@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,11 +10,17 @@
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/reduction/distinct_count.hpp>
+#include <cudf/reduction/unique_count.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+
+#include <array>
+#include <span>
 
 auto constexpr NaN          = std::numeric_limits<double>::quiet_NaN();
 auto constexpr KEEP_ANY     = cudf::duplicate_keep_option::KEEP_ANY;
@@ -341,7 +347,7 @@ TEST_F(StreamCompactionTest, Distinct)
   }
 }
 
-TEST_F(StreamCompactionTest, ApplyBooleanMask)
+TEST_F(StreamCompactionTest, ApplyRetentionMask)
 {
   auto const col = int32s_col{
     9668, 9590, 9526, 9205, 9434, 9347, 9160, 9569, 9143, 9807, 9606, 9446, 9279, 9822, 9691};
@@ -363,26 +369,59 @@ TEST_F(StreamCompactionTest, ApplyBooleanMask)
   cudf::table_view input({col});
   auto const col_expected = int32s_col{9526, 9347, 9569, 9807, 9279, 9691};
   cudf::table_view expected({col_expected});
-  auto const result = cudf::apply_boolean_mask(input, mask, cudf::test::get_default_stream());
+  auto const result = cudf::apply_retention_mask(input, mask, cudf::test::get_default_stream());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, *result);
+}
+
+TEST_F(StreamCompactionTest, ApplyDeletionMask)
+{
+  auto const col = int32s_col{
+    9668, 9590, 9526, 9205, 9434, 9347, 9160, 9569, 9143, 9807, 9606, 9446, 9279, 9822, 9691};
+  cudf::test::fixed_width_column_wrapper<bool> mask({false,
+                                                     false,
+                                                     true,
+                                                     false,
+                                                     false,
+                                                     true,
+                                                     false,
+                                                     true,
+                                                     false,
+                                                     true,
+                                                     false,
+                                                     false,
+                                                     true,
+                                                     false,
+                                                     true});
+  cudf::table_view input({col});
+  auto const col_expected = int32s_col{9668, 9590, 9205, 9434, 9160, 9143, 9606, 9446, 9822};
+  cudf::table_view expected({col_expected});
+  auto const result = cudf::apply_deletion_mask(input, mask, cudf::test::get_default_stream());
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, *result);
 }
 
 TEST_F(StreamCompactionTest, FilterUDF)
 {
-  auto const col      = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
-  auto col_ref_0      = cudf::ast::column_reference(0);
-  auto const expected = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}.release();
-  auto const result   = cudf::filter({col},
-                                   R"***(
+  auto const col                 = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+  auto const expected            = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}.release();
+  auto const input               = cudf::table_view{{col}};
+  cudf::transform_input inputs[] = {col};
+  auto const predicate =
+    cudf::transform(R"***(
 __device__ void filter(bool * out, int32_t a){
   *out = a < 10;
 })***",
-                                     {col},
-                                   false,
-                                   std::nullopt,
-                                   cudf::null_aware::NO,
-                                   cudf::test::get_default_stream());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, *result[0]);
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    std::nullopt,
+                    std::span{inputs},
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    input.num_rows(),
+                    cudf::test::get_default_stream());
+  auto const result = cudf::apply_retention_mask(
+    input, predicate->view().column(0), cudf::test::get_default_stream());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected, result->view().column(0));
 }
 
 TEST_F(StreamCompactionTest, FilterASTJit)
@@ -396,7 +435,10 @@ TEST_F(StreamCompactionTest, FilterASTJit)
   cudf::table_view input({col});
   auto const col_expected = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   cudf::table_view expected({col_expected});
-  auto const result = cudf::filter(input, expression, input, cudf::test::get_default_stream());
+  auto const predicate =
+    cudf::compute_column_jit(input, expression, cudf::test::get_default_stream());
+  auto const result =
+    cudf::apply_retention_mask(input, predicate->view(), cudf::test::get_default_stream());
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, *result);
 }
 

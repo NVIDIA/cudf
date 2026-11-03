@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from functools import cache
@@ -6,6 +6,7 @@ from functools import cache
 from numba import cuda
 from numba.np import numpy_support
 
+from cudf.core.dtype.validators import is_dtype_obj_string
 from cudf.core.udf.api import Masked, pack_return
 from cudf.core.udf.masked_typing import MaskedType
 from cudf.core.udf.strings_typing import string_view
@@ -38,7 +39,7 @@ class SeriesApplyKernel(ApplyKernelBase):
     def _get_frame_type(self):
         return MaskedType(
             string_view
-            if self.frame.dtype == "O"
+            if is_dtype_obj_string(self.frame.dtype)
             else numpy_support.from_dtype(self.frame.dtype)
         )
 

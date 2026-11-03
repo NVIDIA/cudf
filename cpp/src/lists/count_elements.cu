@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,12 +15,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
-#include <thrust/transform_scan.h>
 
 namespace cudf {
 namespace lists {
@@ -34,7 +33,7 @@ namespace detail {
  * @return New size_type column with lengths
  */
 std::unique_ptr<column> count_elements(lists_column_view const& input,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto device_column = cudf::column_device_view::create(input.parent(), stream);
@@ -48,9 +47,9 @@ std::unique_ptr<column> count_elements(lists_column_view const& input,
                                         mr);
 
   // fill in the sizes
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::make_counting_iterator<cudf::size_type>(0),
-                    thrust::make_counting_iterator<cudf::size_type>(input.size()),
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<cudf::size_type>{0},
+                    cuda::counting_iterator<cudf::size_type>{input.size()},
                     output->mutable_view().begin<size_type>(),
                     list_size_functor{d_column});
 
@@ -63,7 +62,7 @@ std::unique_ptr<column> count_elements(lists_column_view const& input,
 // external APIS
 
 std::unique_ptr<column> count_elements(lists_column_view const& input,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

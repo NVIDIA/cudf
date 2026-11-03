@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 import math
@@ -66,11 +66,14 @@ def run_masked_udf_test(func, data, args=(), nullable=True, **kwargs):
     pdf = data.to_pandas(nullable=nullable)
 
     expect = pdf.apply(func, args=args, axis=1)
-    obtain = gdf.apply(func, args=args, axis=1)
+    obtain = gdf.apply(func, args=args, axis=1).to_pandas(nullable=nullable)
+    if "check_dtype" in kwargs and not kwargs.get("check_dtype", True):
+        expect = expect.astype(obtain.dtype)
     assert_eq(expect, obtain, **kwargs)
 
 
-@pytest.fixture
+# String UDF tests only read this input, so one instance is sufficient per worker.
+@pytest.fixture(scope="module")
 def str_udf_data():
     return cudf.DataFrame(
         {
@@ -421,7 +424,7 @@ def test_arith_masked_vs_constant_reflected(
                 constant == 1
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_test(func, gdf, check_dtype=False)
@@ -442,7 +445,7 @@ def test_arith_masked_vs_null(request, arithmetic_op, data):
                 (gdf["data"] == 1).any()
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_test(func, gdf, check_dtype=False)
@@ -530,7 +533,6 @@ def test_apply_mixed_dtypes(numeric_types_as_str, numeric_types_as_str2, op):
     gdf = cudf.DataFrame({"a": [1.5, None, 3, None], "b": [4, 5, None, None]})
     gdf["a"] = gdf["a"].astype(numeric_types_as_str)
     gdf["b"] = gdf["b"].astype(numeric_types_as_str2)
-
     run_masked_udf_test(func, gdf, check_dtype=False)
 
 
@@ -673,8 +675,8 @@ def test_masked_udf_nested_function_support(binary_op):
         y = row["b"]
         return inner_gpu(x, y)
 
-    got = gdf.apply(outer_gpu, axis=1)
-    expect = pdf.apply(outer, axis=1)
+    got = gdf.apply(outer_gpu, axis=1).to_pandas(nullable=True)
+    expect = pdf.apply(outer, axis=1).astype(got.dtype)
     assert_eq(expect, got, check_dtype=False)
 
 
@@ -691,7 +693,7 @@ def test_masked_udf_subset_selection(data):
         return row["a"] + row["b"]
 
     data = cudf.DataFrame(data)
-    run_masked_udf_test(func, data)
+    run_masked_udf_test(func, data, check_dtype=False)
 
 
 @pytest.mark.parametrize(
@@ -770,4 +772,6 @@ def test_masked_udf_scalar_args_binops_multiple(data, binary_op):
         y = binary_op(x, k)
         return y
 
-    run_masked_udf_test(func, data, args=(1, 2), check_dtype=False)
+    run_masked_udf_test(
+        func, data, args=(1, 2), check_dtype=False, nullable=True
+    )

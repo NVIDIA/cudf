@@ -1,27 +1,33 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/cudftable.hpp>
+#include <cudf/scalar/scalar.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda_runtime.h>
 
 #include <fstream>
+#include <memory>
+#include <utility>
 #include <vector>
 
 // Global environment for temporary files
@@ -122,14 +128,13 @@ TEST_F(CudftableTest, MultiColumnCompound)
   cudf::test::strings_column_wrapper string_col({"Lorem", "ipsum", "dolor", "sit"},
                                                 {true, false, true, true});
 
-  auto valids =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2 == 0; });
+  auto valids = cudf::test::iterators::valids_at_multiples_of(2);
   cudf::test::lists_column_wrapper<int32_t> list_col{
     {{1, 2, 3}, valids}, {4, 5}, {}, {{6, 7, 8, 9}, valids}};
 
   cudf::test::fixed_width_column_wrapper<int32_t> struct_col1{{1, 2, 3, 4},
                                                               {true, false, true, true}};
-  cudf::test::strings_column_wrapper struct_col2{{"a", "b", "c", "d"}, {true, true, false, true}};
+  cudf::test::strings_column_wrapper struct_col2{{"a", "b", "", "d"}, {true, true, false, true}};
   cudf::test::structs_column_wrapper struct_col{{struct_col1, struct_col2},
                                                 {true, true, true, false}};
 
@@ -141,18 +146,17 @@ TEST_F(CudftableTest, LargeTable)
 {
   constexpr int num_rows = 23'456'789;
 
-  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
-  cudf::test::fixed_width_column_wrapper<int32_t> col1(sequence, sequence + num_rows);
-  cudf::test::fixed_width_column_wrapper<double> col2(sequence, sequence + num_rows);
+  auto col1 = cudf::sequence(num_rows, cudf::numeric_scalar<int32_t>(0));
+  auto col2 = cudf::sequence(num_rows, cudf::numeric_scalar<double>(0.0));
 
-  auto const expected = cudf::table_view{{col1, col2}};
+  auto const expected = cudf::table_view{{col1->view(), col2->view()}};
   run_test(expected);
 }
 
 TEST_F(CudftableTest, AllNullColumn)
 {
-  auto all_nulls = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return false; });
-  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4, 5}, all_nulls);
+  cudf::test::fixed_width_column_wrapper<int32_t> col({1, 2, 3, 4, 5},
+                                                      cudf::test::iterators::all_nulls());
 
   auto const expected = cudf::table_view{{col}};
   run_test(expected);
@@ -397,15 +401,22 @@ TEST_F(CudftableTest, Lists)
 
   cudf::test::lists_column_wrapper<int32_t> child_list{{1, 2}, {3, 4}, {5, 6, 7}, {8}, {}, {9, 10}};
   auto lists_of_lists_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4, 6, 6}.release();
-  auto lists_of_lists_col = cudf::make_lists_column(
-    4, std::move(lists_of_lists_offsets), child_list.release(), 0, rmm::device_buffer{});
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 6}.release();
+  auto lists_of_lists_col =
+    cudf::make_lists_column(4,
+                            std::move(lists_of_lists_offsets),
+                            child_list.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::strings_column_wrapper strings_child{"hello", "world", "foo", "bar", "baz", "test"};
-  auto strings_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 5, 5, 6}.release();
-  auto lists_of_strings_col = cudf::make_lists_column(
-    4, std::move(strings_offsets), strings_child.release(), 0, rmm::device_buffer{});
+  auto strings_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 5, 6}.release();
+  auto lists_of_strings_col =
+    cudf::make_lists_column(4,
+                            std::move(strings_offsets),
+                            strings_child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::fixed_width_column_wrapper<cudf::timestamp_ms> timestamps_child{
     cudf::timestamp_ms{100ms},
@@ -415,9 +426,13 @@ TEST_F(CudftableTest, Lists)
     cudf::timestamp_ms{500ms},
     cudf::timestamp_ms{600ms}};
   auto timestamps_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3, 6}.release();
-  auto lists_of_timestamps_col = cudf::make_lists_column(
-    4, std::move(timestamps_offsets), timestamps_child.release(), 0, rmm::device_buffer{});
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3, 6}.release();
+  auto lists_of_timestamps_col =
+    cudf::make_lists_column(4,
+                            std::move(timestamps_offsets),
+                            timestamps_child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::fixed_width_column_wrapper<cudf::duration_ns> durations_child{
     cudf::duration_ns{1000ns},
@@ -425,25 +440,35 @@ TEST_F(CudftableTest, Lists)
     cudf::duration_ns{3000ns},
     cudf::duration_ns{4000ns},
     cudf::duration_ns{5000ns}};
-  auto durations_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3, 5}.release();
-  auto lists_of_durations_col = cudf::make_lists_column(
-    4, std::move(durations_offsets), durations_child.release(), 0, rmm::device_buffer{});
+  auto durations_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3, 5}.release();
+  auto lists_of_durations_col =
+    cudf::make_lists_column(4,
+                            std::move(durations_offsets),
+                            durations_child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::fixed_point_column_wrapper<int32_t> decimal32_child{
     {12345, -67890, 99999, 0}, {true, true, true, true}, scale_type{2}};
-  auto decimal32_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 3, 3, 4}.release();
-  auto lists_of_decimals_col = cudf::make_lists_column(
-    4, std::move(decimal32_offsets), decimal32_child.release(), 0, rmm::device_buffer{});
+  auto decimal32_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 3, 4}.release();
+  auto lists_of_decimals_col =
+    cudf::make_lists_column(4,
+                            std::move(decimal32_offsets),
+                            decimal32_child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::fixed_width_column_wrapper<int32_t> struct_col1{1, 2, 3, 4, 5, 6};
   cudf::test::strings_column_wrapper struct_col2{"a", "b", "c", "d", "e", "f"};
   cudf::test::structs_column_wrapper struct_col{{struct_col1, struct_col2}};
   auto lists_of_structs_offsets =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 3, 4, 6}.release();
-  auto lists_of_structs_col = cudf::make_lists_column(
-    4, std::move(lists_of_structs_offsets), struct_col.release(), 0, rmm::device_buffer{});
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 3, 4, 6}.release();
+  auto lists_of_structs_col =
+    cudf::make_lists_column(4,
+                            std::move(lists_of_structs_offsets),
+                            struct_col.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const expected = cudf::table_view{{lists_of_lists_col->view(),
                                           lists_of_strings_col->view(),
@@ -487,13 +512,21 @@ TEST_F(CudftableTest, DeepNestingLists)
 {
   cudf::test::lists_column_wrapper<int32_t> level3_list{{1, 2}, {3, 4}, {5}, {6, 7, 8}};
 
-  auto level2_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 4}.release();
-  auto level2_list    = cudf::make_lists_column(
-    2, std::move(level2_offsets), level3_list.release(), 0, rmm::device_buffer{});
+  auto level2_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4}.release();
+  auto level2_list =
+    cudf::make_lists_column(2,
+                            std::move(level2_offsets),
+                            level3_list.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
-  auto level1_offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2}.release();
-  auto level1_list    = cudf::make_lists_column(
-    1, std::move(level1_offsets), std::move(level2_list), 0, rmm::device_buffer{});
+  auto level1_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2}.release();
+  auto level1_list =
+    cudf::make_lists_column(1,
+                            std::move(level1_offsets),
+                            std::move(level2_list),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const expected = cudf::table_view{{level1_list->view()}};
   run_test(expected);
@@ -511,13 +544,19 @@ TEST_F(CudftableTest, DeviceBufferSource)
                                             cudf::io::sink_info{&buffer}, expected)
                                             .build());
 
-  rmm::device_buffer device_buffer(buffer.size(), cudf::get_default_stream());
-  CUDF_CUDA_TRY(
-    cudaMemcpy(device_buffer.data(), buffer.data(), buffer.size(), cudaMemcpyHostToDevice));
+  cuda::device_buffer<std::byte> device_buffer(cudf::get_default_stream(),
+                                               cudf::get_current_device_resource_ref(),
+                                               buffer.size(),
+                                               cuda::no_init);
+  auto const stream = cudf::get_default_stream();
+  CUDF_CUDA_TRY(cudaMemcpyAsync(
+    device_buffer.data(), buffer.data(), buffer.size(), cudaMemcpyDefault, stream.get()));
+  // Ensure the data is copied to the device before the host read, because the host read does not
+  // take the stream
+  stream.sync();
 
-  auto device_span = cudf::device_span<std::byte const>(
-    static_cast<std::byte const*>(device_buffer.data()), device_buffer.size());
-  auto result = cudf::io::experimental::read_cudftable(
+  auto device_span = cudf::device_span<std::byte const>(device_buffer.data(), device_buffer.size());
+  auto result      = cudf::io::experimental::read_cudftable(
     cudf::io::experimental::cudftable_reader_options::builder(cudf::io::source_info{device_span})
       .build());
 
@@ -552,15 +591,15 @@ TEST_F(CudftableTest, LongStringColumns)
 
 TEST_F(CudftableTest, ManyColumns)
 {
-  constexpr int num_cols = 12'345;
-  std::vector<cudf::column_view> columns;
+  constexpr int num_cols = 1'234;
+  std::vector<std::unique_ptr<cudf::column>> columns;
   for (int i = 0; i < num_cols; ++i) {
     cudf::test::fixed_width_column_wrapper<int32_t> col({i % 10, (i + 1) % 10, (i + 2) % 10});
-    columns.push_back(col);
+    columns.push_back(col.release());
   }
 
-  cudf::table_view expected(columns);
-  run_test(expected);
+  cudf::table expected(std::move(columns));
+  run_test(expected.view());
 }
 
 TEST_F(CudftableTest, FileTooSmallForHeader)

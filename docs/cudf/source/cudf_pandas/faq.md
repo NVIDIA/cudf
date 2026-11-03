@@ -12,8 +12,7 @@ the cuDF library directly should be considered.
   from increased performance by using cuDF directly.
 
 - cuDF does offer some functions and methods that pandas does not. For
-  example, cuDF has a [`.list`
-  accessor](https://docs.rapids.ai/api/cudf/stable/api_docs/list_handling/)
+  example, cuDF has a {ref}`.list accessor <cudf/api_docs/series:list-handling>`
   for working with list-like data. If you need access to the
   additional functionality in cuDF, you will need to use the cuDF
   package directly.
@@ -139,7 +138,7 @@ Both Dask and Apache Spark support accelerated computing through configuration
 based interfaces. Dask allows you to [configure the dataframe
 backend](https://docs.dask.org/en/latest/how-to/selecting-the-collection-backend.html) to use
 cuDF (learn more in [this
-blog](https://medium.com/rapids-ai/easy-cpu-gpu-arrays-and-dataframes-run-your-dask-code-where-youd-like-e349d92351d)) and the [RAPIDS Accelerator for Apache Spark](https://nvidia.github.io/spark-rapids/)
+blog](https://medium.com/rapids-ai/easy-cpu-gpu-arrays-and-dataframes-run-your-dask-code-where-youd-like-e349d92351d)) and the [RAPIDS Accelerator for Apache Spark](https://docs.nvidia.com/spark-rapids/)
 provides a similar configuration-based plugin for Spark.
 
 ## How do I know if an object is a `cudf.pandas` proxy object?
@@ -195,7 +194,7 @@ This means that automatic conversion between GPU and CPU types and automatic fal
 There are a few known limitations that you should be aware of:
 
 - Because fallback involves copying data from GPU to CPU and back,
-  [value mutability](https://pandas.pydata.org/pandas-docs/version/2.3.3/getting_started/overview.html#mutability-and-copying-of-data)
+  [value mutability](https://pandas.pydata.org/pandas-docs/stable/getting_started/overview.html#mutability-and-copying-of-data)
   of Pandas objects is not always guaranteed. You should follow the
   pandas recommendation to favor immutable operations.
 - For performance reasons, joins and join-based operations are not

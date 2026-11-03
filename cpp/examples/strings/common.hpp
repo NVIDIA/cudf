@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -13,14 +13,14 @@
 #include <cudf/table/table_view.hpp>
 
 #include <rmm/cuda_device.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/device_memory_resource.hpp>
-#include <rmm/mr/owning_wrapper.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/memory_resource>
 
 #include <chrono>
 #include <iostream>
-#include <memory>
 #include <string>
 
 /**
@@ -42,34 +42,11 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
                                              cudf::column_view const& visibilities);
 
 /**
- * @brief Create CUDA memory resource
- */
-auto make_cuda_mr() { return std::make_shared<rmm::mr::cuda_memory_resource>(); }
-
-/**
- * @brief Create a pool device memory resource
- */
-auto make_pool_mr()
-{
-  return rmm::mr::make_owning_wrapper<rmm::mr::pool_memory_resource>(
-    make_cuda_mr(), rmm::percent_of_free_device_memory(50));
-}
-
-/**
- * @brief Create memory resource for libcudf functions
- */
-std::shared_ptr<rmm::mr::device_memory_resource> create_memory_resource(std::string const& name)
-{
-  if (name == "pool") { return make_pool_mr(); }
-  return make_cuda_mr();
-}
-
-/**
  * @brief Main for strings examples
  *
  * Command line parameters:
  * 1. CSV file name/path
- * 2. Memory resource (optional): 'pool' or 'cuda'
+ * 2. Memory resource (optional): 'async' (default), 'pool', or 'cuda'
  *
  * The stdout includes the number of rows in the input and the output size in bytes.
  */
@@ -80,9 +57,16 @@ int main(int argc, char const** argv)
     return 1;
   }
 
-  auto const mr_name = std::string{argc > 2 ? std::string(argv[2]) : std::string("cuda")};
-  auto resource      = create_memory_resource(mr_name);
-  cudf::set_current_device_resource(resource.get());
+  auto const mr_name = std::string{argc > 2 ? argv[2] : "async"};
+  auto mr            = [&]() -> cuda::mr::any_resource<cuda::mr::device_accessible> {
+    if (mr_name == "pool") {
+      return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
+                                           rmm::percent_of_free_device_memory(50)};
+    }
+    if (mr_name == "async") { return rmm::mr::cuda_async_memory_resource{}; }
+    return rmm::mr::cuda_memory_resource{};
+  }();
+  cudf::set_current_device_resource(mr);
 
   auto const csv_file   = std::string{argv[1]};
   auto const csv_result = [csv_file] {
@@ -101,7 +85,7 @@ int main(int argc, char const** argv)
   std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - st;
   std::cout << "Wall time: " << elapsed.count() << " seconds\n";
   auto const scv = cudf::strings_column_view(result->view());
-  std::cout << "Output size " << scv.chars_size(rmm::cuda_stream_default) << " bytes\n";
+  std::cout << "Output size " << scv.chars_size(cudf::get_default_stream()) << " bytes\n";
 
   return 0;
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,7 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace lists::detail {
 
 /**
@@ -20,12 +20,12 @@ namespace lists::detail {
  * @param[in] value The `list_scalar` to construct from
  * @param[in] size The number of rows for the output column.
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
- * @param[in] mr Device memory resource used to allocate the returned column's device memory.
+ * @param[in] mr Memory resources used for temporary allocations and the returned column
  */
 std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& value,
                                                             size_type size,
-                                                            rmm::cuda_stream_view stream,
-                                                            rmm::device_async_resource_ref mr);
+                                                            cuda::stream_ref stream,
+                                                            cudf::memory_resources mr);
 
 /**
  * @brief Create an empty lists column.
@@ -33,12 +33,8 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
  * A list column requires a child type and so cannot be created with `make_empty_column`.
  *
  * @param child_type The type used for the empty child column
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
  */
-std::unique_ptr<column> make_empty_lists_column(data_type child_type,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr);
+std::unique_ptr<column> make_empty_lists_column(data_type child_type);
 
 /**
  * @brief Create a lists column with all null rows.
@@ -46,12 +42,12 @@ std::unique_ptr<column> make_empty_lists_column(data_type child_type,
  * @param size Size of the output lists column
  * @param child_type The type used for the empty child column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  */
 std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
                                                     data_type child_type,
-                                                    rmm::cuda_stream_view stream,
-                                                    rmm::device_async_resource_ref mr);
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr);
 
 }  // namespace lists::detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

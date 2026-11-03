@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -38,7 +38,7 @@ void bench_row_grouped_rolling_sum(nvbench::state& state, nvbench::type_list<Typ
   auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result = cudf::grouped_rolling_window(
       keys->view(), vals->view(), preceding_size, following_size, min_periods, *req);

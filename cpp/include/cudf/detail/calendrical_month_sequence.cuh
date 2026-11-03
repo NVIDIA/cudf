@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -13,10 +13,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -26,7 +26,7 @@ struct calendrical_month_sequence_functor {
   std::unique_ptr<cudf::column> operator()(size_type n,
                                            scalar const& input,
                                            size_type months,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
     requires(cudf::is_timestamp_t<T>::value)
   {
@@ -39,9 +39,9 @@ struct calendrical_month_sequence_functor {
     auto output             = cudf::make_fixed_width_column(
       output_column_type, n, cudf::mask_state::UNALLOCATED, stream, mr);
 
-    thrust::transform(rmm::exec_policy_nosync(stream),
-                      thrust::make_counting_iterator<size_type>(0),
-                      thrust::make_counting_iterator<size_type>(n),
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                      cuda::counting_iterator<size_type>{0},
+                      cuda::counting_iterator<size_type>{n},
                       output->mutable_view().begin<T>(),
                       [initial = device_input, months] __device__(size_type i) {
                         return datetime::detail::add_calendrical_months_with_scale_back(

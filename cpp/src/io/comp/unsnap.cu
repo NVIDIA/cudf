@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,9 +10,8 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
-#include <cub/cub.cuh>
+#include <cub/warp/warp_reduce.cuh>
+#include <cuda/stream>
 
 namespace cudf::io::detail {
 constexpr int32_t batch_size    = (1 << 5);
@@ -65,7 +64,7 @@ struct unsnap_state_s {
   uint32_t bytes_left{};           ///< remaining bytes to decompress
   int32_t error{};                 ///< current error status
   uint32_t tstart{};               ///< start time for perf logging
-  volatile unsnap_queue_s q{};     ///< queue for cross-warp communication
+  unsnap_queue_s volatile q{};     ///< queue for cross-warp communication
   device_span<uint8_t const> src;  ///< input for current block
   device_span<uint8_t> dst;        ///< output for current block
 };
@@ -133,7 +132,7 @@ __device__ void snappy_prefetch_bytestream(unsnap_state_s* s, int t)
  *       k_len3lut[k] = v | (n << 4);
  *   }
  */
-static const uint8_t __device__ __constant__ k_len3lut[1 << 10] = {
+static uint8_t const __device__ __constant__ k_len3lut[1 << 10] = {
   0x80, 0x91, 0x80, 0x91, 0x92, 0x91, 0x92, 0x91, 0x80, 0xa3, 0x80, 0xa3, 0x92, 0xa3, 0x92, 0xa3,
   0x94, 0x91, 0x94, 0x91, 0x92, 0x91, 0x92, 0x91, 0x94, 0xa3, 0x94, 0xa3, 0x92, 0xa3, 0x92, 0xa3,
   0x80, 0xa5, 0x80, 0xa5, 0xa6, 0xa5, 0xa6, 0xa5, 0x80, 0xa3, 0x80, 0xa3, 0xa6, 0xa3, 0xa6, 0xa3,
@@ -281,7 +280,7 @@ __device__ void snappy_decode_symbols(unsnap_state_s* s, uint32_t t)
 
   for (;;) {
     int32_t batch_len;
-    volatile unsnap_batch_s* b;
+    unsnap_batch_s volatile* b;
 
     // Wait for prefetcher
     if (t == 0) {
@@ -313,25 +312,32 @@ __device__ void snappy_decode_symbols(unsnap_state_s* s, uint32_t t)
       is_long_sym    = ((b0 & ~4) != 0) && (((b0 + 1) & 2) == 0);
       short_sym_mask = ballot(is_long_sym);
       batch_len      = 0;
-      b = reinterpret_cast<volatile unsnap_batch_s*>(shuffle(reinterpret_cast<uintptr_t>(b)));
+      b = reinterpret_cast<unsnap_batch_s volatile*>(shuffle(reinterpret_cast<uintptr_t>(b)));
       if (!(short_sym_mask & 1)) {
         batch_len = shuffle((t == 0) ? (short_sym_mask) ? __ffs(short_sym_mask) - 1 : 32 : 0);
         if (batch_len != 0) {
           uint32_t blen = 0;
           int32_t ofs   = 0;
+          // Check for bad copy element (offset == 0).
+          bool is_copy_offset_bad = false;
           if (t < batch_len) {
-            blen        = (b0 & 1) ? ((b0 >> 2) & 7) + 4 : ((b0 >> 2) + 1);
-            ofs         = (b0 & 1)   ? ((b0 & 0xe0) << 3) | byte_access(s, cur_t + 1)
-                          : (b0 & 2) ? byte_access(s, cur_t + 1) | (byte_access(s, cur_t + 2) << 8)
-                                     : -(int32_t)(cur_t + 1);
-            b[t].len    = blen;
-            b[t].offset = ofs;
+            blen               = (b0 & 1) ? ((b0 >> 2) & 7) + 4 : ((b0 >> 2) + 1);
+            ofs                = (b0 & 1) ? ((b0 & 0xe0) << 3) | byte_access(s, cur_t + 1)
+                                 : (b0 & 2) ? byte_access(s, cur_t + 1) | (byte_access(s, cur_t + 2) << 8)
+                                            : -(int32_t)(cur_t + 1);
+            is_copy_offset_bad = (b0 & 3) != 0 && ofs == 0;
+            b[t].len           = blen;
+            b[t].offset        = ofs;
             ofs += blen;  // for correct out-of-range detection below
           }
-          blen           = warp_reduce_pos<cudf::detail::warp_size>(blen, t);
-          bytes_left     = shuffle(bytes_left);
-          dst_pos        = shuffle(dst_pos);
-          short_sym_mask = __ffs(ballot(blen > bytes_left || ofs > (int32_t)(dst_pos + blen)));
+          blen       = warp_reduce_pos<cudf::detail::warp_size>(blen, t);
+          bytes_left = shuffle(bytes_left);
+          dst_pos    = shuffle(dst_pos);
+          // If `is_copy_offset_bad`, truncate the batch at the first lane with a malformed copy
+          // element (offset == 0) so warp 2 never runs it; the scalar slow path below then re-reads
+          // it, breaks, and the kernel reports FAILURE.
+          short_sym_mask = __ffs(
+            ballot(blen > bytes_left || ofs > (int32_t)(dst_pos + blen) || is_copy_offset_bad));
           if (short_sym_mask != 0) { batch_len = min(batch_len, short_sym_mask - 1); }
           if (batch_len != 0) {
             blen = shuffle(blen, batch_len - 1);
@@ -363,21 +369,25 @@ __device__ void snappy_decode_symbols(unsnap_state_s* s, uint32_t t)
                         (batch_len + t >= batch_size);
           batch_add = __ffs(ballot(is_long_sym)) - 1;
           if (batch_add != 0) {
-            uint32_t blen = 0;
-            int32_t ofs   = 0;
+            uint32_t blen           = 0;
+            int32_t ofs             = 0;
+            bool is_copy_offset_bad = false;
             if (t < batch_add) {
               blen                    = (b0 & 1) ? ((b0 >> 2) & 7) + 4 : ((b0 >> 2) + 1);
               ofs                     = (b0 & 1) ? ((b0 & 0xe0) << 3) | byte_access(s, cur_t + 1)
                                         : (b0 & 2) ? byte_access(s, cur_t + 1) | (byte_access(s, cur_t + 2) << 8)
                                                    : -(int32_t)(cur_t + 1);
+              is_copy_offset_bad      = (b0 & 3) != 0 && ofs == 0;
               b[batch_len + t].len    = blen;
               b[batch_len + t].offset = ofs;
               ofs += blen;  // for correct out-of-range detection below
             }
-            blen           = warp_reduce_pos<cudf::detail::warp_size>(blen, t);
-            bytes_left     = shuffle(bytes_left);
-            dst_pos        = shuffle(dst_pos);
-            short_sym_mask = __ffs(ballot(blen > bytes_left || ofs > (int32_t)(dst_pos + blen)));
+            blen       = warp_reduce_pos<cudf::detail::warp_size>(blen, t);
+            bytes_left = shuffle(bytes_left);
+            dst_pos    = shuffle(dst_pos);
+            // See comment in the fast-path block above for `is_copy_offset_bad`.
+            short_sym_mask = __ffs(
+              ballot(blen > bytes_left || ofs > (int32_t)(dst_pos + blen) || is_copy_offset_bad));
             if (short_sym_mask != 0) { batch_add = min(batch_add, short_sym_mask - 1); }
             if (batch_add != 0) {
               blen = shuffle(blen, batch_add - 1);
@@ -498,7 +508,7 @@ __device__ void snappy_process_symbols(unsnap_state_s* s, int t, Storage& temp_s
   int batch               = 0;
 
   do {
-    volatile unsnap_batch_s* b = &s->q.batch[batch * batch_size];
+    unsnap_batch_s volatile* b = &s->q.batch[batch * batch_size];
     int32_t batch_len, blen_t, dist_t;
 
     if (t == 0) {
@@ -635,8 +645,8 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   if (!t) {
     s->src         = inputs[strm_id];
     s->dst         = outputs[strm_id];
-    auto cur       = s->src.begin();
-    auto const end = s->src.end();
+    auto cur       = s->src.data();
+    auto const end = s->src.data() + s->src.size();
     s->error       = 0;
     if (cur < end) {
       // Read uncompressed size (varint), limited to 32-bit
@@ -700,23 +710,26 @@ CUDF_KERNEL void __launch_bounds__(block_size)
 void gpu_unsnap(device_span<device_span<uint8_t const> const> inputs,
                 device_span<device_span<uint8_t> const> outputs,
                 device_span<codec_exec_result> results,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream)
 {
+  if (inputs.empty()) { return; }
+
   dim3 dim_block(128, 1);           // 4 warps per stream, 1 stream per block
   dim3 dim_grid(inputs.size(), 1);  // TODO: Check max grid dimensions vs max expected count
 
   unsnap_kernel_no_racecheck<128>
-    <<<dim_grid, dim_block, 0, stream.value()>>>(inputs, outputs, results);
+    <<<dim_grid, dim_block, 0, stream.get()>>>(inputs, outputs, results);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-__global__ void get_snappy_uncompressed_size_kernel(
+CUDF_KERNEL void get_snappy_uncompressed_size_kernel(
   device_span<device_span<uint8_t const> const> inputs, device_span<size_t> uncompressed_sizes)
 {
   auto const idx = cudf::detail::grid_1d::global_thread_id();
   if (idx >= inputs.size()) return;
 
-  auto cur       = inputs[idx].begin();
-  auto const end = inputs[idx].end();
+  auto cur       = inputs[idx].data();
+  auto const end = inputs[idx].data() + inputs[idx].size();
 
   constexpr int payload_bits_per_byte = 7;
   constexpr size_t payload_mask       = (1 << payload_bits_per_byte) - 1;
@@ -737,14 +750,17 @@ __global__ void get_snappy_uncompressed_size_kernel(
 
 void get_snappy_uncompressed_size(device_span<device_span<uint8_t const> const> inputs,
                                   device_span<size_t> uncompressed_sizes,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
+  if (inputs.empty()) { return; }
+
   int threads_per_block = 128;
   auto const num_blocks =
-    cudf::util::div_rounding_up_safe<size_t>(inputs.size(), threads_per_block);
+    cudf::detail::div_rounding_up_safe<size_t>(inputs.size(), threads_per_block);
 
-  get_snappy_uncompressed_size_kernel<<<num_blocks, threads_per_block, 0, stream.value()>>>(
+  get_snappy_uncompressed_size_kernel<<<num_blocks, threads_per_block, 0, stream.get()>>>(
     inputs, uncompressed_sizes);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::detail

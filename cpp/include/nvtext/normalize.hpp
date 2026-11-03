@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,12 +10,15 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/stream>
+
 //! NVText APIs
 namespace CUDF_EXPORT nvtext {
 /**
  * @addtogroup nvtext_normalize
  * @{
  * @file
+ * @brief APIs for normalizing whitespace and characters within strings columns.
  */
 
 /**
@@ -37,14 +40,56 @@ namespace CUDF_EXPORT nvtext {
  * for row `i` in the output column.
  *
  * @param input Strings column to normalize
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return New strings columns of normalized strings.
  */
 std::unique_ptr<cudf::column> normalize_spaces(
   cudf::strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Flags providing more control of nvtext::normalize_characters output
+ *
+ * Flags may be combined with bitwise OR:
+ * @code{.cpp}
+ * normalize_flags::STRIP_ACCENTS | normalize_flags::PAD_PUNCTUATION
+ * @endcode
+ *
+ * If the `character_normalizer` object is created with `do_lower_case = true`,
+ * accent stripping is already implied by the lower-casing transform and
+ * `STRIP_ACCENTS` has no additional effect.
+ */
+enum class normalize_flags : uint32_t {
+  NONE            = 0,
+  STRIP_ACCENTS   = 1 << 0,  ///< Remove diacritics from accented characters
+  PAD_PUNCTUATION = 1 << 1,  ///< Add spaces around punctuation and CJK characters
+};
+
+/**
+ * @brief Combine two normalize_flags values
+ *
+ * @param a First flags value
+ * @param b Second flags value
+ * @return Combined flags
+ */
+inline normalize_flags operator|(normalize_flags a, normalize_flags b)
+{
+  return static_cast<normalize_flags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+
+/**
+ * @brief Used for checking if one or more flags are set
+ *
+ * @param a First flags value
+ * @param b Second flags value
+ * @return Masked combination of flags
+ */
+inline normalize_flags operator&(normalize_flags a, normalize_flags b)
+{
+  return static_cast<normalize_flags>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
 
 /**
  * @brief Normalizer object to be used with nvtext::normalize_characters
@@ -70,6 +115,10 @@ std::unique_ptr<cudf::column> normalize_spaces(
  * However, if the accented character is already lower-case, then only the
  * accent is removed.
  *
+ * Also if `do_lower_case = true`, accent stripping is already implied by
+ * the lower-casing transform. Passing `normalize_flags::STRIP_ACCENTS` to
+ * nvtext::normalize_characters has no additional effect in that case.
+ *
  * If `special_tokens` are included the padding after `[` and before `]` is not
  * inserted if the characters between them match one of the given tokens.
  * Also, the `special_tokens` are expected to include the `[]` characters
@@ -89,12 +138,13 @@ struct character_normalizer {
    * @param special_tokens Each row is a token including the `[]` brackets.
    *        For example: `[BOS]`, `[EOS]`, `[UNK]`, `[SEP]`, `[PAD]`, `[CLS]`, `[MASK]`
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @param mr Memory resources used for temporary allocations and the returned object's device
+   * memory
    */
   character_normalizer(bool do_lower_case,
                        cudf::strings_column_view const& special_tokens,
-                       rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-                       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                       cuda::stream_ref stream   = cudf::get_default_stream(),
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref());
   ~character_normalizer();
 
   struct character_normalizer_impl;
@@ -115,15 +165,15 @@ struct character_normalizer {
  * @param special_tokens Individual tokens including `[]` brackets.
  *        Default is no special tokens.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned object's device memory
  * @return Object to be used with nvtext::normalize_characters
  */
 std::unique_ptr<character_normalizer> create_character_normalizer(
   bool do_lower_case,
   cudf::strings_column_view const& special_tokens = cudf::strings_column_view(cudf::column_view{
     cudf::data_type{cudf::type_id::STRING}, 0, nullptr, nullptr, 0}),
-  rmm::cuda_stream_view stream                    = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr               = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream                         = cudf::get_default_stream(),
+  cudf::memory_resources mr                       = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Normalizes the text in input strings column
@@ -147,14 +197,49 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
  * @param input The input strings to normalize
  * @param normalizer Normalizer to use for this function
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resource to allocate any returned objects
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Normalized strings column
  */
 std::unique_ptr<cudf::column> normalize_characters(
   cudf::strings_column_view const& input,
   character_normalizer const& normalizer,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Normalizes the text in input strings column with explicit behavioral flags.
+ *
+ * @see nvtext::character_normalizer for details on the normalizer behavior.
+ * @see nvtext::normalize_flags for the available flags.
+ *
+ * @code{.pseudo}
+ * cn = create_character_normalizer(false)
+ * s = ["Héllo", "ÑOÑO", "á"]   // a + combining acute
+ * flags = normalize_flags::STRIP_ACCENTS | normalize_flags::PAD_PUNCTUATION
+ * s1 = normalize_characters(s, cn, flags)
+ * s1 is now ["Hello", "NONO", "a"]
+ * @endcode
+ *
+ * A null input element at row `i` produces a corresponding null entry
+ * for row `i` in the output column.
+ *
+ * If the `normalizer` object was created with `do_lower_case = true`, accent stripping is already
+ * implied by the lower-casing transform. Passing `normalize_flags::STRIP_ACCENTS` here no
+ * additional effect. To lower-case without removing accents use the cudf::strings::to_lower API.
+ *
+ * @param input The input strings to normalize
+ * @param normalizer Normalizer to use for this function
+ * @param flags Combination of nvtext::normalize_flags values
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
+ * @return Normalized strings column
+ */
+std::unique_ptr<cudf::column> normalize_characters(
+  cudf::strings_column_view const& input,
+  character_normalizer const& normalizer,
+  normalize_flags flags,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

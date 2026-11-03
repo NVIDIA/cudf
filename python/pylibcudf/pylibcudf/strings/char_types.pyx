@@ -1,19 +1,26 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from libc.stdint cimport uint8_t, uintptr_t
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.strings cimport char_types as cpp_char_types
 from pylibcudf.libcudf.strings.char_types cimport string_character_types
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from cython.operator import dereference
+from cuda.bindings.cyruntime cimport cudaStream_t
 from pylibcudf.libcudf.strings.char_types import \
     string_character_types as StringCharacterTypes  # no-cython-lint
 
@@ -21,13 +28,40 @@ __all__ = [
     "StringCharacterTypes",
     "all_characters_of_type",
     "filter_characters_of_type",
+    "get_character_flags_table_ptr",
 ]
+
+cpdef get_character_flags_table_ptr(
+    object stream: CudaStreamLike | None = None,
+):
+    """
+    Return a device pointer to the character-flags lookup table.
+
+    The table maps a code point (indexed 0..0xFFFF) to a bitmask of
+    :class:`StringCharacterTypes` flags, and backs the character-class checks
+    used by :func:`all_characters_of_type`. The table is lazily copied to the
+    device on first use and remains valid for the process lifetime.
+
+    Parameters
+    ----------
+    stream : Stream | None
+        CUDA stream on which to perform the (first-use) device copy.
+
+    Returns
+    -------
+    int
+        The device address of the ``uint8`` flags table.
+    """
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    cdef const uint8_t* tbl = cpp_char_types.get_character_flags_table(_cs)
+    return int(<uintptr_t>tbl)
 
 cpdef Column all_characters_of_type(
     Column source_strings,
     string_character_types types,
     string_character_types verify_types,
-    Stream stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -50,26 +84,27 @@ cpdef Column all_characters_of_type(
         New column of boolean results for each string
     """
     cdef unique_ptr[column] c_result
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_char_types.all_characters_of_type(
-            source_strings.view(),
+            c_source_strings,
             types,
             verify_types,
-            stream.view(),
+            _cs,
             mr.get_mr()
         )
 
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)
 
 cpdef Column filter_characters_of_type(
     Column source_strings,
     string_character_types types_to_remove,
     Scalar replacement,
     string_character_types types_to_keep,
-    Stream stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -99,19 +134,20 @@ cpdef Column filter_characters_of_type(
         replacement.c_obj.get()
     )
     cdef unique_ptr[column] c_result
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_char_types.filter_characters_of_type(
-            source_strings.view(),
+            c_source_strings,
             types_to_remove,
             dereference(c_replacement),
             types_to_keep,
-            stream.view(),
+            _cs,
             mr.get_mr()
         )
 
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)
 
 StringCharacterTypes.__str__ = StringCharacterTypes.__repr__

@@ -1,0 +1,773 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for dynamic join path in join_actor (including Right and Full joins)."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+
+import polars as pl
+
+import pylibcudf as plc
+from cudf_streaming.channel_metadata import (
+    ChannelMetadata,
+    OrderKey,
+    OrderScheme,
+    Ordering,
+    Partitioning,
+    RowOrdering,
+    RowOrderingScope,
+)
+from cudf_streaming.table_chunk import TableChunk
+
+from cudf_polars import Translator
+from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.ir import Cache, Join
+from cudf_polars.dsl.traversal import traversal
+from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
+from cudf_polars.streaming.actor_graph.join import (
+    _forward_join_partitioning,
+    _make_ordered_strategy,
+    _ordered_join_decision,
+    _use_pwise_join,
+)
+from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
+from cudf_polars.streaming.base import PartitionInfo
+from cudf_polars.streaming.parallel import lower_ir_graph
+from cudf_polars.streaming.shuffle import Shuffle
+from cudf_polars.streaming.statistics import collect_statistics
+from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.engine_utils import warns_on_spmd
+from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
+
+if TYPE_CHECKING:
+    import concurrent.futures
+
+
+@pytest.fixture
+def left():
+    return pl.LazyFrame(
+        {
+            "x": range(15),
+            "y": [1, 2, 3] * 5,
+            "z": [1.0, 2.0, 3.0, 4.0, 5.0] * 3,
+        }
+    )
+
+
+@pytest.fixture
+def right():
+    return pl.LazyFrame(
+        {
+            "xx": range(9),
+            "y": [2, 4, 3] * 3,
+            "zz": [1, 2, 3] * 3,
+        }
+    )
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small"])
+@pytest.mark.parametrize("how", ["inner", "left", "right", "full"])
+@pytest.mark.parametrize(
+    "options",
+    [
+        StreamingOptions(max_rows_per_partition=3, broadcast_limit=48),
+        StreamingOptions(max_rows_per_partition=5, broadcast_limit=48),
+    ],
+)
+def test_dynamic_join_how(left, right, streaming_engine_factory, options, how):
+    """Dynamic join path: all join types including Right and Full."""
+    streaming_engine = streaming_engine_factory(options)
+    q = left.join(right, on="y", how=how)
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@pytest.mark.engine_params(["dask", "ray"])
+@pytest.mark.parametrize("how", ["inner", "left", "right", "full"])
+def test_dynamic_join_distributed_backends(left, right, streaming_engine_factory, how):
+    """Exercise dynamic join planning on the task-based executor adapters."""
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=3, broadcast_limit=48)
+    )
+    q = left.join(right, on="y", how=how)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small"])
+@pytest.mark.parametrize("how", ["right", "full"])
+def test_dynamic_join_right_full_reverse(left, right, streaming_engine_factory, how):
+    """Dynamic join path: Right/Full with reversed left/right (stress ordering)."""
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=3, broadcast_limit=48),
+    )
+    # Reverse so "right" frame is larger; exercises right-side preservation
+    q = right.join(left, on="y", how=how)
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_factory):
+    """Joining remains correct when sampling underestimates an input."""
+    large_row_count = 1_000
+    right_row_count = 10 * large_row_count + 1
+
+    left_path = tmp_path / "left"
+    left_path.mkdir()
+    # Sampling one chunk sees the small file first and underestimates the table.
+    pl.DataFrame({"key": [0], "left": [0]}).write_parquet(
+        left_path / "00-small.parquet"
+    )
+    pl.DataFrame(
+        {
+            "key": range(1, large_row_count + 1),
+            "left": range(1, large_row_count + 1),
+        }
+    ).write_parquet(left_path / "01-large.parquet")
+
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            broadcast_limit=1_024,
+            target_partition_size=1 << 20,
+            max_rows_per_partition=2 * right_row_count,
+            dynamic_planning={"sample_chunk_count": 1},
+        )
+    )
+    left = pl.scan_parquet(left_path / "*.parquet")
+    right = pl.LazyFrame(
+        {
+            "key": range(right_row_count),
+            "right": range(right_row_count),
+        }
+    )
+    assert_gpu_result_equal(
+        left.join(right, on="key"),
+        engine=engine,
+        check_row_order=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests migrated from tests/streaming/test_join.py
+# ---------------------------------------------------------------------------
+
+
+def test_join_then_shuffle(left, right, streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, broadcast_limit=24),
+    )
+    q = left.join(right, on="y", how="inner").select(
+        pl.col("x").sum(),
+        pl.col("xx").mean(),
+        pl.col("y").n_unique(),
+        (pl.col("y") * pl.col("y")).n_unique().alias("y2"),
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_dynamic_join_after_sort_on_join_keys(tmp_path, streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=3,
+            target_partition_size=32,
+            broadcast_limit=1,
+            raise_on_fail=True,
+        ),
+    )
+    left = pl.DataFrame(
+        {
+            "k": [3, 1, 2, 1, 4, 2],
+            "x": [30, 10, 20, 11, 40, 21],
+        }
+    )
+    right = pl.DataFrame(
+        {
+            "k": [2, 4, 1, 3, 1],
+            "y": [200, 400, 100, 300, 101],
+        }
+    )
+    left.write_parquet(tmp_path / "left.parquet")
+    right.write_parquet(tmp_path / "right.parquet")
+    left = pl.scan_parquet(tmp_path / "left.parquet")
+    right = pl.scan_parquet(tmp_path / "right.parquet")
+    q = left.sort("k").join(right.sort("k"), on="k", how="inner")
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def _join_ir(q: pl.LazyFrame) -> Join:
+    engine = pl.GPUEngine(raise_on_fail=True, executor="streaming")
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    return next(node for node in traversal([ir]) if isinstance(node, Join))
+
+
+def _order_partitioning(
+    spmd_engine,
+    key_indices: tuple[int, ...],
+    *,
+    order: plc.types.Order = plc.types.Order.ASCENDING,
+    null_order: plc.types.NullOrder = plc.types.NullOrder.BEFORE,
+) -> NormalizedPartitioning:
+    stream = spmd_engine.context.br().stream_pool.get_stream()
+    table = DataFrame.from_polars(
+        pl.DataFrame({f"k{i}": [1, 2] for i in key_indices}),
+        stream,
+    ).table
+    chunk = TableChunk.from_pylibcudf_table(
+        table,
+        stream,
+        exclusive_view=False,
+        br=spmd_engine.context.br(),
+    )
+    return NormalizedPartitioning(
+        OrderScheme(
+            [
+                Ordering(
+                    [OrderKey(index, order, null_order) for index in key_indices],
+                    chunk,
+                    strict_boundaries=True,
+                )
+            ]
+        ),
+        "inherit",
+    )
+
+
+def _set_sorted_join_metadata(spmd_engine_factory) -> ChannelMetadata:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=128,
+            target_partition_size=1,
+            broadcast_limit=1,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        ),
+    )
+    left = pl.LazyFrame({"k": [1, 2, 3], "x": [10, 20, 30]}).set_sorted("k")
+    right = pl.LazyFrame({"k": [1, 2, 3], "y": [100, 200, 300]}).set_sorted("k")
+    q = left.join(right, on="k", how="inner")
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    metadata_collector = evaluate_logical_plan(
+        ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )[1]
+    assert metadata_collector is not None
+    assert len(metadata_collector) == 1
+    return metadata_collector[0]
+
+
+def test_ordered_join_after_set_sorted_inputs(spmd_engine_factory):
+    metadata = _set_sorted_join_metadata(spmd_engine_factory)
+
+    assert metadata.partitioning is not None
+    assert isinstance(metadata.partitioning.inter_rank, OrderScheme)
+    assert metadata.partitioning.local == "inherit"
+    (ordering,) = metadata.partitioning.inter_rank.orderings
+    assert tuple(key.column_index for key in ordering.keys) == (0,)
+    assert ordering.strict_boundaries is True
+    assert metadata.partitioning.row_orderings == ()
+
+
+@pytest.mark.parametrize(
+    "how,maintain_order,expected_column",
+    [
+        ("inner", "left", "left_value"),
+        ("inner", "right", "right_value"),
+        ("cross", "left", "left_value"),
+        ("cross", "right", None),
+        ("semi", "left", None),
+        ("anti", "left", None),
+    ],
+)
+def test_partitionwise_join_preserves_maintained_side_ordering(
+    spmd_engine, how, maintain_order, expected_column
+) -> None:
+    left = pl.LazyFrame({"k": [1], "left_value": [2]})
+    right = pl.LazyFrame({"k": [1], "right_value": [3]})
+    q = (
+        left.join(right, how=how, maintain_order=maintain_order)
+        if how == "cross"
+        else left.join(right, on="k", how=how, maintain_order=maintain_order)
+    )
+    join = _join_ir(q)
+    child_metadatas = []
+    for child, column in zip(join.children, ("left_value", "right_value"), strict=True):
+        ordering_column = column if column in child.schema else "k"
+        key = OrderKey(
+            tuple(child.schema).index(ordering_column),
+            plc.types.Order.ASCENDING,
+            plc.types.NullOrder.BEFORE,
+        )
+        child_metadatas.append(
+            ChannelMetadata(
+                local_count=1,
+                partitioning=Partitioning(
+                    row_orderings=(RowOrdering((key,), RowOrderingScope.GLOBAL),)
+                ),
+            )
+        )
+
+    result = _forward_join_partitioning(
+        join,
+        child_metadatas,
+        spmd_engine.context,
+    )
+
+    if expected_column is None:
+        assert result is None or result.row_orderings == ()
+        return
+    assert result is not None
+    (row_ordering,) = result.row_orderings
+    (key,) = row_ordering.order_keys
+    assert tuple(join.schema)[key.column_index] == expected_column
+
+
+def test_ordered_join_strategy_matches_exact_ordering_width(spmd_engine):
+    left = pl.LazyFrame({"k0": [1], "k1": [2], "x": [3]})
+    right = pl.LazyFrame({"k0": [1], "k1": [2], "y": [4]})
+    join_ir = _join_ir(left.join(right, on="k0", how="inner"))
+    partitioning = _order_partitioning(spmd_engine, (0, 1))
+
+    assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
+
+
+def test_ordered_join_strategy_checks_order_key_semantics(spmd_engine):
+    left = pl.LazyFrame({"k0": [1], "x": [2]})
+    right = pl.LazyFrame({"k0": [1], "y": [3]})
+    join_ir = _join_ir(left.join(right, on="k0", how="inner"))
+    left_partitioning = _order_partitioning(spmd_engine, (0,))
+    right_partitioning = _order_partitioning(spmd_engine, (0,))
+    mismatched_right = _order_partitioning(
+        spmd_engine, (0,), order=plc.types.Order.DESCENDING
+    )
+
+    assert (
+        _make_ordered_strategy(join_ir, left_partitioning, right_partitioning)
+        is not None
+    )
+    assert _make_ordered_strategy(join_ir, left_partitioning, mismatched_right) is None
+
+
+@pytest.mark.parametrize(
+    "left_aligned,right_aligned,expected",
+    [
+        (True, True, "ordered_aligned"),
+        (True, False, "ordered_adjust_right"),
+        (False, True, "ordered_adjust_left"),
+        (False, False, "ordered_adjust_both"),
+    ],
+)
+def test_ordered_join_decision(left_aligned, right_aligned, expected):
+    assert (
+        _ordered_join_decision(
+            left_aligned=left_aligned,
+            right_aligned=right_aligned,
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize("how", ["right", "full"])
+def test_ordered_join_strategy_rejects_ambiguous_output_key_metadata(spmd_engine, how):
+    left = pl.LazyFrame({"k0": [1], "x": [2]})
+    right = pl.LazyFrame({"k0": [1], "y": [3]})
+    join_ir = _join_ir(left.join(right, on="k0", how=how, coalesce=False))
+    partitioning = _order_partitioning(spmd_engine, (0,))
+
+    assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
+
+
+def assert_conditional_join(reverse, max_rows_per_partition, streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=max_rows_per_partition,
+            fallback_mode="warn",
+            dynamic_planning=None,
+        ),
+    )
+    left = pl.LazyFrame({"x": range(15), "y": [1, 2, 3] * 5})
+    right = pl.LazyFrame({"xx": range(9), "yy": [2, 4, 3] * 3})
+    if reverse:
+        left, right = right, left
+    q = left.join_where(right, pl.col("y") < pl.col("yy"))
+    with warns_on_spmd(
+        streaming_engine,
+        UserWarning,
+        match="ConditionalJoin not supported for multiple partitions.",
+    ):
+        assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small"])
+@pytest.mark.parametrize("reverse", [True, False])
+@pytest.mark.parametrize("max_rows_per_partition", [3, 9])
+def test_join_conditional(reverse, max_rows_per_partition, streaming_engine_factory):
+    assert_conditional_join(reverse, max_rows_per_partition, streaming_engine_factory)
+
+
+@pytest.mark.engine_params(["dask", "ray"])
+@pytest.mark.parametrize("reverse", [True, False])
+def test_join_conditional_distributed_backends(reverse, streaming_engine_factory):
+    assert_conditional_join(reverse, 3, streaming_engine_factory)
+
+
+# ---------------------------------------------------------------------------
+# Tests migrated from tests/streaming/test_join.py
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small"])
+@pytest.mark.parametrize("how", ["inner", "left", "right", "full", "semi", "anti"])
+@pytest.mark.parametrize("reverse", [True, False])
+@pytest.mark.parametrize(
+    "options",
+    [
+        StreamingOptions(
+            max_rows_per_partition=1, target_partition_size=24, broadcast_limit=24
+        ),
+        StreamingOptions(
+            max_rows_per_partition=1, target_partition_size=24, broadcast_limit=384
+        ),
+        StreamingOptions(
+            max_rows_per_partition=5, target_partition_size=24, broadcast_limit=24
+        ),
+        StreamingOptions(
+            max_rows_per_partition=5, target_partition_size=24, broadcast_limit=384
+        ),
+        StreamingOptions(
+            max_rows_per_partition=10, target_partition_size=24, broadcast_limit=24
+        ),
+        StreamingOptions(
+            max_rows_per_partition=10, target_partition_size=24, broadcast_limit=384
+        ),
+        StreamingOptions(
+            max_rows_per_partition=15, target_partition_size=24, broadcast_limit=24
+        ),
+        StreamingOptions(
+            max_rows_per_partition=15, target_partition_size=24, broadcast_limit=384
+        ),
+    ],
+)
+def test_join(left, right, how, reverse, streaming_engine_factory, options):
+    streaming_engine = streaming_engine_factory(options)
+    if reverse:
+        left, right = right, left
+
+    q = left.join(right, on="y", how=how)
+
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+@pytest.mark.engine_params(["dask", "ray"])
+@pytest.mark.parametrize("how", ["inner", "left", "right", "full", "semi", "anti"])
+@pytest.mark.parametrize("reverse", [True, False])
+def test_join_distributed_backends(left, right, how, reverse, streaming_engine_factory):
+    """Exercise backend-specific execution with a representative shuffle join."""
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=5, target_partition_size=24, broadcast_limit=24
+        )
+    )
+    if reverse:
+        left, right = right, left
+    q = left.join(right, on="y", how=how)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.engine_params(["spmd", "spmd-small", "dask", "ray"])
+@pytest.mark.parametrize("how", ["inner", "left", "right"])
+def test_join_reuses_shuffles(left, right, how, streaming_engine_factory):
+    """A second join on the same key must reuse the first join's shuffle."""
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=5, target_partition_size=24, broadcast_limit=24
+        )
+    )
+    q = left.join(right, on="y", how=how)
+    right2 = pl.LazyFrame(
+        {
+            "xxx": range(6),
+            "yyy": [2, 4, 3] * 2,
+            "zzz": [3, 4] * 3,
+        }
+    )
+    q2 = q.join(right2, left_on="y", right_on="yyy", how=how)
+    assert_gpu_result_equal(q2, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("zlice", [(0, 2), (2, 2), (-2, None)])
+def test_join_and_slice(request, zlice, streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=3,
+            target_partition_size=64,
+            broadcast_limit=6400,
+            fallback_mode="warn",
+        ),
+    )
+    if streaming_engine.nranks > 1:
+        # The multi-rank fallback for slice doesn't preserve row order
+        # within equal-key groups, so the slice can pick different rows
+        # than the CPU baseline.
+        request.applymarker(
+            pytest.mark.xfail(
+                reason="https://github.com/NVIDIA/cudf/issues/22405",
+                strict=False,
+            )
+        )
+    left = pl.LazyFrame(
+        {
+            "a": [1, 2, 3, 1, None],
+            "b": [1, 2, 3, 4, 5],
+            "c": [2, 3, 4, 5, 6],
+        }
+    )
+    right = pl.LazyFrame(
+        {
+            "a": [1, 4, 3, 7, None, None, 1],
+            "c": [2, 3, 4, 5, 6, 7, 8],
+            "d": [6, None, 7, 8, -1, 2, 4],
+        }
+    )
+    q = left.join(right, on="a", how="inner").slice(*zlice)
+    # Check that we get the correct row count
+    # See: https://github.com/NVIDIA/cudf/issues/19153
+    with warns_on_spmd(
+        streaming_engine,
+        UserWarning,
+        match="This slice not supported for multiple partitions.",
+        when=zlice in {(2, 2), (-2, None)},
+    ):
+        assert q.collect(engine=streaming_engine).height == q.collect().height
+
+    # Need sort to match order after a join
+    q = left.join(right, on="a", how="inner").sort(pl.col("a")).slice(*zlice)
+    with warns_on_spmd(
+        streaming_engine,
+        UserWarning,
+        match="This slice not supported for multiple partitions.",
+        when=zlice == (2, 2),
+    ):
+        assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["left_right", "right_left", "left", "right"]
+)
+def test_join_maintain_order_fallback_streaming(
+    left, right, maintain_order, streaming_engine_factory
+):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=3,
+            target_partition_size=64,
+            broadcast_limit=64,
+            fallback_mode="warn",
+        ),
+    )
+    q = left.join(right, on="y", how="inner", maintain_order=maintain_order)
+
+    with warns_on_spmd(
+        streaming_engine,
+        UserWarning,
+        match=r"Join\(maintain_order=.*\) not supported for multiple partitions\.",
+    ):
+        assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+# ---------------------------------------------------------------------------
+# Tests migrated from tests/streaming/test_join.py (IR inspection)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("broadcast_limit", [1, 48, 128, 1024])
+def test_broadcast_limit(
+    left,
+    right,
+    broadcast_limit,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+):
+    engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        executor_options={
+            "max_rows_per_partition": 3,
+            # target_partition_size=1 makes broadcast_limit/1 = broadcast_limit
+            # partitions, giving a clean partition-count threshold for this test.
+            "target_partition_size": 1,
+            "broadcast_limit": broadcast_limit,
+            "dynamic_planning": None,  # Requires static planning
+        },
+    )
+    left = pl.LazyFrame(
+        {
+            "x": range(15),
+            "y": [1, 2, 3] * 5,
+            "z": [1.0, 2.0, 3.0, 4.0, 5.0] * 3,
+        }
+    )
+    right = pl.LazyFrame(
+        {
+            "xx": range(9),
+            "y": [2, 4, 3] * 3,
+            "zz": [1, 2, 3] * 3,
+        }
+    )
+
+    q = left.join(right, on="y", how="inner")
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    config_options = ConfigOptions.from_polars_engine(engine)
+    lowering = lower_ir_graph(
+        ir,
+        config_options,
+        collect_statistics(
+            ir,
+            config_options,
+            parquet_stats_executor,
+        ),
+    )
+    shuffle_nodes = [
+        type(node) for node in lowering.partition_info if isinstance(node, Shuffle)
+    ]
+
+    # NOTE: Expect small table to have 3 partitions (9 / 3).
+    # Therefore, we will get a shuffle-based join if our
+    # "broadcast_limit" config is less than 3 (with target_partition_size=1).
+    if broadcast_limit < 3:
+        # Expect shuffle-based join
+        assert len(shuffle_nodes) == 2
+    else:
+        # Expect broadcast join
+        assert len(shuffle_nodes) == 0
+
+
+def test_shared_join_preserves_partitioning(
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+):
+    engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        executor_options={
+            "max_rows_per_partition": 3,
+            "dynamic_planning": None,  # Requires static planning
+        },
+    )
+
+    left = pl.LazyFrame({"key": list(range(20)) * 5, "val_a": range(100)})
+    right = pl.LazyFrame({"key": list(range(20)) * 5, "val_b": range(100)})
+    joined = left.join(right, on="key")
+
+    # Use joined result twice to trigger Cache (CSE)
+    q = pl.concat(
+        [
+            joined.group_by("key").agg(pl.col("val_a").sum()),
+            joined.group_by("key").agg(pl.col("val_b").sum()),
+        ]
+    )
+
+    config_options = ConfigOptions.from_polars_engine(engine)
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    lowering = lower_ir_graph(
+        ir,
+        config_options,
+        collect_statistics(ir, config_options, parquet_stats_executor),
+    )
+    lowered_ir = lowering.lowered
+    partition_info = lowering.partition_info
+
+    assert not any(isinstance(node, Cache) for node in traversal([lowered_ir]))
+
+    # Removing Cache should preserve the shared join's partitioning on 'key'.
+    join_partitioning = [
+        [ne.name for ne in partition_info[node].partitioned_on]
+        for node in traversal([lowered_ir])
+        if isinstance(node, Join)
+    ]
+    assert join_partitioning == [["key"]], (
+        f"Shared join should be partitioned on 'key', got {join_partitioning}"
+    )
+
+    # Only 2 shuffles needed (for join sides, not for groupby)
+    num_shuffles = sum(
+        1 for node in traversal([lowered_ir]) if isinstance(node, Shuffle)
+    )
+    assert num_shuffles == 2, f"Expected 2 shuffles, got {num_shuffles}"
+
+
+def test_dynamic_planning_skips_compile_time_partition_wise_join():
+    lf = pl.LazyFrame({"y": [1, 2, 3]})
+    q = lf.join(lf, on="y", how="inner")
+    engine = pl.GPUEngine(
+        raise_on_fail=True,
+        executor="streaming",
+        executor_options={"dynamic_planning": {}},
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    join_ir = next(n for n in traversal([ir]) if isinstance(n, Join))
+    left_ir, right_ir = join_ir.children
+    executor = StreamingExecutor(dynamic_planning={})
+    partition_info = {
+        join_ir: PartitionInfo(1, partitioned_on=()),
+        left_ir: PartitionInfo(1, partitioned_on=()),
+        right_ir: PartitionInfo(1, partitioned_on=()),
+    }
+    assert not _use_pwise_join(executor, partition_info, join_ir)
+
+
+def test_join_computed_expr_right_key(streaming_engine_factory) -> None:
+    """Join on a computed key expression."""
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=1,
+            max_rows_per_partition=4,
+            broadcast_limit=1,  # Disable broadcast joins
+            raise_on_fail=True,
+        ),
+    )
+    if engine.nranks < 2:
+        pytest.skip("bug only manifests on 2+ ranks")
+
+    zip_prefixes = ["10", "20", "30", "40"]
+    full_zips = ["10001", "20001", "30001", "40001"]
+    reps = 4
+
+    # Start with joins on concrete column references
+    # to establish left and right partitioning metadata.
+    left_a = pl.LazyFrame(
+        {
+            "zip_prefix": zip_prefixes * reps,
+            "val_a": list(range(len(zip_prefixes) * reps)),
+        }
+    )
+    left_b = pl.LazyFrame(
+        {
+            "zip_prefix": zip_prefixes * reps,
+            "val_b": list(range(100, 100 + len(zip_prefixes) * reps)),
+        }
+    )
+    left = left_a.join(left_b, on="zip_prefix", how="inner")
+
+    right_a = pl.LazyFrame(
+        {
+            "full_zip": full_zips * reps,
+            "val_c": list(range(200, 200 + len(full_zips) * reps)),
+        }
+    )
+    right_b = pl.LazyFrame(
+        {
+            "full_zip": full_zips * reps,
+            "val_d": list(range(300, 300 + len(full_zips) * reps)),
+        }
+    )
+    right = right_a.join(right_b, on="full_zip", how="inner")
+
+    # Now join on a computed key expression.
+    # This should not silently drop rows across ranks
+    q = left.join(
+        right,
+        left_on="zip_prefix",
+        right_on=pl.col("full_zip").str.slice(0, 2),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

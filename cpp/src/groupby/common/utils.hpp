@@ -1,26 +1,38 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/aggregation.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/detail/groupby.hpp>
+#include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
+#include <cuda/stream>
+
 #include <memory>
+#include <span>
+#include <utility>
 #include <vector>
 
-namespace cudf {
-namespace groupby {
-namespace detail {
+namespace cudf::groupby::detail {
+
+// Non-template bridges share mask-kernel instantiations across groupby reductions.
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_validity(
+  bool* begin, bool* end, cuda::stream_ref stream, cudf::memory_resources mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_counts(
+  size_type const* begin, size_type const* end, cuda::stream_ref stream, cudf::memory_resources mr);
 
 template <typename RequestType>
-inline std::vector<aggregation_result> extract_results(host_span<RequestType const> requests,
+inline std::vector<aggregation_result> extract_results(std::span<RequestType const> requests,
                                                        cudf::detail::result_cache& cache,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   std::vector<aggregation_result> results(requests.size());
@@ -47,6 +59,34 @@ inline std::vector<aggregation_result> extract_results(host_span<RequestType con
   return results;
 }
 
-}  // namespace detail
-}  // namespace groupby
-}  // namespace cudf
+/**
+ * @brief Compute a combined null bitmask for multi-column keys.
+ *
+ * @return Pair of {buffer, raw_pointer} where pointer is null if no nulls exist.
+ */
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> compute_row_bitmask(
+  table_view const& keys, cuda::stream_ref stream);
+
+/// Whether the given aggregation kind is supported by hash-based groupby.
+constexpr bool is_hash_aggregation(aggregation::Kind k)
+{
+  switch (k) {
+    case aggregation::SUM:
+    case aggregation::SUM_OVERFLOW:
+    case aggregation::SUM_OF_SQUARES:
+    case aggregation::PRODUCT:
+    case aggregation::MIN:
+    case aggregation::MAX:
+    case aggregation::COUNT_VALID:
+    case aggregation::COUNT_ALL:
+    case aggregation::ARGMIN:
+    case aggregation::ARGMAX:
+    case aggregation::MEAN:
+    case aggregation::M2:
+    case aggregation::STD:
+    case aggregation::VARIANCE: return true;
+    default: return false;
+  }
+}
+
+}  // namespace cudf::groupby::detail

@@ -1,22 +1,24 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import contextlib
 import doctest
 import inspect
 import io
-import itertools
 
 import numpy as np
 import pytest
-from packaging import version
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
-
-pytestmark = pytest.mark.filterwarnings("ignore::FutureWarning")
 
 # modules that will be searched for doctests
-tests = [cudf, cudf.core.groupby]
+tests = [
+    cudf,
+    cudf.core.groupby,
+    cudf.core.accessors.string.StringMethods,
+    cudf.core.accessors.lists.ListMethods,
+    cudf.core.accessors.struct.StructMethods,
+    cudf.core.accessors.categorical.CategoricalAccessor,
+]
 
 
 def _name_in_all(parent, name):
@@ -63,33 +65,70 @@ def _find_doctests_in_obj(obj, finder=None, criteria=None):
             )
         # Recurse over the public API of classes (attributes not prefixed with
         # an underscore)
-        if inspect.isclass(member):
+        elif inspect.isclass(member):
             yield from _find_doctests_in_obj(
                 member, finder, criteria=_is_public_name
             )
+        # Pick up doctests from re-exported functions (whose __module__
+        # differs from the parent module, so finder.find(obj) above
+        # skips them).
+        elif inspect.isfunction(member) or inspect.isbuiltin(member):
+            for docstring in finder.find(member):
+                if docstring.examples:
+                    yield docstring
+
+
+marks_for_doctests = {
+    "register_dataframe_accessor": pytest.mark.filterwarnings(
+        "ignore:Attribute .* will be overridden:UserWarning"
+    ),
+    "register_index_accessor": pytest.mark.filterwarnings(
+        "ignore:Attribute .* will be overridden:UserWarning"
+    ),
+    "register_series_accessor": pytest.mark.filterwarnings(
+        "ignore:Attribute .* will be overridden:UserWarning"
+    ),
+}
+
+
+def _collect_doctests():
+    """Eagerly collect all unique doctests into a list.
+
+    This runs once at import time so the result is an immutable snapshot
+    that can be safely shared across pytest-xdist workers without any
+    mutable shared state.
+    """
+    results = []
+    seen = set()
+    for mod in tests:
+        for docstring in _find_doctests_in_obj(mod):
+            # The public API exposes many inherited and re-exported methods.
+            # Test each source docstring once, regardless of its public path.
+            key = (
+                docstring.name,
+                docstring.filename,
+                docstring.lineno,
+                docstring.docstring,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            if (mark := marks_for_doctests.get(docstring.name)) is not None:
+                doc = pytest.param(docstring, marks=mark)
+            else:
+                doc = docstring
+            results.append(doc)
+    return results
+
+
+_all_doctests = _collect_doctests()
 
 
 class TestDoctests:
-    @pytest.fixture(autouse=True)
-    def printoptions(cls):
-        # TODO: NumPy now prints scalars as `np.int8(1)`, etc. this should
-        #       be adapted evantually.
-        if version.parse(np.__version__) >= version.parse("2.0"):
-            with np.printoptions(legacy="1.25"):
-                yield
-        else:
-            yield
-
     @pytest.mark.parametrize(
         "docstring",
-        itertools.chain.from_iterable(
-            _find_doctests_in_obj(mod) for mod in tests
-        ),
+        _all_doctests,
         ids=lambda docstring: docstring.name,
-    )
-    @pytest.mark.skipif(
-        PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-        reason="Doctests not expected to pass on older versions of pandas",
     )
     def test_docstring(self, docstring, monkeypatch, tmp_path):
         # We ignore differences in whitespace in the doctest output, and enable

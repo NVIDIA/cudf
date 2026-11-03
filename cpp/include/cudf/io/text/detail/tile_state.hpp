@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -73,7 +73,7 @@ struct scan_tile_state {
   rmm::device_uvector<T> tile_state_inclusive;
 
   scan_tile_state(cudf::size_type num_tiles,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   rmm::device_async_resource_ref mr)
     : tile_status(rmm::device_uvector<cuda::atomic<scan_tile_status, cuda::thread_scope_device>>(
         num_tiles, stream, mr)),
@@ -90,7 +90,7 @@ struct scan_tile_state {
                                    tile_state_inclusive.data()};
   }
 
-  inline T get_inclusive_prefix(cudf::size_type tile_idx, rmm::cuda_stream_view stream) const
+  inline T get_inclusive_prefix(cudf::size_type tile_idx, cuda::stream_ref stream) const
   {
     auto const offset = (tile_idx + tile_status.size()) % tile_status.size();
     return tile_state_inclusive.element(offset, stream);

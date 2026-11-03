@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "compute_column_kernel.hpp"
+#include "runtime/context.hpp"
 
 #include <cudf/ast/detail/expression_evaluator.cuh>
 #include <cudf/ast/detail/expression_parser.hpp>
@@ -19,8 +20,9 @@
 #include <cudf/transform.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/mr/device_memory_resource.hpp>
+#include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <algorithm>
 
@@ -28,9 +30,11 @@ namespace cudf {
 namespace detail {
 std::unique_ptr<column> compute_column(table_view const& table,
                                        ast::expression const& expr,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
+  if (get_context().use_jit()) { return compute_column_jit(table, expr, stream, mr); }
+
   // If evaluating the expression may produce null outputs we create a nullable
   // output column and follow the null-supporting expression evaluation code
   // path.
@@ -100,7 +104,7 @@ std::unique_ptr<column> compute_column(table_view const& table,
     }
   }
 
-  CUDF_CHECK_CUDA(stream.value());
+  CUDF_CHECK_CUDA(stream.get());
   output_column->set_null_count(
     cudf::detail::null_count(mutable_output_device->null_mask(), 0, output_column->size(), stream));
   return output_column;
@@ -110,7 +114,7 @@ std::unique_ptr<column> compute_column(table_view const& table,
 
 std::unique_ptr<column> compute_column(table_view const& table,
                                        ast::expression const& expr,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

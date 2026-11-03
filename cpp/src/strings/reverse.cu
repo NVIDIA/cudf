@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,8 +15,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
+
+#include <cuda/iterator>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -47,7 +49,7 @@ struct reverse_characters_fn {
 }  // namespace
 
 std::unique_ptr<column> reverse(strings_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -59,8 +61,8 @@ std::unique_ptr<column> reverse(strings_column_view const& input,
   auto d_chars         = result->mutable_view().head<char>();
 
   auto const d_column = column_device_view::create(input.parent(), stream);
-  thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::counting_iterator<size_type>(0),
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<size_type>{0},
                      input.size(),
                      reverse_characters_fn{*d_column, d_offsets, d_chars});
 
@@ -70,7 +72,7 @@ std::unique_ptr<column> reverse(strings_column_view const& input,
 }  // namespace detail
 
 std::unique_ptr<column> reverse(strings_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -1,13 +1,15 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 import pylibcudf as plc
 
 from cudf.core.column import ColumnBase
+from cudf.core.column.column import _normalize_types_column
 from cudf.core.column_accessor import ColumnAccessor
 from cudf.core.dataframe import DataFrame
 from cudf.core.series import Series
+from cudf.utils.dtypes import dtype_from_pylibcudf_column
 
 
 def from_dlpack(pycapsule_obj) -> Series | DataFrame:
@@ -40,7 +42,13 @@ def from_dlpack(pycapsule_obj) -> Series | DataFrame:
     data = ColumnAccessor(
         dict(
             enumerate(
-                (ColumnBase.from_pylibcudf(col) for col in plc_table.columns())
+                (
+                    ColumnBase.create(
+                        _normalize_types_column(col),
+                        dtype=dtype_from_pylibcudf_column(col),
+                    )
+                    for col in plc_table.columns()
+                )
             )
         ),
         verify=False,

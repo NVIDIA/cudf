@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,6 +18,7 @@
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/sort_merge_join.hpp>
+#include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -26,10 +27,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
-#include <cuco/utility/error.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <future>
@@ -37,26 +39,26 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
 
 namespace {
 template <typename T>
-using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
-using strcol_wrapper = cudf::test::strings_column_wrapper;
-using CVector        = std::vector<std::unique_ptr<cudf::column>>;
-using Table          = cudf::table;
-constexpr cudf::size_type NoneValue =
-  std::numeric_limits<cudf::size_type>::min();  // TODO: how to test if this isn't public?
-enum class algorithm { HASH, SORT_MERGE, MERGE };
+using column_wrapper                = cudf::test::fixed_width_column_wrapper<T>;
+using strcol_wrapper                = cudf::test::strings_column_wrapper;
+using CVector                       = std::vector<std::unique_ptr<cudf::column>>;
+using Table                         = cudf::table;
+constexpr cudf::size_type NoneValue = cudf::JoinNoMatch;
+enum class algorithm { HASH, HASH_PARTITIONED, STREAMING_HASH, SORT_MERGE, MERGE };
 
 void expect_match_counts_equal(rmm::device_uvector<cudf::size_type> const& actual_counts,
                                std::vector<cudf::size_type> const& expected_counts,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   auto const host_actual_counts = cudf::detail::make_host_vector_async(actual_counts, stream);
-  stream.synchronize();
+  stream.sync();
 
   ASSERT_EQ(host_actual_counts.size(), expected_counts.size());
   EXPECT_TRUE(
@@ -76,7 +78,7 @@ std::unique_ptr<cudf::table> join_and_gather(
   std::vector<cudf::size_type> const& left_on,
   std::vector<cudf::size_type> const& right_on,
   cudf::null_equality compare_nulls,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto left_selected  = left_input.select(left_on);
@@ -114,10 +116,10 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
-        return obj.inner_join(left, cudf::sorted::NO, stream, mr);
+        return obj.inner_join(left, stream, mr);
       },
       left_input,
       right_input,
@@ -129,10 +131,62 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::YES, compare_nulls, stream);
-        return obj.inner_join(left, cudf::sorted::YES, stream, mr);
+        return obj.inner_join(left, stream, mr);
+      },
+      left_input,
+      right_input,
+      left_on,
+      right_on,
+      compare_nulls);
+  } else if (algo == algorithm::HASH_PARTITIONED) {
+    return join_and_gather(
+      [](cudf::table_view const& left,
+         cudf::table_view const& right,
+         cudf::null_equality compare_nulls,
+         cuda::stream_ref stream,
+         rmm::device_async_resource_ref mr) {
+        cudf::hash_join hash_joiner(right, compare_nulls, stream);
+        auto match_ctx = hash_joiner.inner_join_match_context(left, stream, mr);
+        auto part_ctx  = cudf::join_partition_context{
+          std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, left.num_rows()};
+        return hash_joiner.partitioned_inner_join(part_ctx, stream, mr);
+      },
+      left_input,
+      right_input,
+      left_on,
+      right_on,
+      compare_nulls);
+  } else if (algo == algorithm::STREAMING_HASH) {
+    return join_and_gather(
+      [](cudf::table_view const& left,
+         cudf::table_view const& right,
+         cudf::null_equality compare_nulls,
+         cuda::stream_ref stream,
+         rmm::device_async_resource_ref mr) {
+        std::vector<cudf::size_type> right_key_indices(right.num_columns());
+        std::iota(right_key_indices.begin(), right_key_indices.end(), 0);
+
+        cudf::streaming_hash_join joiner{right,
+                                         right_key_indices,
+                                         right.num_rows(),
+                                         /*max_num_batches=*/1,
+                                         cudf::nullable_join::YES,
+                                         compare_nulls,
+                                         /*load_factor=*/0.5,
+                                         stream};
+        joiner.insert(right, stream);
+        auto [left_indices, right_indices] = joiner.inner_join(left, {}, stream, mr);
+        auto& [batch_indices, row_indices] = right_indices;
+
+        auto const host_batch_indices = cudf::detail::make_host_vector(*batch_indices, stream);
+        EXPECT_TRUE(std::all_of(host_batch_indices.begin(),
+                                host_batch_indices.end(),
+                                [](cudf::size_type batch_index) { return batch_index == 0; }));
+
+        return JoinResult{std::move(left_indices), std::move(row_indices)};
       },
       left_input,
       right_input,
@@ -144,7 +198,7 @@ std::unique_ptr<cudf::table> inner_join(
     [](cudf::table_view const& left,
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        rmm::device_async_resource_ref mr) {
       return cudf::inner_join(left, right, compare_nulls, stream, mr);
     },
@@ -168,8 +222,8 @@ std::vector<cudf::size_type> inner_join_size_per_row(
   auto right_selected = right_input.select(right_on);
   auto stream         = cudf::get_default_stream();
   cudf::sort_merge_join obj(right_selected, cudf::sorted::NO, compare_nulls, stream);
-  auto per_row_counts = obj.inner_join_match_context(
-    left_selected, cudf::sorted::NO, stream, cudf::get_current_device_resource_ref());
+  auto per_row_counts =
+    obj.inner_join_match_context(left_selected, stream, cudf::get_current_device_resource_ref());
 
   return cudf::detail::make_std_vector<cudf::size_type>(*per_row_counts->_match_counts, stream);
 }
@@ -187,10 +241,10 @@ std::unique_ptr<cudf::table> left_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
-        return obj.left_join(left, cudf::sorted::NO, stream, mr);
+        return obj.left_join(left, stream, mr);
       },
       left_input,
       right_input,
@@ -202,10 +256,28 @@ std::unique_ptr<cudf::table> left_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         cudf::sort_merge_join obj(right, cudf::sorted::YES, compare_nulls, stream);
-        return obj.left_join(left, cudf::sorted::YES, stream, mr);
+        return obj.left_join(left, stream, mr);
+      },
+      left_input,
+      right_input,
+      left_on,
+      right_on,
+      compare_nulls);
+  } else if (algo == algorithm::HASH_PARTITIONED) {
+    return join_and_gather<cudf::out_of_bounds_policy::NULLIFY>(
+      [](cudf::table_view const& left,
+         cudf::table_view const& right,
+         cudf::null_equality compare_nulls,
+         cuda::stream_ref stream,
+         rmm::device_async_resource_ref mr) {
+        cudf::hash_join hash_joiner(right, compare_nulls, stream);
+        auto match_ctx = hash_joiner.left_join_match_context(left, stream, mr);
+        auto part_ctx  = cudf::join_partition_context{
+          std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, left.num_rows()};
+        return hash_joiner.partitioned_left_join(part_ctx, stream, mr);
       },
       left_input,
       right_input,
@@ -217,7 +289,7 @@ std::unique_ptr<cudf::table> left_join(
     [](cudf::table_view const& left,
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        rmm::device_async_resource_ref mr) {
       return cudf::left_join(left, right, compare_nulls, stream, mr);
     },
@@ -233,13 +305,40 @@ std::unique_ptr<cudf::table> full_join(
   cudf::table_view const& right_input,
   std::vector<cudf::size_type> const& full_on,
   std::vector<cudf::size_type> const& right_on,
-  cudf::null_equality compare_nulls = cudf::null_equality::EQUAL)
+  cudf::null_equality compare_nulls = cudf::null_equality::EQUAL,
+  algorithm algo                    = algorithm::HASH)
 {
+  if (algo == algorithm::HASH_PARTITIONED) {
+    return join_and_gather<cudf::out_of_bounds_policy::NULLIFY>(
+      [](cudf::table_view const& left,
+         cudf::table_view const& right,
+         cudf::null_equality compare_nulls,
+         cuda::stream_ref stream,
+         rmm::device_async_resource_ref mr) {
+        cudf::hash_join hash_joiner(right, compare_nulls, stream);
+        auto match_ctx = hash_joiner.full_join_match_context(left, stream, mr);
+        auto part_ctx  = cudf::join_partition_context{
+          std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, left.num_rows()};
+        auto [left_idx, right_idx] = hash_joiner.partitioned_full_join(part_ctx, stream, mr);
+
+        std::vector<cudf::device_span<cudf::size_type const>> left_partials{
+          cudf::device_span<cudf::size_type const>{left_idx->data(), left_idx->size()}};
+        std::vector<cudf::device_span<cudf::size_type const>> right_partials{
+          cudf::device_span<cudf::size_type const>{right_idx->data(), right_idx->size()}};
+        return cudf::hash_join::finalize_partitioned_full_join(
+          left_partials, right_partials, left.num_rows(), right.num_rows(), stream, mr);
+      },
+      full_input,
+      right_input,
+      full_on,
+      right_on,
+      compare_nulls);
+  }
   return join_and_gather<cudf::out_of_bounds_policy::NULLIFY>(
     [](cudf::table_view const& left,
        cudf::table_view const& right,
        cudf::null_equality compare_nulls,
-       rmm::cuda_stream_view stream,
+       cuda::stream_ref stream,
        rmm::device_async_resource_ref mr) {
       return cudf::full_join(left, right, compare_nulls, stream, mr);
     },
@@ -294,27 +393,40 @@ TEST_F(JoinTest, InvalidLoadFactor)
 
   // Test load factor of -0.1
   EXPECT_THROW(cudf::hash_join(t0, cudf::nullable_join::NO, cudf::null_equality::EQUAL, -0.1),
-               cuco::logic_error);
+               std::invalid_argument);
   // Test load factor of 0
   EXPECT_THROW(cudf::hash_join(t0, cudf::nullable_join::NO, cudf::null_equality::EQUAL, 0.0),
-               cuco::logic_error);
+               std::invalid_argument);
   // Test load factor > 1
   EXPECT_THROW(cudf::hash_join(t0, cudf::nullable_join::NO, cudf::null_equality::EQUAL, 1.5),
-               cuco::logic_error);
+               std::invalid_argument);
 }
 
 struct JoinParameterizedTest : public JoinTest, public testing::WithParamInterface<algorithm> {};
+struct InnerJoinParameterizedTest : public JoinTest,
+                                    public testing::WithParamInterface<algorithm> {};
 struct JoinParameterizedTestSortedInput : public JoinTest,
                                           public testing::WithParamInterface<algorithm> {};
 
 // Parametrize qualifying join tests for supported algorithms
-INSTANTIATE_TEST_CASE_P(InnerJoinParameterizedTest,
+INSTANTIATE_TEST_CASE_P(JoinParameterizedTest,
                         JoinParameterizedTest,
-                        ::testing::Values(algorithm::HASH, algorithm::SORT_MERGE));
+                        ::testing::Values(algorithm::HASH,
+                                          algorithm::HASH_PARTITIONED,
+                                          algorithm::SORT_MERGE));
+
+INSTANTIATE_TEST_CASE_P(InnerJoinParameterizedTest,
+                        InnerJoinParameterizedTest,
+                        ::testing::Values(algorithm::HASH,
+                                          algorithm::HASH_PARTITIONED,
+                                          algorithm::STREAMING_HASH,
+                                          algorithm::SORT_MERGE));
 
 INSTANTIATE_TEST_CASE_P(InnerJoinParameterizedTestSortedInput,
                         JoinParameterizedTestSortedInput,
-                        ::testing::Values(algorithm::HASH, algorithm::MERGE));
+                        ::testing::Values(algorithm::HASH,
+                                          algorithm::HASH_PARTITIONED,
+                                          algorithm::MERGE));
 
 TEST_P(JoinParameterizedTestSortedInput, SortedKeys)
 {
@@ -362,7 +474,7 @@ TEST_P(JoinParameterizedTestSortedInput, SortedKeys)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, InvalidInput)
+TEST_P(InnerJoinParameterizedTest, InvalidInput)
 {
   auto algo                  = GetParam();
   auto const left_first_col  = cudf::test::fixed_width_column_wrapper<int32_t>{1197};
@@ -382,7 +494,7 @@ TEST_P(JoinParameterizedTest, InvalidInput)
                std::invalid_argument);
 }
 
-TEST_P(JoinParameterizedTest, EmptySentinelRepro)
+TEST_P(InnerJoinParameterizedTest, EmptySentinelRepro)
 {
   auto algo = GetParam();
   // This test reproduced an implementation specific behavior where the combination of these
@@ -952,7 +1064,7 @@ TEST_F(JoinTest, SortMergeInnerJoinSizePerRowNoNulls)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  for (const auto eq : {cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL}) {
+  for (auto const eq : {cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL}) {
     // single column
     {
       auto size_per_row = inner_join_size_per_row(t0, t1, {0}, {0}, eq, algorithm::SORT_MERGE);
@@ -966,6 +1078,22 @@ TEST_F(JoinTest, SortMergeInnerJoinSizePerRowNoNulls)
       EXPECT_EQ(result, expected);
     }
   }
+}
+
+TEST_F(JoinTest, SortMergeInnerJoinMatchContextMemoryResource)
+{
+  column_wrapper<int32_t> left_key{{3, 1, 2, 0, 2}};
+  column_wrapper<int32_t> right_key{{2, 2, 0, 4, 3}};
+  auto left   = cudf::table_view{{left_key}};
+  auto right  = cudf::table_view{{right_key}};
+  auto stream = cudf::get_default_stream();
+
+  auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  cudf::sort_merge_join obj(right, cudf::sorted::NO, cudf::null_equality::EQUAL, stream);
+  auto match_context = obj.inner_join_match_context(left, stream, mr);
+
+  EXPECT_GT(mr.get_bytes_counter().peak, 0);
+  expect_match_counts_equal(*match_context->_match_counts, {1, 0, 2, 1, 2}, stream);
 }
 
 TEST_F(JoinTest, SortMergeInnerJoinSizePerRowWithNulls)
@@ -1052,7 +1180,7 @@ TEST_F(JoinTest, PartitionedInnerJoinWithNulls)
 
   cudf::sort_merge_join obj(t1.select(right_on), cudf::sorted::NO, compare_nulls, stream);
   auto match_context = obj.inner_join_match_context(
-    t0.select(left_on), cudf::sorted::NO, stream, cudf::get_current_device_resource_ref());
+    t0.select(left_on), stream, cudf::get_current_device_resource_ref());
   auto partition_context = cudf::join_partition_context{std::move(match_context), 0, 0};
 
   auto join_and_gather = [&t0, &t1, &obj, stream](cudf::join_partition_context const& cxt) {
@@ -1094,7 +1222,52 @@ TEST_F(JoinTest, PartitionedInnerJoinWithNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sorted_result, *concatenated_sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinNoNulls)
+TEST_F(JoinTest, PartitionedInnerJoinWithNestedNullsUnequal)
+{
+  column_wrapper<int32_t> left_child{{10, 20, 30, 40, 50}, {true, false, true, true, true}};
+  column_wrapper<int32_t> right_child{{30, 40, 50, 10, 20}, {true, true, true, true, false}};
+  auto left_key  = cudf::test::structs_column_wrapper{{left_child}};
+  auto right_key = cudf::test::structs_column_wrapper{{right_child}};
+  auto left      = cudf::table_view{{left_key}};
+  auto right     = cudf::table_view{{right_key}};
+  auto stream    = cudf::get_default_stream();
+  auto mr        = cudf::get_current_device_resource_ref();
+
+  cudf::sort_merge_join obj(right, cudf::sorted::NO, cudf::null_equality::UNEQUAL, stream);
+  auto match_context = obj.inner_join_match_context(left, stream, mr);
+  expect_match_counts_equal(*match_context->_match_counts, {1, 0, 1, 1, 1}, stream);
+  auto partition_context = cudf::join_partition_context{std::move(match_context), 2, 4};
+
+  auto const [left_indices, right_indices] =
+    obj.partitioned_inner_join(partition_context, stream, mr);
+
+  EXPECT_EQ(cudf::detail::make_std_vector<cudf::size_type>(*left_indices, stream),
+            std::vector<cudf::size_type>({2, 3}));
+  EXPECT_EQ(cudf::detail::make_std_vector<cudf::size_type>(*right_indices, stream),
+            std::vector<cudf::size_type>({0, 1}));
+}
+
+TEST_F(JoinTest, LeftJoinPreservesNestedNullRowOrderUnequal)
+{
+  column_wrapper<int32_t> left_child{{10, 20, 30, 40, 50}, {true, false, true, false, true}};
+  column_wrapper<int32_t> right_child{{10, 30, 50}};
+  auto left_key  = cudf::test::structs_column_wrapper{{left_child}};
+  auto right_key = cudf::test::structs_column_wrapper{{right_child}};
+  auto left      = cudf::table_view{{left_key}};
+  auto right     = cudf::table_view{{right_key}};
+  auto stream    = cudf::get_default_stream();
+  auto mr        = cudf::get_current_device_resource_ref();
+
+  cudf::sort_merge_join obj(right, cudf::sorted::NO, cudf::null_equality::UNEQUAL, stream);
+  auto const [left_indices, right_indices] = obj.left_join(left, stream, mr);
+
+  EXPECT_EQ(cudf::detail::make_std_vector<cudf::size_type>(*left_indices, stream),
+            std::vector<cudf::size_type>({0, 1, 2, 3, 4}));
+  EXPECT_EQ(cudf::detail::make_std_vector<cudf::size_type>(*right_indices, stream),
+            std::vector<cudf::size_type>({0, cudf::JoinNoMatch, 1, cudf::JoinNoMatch, 2}));
+}
+
+TEST_P(InnerJoinParameterizedTest, InnerJoinNoNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -1116,7 +1289,7 @@ TEST_P(JoinParameterizedTest, InnerJoinNoNulls)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  for (const auto eq : {cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL}) {
+  for (auto const eq : {cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL}) {
     // single column
     {
       auto result            = inner_join(t0, t1, {0}, {0}, eq, algo);
@@ -1170,7 +1343,7 @@ TEST_P(JoinParameterizedTest, InnerJoinNoNulls)
   }
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinWithNulls)
+TEST_P(InnerJoinParameterizedTest, InnerJoinWithNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -1217,7 +1390,7 @@ TEST_P(JoinParameterizedTest, InnerJoinWithNulls)
 }
 
 // TODO: add unequal nulls case here
-TEST_P(JoinParameterizedTest, InnerJoinWithStructsAndNulls)
+TEST_P(InnerJoinParameterizedTest, InnerJoinWithStructsAndNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -1352,7 +1525,7 @@ TEST_P(JoinParameterizedTest, InnerJoinWithStructsAndNulls)
 }
 
 // // Test to check join behavior when join keys are null.
-TEST_P(JoinParameterizedTest, InnerJoinOnNulls)
+TEST_P(InnerJoinParameterizedTest, InnerJoinOnNulls)
 {
   auto algo = GetParam();
   // clang-format off
@@ -1435,7 +1608,7 @@ TEST_P(JoinParameterizedTest, InnerJoinOnNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinStructs)
+TEST_P(InnerJoinParameterizedTest, InnerJoinStructs)
 {
   auto algo = GetParam();
 
@@ -1566,7 +1739,7 @@ TEST_P(JoinParameterizedTest, InnerJoinStructs)
 }
 
 // Empty Left Table
-TEST_P(JoinParameterizedTest, EmptyLeftTableInnerJoin)
+TEST_P(InnerJoinParameterizedTest, EmptyLeftTableInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0;
@@ -1647,10 +1820,28 @@ TEST_F(JoinTest, EmptyLeftTableFullJoin)
   auto sorted_gold     = cudf::gather(gold.view(), *gold_sort_order);
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
+
+  auto hash_joiner       = cudf::hash_join(rhs, cudf::null_equality::EQUAL);
+  auto const output_size = hash_joiner.full_join_size(lhs);
+  EXPECT_EQ(output_size, rhs.num_rows());
+
+  auto const [left_indices, right_indices] = hash_joiner.full_join(lhs, output_size);
+  EXPECT_EQ(left_indices->size(), output_size);
+  EXPECT_EQ(right_indices->size(), output_size);
+
+  column_wrapper<cudf::size_type> expected_left_indices{
+    {NoneValue, NoneValue, NoneValue, NoneValue, NoneValue}};
+  column_wrapper<cudf::size_type> expected_right_indices{{0, 1, 2, 3, 4}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected_left_indices,
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*left_indices}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected_right_indices,
+    cudf::column_view{cudf::device_span<cudf::size_type const>{*right_indices}});
 }
 
 // Empty Right Table
-TEST_P(JoinParameterizedTest, EmptyRightTableInnerJoin)
+TEST_P(InnerJoinParameterizedTest, EmptyRightTableInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{2, 2, 0, 4, 3}};
@@ -1769,8 +1960,76 @@ TEST_F(JoinTest, EmptyRightTableFullJoin)
   }
 }
 
+// A caller-supplied output size is validated on every path, including the trivial ones.
+TEST_F(JoinTest, HashJoinIncorrectOutputSize)
+{
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 3}};
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  column_wrapper<int32_t> col_empty;
+
+  CVector cols0, cols1, cols_empty;
+  cols0.push_back(col0_0.release());
+  cols1.push_back(col1_0.release());
+  cols_empty.push_back(col_empty.release());
+
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+  Table empty(std::move(cols_empty));
+
+  // Non-trivial: a correct size passes, a wrong size throws for every join kind.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+
+    auto const inner_size = hash_join.inner_join_size(t0);
+    auto const left_size  = hash_join.left_join_size(t0);
+    auto const full_size  = hash_join.full_join_size(t0);
+    EXPECT_EQ(inner_size, std::size_t{5});
+    EXPECT_EQ(left_size, std::size_t{6});
+    EXPECT_EQ(full_size, std::size_t{7});
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, inner_size));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, left_size));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, inner_size + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, left_size + 1), cudf::logic_error);
+    // The full-join size includes the unmatched right rows; a left-join-sized value must fail.
+    EXPECT_THROW((void)hash_join.full_join(t0, left_size), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, full_size + 1), cudf::logic_error);
+  }
+
+  // Trivial, empty right table: left and full joins emit one row per left row, inner emits none.
+  {
+    cudf::hash_join hash_join(empty, cudf::null_equality::EQUAL);
+    auto const num_left = static_cast<std::size_t>(t0.num_rows());
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, num_left));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, num_left));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, num_left + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, std::size_t{0}), cudf::logic_error);
+  }
+
+  // Empty left table: inner and left joins emit nothing, a full join emits every right row.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+    auto const full_size = hash_join.full_join_size(empty);
+    EXPECT_EQ(full_size, static_cast<std::size_t>(t1.num_rows()));
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.full_join(empty, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(empty, std::size_t{0}), cudf::logic_error);
+  }
+}
+
 // Both tables empty
-TEST_P(JoinParameterizedTest, BothEmptyInnerJoin)
+TEST_P(InnerJoinParameterizedTest, BothEmptyInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0;
@@ -1837,7 +2096,7 @@ TEST_F(JoinTest, BothEmptyFullJoin)
 
 // // EqualValues X Inner,Left,Full
 
-TEST_P(JoinParameterizedTest, EqualValuesInnerJoin)
+TEST_P(InnerJoinParameterizedTest, EqualValuesInnerJoin)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{0, 0}};
@@ -1942,7 +2201,7 @@ TEST_F(JoinTest, EqualValuesFullJoin)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(gold, *result);
 }
 
-TEST_P(JoinParameterizedTest, InnerJoinCornerCase)
+TEST_P(InnerJoinParameterizedTest, InnerJoinCornerCase)
 {
   auto algo = GetParam();
   column_wrapper<int64_t> col0_0{{4, 1, 3, 2, 2, 2, 2}};
@@ -2234,9 +2493,11 @@ TEST_F(JoinTest, HashJoinLargeOutputSize)
 {
   // self-join a table of zeroes to generate an output row count that would overflow int32_t
   std::size_t col_size = 65567;
-  rmm::device_buffer zeroes(col_size * sizeof(int32_t), cudf::get_default_stream());
-  CUDF_CUDA_TRY(
-    cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().value()));
+  cuda::device_buffer<std::byte> zeroes(cudf::get_default_stream(),
+                                        cudf::get_current_device_resource_ref(),
+                                        col_size * sizeof(int32_t),
+                                        cuda::no_init);
+  CUDF_CUDA_TRY(cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().get()));
   cudf::column_view col_zeros(
     cudf::data_type{cudf::type_id::INT32}, col_size, zeroes.data(), nullptr, 0);
   cudf::table_view tview{{col_zeros}};
@@ -2245,6 +2506,29 @@ TEST_F(JoinTest, HashJoinLargeOutputSize)
     tview, cudf::nullable_join::NO, cudf::null_equality::UNEQUAL, desired_load_factor);
   std::size_t output_size = hash_join.inner_join_size(tview);
   EXPECT_EQ(col_size * col_size, output_size);
+}
+
+TEST_F(JoinTest, HashJoinMemoryResource)
+{
+  CVector cols0;
+  cols0.emplace_back(column_wrapper<int32_t>{{3, 1, 2, 0, 2}}.release());
+  Table t0(std::move(cols0));
+
+  CVector cols1;
+  cols1.emplace_back(column_wrapper<int32_t>{{2, 2, 0, 4, 3}}.release());
+  Table t1(std::move(cols1));
+
+  auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+
+  cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL, cudf::get_default_stream(), mr);
+
+  EXPECT_GT(mr.get_bytes_counter().peak, 0);
+
+  auto result = hash_join.inner_join(t0);
+  column_wrapper<int32_t> col_gold_0{{0, 2, 2, 3, 4, 4}};
+  column_wrapper<int32_t> col_gold_1{{4, 0, 1, 2, 0, 1}};
+  auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
 TEST_F(JoinTest, HashJoinInnerMatchContext)
@@ -2270,7 +2554,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test single column join with null_equality::EQUAL
   {
@@ -2281,7 +2565,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.synchronize();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));
@@ -2330,7 +2614,7 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test single column join
   {
@@ -2341,7 +2625,7 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.synchronize();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const left_join_size = hash_join.left_join_size(t0.select({0}));
@@ -2382,7 +2666,7 @@ TEST_F(JoinTest, HashJoinFullMatchContext)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test single column join
   {
@@ -2401,9 +2685,9 @@ TEST_F(JoinTest, HashJoinFullMatchContext)
   }
 }
 
-TEST_F(JoinTest, HashJoinMatchContextEmptyBuild)
+TEST_F(JoinTest, HashJoinMatchContextEmptyRight)
 {
-  // Test match context with empty build table
+  // Test match context with empty right table
   column_wrapper<int32_t> col0_0{{3, 1, 2}};
   column_wrapper<int32_t> col1_0{};  // Empty
 
@@ -2414,7 +2698,7 @@ TEST_F(JoinTest, HashJoinMatchContextEmptyBuild)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
   cudf::hash_join const hash_join(t1, cudf::null_equality::EQUAL);
 
   // Test inner join match context
@@ -2454,7 +2738,7 @@ TEST_F(JoinTest, HashJoinMatchContextDuplicatesAndEdgeCases)
   Table t0(std::move(cols0));
   Table t1(std::move(cols1));
 
-  auto const stream = cudf::get_default_stream();
+  cuda::stream_ref const stream = cudf::get_default_stream();
 
   // Test inner join with multiple matches per row
   {
@@ -2465,7 +2749,7 @@ TEST_F(JoinTest, HashJoinMatchContextDuplicatesAndEdgeCases)
 
     auto const host_match_counts =
       cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
-    stream.synchronize();
+    stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));
@@ -2557,7 +2841,7 @@ TEST_F(JoinDictionaryTest, LeftJoinWithNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, DictionaryInnerJoinNoNulls)
+TEST_P(InnerJoinParameterizedTest, DictionaryInnerJoinNoNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -2595,7 +2879,7 @@ TEST_P(JoinParameterizedTest, DictionaryInnerJoinNoNulls)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
 }
 
-TEST_P(JoinParameterizedTest, DictionaryInnerJoinWithNulls)
+TEST_P(InnerJoinParameterizedTest, DictionaryInnerJoinWithNulls)
 {
   auto algo = GetParam();
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -2626,6 +2910,45 @@ TEST_P(JoinParameterizedTest, DictionaryInnerJoinWithNulls)
 
   auto g0              = cudf::table_view({col0_0, col0_1, col0_2_w});
   auto g1              = cudf::table_view({col1_0, col1_1, col1_2_w});
+  auto gold            = inner_join(g0, g1, {0, 1}, {0, 1});
+  auto gold_sort_order = cudf::sorted_order(gold->view());
+  auto sorted_gold     = cudf::gather(gold->view(), *gold_sort_order);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
+}
+
+TEST_P(JoinParameterizedTest, DictionaryInnerJoinKeyWithNulls)
+{
+  auto algo = GetParam();
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
+  strcol_wrapper col0_1_w({"s1", "s1", "", "s4", "s0"}, {true, true, false, true, true});
+  auto col0_1 = cudf::dictionary::encode(col0_1_w);
+  column_wrapper<int32_t> col0_2{{0, 1, 2, 4, 1}};
+
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  strcol_wrapper col1_1_w({"s1", "", "", "s2", "s1"}, {true, false, false, true, true});
+  auto col1_1 = cudf::dictionary::encode(col1_1_w);
+  column_wrapper<int32_t> col1_2{{1, 0, 1, 2, 1}};
+
+  auto t0 = cudf::table_view({col0_0, col0_1->view(), col0_2});
+  auto t1 = cudf::table_view({col1_0, col1_1->view(), col1_2});
+
+  // left[2](2, null) matches right[1](2, null); left[0](3, "s1") matches right[4](3, "s1")
+  auto result      = inner_join(t0, t1, {0, 1}, {0, 1}, cudf::null_equality::EQUAL, algo);
+  auto result_view = result->view();
+  auto decoded1    = cudf::dictionary::decode(result_view.column(1));
+  auto decoded4    = cudf::dictionary::decode(result_view.column(4));
+  std::vector<cudf::column_view> result_decoded({result_view.column(0),
+                                                 decoded1->view(),
+                                                 result_view.column(2),
+                                                 result_view.column(3),
+                                                 decoded4->view(),
+                                                 result_view.column(5)});
+  auto result_sort_order = cudf::sorted_order(cudf::table_view(result_decoded));
+  auto sorted_result     = cudf::gather(cudf::table_view(result_decoded), *result_sort_order);
+
+  auto g0              = cudf::table_view({col0_0, col0_1_w, col0_2});
+  auto g1              = cudf::table_view({col1_0, col1_1_w, col1_2});
   auto gold            = inner_join(g0, g1, {0, 1}, {0, 1});
   auto gold_sort_order = cudf::sorted_order(gold->view());
   auto sorted_gold     = cudf::gather(gold->view(), *gold_sort_order);
@@ -2855,7 +3178,7 @@ struct JoinTestLists : public cudf::test::BaseFixture {
       [],        3
       [5, 6]     4
   */
-  lcw build{{{0}, {1}, {{2, 0}, null_at(1)}, {}, {5, 6}}, null_at(0)};
+  lcw right{{{0}, {1}, {{2, 0}, null_at(1)}, {}, {5, 6}}, null_at(0)};
 
   /*
     [
@@ -2868,7 +3191,7 @@ struct JoinTestLists : public cudf::test::BaseFixture {
       [6]        6
     ]
   */
-  lcw probe{{{1}, {3}, {0}, {}, {{2, 0}, null_at(1)}, {5}, {6}}, null_at(2)};
+  lcw left{{{1}, {3}, {0}, {}, {{2, 0}, null_at(1)}, {5}, {6}}, null_at(2)};
 
   auto column_view_from_device_uvector(rmm::device_uvector<cudf::size_type> const& vector)
   {
@@ -2893,23 +3216,23 @@ struct JoinTestLists : public cudf::test::BaseFixture {
             JoinFunc join_func,
             cudf::out_of_bounds_policy oob_policy)
   {
-    auto const build_tv = cudf::table_view{{build}};
-    auto const probe_tv = cudf::table_view{{probe}};
+    auto const right_tv = cudf::table_view{{right}};
+    auto const left_tv  = cudf::table_view{{left}};
 
     auto const [left_result_map, right_result_map] =
-      join_func(build_tv,
-                probe_tv,
+      join_func(right_tv,
+                left_tv,
                 nulls_equal,
                 cudf::get_default_stream(),
                 cudf::get_current_device_resource_ref());
 
     auto const left_result_table =
-      sort_and_gather(build_tv, column_view_from_device_uvector(*left_result_map), oob_policy);
+      sort_and_gather(right_tv, column_view_from_device_uvector(*left_result_map), oob_policy);
     auto const right_result_table =
-      sort_and_gather(probe_tv, column_view_from_device_uvector(*right_result_map), oob_policy);
+      sort_and_gather(left_tv, column_view_from_device_uvector(*right_result_map), oob_policy);
 
-    auto const left_gold_table  = sort_and_gather(build_tv, left_gold_map, oob_policy);
-    auto const right_gold_table = sort_and_gather(probe_tv, right_gold_map, oob_policy);
+    auto const left_gold_table  = sort_and_gather(right_tv, left_gold_map, oob_policy);
+    auto const right_gold_table = sort_and_gather(left_tv, right_gold_map, oob_policy);
 
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*left_result_table, *left_gold_table);
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*right_result_table, *right_gold_table);
@@ -2959,10 +3282,10 @@ struct JoinParameterizedTestLists : public JoinTestLists,
     auto join_lambda = [](cudf::table_view const& left,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
-      return obj.inner_join(left, cudf::sorted::NO, stream, mr);
+      return obj.inner_join(left, stream, mr);
     };
     join(left_gold_map,
          right_gold_map,
@@ -2979,10 +3302,10 @@ struct JoinParameterizedTestLists : public JoinTestLists,
     auto join_lambda = [](cudf::table_view const& left,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
-      return obj.left_join(left, cudf::sorted::NO, stream, mr);
+      return obj.left_join(left, stream, mr);
     };
     join(left_gold_map,
          right_gold_map,
@@ -3067,7 +3390,7 @@ TEST_F(SortMergeJoinThreadSafetyTest, ConcurrentMatchContext)
   cudf::sort_merge_join join_obj(t1, cudf::sorted::NO, cudf::null_equality::EQUAL);
 
   // Get expected result from single-threaded execution
-  auto expected_ctx    = join_obj.inner_join_match_context(t0, cudf::sorted::NO);
+  auto expected_ctx    = join_obj.inner_join_match_context(t0);
   auto expected_counts = cudf::detail::make_std_vector<cudf::size_type>(
     *expected_ctx->_match_counts, cudf::get_default_stream());
 
@@ -3078,7 +3401,7 @@ TEST_F(SortMergeJoinThreadSafetyTest, ConcurrentMatchContext)
   for (int i = 0; i < num_threads; ++i) {
     futures.push_back(std::async(std::launch::async, [&]() {
       auto ctx = join_obj.inner_join_match_context(
-        t0, cudf::sorted::NO, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+        t0, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
       auto counts = cudf::detail::make_std_vector<cudf::size_type>(*ctx->_match_counts,
                                                                    cudf::get_default_stream());
       return counts;
@@ -3103,7 +3426,7 @@ TEST_F(SortMergeJoinThreadSafetyTest, ConcurrentPartitionedJoins)
 
   // Get expected result from single-threaded inner_join
   auto [expected_left, expected_right] =
-    join_obj.inner_join(t0, cudf::sorted::NO, stream, cudf::get_current_device_resource_ref());
+    join_obj.inner_join(t0, stream, cudf::get_current_device_resource_ref());
   auto expected_size = expected_left->size();
 
   // Run concurrent partitioned joins
@@ -3113,8 +3436,8 @@ TEST_F(SortMergeJoinThreadSafetyTest, ConcurrentPartitionedJoins)
   for (int i = 0; i < num_threads; ++i) {
     futures.push_back(std::async(std::launch::async, [&]() {
       // Each thread does full partitioned workflow
-      auto match_ctx = join_obj.inner_join_match_context(
-        t0, cudf::sorted::NO, stream, cudf::get_current_device_resource_ref());
+      auto match_ctx =
+        join_obj.inner_join_match_context(t0, stream, cudf::get_current_device_resource_ref());
 
       cudf::join_partition_context part_ctx{std::move(match_ctx), 0, 0};
 
@@ -3135,6 +3458,411 @@ TEST_F(SortMergeJoinThreadSafetyTest, ConcurrentPartitionedJoins)
     auto result_size = future.get();
     EXPECT_EQ(result_size, expected_size);
   }
+}
+
+TEST_F(JoinTest, HashJoinPartitionedInnerJoin)
+{
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
+  strcol_wrapper col0_1({"s1", "s1", "s0", "s4", "s0"}, {true, true, false, true, true});
+  column_wrapper<int32_t> col0_2{{0, 1, 2, 4, 1}};
+
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  strcol_wrapper col1_1({"s1", "s0", "s1", "s2", "s1"}, {true, false, true, true, true});
+  column_wrapper<int32_t> col1_2{{1, 0, 1, 2, 1}, {true, false, true, true, true}};
+
+  CVector cols0, cols1;
+  cols0.push_back(col0_0.release());
+  cols0.push_back(col0_1.release());
+  cols0.push_back(col0_2.release());
+  cols1.push_back(col1_0.release());
+  cols1.push_back(col1_1.release());
+  cols1.push_back(col1_2.release());
+
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+
+  auto const left_on       = std::vector<cudf::size_type>({0, 1});
+  auto const right_on      = std::vector<cudf::size_type>({0, 1});
+  auto const compare_nulls = cudf::null_equality::EQUAL;
+  auto const stream        = cudf::get_default_stream();
+  auto const mr            = cudf::get_current_device_resource_ref();
+
+  // Reference result from full inner join
+  auto expected_result     = inner_join(t0, t1, left_on, right_on, compare_nulls);
+  auto expected_sort_order = cudf::sorted_order(expected_result->view());
+  auto expected_sorted     = cudf::gather(expected_result->view(), *expected_sort_order);
+
+  // Partitioned inner join
+  cudf::hash_join hash_joiner(t1.select(right_on), compare_nulls, stream);
+  auto match_ctx = hash_joiner.inner_join_match_context(t0.select(left_on), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, 0};
+
+  auto join_and_gather = [&](cudf::join_partition_context const& ctx) {
+    auto const [left_idx, right_idx] = hash_joiner.partitioned_inner_join(ctx, stream, mr);
+    auto left_col  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+    auto right_col = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+    auto left_res  = cudf::gather(t0, left_col, cudf::out_of_bounds_policy::DONT_CHECK);
+    auto right_res = cudf::gather(t1, right_col, cudf::out_of_bounds_policy::DONT_CHECK);
+    auto joined    = left_res->release();
+    auto right_c   = right_res->release();
+    joined.insert(joined.end(),
+                  std::make_move_iterator(right_c.begin()),
+                  std::make_move_iterator(right_c.end()));
+    return std::make_unique<cudf::table>(std::move(joined));
+  };
+
+  // Process row by row
+  std::vector<std::unique_ptr<cudf::table>> partials;
+  std::vector<cudf::table_view> partial_views;
+  for (cudf::size_type i = 0; i < t0.num_rows(); i++) {
+    part_ctx.left_start_idx = i;
+    part_ctx.left_end_idx   = i + 1;
+    partials.push_back(join_and_gather(part_ctx));
+    partial_views.push_back(partials.back()->view());
+  }
+
+  auto concat_result     = cudf::concatenate(partial_views, stream, mr);
+  auto concat_sort_order = cudf::sorted_order(concat_result->view());
+  auto concat_sorted     = cudf::gather(concat_result->view(), *concat_sort_order);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sorted, *concat_sorted);
+}
+
+TEST_F(JoinTest, HashJoinPartitionedLeftJoin)
+{
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
+  strcol_wrapper col0_1({"s1", "s1", "s0", "s4", "s0"}, {true, true, false, true, true});
+  column_wrapper<int32_t> col0_2{{0, 1, 2, 4, 1}};
+
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  strcol_wrapper col1_1({"s1", "s0", "s1", "s2", "s1"}, {true, false, true, true, true});
+  column_wrapper<int32_t> col1_2{{1, 0, 1, 2, 1}, {true, false, true, true, true}};
+
+  CVector cols0, cols1;
+  cols0.push_back(col0_0.release());
+  cols0.push_back(col0_1.release());
+  cols0.push_back(col0_2.release());
+  cols1.push_back(col1_0.release());
+  cols1.push_back(col1_1.release());
+  cols1.push_back(col1_2.release());
+
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+
+  auto const left_on       = std::vector<cudf::size_type>({0, 1});
+  auto const right_on      = std::vector<cudf::size_type>({0, 1});
+  auto const compare_nulls = cudf::null_equality::EQUAL;
+  auto const stream        = cudf::get_default_stream();
+  auto const mr            = cudf::get_current_device_resource_ref();
+
+  // Reference result from full left join
+  auto expected_result     = left_join(t0, t1, left_on, right_on, compare_nulls);
+  auto expected_sort_order = cudf::sorted_order(expected_result->view());
+  auto expected_sorted     = cudf::gather(expected_result->view(), *expected_sort_order);
+
+  // Partitioned left join
+  cudf::hash_join hash_joiner(t1.select(right_on), compare_nulls, stream);
+  auto match_ctx = hash_joiner.left_join_match_context(t0.select(left_on), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, 0};
+
+  auto join_and_gather = [&](cudf::join_partition_context const& ctx) {
+    auto const [left_idx, right_idx] = hash_joiner.partitioned_left_join(ctx, stream, mr);
+    auto left_col  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+    auto right_col = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+    auto left_res  = cudf::gather(t0, left_col, cudf::out_of_bounds_policy::NULLIFY);
+    auto right_res = cudf::gather(t1, right_col, cudf::out_of_bounds_policy::NULLIFY);
+    auto joined    = left_res->release();
+    auto right_c   = right_res->release();
+    joined.insert(joined.end(),
+                  std::make_move_iterator(right_c.begin()),
+                  std::make_move_iterator(right_c.end()));
+    return std::make_unique<cudf::table>(std::move(joined));
+  };
+
+  std::vector<std::unique_ptr<cudf::table>> partials;
+  std::vector<cudf::table_view> partial_views;
+  for (cudf::size_type i = 0; i < t0.num_rows(); i++) {
+    part_ctx.left_start_idx = i;
+    part_ctx.left_end_idx   = i + 1;
+    partials.push_back(join_and_gather(part_ctx));
+    partial_views.push_back(partials.back()->view());
+  }
+
+  auto concat_result     = cudf::concatenate(partial_views, stream, mr);
+  auto concat_sort_order = cudf::sorted_order(concat_result->view());
+  auto concat_sorted     = cudf::gather(concat_result->view(), *concat_sort_order);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sorted, *concat_sorted);
+}
+
+TEST_F(JoinTest, HashJoinPartitionedFullJoin)
+{
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
+  strcol_wrapper col0_1({"s1", "s1", "s0", "s4", "s0"}, {true, true, false, true, true});
+  column_wrapper<int32_t> col0_2{{0, 1, 2, 4, 1}};
+
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  strcol_wrapper col1_1({"s1", "s0", "s1", "s2", "s1"}, {true, false, true, true, true});
+  column_wrapper<int32_t> col1_2{{1, 0, 1, 2, 1}, {true, false, true, true, true}};
+
+  CVector cols0, cols1;
+  cols0.push_back(col0_0.release());
+  cols0.push_back(col0_1.release());
+  cols0.push_back(col0_2.release());
+  cols1.push_back(col1_0.release());
+  cols1.push_back(col1_1.release());
+  cols1.push_back(col1_2.release());
+
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+
+  auto const left_on       = std::vector<cudf::size_type>({0, 1});
+  auto const right_on      = std::vector<cudf::size_type>({0, 1});
+  auto const compare_nulls = cudf::null_equality::EQUAL;
+  auto const stream        = cudf::get_default_stream();
+  auto const mr            = cudf::get_current_device_resource_ref();
+
+  // Reference result from full join
+  auto expected_result     = full_join(t0, t1, left_on, right_on, compare_nulls);
+  auto expected_sort_order = cudf::sorted_order(expected_result->view());
+  auto expected_sorted     = cudf::gather(expected_result->view(), *expected_sort_order);
+
+  // Partitioned full join (probe side)
+  cudf::hash_join hash_joiner(t1.select(right_on), compare_nulls, stream);
+  auto match_ctx = hash_joiner.full_join_match_context(t0.select(left_on), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, 0};
+
+  // Collect per-partition (left, right) indices for finalization.
+  std::vector<std::unique_ptr<rmm::device_uvector<cudf::size_type>>> left_idx_parts;
+  std::vector<std::unique_ptr<rmm::device_uvector<cudf::size_type>>> right_idx_parts;
+  for (cudf::size_type i = 0; i < t0.num_rows(); i++) {
+    part_ctx.left_start_idx    = i;
+    part_ctx.left_end_idx      = i + 1;
+    auto [left_idx, right_idx] = hash_joiner.partitioned_full_join(part_ctx, stream, mr);
+    left_idx_parts.push_back(std::move(left_idx));
+    right_idx_parts.push_back(std::move(right_idx));
+  }
+
+  std::vector<cudf::device_span<cudf::size_type const>> left_partials;
+  std::vector<cudf::device_span<cudf::size_type const>> right_partials;
+  left_partials.reserve(left_idx_parts.size());
+  right_partials.reserve(right_idx_parts.size());
+  for (std::size_t i = 0; i < left_idx_parts.size(); ++i) {
+    left_partials.emplace_back(left_idx_parts[i]->data(), left_idx_parts[i]->size());
+    right_partials.emplace_back(right_idx_parts[i]->data(), right_idx_parts[i]->size());
+  }
+
+  auto [final_left, final_right] =
+    cudf::hash_join::finalize_partitioned_full_join(left_partials,
+                                                    right_partials,
+                                                    t0.select(left_on).num_rows(),
+                                                    t1.select(right_on).num_rows(),
+                                                    stream,
+                                                    mr);
+
+  auto left_col  = cudf::column_view{cudf::device_span<cudf::size_type const>{*final_left}};
+  auto right_col = cudf::column_view{cudf::device_span<cudf::size_type const>{*final_right}};
+  auto left_res  = cudf::gather(t0, left_col, cudf::out_of_bounds_policy::NULLIFY);
+  auto right_res = cudf::gather(t1, right_col, cudf::out_of_bounds_policy::NULLIFY);
+  auto joined    = left_res->release();
+  auto right_c   = right_res->release();
+  joined.insert(
+    joined.end(), std::make_move_iterator(right_c.begin()), std::make_move_iterator(right_c.end()));
+  auto concat_result     = std::make_unique<cudf::table>(std::move(joined));
+  auto concat_sort_order = cudf::sorted_order(concat_result->view());
+  auto concat_sorted     = cudf::gather(concat_result->view(), *concat_sort_order);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sorted, *concat_sorted);
+}
+
+TEST_F(JoinTest, HashJoinPartitionedEmptyPartition)
+{
+  column_wrapper<int32_t> col0{{3, 1, 2, 0, 2}};
+  column_wrapper<int32_t> col1{{2, 2, 0, 4, 3}};
+
+  CVector cols0, cols1;
+  cols0.push_back(col0.release());
+  cols1.push_back(col1.release());
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  cudf::hash_join hash_joiner(t1.select({0}), cudf::null_equality::EQUAL, stream);
+  auto match_ctx = hash_joiner.inner_join_match_context(t0.select({0}), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, 0};
+
+  // Empty partition (start == end)
+  part_ctx.left_start_idx    = 2;
+  part_ctx.left_end_idx      = 2;
+  auto [left_idx, right_idx] = hash_joiner.partitioned_inner_join(part_ctx, stream, mr);
+  EXPECT_EQ(left_idx->size(), 0);
+  EXPECT_EQ(right_idx->size(), 0);
+}
+
+TEST_F(JoinTest, HashJoinPartitionedWholeTable)
+{
+  column_wrapper<int32_t> col0{{3, 1, 2, 0, 2}};
+  column_wrapper<int32_t> col1{{2, 2, 0, 4, 3}};
+
+  CVector cols0, cols1;
+  cols0.push_back(col0.release());
+  cols1.push_back(col1.release());
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  // Reference: full inner join
+  auto expected       = inner_join(t0, t1, {0}, {0});
+  auto expected_order = cudf::sorted_order(expected->view());
+  auto expected_sort  = cudf::gather(expected->view(), *expected_order);
+
+  // Partitioned: entire table as one partition
+  cudf::hash_join hash_joiner(t1.select({0}), cudf::null_equality::EQUAL, stream);
+  auto match_ctx = hash_joiner.inner_join_match_context(t0.select({0}), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, t0.num_rows()};
+
+  auto [left_idx, right_idx] = hash_joiner.partitioned_inner_join(part_ctx, stream, mr);
+  auto left_col  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+  auto right_col = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+  auto left_res  = cudf::gather(t0, left_col, cudf::out_of_bounds_policy::DONT_CHECK);
+  auto right_res = cudf::gather(t1, right_col, cudf::out_of_bounds_policy::DONT_CHECK);
+  auto joined    = left_res->release();
+  auto right_c   = right_res->release();
+  joined.insert(
+    joined.end(), std::make_move_iterator(right_c.begin()), std::make_move_iterator(right_c.end()));
+  auto result       = std::make_unique<cudf::table>(std::move(joined));
+  auto result_order = cudf::sorted_order(result->view());
+  auto result_sort  = cudf::gather(result->view(), *result_order);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sort, *result_sort);
+}
+
+// Exercises both a sliced (non-zero offset) left view and a partition size large enough
+// to span multiple kernel blocks.
+// An empty build table sends the partitioned join down the trivial path, which must still emit
+// left indices in the coordinate space of the whole left table rather than of the partition.
+TEST_F(JoinTest, HashJoinPartitionedEmptyBuildTableUsesGlobalLeftIndices)
+{
+  auto constexpr left_rows  = 10;
+  auto constexpr part_start = 4;
+  auto constexpr part_end   = 9;
+
+  column_wrapper<int32_t> left_col{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}};
+  CVector left_cols;
+  left_cols.push_back(left_col.release());
+  Table left(std::move(left_cols));
+  EXPECT_EQ(left.num_rows(), left_rows);
+
+  // Build side is empty, so every left row is unmatched.
+  column_wrapper<int32_t> empty_col{};
+  CVector empty_cols;
+  empty_cols.push_back(empty_col.release());
+  Table empty_right(std::move(empty_cols));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  cudf::hash_join hash_joiner(empty_right.view(), cudf::null_equality::EQUAL, stream);
+  auto match_ctx = hash_joiner.left_join_match_context(left.view(), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), part_start, part_end};
+
+  auto const [left_idx, right_idx] = hash_joiner.partitioned_left_join(part_ctx, stream, mr);
+
+  // Left indices must be the global rows [part_start, part_end), not [0, part_end - part_start).
+  column_wrapper<cudf::size_type> expected_left{{4, 5, 6, 7, 8}};
+  column_wrapper<cudf::size_type> expected_right{{cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch}};
+
+  auto const left_view  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+  auto const right_view = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_left, left_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_right, right_view);
+}
+
+TEST_F(JoinTest, HashJoinPartitionedSlicedMultiBlock)
+{
+  auto constexpr left_full_rows = 4000;
+  auto constexpr left_offset    = 1234;
+  auto constexpr left_rows      = 2500;
+  auto constexpr right_rows     = 300;
+
+  std::vector<int32_t> left_vals(left_full_rows);
+  for (cudf::size_type i = 0; i < left_full_rows; ++i) {
+    left_vals[i] = i % 200;
+  }
+  std::vector<int32_t> right_vals(right_rows);
+  for (cudf::size_type i = 0; i < right_rows; ++i) {
+    right_vals[i] = i;
+  }
+
+  column_wrapper<int32_t> left_col(left_vals.begin(), left_vals.end());
+  column_wrapper<int32_t> right_col(right_vals.begin(), right_vals.end());
+
+  CVector cols_left, cols_right;
+  cols_left.push_back(left_col.release());
+  cols_right.push_back(right_col.release());
+  Table left_full(std::move(cols_left));
+  Table right(std::move(cols_right));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  // Sliced left view with non-zero offset
+  auto const left_view = cudf::slice(left_full.view(), {left_offset, left_offset + left_rows})[0];
+
+  // Reference: full inner join on the sliced left
+  auto expected       = inner_join(cudf::table_view{left_view}, right, {0}, {0});
+  auto expected_order = cudf::sorted_order(expected->view());
+  auto expected_sort  = cudf::gather(expected->view(), *expected_order);
+
+  cudf::hash_join hash_joiner(right.select({0}), cudf::null_equality::EQUAL, stream);
+  auto match_ctx = hash_joiner.inner_join_match_context(left_view, stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), 0, 0};
+
+  // Two partitions covering the sliced left; each is large enough to span multiple GPU blocks.
+  auto const mid                                                            = left_rows / 2;
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> const partitions = {{0, mid},
+                                                                               {mid, left_rows}};
+
+  std::vector<std::unique_ptr<cudf::table>> partials;
+  std::vector<cudf::table_view> partial_views;
+  for (auto [s, e] : partitions) {
+    part_ctx.left_start_idx          = s;
+    part_ctx.left_end_idx            = e;
+    auto const [left_idx, right_idx] = hash_joiner.partitioned_inner_join(part_ctx, stream, mr);
+    auto left_col_view  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+    auto right_col_view = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+    auto left_res       = cudf::gather(
+      cudf::table_view{left_view}, left_col_view, cudf::out_of_bounds_policy::DONT_CHECK);
+    auto right_res = cudf::gather(right, right_col_view, cudf::out_of_bounds_policy::DONT_CHECK);
+    auto joined    = left_res->release();
+    auto right_c   = right_res->release();
+    joined.insert(joined.end(),
+                  std::make_move_iterator(right_c.begin()),
+                  std::make_move_iterator(right_c.end()));
+    partials.push_back(std::make_unique<cudf::table>(std::move(joined)));
+    partial_views.push_back(partials.back()->view());
+  }
+
+  auto concat       = cudf::concatenate(partial_views, stream, mr);
+  auto concat_order = cudf::sorted_order(concat->view());
+  auto concat_sort  = cudf::gather(concat->view(), *concat_order);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sort, *concat_sort);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

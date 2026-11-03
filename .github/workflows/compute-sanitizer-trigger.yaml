@@ -1,6 +1,6 @@
-name: Compute Sanitizer Trigger
+name: Trigger Compute Sanitizer
 
-# This workflow runs all compute-sanitizer tools on all libcudf tests weekly.
+# This workflow triggers compute-sanitizer runs for all libcudf tests weekly.
 # WARNING: This is very resource intensive and runs hundreds of GPU jobs.
 # For targeted testing, manually trigger compute-sanitizer-run.yaml with specific tool_name and test_names.
 
@@ -9,32 +9,36 @@ on:
     - cron: '0 10 * * 6'  # Weekly on Saturday at 10:00 UTC
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
-  discover-sanitizer-tests:
-    runs-on: linux-amd64-cpu4
-    container:
-      image: rapidsai/ci-conda:26.04-latest
-    outputs:
-      tests: ${{ steps.find-tests.outputs.tests }}
+  trigger-racecheck:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-      - name: Discover test executables
-        id: find-tests
-        shell: bash
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Trigger racecheck
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          ./ci/discover_libcudf_tests.sh
-  run-sanitizer-tests-racecheck:
-    name: compute-sanitizer racecheck tests
-    needs: discover-sanitizer-tests
-    uses: ./.github/workflows/compute-sanitizer-run.yaml
-    with:
-      tool_name: "racecheck"
-      test_names: ${{ needs.discover-sanitizer-tests.outputs.tests }}
-  run-sanitizer-tests-synccheck:
-    name: compute-sanitizer synccheck tests
-    needs: discover-sanitizer-tests
-    uses: ./.github/workflows/compute-sanitizer-run.yaml
-    with:
-      tool_name: "synccheck"
-      test_names: ${{ needs.discover-sanitizer-tests.outputs.tests }}
+          gh workflow run compute-sanitizer-run.yaml \
+            -f tool_name="racecheck"
+  trigger-synccheck:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Trigger synccheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run compute-sanitizer-run.yaml \
+            -f tool_name="synccheck"

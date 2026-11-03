@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -88,9 +88,10 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::vector<T> const& data,
 {
   std::shared_ptr<arrow::Buffer> data_buffer;
   arrow::BufferBuilder buff_builder;
-  CUDF_EXPECTS(buff_builder.Append(data.data(), sizeof(T) * data.size()).ok(),
-               "Failed to append values");
-  CUDF_EXPECTS(buff_builder.Finish(&data_buffer).ok(), "Failed to allocate buffer");
+  auto const append_status = buff_builder.Append(data.data(), sizeof(T) * data.size());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values");
+  auto const finish_status = buff_builder.Finish(&data_buffer);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to allocate buffer");
 
   std::shared_ptr<arrow::Buffer> mask_buffer =
     mask.empty() ? nullptr : arrow::internal::BytesToBits(mask).ValueOrDie();
@@ -118,13 +119,14 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::vector<bool> const& data,
   arrow::BooleanBuilder boolean_builder;
 
   if (mask.empty()) {
-    CUDF_EXPECTS(boolean_builder.AppendValues(data).ok(),
-                 "Failed to append values to boolean builder");
+    auto const append_status = boolean_builder.AppendValues(data);
+    CUDF_EXPECTS(append_status.ok(), "Failed to append values to boolean builder");
   } else {
-    CUDF_EXPECTS(boolean_builder.AppendValues(data, mask).ok(),
-                 "Failed to append values to boolean builder");
+    auto const append_status = boolean_builder.AppendValues(data, mask);
+    CUDF_EXPECTS(append_status.ok(), "Failed to append values to boolean builder");
   }
-  CUDF_EXPECTS(boolean_builder.Finish(&boolean_array).ok(), "Failed to create arrow boolean array");
+  auto const finish_status = boolean_builder.Finish(&boolean_array);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to create arrow boolean array");
 
   return boolean_array;
 }
@@ -148,9 +150,10 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::vector<std::string> const& da
   std::shared_ptr<arrow::StringArray> string_array;
   arrow::StringBuilder string_builder;
 
-  CUDF_EXPECTS(string_builder.AppendValues(data, mask.data()).ok(),
-               "Failed to append values to string builder");
-  CUDF_EXPECTS(string_builder.Finish(&string_array).ok(), "Failed to create arrow string array");
+  auto const append_status = string_builder.AppendValues(data, mask.data());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values to string builder");
+  auto const finish_status = string_builder.Finish(&string_array);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to create arrow string array");
 
   return string_array;
 }
@@ -200,9 +203,10 @@ std::shared_ptr<arrow::Array> get_arrow_list_array(std::vector<T> data,
   auto data_array = get_arrow_array<T>(data, data_validity);
   std::shared_ptr<arrow::Buffer> offset_buffer;
   arrow::BufferBuilder buff_builder;
-  CUDF_EXPECTS(buff_builder.Append(offsets.data(), sizeof(int32_t) * offsets.size()).ok(),
-               "Failed to append values to buffer builder");
-  CUDF_EXPECTS(buff_builder.Finish(&offset_buffer).ok(), "Failed to allocate buffer");
+  auto const append_status = buff_builder.Append(offsets.data(), sizeof(int32_t) * offsets.size());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values to buffer builder");
+  auto const finish_status = buff_builder.Finish(&offset_buffer);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to allocate buffer");
 
   return std::make_shared<arrow::ListArray>(
     arrow::list(arrow::field("element", data_array->type(), data_array->null_count() > 0)),
@@ -241,9 +245,10 @@ std::shared_ptr<arrow::Array> get_decimal_arrow_array(
 {
   std::shared_ptr<arrow::Buffer> data_buffer;
   arrow::BufferBuilder buff_builder;
-  CUDF_EXPECTS(buff_builder.Append(data.data(), sizeof(T) * data.size()).ok(),
-               "Failed to append values to buffer builder");
-  CUDF_EXPECTS(buff_builder.Finish(&data_buffer).ok(), "Failed to allocate buffer");
+  auto const append_status = buff_builder.Append(data.data(), sizeof(T) * data.size());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values to buffer builder");
+  auto const finish_status = buff_builder.Finish(&data_buffer);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to allocate buffer");
 
   std::shared_ptr<arrow::Buffer> mask_buffer =
     !validity.has_value() ? nullptr : arrow::internal::BytesToBits(validity.value()).ValueOrDie();

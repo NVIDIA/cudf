@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/copying.hpp>
@@ -15,15 +15,13 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   // If there are no rows in the input, return successfully
@@ -39,8 +37,8 @@ std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input
     "Column type mismatch");
 
   auto output_column = cudf::detail::interleave_columns(input, stream, mr);
-  auto one_iter      = thrust::make_counting_iterator<size_type>(1);
-  auto splits_iter   = thrust::make_transform_iterator(
+  auto one_iter      = cuda::counting_iterator<size_type>{1};
+  auto splits_iter   = cuda::transform_iterator(
     one_iter, [width = input.num_columns()](size_type idx) { return idx * width; });
   auto splits = std::vector<size_type>(splits_iter, splits_iter + input.num_rows() - 1);
   auto output_column_views = detail::split(output_column->view(), splits, stream);
@@ -50,7 +48,7 @@ std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input
 }  // namespace detail
 
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

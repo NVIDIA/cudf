@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +10,11 @@
 
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/unary.hpp>
+
+#include <limits>
 
 using namespace cudf::test::iterators;
 
@@ -61,9 +62,12 @@ auto compute_partial_results(cudf::column_view const& keys, cudf::column_view co
                                               cudf::data_type(cudf::type_id::INT64),
                                               cudf::get_default_stream());
   auto const num_output_rows     = out_keys->num_rows();
-  return std::pair(std::move(out_keys->release()[0]),
-                   cudf::make_structs_column(
-                     num_output_rows, std::move(out_results[0].results), 0, rmm::device_buffer{}));
+  return std::pair(
+    std::move(out_keys->release()[0]),
+    cudf::make_structs_column(num_output_rows,
+                              std::move(out_results[0].results),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 }
 
 /**
@@ -88,10 +92,118 @@ auto merge_M2(vcol_views const& keys_cols, vcol_views const& values_cols)
   auto result = gb_obj.aggregate(requests);
   return std::pair(std::move(result.first->release()[0]), std::move(result.second[0].results[0]));
 }
+
+template <typename CountType>
+void test_extreme_finite_first_partial()
+{
+  auto const key  = keys_col<int32_t>{1};
+  auto counts     = cudf::test::fixed_width_column_wrapper<CountType>{CountType{1}};
+  auto means      = means_col<double>{std::numeric_limits<double>::max()};
+  auto m2s        = M2s_col<double>{0.0};
+  auto const vals = structs_col{counts, means, m2s};
+
+  auto const [out_key, out_vals] = merge_M2({key}, {vals});
+
+  auto const expected_keys   = keys_col<int32_t>{1};
+  auto expected_counts       = cudf::test::fixed_width_column_wrapper<CountType>{CountType{1}};
+  auto expected_means        = means_col<double>{std::numeric_limits<double>::max()};
+  auto expected_m2s          = M2s_col<double>{0.0};
+  auto const expected_values = structs_col{expected_counts, expected_means, expected_m2s};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, *out_key, verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values, *out_vals, verbosity);
+}
+
+template <typename CountType>
+void test_extreme_finite_merged_partials()
+{
+  auto const keys = keys_col<int32_t>{1, 1};
+  auto counts     = cudf::test::fixed_width_column_wrapper<CountType>{CountType{1}, CountType{1}};
+  auto means      = means_col<double>{std::numeric_limits<double>::max(), 0.0};
+  auto m2s        = M2s_col<double>{0.0, 0.0};
+  auto const vals = structs_col{counts, means, m2s};
+
+  auto const [out_keys, out_vals] = merge_M2({keys}, {vals});
+
+  auto const expected_keys   = keys_col<int32_t>{1};
+  auto expected_counts       = cudf::test::fixed_width_column_wrapper<CountType>{CountType{2}};
+  auto expected_means        = means_col<double>{std::numeric_limits<double>::max() / 2};
+  auto expected_m2s          = M2s_col<double>{std::numeric_limits<double>::infinity()};
+  auto const expected_values = structs_col{expected_counts, expected_means, expected_m2s};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, *out_keys, verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values, *out_vals, verbosity);
+}
+
+// A non-finite mean in a partial must propagate, not be coerced. This pins the
+// identity-branch behavior: a single non-empty partial with NaN/Inf statistics
+// should be preserved as-is, since coercing to NaN would discard upstream
+// signal (e.g. an upstream overflow that already produced +Inf).
+template <typename CountType>
+void test_nan_mean_first_partial()
+{
+  auto const key  = keys_col<int32_t>{1};
+  auto counts     = cudf::test::fixed_width_column_wrapper<CountType>{CountType{1}};
+  auto means      = means_col<double>{std::numeric_limits<double>::quiet_NaN()};
+  auto m2s        = M2s_col<double>{std::numeric_limits<double>::quiet_NaN()};
+  auto const vals = structs_col{counts, means, m2s};
+
+  auto const [out_key, out_vals] = merge_M2({key}, {vals});
+
+  auto const expected_keys   = keys_col<int32_t>{1};
+  auto expected_counts       = cudf::test::fixed_width_column_wrapper<CountType>{CountType{1}};
+  auto expected_means        = means_col<double>{std::numeric_limits<double>::quiet_NaN()};
+  auto expected_m2s          = M2s_col<double>{std::numeric_limits<double>::quiet_NaN()};
+  auto const expected_values = structs_col{expected_counts, expected_means, expected_m2s};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, *out_key, verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values, *out_vals, verbosity);
+}
+
+template <typename CountType>
+void test_inf_mean_first_partial()
+{
+  auto const key  = keys_col<int32_t>{1};
+  auto counts     = cudf::test::fixed_width_column_wrapper<CountType>{CountType{1}};
+  auto means      = means_col<double>{std::numeric_limits<double>::infinity()};
+  auto m2s        = M2s_col<double>{0.0};
+  auto const vals = structs_col{counts, means, m2s};
+
+  auto const [out_key, out_vals] = merge_M2({key}, {vals});
+
+  auto const expected_keys   = keys_col<int32_t>{1};
+  auto expected_counts       = cudf::test::fixed_width_column_wrapper<CountType>{CountType{1}};
+  auto expected_means        = means_col<double>{std::numeric_limits<double>::infinity()};
+  auto expected_m2s          = M2s_col<double>{0.0};
+  auto const expected_values = structs_col{expected_counts, expected_means, expected_m2s};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, *out_key, verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values, *out_vals, verbosity);
+}
+
+// Once the accumulator holds a NaN, any subsequent merge step must keep
+// propagating NaN (NaN ⊕ anything = NaN), regardless of partial order.
+template <typename CountType>
+void test_nan_mean_merged_with_finite()
+{
+  auto const keys = keys_col<int32_t>{1, 1};
+  auto counts     = cudf::test::fixed_width_column_wrapper<CountType>{CountType{10}, CountType{10}};
+  auto means      = means_col<double>{std::numeric_limits<double>::quiet_NaN(), 5.0};
+  auto m2s        = M2s_col<double>{std::numeric_limits<double>::quiet_NaN(), 20.0};
+  auto const vals = structs_col{counts, means, m2s};
+
+  auto const [out_keys, out_vals] = merge_M2({keys}, {vals});
+
+  auto const expected_keys   = keys_col<int32_t>{1};
+  auto expected_counts       = cudf::test::fixed_width_column_wrapper<CountType>{CountType{20}};
+  auto expected_means        = means_col<double>{std::numeric_limits<double>::quiet_NaN()};
+  auto expected_m2s          = M2s_col<double>{std::numeric_limits<double>::quiet_NaN()};
+  auto const expected_values = structs_col{expected_counts, expected_means, expected_m2s};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, *out_keys, verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values, *out_vals, verbosity);
+}
 }  // namespace
 
 template <class T>
 struct GroupbyMergeM2TypedTest : public cudf::test::BaseFixture {};
+
+struct GroupbyMergeM2ExtremeTest : public cudf::test::BaseFixture {};
 
 using TestTypes = cudf::test::Concat<cudf::test::Types<int8_t, int16_t, int32_t, int64_t>,
                                      cudf::test::FloatingPointTypes>;
@@ -132,8 +244,8 @@ TYPED_TEST(GroupbyMergeM2TypedTest, InvalidInput)
 TYPED_TEST(GroupbyMergeM2TypedTest, EmptyInput)
 {
   using T      = TypeParam;
-  using M2_t   = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
-  using mean_t = cudf::detail::target_type_t<T, cudf::aggregation::MEAN>;
+  using M2_t   = double;
+  using mean_t = double;
 
   auto const keys = keys_col<T>{};
   auto vals_count = counts_col{};
@@ -146,10 +258,60 @@ TYPED_TEST(GroupbyMergeM2TypedTest, EmptyInput)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(vals, *out_vals, verbosity);
 }
 
+TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteFirstPartialInt64Count)
+{
+  test_extreme_finite_first_partial<int64_t>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteFirstPartialDoubleCount)
+{
+  test_extreme_finite_first_partial<double>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteMergedPartialsInt64Count)
+{
+  test_extreme_finite_merged_partials<int64_t>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, ExtremeFiniteMergedPartialsDoubleCount)
+{
+  test_extreme_finite_merged_partials<double>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, NanMeanFirstPartialInt64Count)
+{
+  test_nan_mean_first_partial<int64_t>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, NanMeanFirstPartialDoubleCount)
+{
+  test_nan_mean_first_partial<double>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, InfMeanFirstPartialInt64Count)
+{
+  test_inf_mean_first_partial<int64_t>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, InfMeanFirstPartialDoubleCount)
+{
+  test_inf_mean_first_partial<double>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, NanMeanMergedWithFiniteInt64Count)
+{
+  test_nan_mean_merged_with_finite<int64_t>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, NanMeanMergedWithFiniteDoubleCount)
+{
+  test_nan_mean_merged_with_finite<double>();
+}
+
 TYPED_TEST(GroupbyMergeM2TypedTest, SimpleInput)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // Full dataset:
   //
@@ -208,7 +370,7 @@ TYPED_TEST(GroupbyMergeM2TypedTest, SimpleInput)
 TYPED_TEST(GroupbyMergeM2TypedTest, SimpleInputHavingNegativeValues)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // Full dataset:
   //
@@ -267,7 +429,7 @@ TYPED_TEST(GroupbyMergeM2TypedTest, SimpleInputHavingNegativeValues)
 TYPED_TEST(GroupbyMergeM2TypedTest, InputHasNulls)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // Full dataset:
   //
@@ -327,7 +489,7 @@ TYPED_TEST(GroupbyMergeM2TypedTest, InputHasNulls)
 TYPED_TEST(GroupbyMergeM2TypedTest, InputHaveNullsAndNaNs)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // Full dataset:
   //
@@ -393,7 +555,7 @@ TYPED_TEST(GroupbyMergeM2TypedTest, InputHaveNullsAndNaNs)
 TYPED_TEST(GroupbyMergeM2TypedTest, SlicedColumnsInput)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // This test should compute M2 aggregation on the same dataset as the InputHaveNullsAndNaNs test.
   // i.e.:

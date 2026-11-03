@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
@@ -13,6 +13,9 @@ cdef extern from "cudf/table/table_view.hpp" namespace "cudf" nogil:
     cdef cppclass table_view:
         table_view() except +libcudf_exception_handler
         table_view(const vector[column_view]) except +libcudf_exception_handler
+        table_view(
+            const vector[column_view], size_type num_rows
+        ) except +libcudf_exception_handler
         column_view column(size_type column_index) except +libcudf_exception_handler
         size_type num_columns() except +libcudf_exception_handler
         size_type num_rows() except +libcudf_exception_handler

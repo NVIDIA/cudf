@@ -1,9 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from typing import Protocol
 
 from rmm.pylibrmm.stream import Stream
 
-def _get_stream(stream: Stream | None = None) -> Stream: ...
+class HasCudaStream(Protocol):
+    def __cuda_stream__(self) -> tuple[int, int]: ...
 
-# TODO: Stop using a leading underscore for this function if it's part of the public API
-def _is_concurrent_managed_access_supported() -> bool: ...
+CudaStreamLike = Stream | HasCudaStream
+
+def _get_stream(stream: CudaStreamLike | None = None) -> Stream: ...
+def _set_up_kvikio(nthreads: int | None = None) -> None: ...

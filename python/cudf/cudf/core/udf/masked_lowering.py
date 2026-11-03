@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import operator
@@ -255,10 +255,10 @@ def masked_scalar_is_null_impl(context, builder, sig, args):
     Implement `MaskedType` is `NA`
     """
     if isinstance(sig.args[1], NAType):
-        masked_type, na = sig.args
+        masked_type, _na = sig.args
         value = args[0]
     else:
-        na, masked_type = sig.args
+        _na, masked_type = sig.args
         value = args[1]
 
     indata = cgutils.create_struct_proxy(masked_type)(

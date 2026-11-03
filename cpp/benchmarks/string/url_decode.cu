@@ -1,7 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -12,18 +14,18 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
+#include <cuda/iterator>
+#include <cuda/std/random>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/random.h>
 
 #include <nvbench/nvbench.cuh>
 
 struct url_string_generator {
   cudf::column_device_view d_strings;
   double esc_seq_chance;
-  thrust::minstd_rand engine;
-  thrust::uniform_real_distribution<float> esc_seq_dist{0, 1};
+  cuda::std::philox4x32 engine;
+  cuda::std::uniform_real_distribution<float> esc_seq_dist{0, 1};
 
   __device__ void operator()(cudf::size_type idx)
   {
@@ -47,9 +49,9 @@ auto generate_column(cudf::size_type num_rows, cudf::size_type chars_per_row, do
   auto result_col = cudf::make_column_from_scalar(cudf::string_scalar(str_row), num_rows);
   auto d_strings  = cudf::column_device_view::create(result_col->view());
 
-  auto engine = thrust::default_random_engine{};
+  auto engine = cuda::std::philox4x32{};
   thrust::for_each_n(thrust::device,
-                     thrust::counting_iterator<cudf::size_type>(0),
+                     cuda::counting_iterator<cudf::size_type>{0},
                      num_rows,
                      url_string_generator{*d_strings, esc_seq_chance, engine});
   return result_col;
@@ -65,7 +67,7 @@ static void bench_url_decode(nvbench::state& state)
   auto input  = cudf::strings_column_view(column->view());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
 
@@ -75,8 +77,11 @@ static void bench_url_decode(nvbench::state& state)
     state.add_global_memory_writes<nvbench::int8_t>(sv.chars_size(stream));
   }
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch& launch) { cudf::strings::url_decode(input); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_url_decode)

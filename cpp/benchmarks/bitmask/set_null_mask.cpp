@@ -1,7 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -37,11 +39,14 @@ auto generate_test_data(cudf::size_type num_masks,
 
   auto valids = thrust::host_vector<bool>(num_masks, true);
 
-  std::vector<rmm::device_buffer> masks(num_masks);
-  std::vector<cudf::bitmask_type*> masks_ptr(num_masks);
+  std::vector<cuda::device_buffer<cudf::bitmask_type>> masks;
+  masks.reserve(num_masks);
+  std::vector<cudf::bitmask_type*> masks_ptr;
+  masks_ptr.reserve(num_masks);
   for (cudf::size_type i = 0; i < num_masks; ++i) {
-    masks[i]     = cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
-    masks_ptr[i] = static_cast<cudf::bitmask_type*>(masks[i].data());
+    auto& last =
+      masks.emplace_back(cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED));
+    masks_ptr.emplace_back(last.data());
   }
 
   return std::make_tuple(std::move(begin_bits),
@@ -55,17 +60,23 @@ auto generate_test_data(cudf::size_type num_masks,
 
 void BM_setnullmask(nvbench::state& state)
 {
-  auto const mask_size    = static_cast<cudf::size_type>(state.get_int64("mask_size"));
-  rmm::device_buffer mask = cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
+  auto const mask_size = static_cast<cudf::size_type>(state.get_int64("mask_size"));
+  cuda::device_buffer<cudf::bitmask_type> mask =
+    cudf::create_null_mask(mask_size, cudf::mask_state::UNINITIALIZED);
   auto begin = 0, end = mask_size;
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                timer.start();
-               cudf::set_null_mask(static_cast<cudf::bitmask_type*>(mask.data()), begin, end, true);
+               cudf::set_null_mask(mask.data(), begin, end, true);
                timer.stop();
              });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count((static_cast<double>(mask_size) / (8 * 1024 * 1024)) / time,
@@ -83,13 +94,18 @@ void BM_setnullmask_unsafe_bulk(nvbench::state& state)
   auto [begin_bits, end_bits, valids, masks, masks_ptr] =
     generate_test_data(num_masks, mask_size, use_variable_mask_sizes);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                timer.start();
                cudf::set_null_masks_unsafe(masks_ptr, begin_bits, end_bits, valids);
                timer.stop();
              });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count((static_cast<double>(mask_size) / (8 * 1024 * 1024)) * num_masks / time,
                           "Mbytes_per_second");
@@ -106,13 +122,18 @@ void BM_setnullmask_safe_bulk(nvbench::state& state)
   auto [begin_bits, end_bits, valids, masks, masks_ptr] =
     generate_test_data(num_masks, mask_size, use_variable_mask_sizes);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                timer.start();
                cudf::set_null_masks_safe(masks_ptr, begin_bits, end_bits, valids);
                timer.stop();
              });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count((static_cast<double>(mask_size) / (8 * 1024 * 1024)) * num_masks / time,
                           "Mbytes_per_second");
@@ -129,7 +150,9 @@ void BM_setnullmask_loop(nvbench::state& state)
   auto [begin_bits, end_bits, valids, masks, masks_ptr] =
     generate_test_data(num_masks, mask_size, use_variable_mask_sizes);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                timer.start();
@@ -138,6 +161,9 @@ void BM_setnullmask_loop(nvbench::state& state)
                }
                timer.stop();
              });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count((static_cast<double>(mask_size) / (8 * 1024 * 1024)) * num_masks / time,
                           "Mbytes_per_second");

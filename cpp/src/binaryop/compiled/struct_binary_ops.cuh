@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,10 +15,11 @@
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/lexicographic.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/tabulate.h>
+#include <cuda/iterator>
+#include <cuda/stream>
+#include <thrust/transform.h>
 
 namespace cudf::binops::compiled::detail {
 template <class T, class... Ts>
@@ -61,7 +62,7 @@ void apply_struct_binary_op(mutable_column_view& out,
                             bool is_lhs_scalar,
                             bool is_rhs_scalar,
                             PhysicalElementComparator comparator,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   auto const compare_orders = std::vector<order>(
     lhs.size(),
@@ -77,10 +78,11 @@ void apply_struct_binary_op(mutable_column_view& out,
   auto const comparator_nulls = nullate::DYNAMIC{has_nested_nulls(tlhs) || has_nested_nulls(trhs)};
 
   auto tabulate_device_operator = [&](auto device_comparator) {
-    thrust::tabulate(
-      rmm::exec_policy_nosync(stream),
+    thrust::transform(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::counting_iterator<size_type>(0),
+      cuda::counting_iterator<size_type>(out.size()),
       out.begin<bool>(),
-      out.end<bool>(),
       device_comparison_functor{optional_iter, is_lhs_scalar, is_rhs_scalar, device_comparator});
   };
   if (cudf::detail::has_nested_columns(tlhs) || cudf::detail::has_nested_columns(trhs)) {
@@ -135,31 +137,34 @@ void apply_struct_equality_op(mutable_column_view& out,
                               bool is_rhs_scalar,
                               binary_operator op,
                               PhysicalEqualityComparator comparator,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   CUDF_EXPECTS(op == binary_operator::EQUAL || op == binary_operator::NOT_EQUAL ||
                  op == binary_operator::NULL_EQUALS || op == binary_operator::NULL_NOT_EQUALS,
                "Unsupported operator for these types",
                cudf::data_type_error);
 
-  auto tlhs             = table_view{{lhs}};
-  auto trhs             = table_view{{rhs}};
-  auto table_comparator = cudf::detail::row::equality::two_table_comparator{tlhs, trhs, stream};
+  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto tlhs    = table_view{{lhs}};
+  auto trhs    = table_view{{rhs}};
+  auto table_comparator =
+    cudf::detail::row::equality::two_table_comparator{tlhs, trhs, stream, temp_mr};
 
-  auto outd = column_device_view::create(out, stream);
+  auto outd = column_device_view::create(out, stream, temp_mr);
   auto optional_iter =
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});
 
   auto const comparator_helper = [&](auto const device_comparator) {
-    thrust::tabulate(rmm::exec_policy_nosync(stream),
-                     out.begin<bool>(),
-                     out.end<bool>(),
-                     struct_equality_functor<decltype(optional_iter), decltype(device_comparator)>(
-                       optional_iter,
-                       device_comparator,
-                       is_lhs_scalar,
-                       is_rhs_scalar,
-                       op != binary_operator::NOT_EQUAL));
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                      cuda::counting_iterator<size_type>(0),
+                      cuda::counting_iterator<size_type>(out.size()),
+                      out.begin<bool>(),
+                      struct_equality_functor<decltype(optional_iter), decltype(device_comparator)>(
+                        optional_iter,
+                        device_comparator,
+                        is_lhs_scalar,
+                        is_rhs_scalar,
+                        op != binary_operator::NOT_EQUAL));
   };
 
   if (cudf::detail::has_nested_columns(tlhs) or cudf::detail::has_nested_columns(trhs)) {

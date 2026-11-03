@@ -1,63 +1,54 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <jit/span.cuh>
-#include <jit_preprocessed_files/transform/jit/kernel.cu.jit.hpp>
+#include <cuda/buffer>
+#include <cuda/iterator>
+
+#include <jit/cache.hpp>
 
 #include <algorithm>
+#include <span>
+#include <variant>
+#include <vector>
 
 namespace cudf {
 namespace jit {
 
-constexpr bool is_scalar(cudf::size_type base_column_size, cudf::size_type column_size)
+inline column_view as_column_view(scalar_column_view const& scalar)
 {
-  return column_size == 1 && column_size != base_column_size;
+  return scalar.as_column_view();
 }
 
-typename std::vector<column_view>::const_iterator get_transform_base_column(
-  std::vector<column_view> const& inputs);
+inline column_view as_column_view(column_view const& column) { return column; }
 
-struct input_column_reflection {
-  std::string type_name;
-  bool is_scalar = false;
+[[deprecated("Use scalar_column_view instead")]] bool is_scalar(cudf::size_type base_column_size,
+                                                                cudf::size_type column_size);
 
-  [[nodiscard]] std::string accessor(int32_t index) const
-  {
-    auto column_accessor =
-      jitify2::reflection::Template("cudf::jit::column_accessor").instantiate(type_name, index);
+[[deprecated("Use get_projection_size instead")]] typename std::vector<column_view>::const_iterator
+get_transform_base_column(std::vector<column_view> const& inputs);
 
-    return is_scalar ? jitify2::reflection::Template("cudf::jit::scalar_accessor")
-                         .instantiate(column_accessor)
-                     : column_accessor;
-  }
-};
+size_type get_projection_size(
+  std::span<std::variant<column_view, scalar_column_view> const> inputs);
 
-std::map<uint32_t, std::string> build_ptx_params(std::vector<std::string> const& output_typenames,
-                                                 std::vector<std::string> const& input_typenames,
+std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> output_typenames,
+                                                 std::span<std::string const> input_typenames,
                                                  bool has_user_data);
-
-template <typename T>
-rmm::device_uvector<T> to_device_vector(std::vector<T> const& host,
-                                        rmm::cuda_stream_view stream,
-                                        rmm::device_async_resource_ref mr)
-{
-  rmm::device_uvector<T> device{host.size(), stream, mr};
-  cudf::detail::cuda_memcpy_async<T>(device, host, stream);
-  return device;
-}
 
 template <typename DeviceView, typename ColumnView>
 std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>>,
-           rmm::device_uvector<DeviceView>>
-column_views_to_device(std::vector<ColumnView> const& views,
-                       rmm::cuda_stream_view stream,
+           cuda::device_buffer<DeviceView>>
+column_views_to_device(std::span<ColumnView const> views,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
 {
   std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>> handles;
@@ -66,34 +57,26 @@ column_views_to_device(std::vector<ColumnView> const& views,
     return DeviceView::create(view, stream);
   });
 
-  std::vector<DeviceView> host_array;
+  // Use pinned host memory so cuda_memcpy_async takes the device-accessible
+  // path instead of cudaMemcpyBatchAsync with deferred source reads.
+  auto host_array = detail::make_empty_pinned_vector<DeviceView>(handles.size(), stream);
+  for (auto const& h : handles) {
+    host_array.push_back(*h);
+  }
 
-  std::transform(
-    handles.begin(), handles.end(), std::back_inserter(host_array), [](auto const& handle) {
-      return *handle;
-    });
-
-  auto device_array = to_device_vector(host_array, stream, mr);
+  cuda::device_buffer<DeviceView> device_array{stream, mr, handles.size(), cuda::no_init};
+  cudf::detail::cuda_memcpy<DeviceView>(device_array, host_array, stream);
 
   return std::make_tuple(std::move(handles), std::move(device_array));
 }
 
-input_column_reflection reflect_input_column(size_type base_column_size, column_view column);
+kernel get_udf_kernel(std::string const& source_file,
+                      std::string const& kernel_name,
+                      std::string const& cuda_source);
 
-std::vector<input_column_reflection> reflect_input_columns(size_type base_column_size,
-                                                           std::vector<column_view> const& inputs);
-
-template <typename ColumnView>
-std::vector<std::string> column_type_names(std::vector<ColumnView> const& views)
-{
-  std::vector<std::string> names;
-
-  std::transform(views.begin(), views.end(), std::back_inserter(names), [](auto const& view) {
-    return type_to_name(view.type());
-  });
-
-  return names;
-}
+rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
+                                   std::string const& kernel_name,
+                                   std::string const& udf_type);
 
 }  // namespace jit
 }  // namespace cudf

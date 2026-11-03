@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 import math
 from functools import cache
@@ -114,13 +114,9 @@ class DataFrameApplyKernel(ApplyKernelBase):
         # Create argument list for kernel
         frame = _supported_cols_from_frame(self.frame)
 
-        input_columns = ", ".join(
-            [f"input_col_{i}" for i in range(len(frame))]
-        )
-        input_offsets = ", ".join([f"offset_{i}" for i in range(len(frame))])
-        extra_args = ", ".join(
-            [f"extra_arg_{i}" for i in range(len(self.args))]
-        )
+        input_columns = self._format_arg_list("input_col", len(frame))
+        input_offsets = self._format_arg_list("offset", len(frame))
+        extra_args = self._format_arg_list("extra_arg", len(self.args))
 
         # Generate the initializers for each device function argument
         initializers = []
@@ -133,9 +129,7 @@ class DataFrameApplyKernel(ApplyKernelBase):
                 else unmasked_input_initializer_template
             )
             initializers.append(template.format(idx=idx))
-            row_initializers.append(
-                row_initializer_template.format(idx=idx, name=colname)
-            )
+            row_initializers.append(row_initializer_template.format(idx=idx))
 
         return row_kernel_template.format(
             input_columns=input_columns,
@@ -153,10 +147,12 @@ class DataFrameApplyKernel(ApplyKernelBase):
         # compiled and the cuda module.
 
         row_type = self._get_frame_type()
+        col_names = tuple(_supported_cols_from_frame(self.frame).keys())
         return {
             "cuda": cuda,
             "Masked": Masked,
             "_mask_get": _mask_get,
             "pack_return": pack_return,
             "row_type": row_type,
+            "_col_names": col_names,
         }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,8 +12,7 @@
 #include <cuda/functional>
 #include <cuda/std/type_traits>
 
-namespace CUDF_EXPORT cudf {
-
+namespace cudf {
 namespace detail::rolling {
 
 /**
@@ -220,4 +219,4 @@ template <direction Direction, typename Grouping>
     cudf::size_type{0}, fixed_window_clamper<Direction, Grouping>{grouper, delta});
 }
 }  // namespace detail::rolling
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

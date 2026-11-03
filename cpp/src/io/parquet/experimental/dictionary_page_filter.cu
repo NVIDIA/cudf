@@ -1,40 +1,50 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "hybrid_scan_helpers.hpp"
 #include "hybrid_scan_impl.hpp"
+#include "io/parquet/decimal_decode_utils.cuh"
+#include "io/parquet/expression_transform_helpers.hpp"
 #include "io/parquet/parquet_gpu.hpp"
+#include "io/parquet/timestamp_utils.cuh"
 #include "io/utilities/block_utils.cuh"
 
-#include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/detail/cuco_helpers.hpp>
+#include <cudf/detail/utilities/assert.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing/detail/default_hash.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/extent.cuh>
 #include <cuco/static_set.cuh>
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/stream>
 
 #include <optional>
+#include <ranges>
+#include <span>
 
 namespace cudf::io::parquet::experimental::detail {
 
 using parquet::detail::chunk_page_info;
 using parquet::detail::ColumnChunkDesc;
+using parquet::detail::decode_big_endian_decimal;
+using parquet::detail::decode_byte_array_decimal;
 using parquet::detail::decode_error;
 using parquet::detail::PageInfo;
 
@@ -154,14 +164,13 @@ struct query_equality_functor {
  * @param offset Offset into the data stream
  * @param length Length of the data to read
  * @param page_data_size Size of the page data
-
  * @return Boolean indicating if there is a data stream overrun
  */
-__device__ __forceinline__ bool is_stream_overrun(size_type offset,
-                                                  size_type length,
+__device__ __forceinline__ bool is_stream_overrun(std::size_t offset,
+                                                  std::size_t length,
                                                   size_type page_data_size)
 {
-  return offset + length > page_data_size;
+  return page_data_size < 0 or offset + length > static_cast<std::size_t>(page_data_size);
 }
 
 /**
@@ -189,36 +198,6 @@ __device__ __forceinline__ bool is_error_set(kernel_error::pointer error)
 }
 
 /**
- * @brief Helper function to calculate the timestamp scale
- *
- * @param logical_type Logical type of the column
- * @param clock_rate Clock rate of the column
- * @return Timestamp scale
- */
-__device__ __forceinline__ int32_t calc_timestamp_scale(LogicalType const& logical_type,
-                                                        int32_t clock_rate)
-{
-  // Note: This function has been extracted from the snippet at:
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1219-L1236
-
-  // Adjust for timestamps
-  auto units = 0;
-  if (logical_type.is_timestamp_millis()) {
-    units = cudf::timestamp_ms::period::den;
-  } else if (logical_type.is_timestamp_micros()) {
-    units = cudf::timestamp_us::period::den;
-  } else if (logical_type.is_timestamp_nanos()) {
-    units = cudf::timestamp_ns::period::den;
-  }
-
-  if (units and units != clock_rate) {
-    return (clock_rate < units) ? -(units / clock_rate) : (clock_rate / units);
-  }
-
-  return 0;
-}
-
-/**
  * @brief Helper function to get the length of INT32 physical type
  *
  * @param logical_type Logical type of the column
@@ -227,7 +206,7 @@ __device__ __forceinline__ int32_t calc_timestamp_scale(LogicalType const& logic
 __device__ __forceinline__ int32_t get_int32_type_len(LogicalType const& logical_type)
 {
   // Note: This function has been extracted from the snippet at:
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_decode.cuh#L1278-L1287
 
   // Check for smaller bitwidths
   if (logical_type.type == LogicalType::INTEGER) {
@@ -252,14 +231,14 @@ __device__ __forceinline__ void decode_int96timestamp(uint8_t const* int96_ptr,
                                                       int64_t* timestamp64)
 {
   // Note: This function has been modified from the original at
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
+  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
 
   int64_t nanos = cudf::io::unaligned_load<uint64_t>(int96_ptr);
   int64_t days  = cudf::io::unaligned_load<uint32_t>(int96_ptr + sizeof(int64_t));
 
   // Convert from Julian day at noon to UTC seconds
-  cudf::duration_D duration_days{
-    days - 2440588};  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  cudf::duration_D duration_days{days - cudf::io::parquet::detail::julian_day_unix_epoch};
 
   using cuda::std::chrono::duration_cast;
 
@@ -278,27 +257,6 @@ __device__ __forceinline__ void decode_int96timestamp(uint8_t const* int96_ptr,
       default: return duration_cast<cudf::duration_ns>(duration_days).count() + nanos;
     }
   }();
-}
-
-/**
- * @brief Helper function to convert a int64_t to a timestamp64
- *
- * @param value Value to convert
- * @param timestamp_scale Timestamp scale
- * @return Converted timestamp64 value
- */
-__device__ __forceinline__ int64_t convert_to_timestamp64(int64_t const value,
-                                                          int32_t timestamp_scale)
-{
-  // Note: This function has been taken as-is from the snippet at:
-  // https://github.com/rapidsai/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L247-L258
-
-  if (timestamp_scale < 0) {
-    // round towards negative infinity
-    int32_t const sign = (value < 0);
-    return ((value + sign) / -timestamp_scale) + sign;
-  }
-  return value * timestamp_scale;
 }
 
 /**
@@ -343,8 +301,14 @@ CUDF_KERNEL void query_dictionaries(cudf::device_span<T> decoded_data,
 
   // Evaluate the scalar against all cuco hash sets of this column
   for (auto set_idx = group.thread_rank(); set_idx < total_row_groups; set_idx += group.size()) {
-    // If the set is empty (no dictionary page data), then skip the dictionary page filter
-    if (set_offsets[set_idx + 1] - set_offsets[set_idx] == 0) {
+    // Number of values in this hash set
+    auto const num_set_values = value_offsets[set_idx + 1] - value_offsets[set_idx];
+
+    // Skip the dictionary page filter for a column chunk with no dictionary page. Emptiness must be
+    // read from the value count and not from the number of slots, because cuco rounds every
+    // capacity up to at least one bucket, so an empty dictionary still has slots. Its set was never
+    // built, so probing it would report the literal as absent and prune the row group.
+    if (num_set_values == 0) {
       result[set_idx] = operators[scalar_idx] == ast::ast_operator::EQUAL;
       continue;
     }
@@ -361,8 +325,6 @@ CUDF_KERNEL void query_dictionaries(cudf::device_span<T> decoded_data,
                                              storage_ref};
     auto set_find_ref = hash_set_ref.rebind_operators(cuco::contains);
 
-    // Number of values in this hash set
-    auto const num_set_values = value_offsets[set_idx + 1] - value_offsets[set_idx];
     // Literal value to find in this hash set
     auto const literal_value = scalar.value<T>();
 
@@ -387,14 +349,16 @@ CUDF_KERNEL void query_dictionaries(cudf::device_span<T> decoded_data,
  * @param chunk Column chunk descriptor
  * @param value_idx Index of the value to decode from page data buffer
  * @param physical_type Parquet physical type of the column
+ * @param byte_array_offset Offset of the next value in a BYTE_ARRAY page data buffer
  * @param error Pointer to the kernel error code
  * @return Decoded value
  */
 template <SupportedFixedWidthType T>
 __device__ T decode_fixed_width_value(PageInfo const& page,
                                       ColumnChunkDesc const& chunk,
-                                      int32_t value_idx,
+                                      std::size_t value_idx,
                                       parquet::Type physical_type,
+                                      int32_t& byte_array_offset,
                                       kernel_error::pointer error)
 {
   // Page data pointer
@@ -402,9 +366,7 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
 
   // Calculate the timestamp scale if this chunk has a timestamp logical type
   auto const timestamp_scale =
-    chunk.logical_type.has_value()
-      ? calc_timestamp_scale(chunk.logical_type.value(), chunk.ts_clock_rate)
-      : int32_t{0};
+    parquet::detail::calc_timestamp_scale(chunk.logical_type, chunk.ts_clock_rate);
 
   // FLBA length (0 if not FLBA type)
   auto const flba_length = chunk.type_length;
@@ -412,10 +374,10 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
   // Placeholder for the decoded value
   auto decoded_value = T{};
 
-  // Check for decimal types
+  // Check for decimal types, which are dispatched as their integer storage type
   auto const is_decimal =
     chunk.logical_type.has_value() and chunk.logical_type.value().type == LogicalType::DECIMAL;
-  if (is_decimal and not cudf::is_fixed_point<T>()) {
+  if (is_decimal and not cudf::is_integral<T>()) {
     set_error(error, decode_error::INVALID_DATA_TYPE);
     return {};
   }
@@ -428,16 +390,17 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
         set_error(error, decode_error::DATA_STREAM_OVERRUN);
         return {};
       }
-      // Check if the flba length is valid
-      if (flba_length != INT96_SIZE or not cuda::std::is_same_v<T, int64_t>) {
+      // INT96 values are decoded into 64-bit timestamps. INT96 has no type length in the schema, so
+      // `INT96_SIZE` is used to index the page data.
+      if constexpr (sizeof(T) == sizeof(int64_t) and
+                    (cudf::is_timestamp<T>() or cuda::std::is_same_v<T, int64_t>)) {
+        decode_int96timestamp(page_data + (value_idx * INT96_SIZE),
+                              chunk.ts_clock_rate,
+                              reinterpret_cast<int64_t*>(&decoded_value));
+      } else {
         set_error(error, decode_error::INVALID_DATA_TYPE);
         return {};
       }
-
-      // Decode the int96 value from the page data
-      decode_int96timestamp(page_data + (value_idx * flba_length),
-                            chunk.ts_clock_rate,
-                            reinterpret_cast<int64_t*>(&decoded_value));
       break;
     }
 
@@ -452,19 +415,29 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
         set_error(error, decode_error::INVALID_DATA_TYPE);
         return {};
       }
-      // Decode the flba values as string view
-      auto const flba_value = cudf::string_view{
-        reinterpret_cast<char const*>(page_data) + value_idx * flba_length, flba_length};
-      // Copy the flba value including decimal128 (__int128) from the page data
-      cuda::std::memcpy(&decoded_value, flba_value.data(), flba_length);
-
-      // Handle signed integral types
-      if constexpr (cudf::is_integral<T>() and cudf::is_signed<T>()) {
-        // Shift the unscaled value up and back down to correctly represent negative numbers.
-        if (flba_length < sizeof(T)) {
-          decoded_value <<= (sizeof(T) - flba_length) * 8;
-          decoded_value >>= (sizeof(T) - flba_length) * 8;
+      // Only decimals are decoded from FIXED_LEN_BYTE_ARRAY into fixed width types
+      if constexpr (cudf::is_integral<T>()) {
+        decoded_value =
+          decode_big_endian_decimal<T>(page_data + value_idx * flba_length, flba_length);
+      } else {
+        set_error(error, decode_error::INVALID_DATA_TYPE);
+        return {};
+      }
+      break;
+    }
+    case parquet::Type::BYTE_ARRAY: {
+      // Only decimals are decoded from BYTE_ARRAY into fixed width types
+      if constexpr (cudf::is_integral<T>()) {
+        auto const value =
+          decode_byte_array_decimal<T>(page_data, page.uncompressed_page_size, byte_array_offset);
+        if (not value.has_value()) {
+          set_error(error, decode_error::DATA_STREAM_OVERRUN);
+          return {};
         }
+        decoded_value = value.value();
+      } else {
+        set_error(error, decode_error::INVALID_DATA_TYPE);
+        return {};
       }
       break;
     }
@@ -499,7 +472,7 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
       // Handle durations
       else if constexpr (cudf::is_duration<T>()) {
         // Note: This function has been extracted from the snippet at:
-        // https://github.com/rapidsai/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
+        // https://github.com/NVIDIA/cudf/blob/594d26768ce86b9c2f389e851ae1afb77032c879/cpp/src/io/parquet/decode_fixed.cu#L159-L163
 
         // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
         // TIME_MILLIS is the only duration type stored as int32:
@@ -540,8 +513,8 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
         int64_t const timestamp =
           cudf::io::unaligned_load<uint64_t>(page_data + (value_idx * sizeof(int64_t)));
         if (timestamp_scale != 0) {
-          decoded_value = T{typename T::duration(
-            static_cast<typename T::rep>(convert_to_timestamp64(timestamp, timestamp_scale)))};
+          decoded_value = T{typename T::duration(static_cast<typename T::rep>(
+            parquet::detail::apply_ts_scale(timestamp, timestamp_scale)))};
         } else {
           decoded_value = T{typename T::duration(static_cast<typename T::rep>(timestamp))};
         }
@@ -593,7 +566,7 @@ __device__ cudf::string_view decode_string_value(uint8_t const* page_data,
   }
 
   // Decode string length
-  auto const string_length = static_cast<int32_t>(*(page_data + buffer_offset));
+  auto const string_length = cudf::io::unaligned_load<uint32_t>(page_data + buffer_offset);
   buffer_offset += sizeof(int32_t);
 
   // Check if we have a stream overrun
@@ -608,7 +581,7 @@ __device__ cudf::string_view decode_string_value(uint8_t const* page_data,
                       static_cast<cudf::size_type>(string_length)};
 
   // Update the buffer offset
-  buffer_offset += string_length;
+  buffer_offset += static_cast<int32_t>(string_length);
 
   return decoded_value;
 }
@@ -767,15 +740,25 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
                                            storage_ref};
   auto set_insert_ref = hash_set_ref.rebind_operators(cuco::insert);
 
+  // Check for BYTE_ARRAY decimals
+  auto const is_byte_array = physical_type == parquet::Type::BYTE_ARRAY;
+
+  // Only one thread decodes BYTE_ARRAY decimals as they are rare (deprecated). If this becomes a
+  // bottleneck, use a warp-sized kernel or prefetch page data into shared memory
+  if (is_byte_array and group.thread_rank() != 0) { return; }
+
+  // Initial byte array decimal offset
+  auto byte_array_offset = int32_t{0};
+
   // Decode values from the current dictionary page
   for (auto value_idx = group.thread_rank(); value_idx < page.num_input_values;
-       value_idx += group.num_threads()) {
+       value_idx += is_byte_array ? 1 : group.num_threads()) {
     // Key (decoded value's global index) to insert into the cuco hash set
     auto const insert_key = static_cast<key_type>(value_offset + value_idx);
 
     // Decode the value from the page data
     decoded_data[insert_key] =
-      decode_fixed_width_value<T>(page, chunk, value_idx, physical_type, error);
+      decode_fixed_width_value<T>(page, chunk, value_idx, physical_type, byte_array_offset, error);
 
     // Return early if an error has been set
     if (is_error_set(error)) { return; }
@@ -883,8 +866,8 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
       // Otherwise, check if we have more than one values in the dictionary (will never evaluate to
       // true so we can easily break) or if the decoded value was a match with the literal value.
       if (thrust::all_of(thrust::seq,
-                         thrust::counting_iterator(0),
-                         thrust::counting_iterator(total_num_scalars),
+                         cuda::counting_iterator<cudf::size_type>{0},
+                         cuda::counting_iterator{total_num_scalars},
                          [&](auto scalar_idx) {
                            return operators[scalar_idx] == ast::ast_operator::EQUAL
                                     ? results[scalar_idx][row_group_idx]
@@ -953,11 +936,22 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
     results[i][row_group_idx] = false;
   }
 
+  group.sync();
+
+  // Check for BYTE_ARRAY decimals
+  auto const is_byte_array = physical_type == parquet::Type::BYTE_ARRAY;
+  // Only one thread decodes BYTE_ARRAY decimals as they are rare (deprecated). If this becomes a
+  // bottleneck, use a warp-sized kernel or prefetch page data into shared memory
+  if (is_byte_array and group.thread_rank() != 0) { return; }
+  // Initial byte array decimal offset
+  auto byte_array_offset = int32_t{0};
+
   // Decode values from the current dictionary page with the current thread block
   for (auto value_idx = group.thread_rank(); value_idx < page.num_input_values;
-       value_idx += group.num_threads()) {
+       value_idx += is_byte_array ? 1 : group.num_threads()) {
     // Decode the value from the page data
-    auto decoded_value = decode_fixed_width_value<T>(page, chunk, value_idx, physical_type, error);
+    auto const decoded_value =
+      decode_fixed_width_value<T>(page, chunk, value_idx, physical_type, byte_array_offset, error);
 
     // Return early if an error has been set
     if (is_error_set(error)) { return; }
@@ -978,8 +972,8 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
     // Otherwise, check if we have more than one values in the dictionary (will never evaluate to
     // true so we can easily break) or if the decoded value was a match with the literal value.
     if (thrust::all_of(thrust::seq,
-                       thrust::counting_iterator(0),
-                       thrust::counting_iterator(total_num_scalars),
+                       cuda::counting_iterator<cudf::size_type>{0},
+                       cuda::counting_iterator{total_num_scalars},
                        [&](auto scalar_idx) {
                          return operators[scalar_idx] == ast::ast_operator::EQUAL
                                   ? results[scalar_idx][row_group_idx]
@@ -997,7 +991,7 @@ CUDF_KERNEL void __launch_bounds__(DECODE_BLOCK_SIZE)
 struct dictionary_caster {
   cudf::detail::hostdevice_span<parquet::detail::ColumnChunkDesc const> chunks;
   cudf::detail::hostdevice_span<parquet::detail::PageInfo const> pages;
-  size_t total_row_groups;
+  std::size_t total_row_groups;
   parquet::Type physical_type;
   cudf::size_type type_length;
   cudf::size_type num_dictionary_columns;
@@ -1007,11 +1001,15 @@ struct dictionary_caster {
    * @brief Build BOOL8 columns from dictionary membership results device buffers
    *
    * @param results_buffers Vector of dictionary membership results device buffers
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned device memory
    *
    * @return A vector of BOOL8 columns
    */
   [[nodiscard]] std::vector<std::unique_ptr<cudf::column>> build_columns(
-    cudf::host_span<rmm::device_buffer> results_buffers)
+    cudf::host_span<rmm::device_buffer> results_buffers,
+    cuda::stream_ref stream,
+    rmm::device_async_resource_ref mr)
   {
     auto columns = std::vector<std::unique_ptr<cudf::column>>{};
     columns.reserve(results_buffers.size());
@@ -1023,7 +1021,7 @@ struct dictionary_caster {
                        cudf::data_type{cudf::type_id::BOOL8},
                        static_cast<cudf::size_type>(total_row_groups),
                        std::move(result_buffer),
-                       rmm::device_buffer{},
+                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
                        0);
                    });
     return columns;
@@ -1045,7 +1043,7 @@ struct dictionary_caster {
   std::vector<std::unique_ptr<cudf::column>> evaluate_many_literals(
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Host vectors to store the running number of hash set slots and decoded values for all
@@ -1064,8 +1062,8 @@ struct dictionary_caster {
 
     // Compute the running number of hash set slots and decoded values for all dictionaries
     std::for_each(
-      thrust::counting_iterator<size_t>(0),
-      thrust::counting_iterator(total_row_groups),
+      cuda::counting_iterator<std::size_t>{0},
+      cuda::counting_iterator{total_row_groups},
       [&](auto row_group_idx) {
         auto const chunk_idx        = dictionary_col_idx + (row_group_idx * num_dictionary_columns);
         auto const num_input_values = pages[chunk_idx].num_input_values;
@@ -1084,23 +1082,23 @@ struct dictionary_caster {
     // Device vectors to store the running number of hash set slots and decoded values for all
     // dictionaries
     auto const set_offsets =
-      cudf::detail::make_device_uvector_async(host_set_offsets, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_set_offsets, stream, default_mr);
     auto const value_offsets =
-      cudf::detail::make_device_uvector_async(host_value_offsets, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_value_offsets, stream, default_mr);
 
-    auto const total_set_storage_size = static_cast<size_t>(host_set_offsets.back());
-    auto const total_num_values       = static_cast<size_t>(host_value_offsets.back());
+    auto const total_set_storage_size = static_cast<std::size_t>(host_set_offsets.back());
+    auto const total_num_values       = static_cast<std::size_t>(host_value_offsets.back());
     auto const total_num_literals     = static_cast<cudf::size_type>(literals.size());
 
     // Create a single bulk storage used by all cuco hash sets
     auto set_storage =
-      storage_type{total_set_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.value()};
+      storage_type{total_set_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get()};
 
     // Initialize storage with the empty key sentinel
-    set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.value()});
+    set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.get()});
 
     // Device vector to store the decoded values for all dictionaries
-    rmm::device_uvector<T> decoded_data{total_num_values, stream, default_mr};
+    cuda::device_buffer<T> decoded_data{stream, default_mr, total_num_values, cuda::no_init};
     kernel_error error_code(stream);
 
     // Host vector of scalar device views from all literals
@@ -1110,35 +1108,38 @@ struct dictionary_caster {
       host_scalars.push_back(literal->get_value());
     });
     // Device vector of all scalars device views
-    auto const scalars = cudf::detail::make_device_uvector_async(host_scalars, stream, default_mr);
+    auto const scalars = cudf::detail::make_device_buffer_async(host_scalars, stream, default_mr);
 
     // Device vector of all operators
-    auto const d_operators = cudf::detail::make_device_uvector_async(operators, stream, default_mr);
+    auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, default_mr);
 
     // Device buffers to store the dictionary membership results for all predicates
     std::vector<rmm::device_buffer> results_buffers(total_num_literals);
     // Host vector of pointers to the result buffers
     auto host_results_ptrs = cudf::detail::make_host_vector<bool*>(total_num_literals, stream);
-    std::for_each(
-      thrust::counting_iterator(0), thrust::counting_iterator(total_num_literals), [&](auto i) {
-        // Allocate the results buffer using the user-provided memory resource (output memory)
-        results_buffers[i]   = rmm::device_buffer(total_row_groups, stream, mr);
-        host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
-      });
+    std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                  cuda::counting_iterator{total_num_literals},
+                  [&](auto i) {
+                    // Allocate the results buffer using the user-provided memory resource (output
+                    // memory)
+                    results_buffers[i]   = rmm::device_buffer(total_row_groups, stream, mr);
+                    host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
+                  });
     if constexpr (not cuda::std::is_same_v<T, cudf::string_view>) {
       // Decode fixed width dictionaries and insert them to cuco hash sets, one dictionary per
       // thread block
       build_fixed_width_dictionaries<T>
-        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.value()>>>(pages.device_begin(),
-                                                                     chunks.device_begin(),
-                                                                     decoded_data,
-                                                                     set_storage.data(),
-                                                                     set_offsets.data(),
-                                                                     value_offsets.data(),
-                                                                     physical_type,
-                                                                     num_dictionary_columns,
-                                                                     dictionary_col_idx,
-                                                                     error_code.data());
+        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.get()>>>(pages.device_begin(),
+                                                                   chunks.device_begin(),
+                                                                   decoded_data,
+                                                                   set_storage.data(),
+                                                                   set_offsets.data(),
+                                                                   value_offsets.data(),
+                                                                   physical_type,
+                                                                   num_dictionary_columns,
+                                                                   dictionary_col_idx,
+                                                                   error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
 
     } else {
       // Check if the decode block size is a multiple of the warp size
@@ -1148,14 +1149,14 @@ struct dictionary_caster {
       CUDF_EXPECTS(physical_type == parquet::Type::BYTE_ARRAY, "Unsupported physical type");
 
       // Number of warps per thread block
-      size_t const warps_per_block = DECODE_BLOCK_SIZE / cudf::detail::warp_size;
+      std::size_t const warps_per_block = DECODE_BLOCK_SIZE / cudf::detail::warp_size;
       // Number of thread blocks to get at least `total_row_groups` warps
       auto const num_blocks =
-        cudf::util::div_rounding_up_safe<size_t>(total_row_groups, warps_per_block);
+        cudf::detail::div_rounding_up_safe<std::size_t>(total_row_groups, warps_per_block);
 
       // Decode string dictionaries and insert them to cuco hash sets, one dictionary per
       // warp
-      build_string_dictionaries<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.value()>>>(
+      build_string_dictionaries<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.get()>>>(
         pages.device_begin(),
         decoded_data,
         set_storage.data(),
@@ -1165,6 +1166,7 @@ struct dictionary_caster {
         num_dictionary_columns,
         dictionary_col_idx,
         error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
     }
 
     // Check if there are any errors in data decoding
@@ -1191,22 +1193,24 @@ struct dictionary_caster {
 
     // Device vector of pointers to the result buffers
     auto results_ptrs =
-      cudf::detail::make_device_uvector_async(host_results_ptrs, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
 
     // Query one predicate against all cuco hash sets of this column using a thread block
     query_dictionaries<T>
-      <<<total_num_literals, query_block_size, 0, stream.value()>>>(decoded_data,
-                                                                    results_ptrs,
-                                                                    scalars.data(),
-                                                                    d_operators.data(),
-                                                                    set_storage.data(),
-                                                                    set_offsets.data(),
-                                                                    value_offsets.data(),
-                                                                    total_row_groups,
-                                                                    physical_type);
+      <<<total_num_literals, query_block_size, 0, stream.get()>>>(decoded_data,
+                                                                  results_ptrs,
+                                                                  scalars.data(),
+                                                                  d_operators.data(),
+                                                                  set_storage.data(),
+                                                                  set_offsets.data(),
+                                                                  value_offsets.data(),
+                                                                  total_row_groups,
+                                                                  physical_type);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
+    stream.sync();
     // Build the BOOL8 columns from the results buffers
-    return build_columns(results_buffers);
+    return build_columns(results_buffers, stream, mr);
   }
 
   /**
@@ -1224,7 +1228,7 @@ struct dictionary_caster {
   std::vector<std::unique_ptr<cudf::column>> evaluate_few_literals(
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
     // Get the total number of scalars and literals
@@ -1240,25 +1244,27 @@ struct dictionary_caster {
       host_scalars.push_back(literal->get_value());
     });
     // Device vector of all scalars device views
-    auto const scalars = cudf::detail::make_device_uvector_async(host_scalars, stream, default_mr);
+    auto const scalars = cudf::detail::make_device_buffer_async(host_scalars, stream, default_mr);
 
     // Device vector of all operators
-    auto const d_operators = cudf::detail::make_device_uvector_async(operators, stream, default_mr);
+    auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, default_mr);
 
     // Device buffers to store the dictionary membership results for all predicates
     std::vector<rmm::device_buffer> results_buffers(total_num_literals);
     // Host vector of pointers to the result buffers
     auto host_results_ptrs = cudf::detail::make_host_vector<bool*>(total_num_literals, stream);
-    std::for_each(
-      thrust::counting_iterator(0), thrust::counting_iterator(total_num_literals), [&](auto i) {
-        // Allocate the results buffer using the user-provided memory resource (output memory)
-        results_buffers[i]   = rmm::device_buffer(total_row_groups, stream, mr);
-        host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
-      });
+    std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                  cuda::counting_iterator{total_num_literals},
+                  [&](auto i) {
+                    // Allocate the results buffer using the user-provided memory resource (output
+                    // memory)
+                    results_buffers[i]   = rmm::device_buffer(total_row_groups, stream, mr);
+                    host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
+                  });
 
     // Device vector of pointers to the result buffers
     auto results_ptrs =
-      cudf::detail::make_device_uvector_async(host_results_ptrs, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
 
     // Error code for the dictionary decode kernel
     kernel_error error_code(stream);
@@ -1267,30 +1273,31 @@ struct dictionary_caster {
       // Decode fixed width dictionaries and evaluate literals against them, one dictionary per
       // thread block
       evaluate_few_fixed_width_literals<T>
-        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.value()>>>(pages.device_begin(),
-                                                                     chunks.device_begin(),
-                                                                     results_ptrs,
-                                                                     scalars.data(),
-                                                                     d_operators.data(),
-                                                                     physical_type,
-                                                                     total_num_literals,
-                                                                     num_dictionary_columns,
-                                                                     dictionary_col_idx,
-                                                                     error_code.data());
+        <<<total_row_groups, DECODE_BLOCK_SIZE, 0, stream.get()>>>(pages.device_begin(),
+                                                                   chunks.device_begin(),
+                                                                   results_ptrs,
+                                                                   scalars.data(),
+                                                                   d_operators.data(),
+                                                                   physical_type,
+                                                                   total_num_literals,
+                                                                   num_dictionary_columns,
+                                                                   dictionary_col_idx,
+                                                                   error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       static_assert(DECODE_BLOCK_SIZE % cudf::detail::warp_size == 0,
                     "decoder block size must be a multiple of warp_size");
       CUDF_EXPECTS(physical_type == parquet::Type::BYTE_ARRAY, "Unsupported physical type");
 
       // Number of warps per thread block
-      size_t const warps_per_block = DECODE_BLOCK_SIZE / cudf::detail::warp_size;
+      std::size_t const warps_per_block = DECODE_BLOCK_SIZE / cudf::detail::warp_size;
       // Number of thread blocks to get at least `total_row_groups` warps
       auto const num_blocks =
-        cudf::util::div_rounding_up_safe<size_t>(total_row_groups, warps_per_block);
+        cudf::detail::div_rounding_up_safe<std::size_t>(total_row_groups, warps_per_block);
 
       // Decode string dictionaries and evaluate all literals against them, one dictionary per
       // warp
-      evaluate_few_string_literals<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.value()>>>(
+      evaluate_few_string_literals<<<num_blocks, DECODE_BLOCK_SIZE, 0, stream.get()>>>(
         pages.device_begin(),
         results_ptrs,
         scalars.data(),
@@ -1300,6 +1307,7 @@ struct dictionary_caster {
         num_dictionary_columns,
         dictionary_col_idx,
         error_code.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
     }
 
     // Check if there are any errors in data decoding
@@ -1308,7 +1316,7 @@ struct dictionary_caster {
     }
 
     // Build the BOOL8 columns from the results buffers
-    return build_columns(results_buffers);
+    return build_columns(results_buffers, stream, mr);
   }
 
   template <typename T>
@@ -1316,23 +1324,17 @@ struct dictionary_caster {
     cudf::data_type dtype,
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr)
   {
-    // Boolean, List, Struct, Dictionary types are not supported
+    // Booleans and compound types are not collected by `dictionary_literals_collector`
     if constexpr (not is_supported_dictionary_type<T>) {
-      CUDF_FAIL("Dictionaries do not support boolean or compound types");
+      CUDF_UNREACHABLE("Dictionaries cannot be queried for boolean or compound types");
     } else {
-      // Make sure all literals have the same type as the predicate column
-      std::for_each(literals.begin(), literals.end(), [&](auto const& literal) {
-        // Check if the literal has the same type as the predicate column
-        CUDF_EXPECTS(
-          dtype == literal->get_data_type() and
-            cudf::have_same_types(
-              cudf::column_view{dtype, 0, {}, {}, 0, 0, {}},
-              cudf::scalar_type_t<T>(T{}, false, stream, cudf::get_current_device_resource_ref())),
-          "Mismatched predicate column and literal types");
-      });
+      // Only decimals are decoded from BYTE_ARRAY into fixed width types
+      CUDF_EXPECTS((physical_type != parquet::Type::BYTE_ARRAY or
+                    cuda::std::is_same_v<T, cudf::string_view> or cudf::is_fixed_point(dtype)),
+                   "Dictionaries of BYTE_ARRAY columns can only be decoded as strings or decimals");
 
       // If there are only a few literals, just evaluate expression while decoding dictionary data
       if (literals.size() <= MAX_INLINE_LITERALS) {
@@ -1346,24 +1348,41 @@ struct dictionary_caster {
 };
 
 /**
+ * @brief Whether a dictionary page can be queried for a `col op literal` predicate
+ *
+ * @throws cudf::logic_error if the column and literal types mismatch
+ *
+ * @param op Comparison operator
+ * @param col_type Output type of the column
+ * @param literal Literal compared against the column
+ * @return Whether the dictionary page can be queried
+ */
+[[nodiscard]] bool is_dictionary_filterable(ast::ast_operator op,
+                                            cudf::data_type col_type,
+                                            ast::literal const& literal)
+{
+  // A dictionary page holds the values in a column chunk, so (in)equality can be evaluated exactly
+  if (op != ast::ast_operator::EQUAL and op != ast::ast_operator::NOT_EQUAL) { return false; }
+  return parquet::detail::is_membership_queryable(col_type, literal);
+}
+
+using parquet::detail::parquet_expression_simplifier;
+using parquet::detail::simplified_expression_opt;
+
+/**
  * @brief Converts AST expression to dictionary membership (DictionaryAST) expression.
  * This is used in row group filtering based on equality predicate.
  */
-class dictionary_expression_converter : public equality_literals_collector {
+class dictionary_expression_converter final : public parquet_expression_simplifier {
  public:
   dictionary_expression_converter(ast::expression const& expr,
-                                  size_type num_input_columns,
-                                  cudf::host_span<std::vector<ast::literal*> const> literals,
-                                  rmm::cuda_stream_view stream)
-    : _literals{literals},
-      _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
-      _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
+                                  std::span<cudf::data_type const> output_dtypes,
+                                  std::span<std::vector<ast::literal*> const> literals,
+                                  std::span<std::vector<ast::ast_operator> const> operators)
+    : parquet_expression_simplifier{output_dtypes}, _literals{literals}, _operators{operators}
   {
-    // Set the num columns
-    _num_input_columns = num_input_columns;
-
     // Compute and store columns literals offsets
-    _col_literals_offsets.reserve(_num_input_columns + 1);
+    _col_literals_offsets.reserve(static_cast<cudf::size_type>(_output_dtypes.size()) + 1);
     _col_literals_offsets.emplace_back(0);
 
     // Set column literal count offsets
@@ -1375,106 +1394,61 @@ class dictionary_expression_converter : public equality_literals_collector {
                             static_cast<cudf::size_type>(col_literal_map.size());
                    });
 
-    // Add this visitor
-    expr.accept(*this);
+    _dictionary_expr = simplify_expr(expr);
   }
 
   /**
-   * @brief Delete equality literals getter as it's not needed in the derived class
+   * @brief Returns the AST to apply on dictionary membership
+   *
+   * @return The membership expression, or std::nullopt if no row group can be pruned
    */
-  [[nodiscard]] std::vector<std::vector<ast::literal*>> get_equality_literals() && = delete;
+  [[nodiscard]] simplified_expression_opt get_dictionary_expr() const { return _dictionary_expr; }
 
-  // Bring all overloads of `visit` from equality_predicate_collector into scope
-  using equality_literals_collector::visit;
-
+ protected:
   /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
+   * @copydoc parquet::detail::parquet_expression_simplifier::simplify_comparison
+   *
+   * Dictionary membership supports equality and inequality comparisons. Unsupported operations
+   * return std::nullopt.
    */
-  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override
+  [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,
+                                                              ast::column_reference const& col_ref,
+                                                              ast::literal const& literal) override
   {
     using cudf::ast::ast_operator;
-    auto const operands       = expr.get_operands();
-    auto const op             = expr.get_operator();
-    auto const operator_arity = cudf::ast::detail::ast_operator_arity(op);
 
-    if (auto* v = dynamic_cast<ast::column_reference const*>(&operands[0].get())) {
-      // First operand should be column reference, second (if binary operation) should be literal.
-      CUDF_EXPECTS(operator_arity == 1 or operator_arity == 2,
-                   "Only unary and binary operations are supported on column reference");
-      CUDF_EXPECTS(
-        operator_arity == 1 or dynamic_cast<ast::literal const*>(&operands[1].get()) != nullptr,
-        "Second operand of binary operation with column reference must be a literal");
-      v->accept(*this);
+    auto const col_idx             = col_ref.get_column_index();
+    auto const& equality_literals  = _literals[col_idx];
+    auto const& equality_operators = _operators[col_idx];
+    auto const literal_indices     = std::views::iota(std::size_t{0}, equality_literals.size());
+    auto const literal_iter        = std::ranges::find_if(literal_indices, [&](auto idx) {
+      return equality_literals[idx] == &literal and equality_operators[idx] == op;
+    });
 
-      // Propagate the `_always_true` as expression to its unary operator parent
-      if (operator_arity == 1) {
-        _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-        return *_always_true;
-      }
+    // Unsupported comparisons and those in discarded OR branches were not collected
+    if (literal_iter == literal_indices.end()) { return std::nullopt; }
 
-      if (op == ast_operator::EQUAL or op == ast::ast_operator::NOT_EQUAL) {
-        // Search the literal in this input column's equality literals list and add to
-        // the offset.
-        auto const col_idx            = v->get_column_index();
-        auto const& equality_literals = _literals[col_idx];
-        auto col_literal_offset       = _col_literals_offsets[col_idx];
-        auto const literal_iter       = std::find(equality_literals.cbegin(),
-                                            equality_literals.cend(),
-                                            dynamic_cast<ast::literal const*>(&operands[1].get()));
-        CUDF_EXPECTS(literal_iter != equality_literals.end(), "Could not find the literal ptr");
-        col_literal_offset += std::distance(equality_literals.cbegin(), literal_iter);
+    auto const col_literal_offset =
+      _col_literals_offsets[col_idx] + static_cast<cudf::size_type>(*literal_iter);
+    auto const& value = _tree.push(ast::column_reference{col_literal_offset});
 
-        auto const& value = _dictionary_expr.push(ast::column_reference{col_literal_offset});
-
-        if (op == ast_operator::NOT_EQUAL) {
-          // For NOT_EQUAL operator, simply evaluate boolean is_false(value) expression as
-          // NOT(value). The value indicates if the row group should be pruned (if the literal is
-          // present in the hash set and it's the only value in the hash set)
-          _dictionary_expr.push(ast::operation{ast_operator::NOT, value});
-        } else {
-          // For EQUAL operator, evaluate boolean is_true(value) expression as IDENTITY(value)
-          // The value indicates if the row group should be kept (if the literal is present in the
-          // hash set)
-          _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, value});
-        }
-      }
-      // For all other expressions, push the `_always_true` expression
-      else {
-        _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-      }
-    } else {
-      auto new_operands = visit_operands(operands);
-      if (operator_arity == 2) {
-        _dictionary_expr.push(ast::operation{op, new_operands.front(), new_operands.back()});
-      } else if (operator_arity == 1) {
-        // If the new_operands is just a `_always_true` literal, propagate it here
-        if (&new_operands.front().get() == _always_true.get()) {
-          _dictionary_expr.push(ast::operation{ast_operator::IDENTITY, _dictionary_expr.back()});
-          return *_always_true;
-        } else {
-          _dictionary_expr.push(ast::operation{op, new_operands.front()});
-        }
-      }
+    if (op == ast_operator::NOT_EQUAL) {
+      // For NOT_EQUAL operator, simply evaluate boolean is_false(value) expression as
+      // NOT(value). The value indicates if the row group should be pruned (if the literal is
+      // present in the hash set and it's the only value in the hash set)
+      return _tree.push(ast::operation{ast_operator::NOT, value});
     }
-    return _dictionary_expr.back();
-  }
-
-  /**
-   * @brief Returns the AST to apply on dictionary membership.
-   *
-   * @return AST operation expression
-   */
-  [[nodiscard]] std::reference_wrapper<ast::expression const> get_dictionary_expr() const
-  {
-    return _dictionary_expr.back();
+    // For EQUAL operator, evaluate boolean is_true(value) expression as IDENTITY(value)
+    // The value indicates if the row group should be kept (if the literal is present in the
+    // hash set)
+    return _tree.push(ast::operation{ast_operator::IDENTITY, value});
   }
 
  private:
   std::vector<cudf::size_type> _col_literals_offsets;
-  cudf::host_span<std::vector<ast::literal*> const> _literals;
-  ast::tree _dictionary_expr;
-  std::unique_ptr<cudf::numeric_scalar<bool>> _always_true_scalar;
-  std::unique_ptr<ast::literal> _always_true;
+  std::span<std::vector<ast::literal*> const> _literals;
+  std::span<std::vector<ast::ast_operator> const> _operators;
+  simplified_expression_opt _dictionary_expr;
 };
 
 }  // namespace
@@ -1483,21 +1457,32 @@ std::optional<std::vector<std::vector<cudf::size_type>>>
 aggregate_reader_metadata::apply_dictionary_filter(
   cudf::detail::hostdevice_span<parquet::detail::ColumnChunkDesc const> chunks,
   cudf::detail::hostdevice_span<parquet::detail::PageInfo const> pages,
-  host_span<std::vector<size_type> const> input_row_group_indices,
-  host_span<std::vector<ast::literal*> const> literals,
-  cudf::host_span<std::vector<ast::ast_operator> const> operators,
+  std::span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<ast::literal*> const> literals,
+  std::span<std::vector<ast::ast_operator> const> operators,
   std::size_t total_row_groups,
-  cudf::host_span<data_type const> output_dtypes,
-  cudf::host_span<int const> dictionary_col_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<int const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  rmm::cuda_stream_view stream) const
+  cuda::stream_ref stream) const
 {
+  CUDF_FUNC_RANGE();
+
+  // Convert AST to DictionaryAST expression with reference to dictionary membership
+  // in above `dictionary_membership_table`
+  dictionary_expression_converter dictionary_expr_converter{
+    filter.get(), output_dtypes, literals, operators};
+
+  // Dictionary membership cannot filter anything in the filter, all row groups survive
+  auto const dictionary_expr = dictionary_expr_converter.get_dictionary_expr();
+  if (not dictionary_expr.has_value()) { return std::nullopt; }
+
   // Number of input table columns
   auto const num_input_columns = static_cast<cudf::size_type>(output_dtypes.size());
   // Number of columns with dictionaries
   auto const num_dictionary_columns = static_cast<cudf::size_type>(dictionary_col_schemas.size());
   // Get parquet types for the predicate columns
-  auto const parquet_types = get_parquet_types(input_row_group_indices, dictionary_col_schemas);
+  auto const parquet_types = get_parquet_types(dictionary_col_schemas);
 
   // Convert dictionary membership for (in)equality predicate columns to a table
   // containing a column for each `col[i] == literal` or `col[i] != literal` predicate
@@ -1512,16 +1497,13 @@ aggregate_reader_metadata::apply_dictionary_filter(
 
   // For each input column
   std::for_each(
-    thrust::counting_iterator(0),
-    thrust::counting_iterator(num_input_columns),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{num_input_columns},
     [&](auto input_col_idx) {
       auto const& dtype = output_dtypes[input_col_idx];
 
       // Skip if no equality literals for this column
       if (literals[input_col_idx].empty()) { return; }
-
-      // Skip if non-comparable (compound) type except string
-      if (cudf::is_compound(dtype) and dtype.id() != cudf::type_id::STRING) { return; }
 
       // Create a dictionary membership caster struct for the current column
       dictionary_caster const dictionary_col{chunks,
@@ -1554,68 +1536,28 @@ aggregate_reader_metadata::apply_dictionary_filter(
   // Create a table from columns
   auto const dictionary_membership_table = cudf::table(std::move(dictionary_membership_columns));
 
-  // Convert AST to DictionaryAST expression with reference to dictionary membership
-  // in above `dictionary_membership_table`
-  dictionary_expression_converter dictionary_expr{
-    filter.get(), num_input_columns, literals, stream};
-
   // Filter dictionary membership table with the DictionaryAST expression and collect
   // filtered row group indices
-  return parquet::detail::collect_filtered_row_group_indices(dictionary_membership_table,
-                                                             dictionary_expr.get_dictionary_expr(),
-                                                             input_row_group_indices,
-                                                             stream);
+  return parquet::detail::collect_filtered_row_group_indices(
+    dictionary_membership_table, dictionary_expr.value(), input_row_group_indices, stream);
 }
 
-dictionary_literals_collector::dictionary_literals_collector(ast::expression const& expr,
-                                                             cudf::size_type num_input_columns)
+dictionary_literals_collector::dictionary_literals_collector(
+  ast::expression const& expr, std::span<cudf::data_type const> output_dtypes)
+  : equality_literals_collector{output_dtypes, {}}
 {
-  _num_input_columns = num_input_columns;
-  _literals.resize(num_input_columns);
-  _operators.resize(num_input_columns);
-  expr.accept(*this);
+  collect(expr);
 }
 
-std::reference_wrapper<ast::expression const> dictionary_literals_collector::visit(
-  ast::operation const& expr)
+simplified_expression_opt dictionary_literals_collector::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  using cudf::ast::ast_operator;
-  auto const operands = expr.get_operands();
-  auto const op       = expr.get_operator();
+  auto const col_idx = col_ref.get_column_index();
 
-  if (auto* v = dynamic_cast<ast::column_reference const*>(&operands[0].get())) {
-    // First operand should be column reference, second (if binary operation) should be literal.
-    auto const operator_arity = cudf::ast::detail::ast_operator_arity(op);
-    CUDF_EXPECTS(operator_arity == 1 or operator_arity == 2,
-                 "Only unary and binary operations are supported on column reference");
-    CUDF_EXPECTS(
-      operator_arity == 1 or dynamic_cast<ast::literal const*>(&operands[1].get()) != nullptr,
-      "Second operand of binary operation with column reference must be a literal");
-    v->accept(*this);
+  // Do not collect literals that dictionary pages cannot be queried for
+  if (not is_dictionary_filterable(op, _output_dtypes[col_idx], literal)) { return std::nullopt; }
 
-    // Return early if this is a unary operation
-    if (operator_arity == 1) { return expr; }
-
-    // Push to the corresponding column's literals and operators list iff EQUAL or NOT_EQUAL
-    // operator is seen
-    if (op == ast_operator::EQUAL or op == ast::ast_operator::NOT_EQUAL) {
-      auto const literal_ptr = dynamic_cast<ast::literal const*>(&operands[1].get());
-      auto const col_idx     = v->get_column_index();
-      _literals[col_idx].emplace_back(const_cast<ast::literal*>(literal_ptr));
-      _operators[col_idx].emplace_back(op);
-    }
-  } else {
-    // Visit the operands and ignore any output as we only want to collect literals and operators
-    std::ignore = visit_operands(operands);
-  }
-
-  return expr;
-}
-
-std::pair<std::vector<std::vector<ast::literal*>>, std::vector<std::vector<ast::ast_operator>>>
-dictionary_literals_collector::get_literals_and_operators() &&
-{
-  return {std::move(_literals), std::move(_operators)};
+  return _tree.push(ast::operation{op, col_ref, literal});
 }
 
 }  // namespace cudf::io::parquet::experimental::detail

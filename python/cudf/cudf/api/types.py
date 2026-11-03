@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Define common type operations."""
@@ -20,7 +20,10 @@ from pandas.api import types as pd_types  # noqa: TID251
 import pylibcudf as plc
 
 import cudf
-from cudf.core._compat import PANDAS_LT_300
+from cudf.core.dtype.validators import (
+    is_dtype_obj_numeric,
+    is_dtype_obj_string,
+)
 from cudf.core.dtypes import (  # noqa: F401
     _BaseDtype,
     _is_categorical_dtype,
@@ -35,7 +38,6 @@ from cudf.core.dtypes import (  # noqa: F401
     is_list_dtype,
     is_struct_dtype,
 )
-from cudf.utils.dtypes import CUDF_STRING_DTYPE
 
 if TYPE_CHECKING:
     from cudf.core.index import CategoricalIndex
@@ -74,7 +76,7 @@ def is_numeric_dtype(obj):
         ):
             return False
     if isinstance(obj, cudf.Index):
-        return obj._is_numeric()
+        return is_dtype_obj_numeric(obj.dtype, include_decimal=False)
     return pd_types.is_numeric_dtype(obj)
 
 
@@ -104,7 +106,7 @@ def is_string_dtype(obj):
     return (
         (
             isinstance(obj, (cudf.Index, cudf.Series))
-            and obj.dtype == CUDF_STRING_DTYPE
+            and is_dtype_obj_string(obj.dtype)
         )
         or (isinstance(obj, pd.StringDtype))
         or (
@@ -250,7 +252,7 @@ def _union_categoricals(
 
     result_col = cudf.core.column.CategoricalColumn._concat(
         [
-            cast(cudf.core.column.CategoricalColumn, obj._column)
+            cast("cudf.core.column.CategoricalColumn", obj._column)
             for obj in to_union
         ]
     )
@@ -300,7 +302,7 @@ def is_bool_dtype(arr_or_dtype):
     True
     """
     if isinstance(arr_or_dtype, cudf.Index):
-        return arr_or_dtype._is_boolean()
+        return arr_or_dtype.dtype.kind == "b"
     elif isinstance(arr_or_dtype, cudf.Series):
         if isinstance(arr_or_dtype.dtype, cudf.CategoricalDtype):
             return is_bool_dtype(arr_or_dtype=arr_or_dtype.dtype)
@@ -344,7 +346,7 @@ def is_object_dtype(arr_or_dtype):
     False
     """
     if isinstance(arr_or_dtype, cudf.Index):
-        return arr_or_dtype._is_object()
+        return is_dtype_obj_string(arr_or_dtype.dtype)
     elif isinstance(arr_or_dtype, cudf.Series):
         return pd_types.is_object_dtype(arr_or_dtype=arr_or_dtype.dtype)
     else:
@@ -384,7 +386,7 @@ def is_float_dtype(arr_or_dtype) -> bool:
     True
     """
     if isinstance(arr_or_dtype, cudf.Index):
-        return arr_or_dtype._is_floating()
+        return arr_or_dtype.dtype.kind == "f"
     return _wrap_pandas_is_dtype_api(pd_types.is_float_dtype)(arr_or_dtype)
 
 
@@ -435,7 +437,7 @@ def is_integer_dtype(arr_or_dtype) -> bool:
     False
     """
     if isinstance(arr_or_dtype, cudf.Index):
-        return arr_or_dtype._is_integer()
+        return arr_or_dtype.dtype.kind in "iu"
     return _wrap_pandas_is_dtype_api(pd_types.is_integer_dtype)(arr_or_dtype)
 
 
@@ -479,22 +481,13 @@ def is_any_real_numeric_dtype(arr_or_dtype) -> bool:
     )
 
 
-def _is_datetime64tz_dtype(obj):
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        assert PANDAS_LT_300, "Need to drop after pandas-3.0 support is added."
-        return _wrap_pandas_is_dtype_api(pd_types.is_datetime64tz_dtype)(obj)
-
-
 def is_datetime64tz_dtype(obj):
-    # Do not remove until pandas 3.0 support is added.
-    assert PANDAS_LT_300, "Need to drop after pandas-3.0 support is added."
     warnings.warn(
         "is_datetime64tz_dtype is deprecated and will be removed in a future "
         "version.",
         FutureWarning,
     )
-    return _is_datetime64tz_dtype(obj)
+    return _wrap_pandas_is_dtype_api(pd_types.is_datetime64tz_dtype)(obj)
 
 
 # TODO: The below alias is removed for now since improving cudf categorical
@@ -531,7 +524,6 @@ is_bool = pd_types.is_bool
 is_complex = pd_types.is_complex
 is_float = pd_types.is_float
 is_hashable = pd_types.is_hashable
-is_interval = pd_types.is_interval
 is_number = pd_types.is_number
 is_re = pd_types.is_re
 is_re_compilable = pd_types.is_re_compilable

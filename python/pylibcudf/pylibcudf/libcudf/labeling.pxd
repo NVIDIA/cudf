@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport int
 from libcpp.memory cimport unique_ptr
@@ -6,8 +6,8 @@ from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
-from rmm.librmm.memory_resource cimport device_memory_resource
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
 cdef extern from "cudf/labeling/label_bins.hpp" namespace "cudf" nogil:
@@ -21,6 +21,6 @@ cdef extern from "cudf/labeling/label_bins.hpp" namespace "cudf" nogil:
         inclusive left_inclusive,
         const column_view &right_edges,
         inclusive right_inclusive,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler

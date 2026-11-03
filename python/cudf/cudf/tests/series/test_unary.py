@@ -6,10 +6,8 @@ from decimal import Decimal
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-import pytest
 
 from cudf import Series, from_pandas, option_context
-from cudf.core._compat import PANDAS_GE_210
 from cudf.testing import assert_eq
 
 
@@ -47,13 +45,7 @@ def test_series_decimal_neg():
     assert_eq((-sr).to_pandas(), -psr, check_dtype=True)
 
 
-def test_series_invert_arrow_dtype(request):
-    request.applymarker(
-        pytest.mark.xfail(
-            condition=not PANDAS_GE_210,
-            reason="PyArrow-backed integer dtypes now support bitwise operations in Pandas 2.1 and above",
-        )
-    )
+def test_series_invert_arrow_dtype():
     ps = pd.Series(
         pd.arrays.ArrowExtensionArray(
             pa.array([1, 0, 1, 0, None, 2, 1, 2], type=pa.uint32())

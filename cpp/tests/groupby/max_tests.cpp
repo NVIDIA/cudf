@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 
 #include <limits>
@@ -30,7 +30,7 @@ TYPED_TEST_SUITE(groupby_max_test, cudf::test::FixedWidthTypesWithoutFixedPoint)
 TYPED_TEST(groupby_max_test, basic)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MAX>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -48,7 +48,7 @@ TYPED_TEST(groupby_max_test, basic)
 TYPED_TEST(groupby_max_test, empty_cols)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MAX>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> vals{};
@@ -66,7 +66,7 @@ TYPED_TEST(groupby_max_test, empty_cols)
 TYPED_TEST(groupby_max_test, zero_valid_keys)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MAX>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys({1, 2, 3}, all_nulls());
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5});
@@ -84,7 +84,7 @@ TYPED_TEST(groupby_max_test, zero_valid_keys)
 TYPED_TEST(groupby_max_test, zero_valid_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MAX>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5}, all_nulls());
@@ -102,7 +102,7 @@ TYPED_TEST(groupby_max_test, zero_valid_values)
 TYPED_TEST(groupby_max_test, null_keys_and_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MAX>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys(
     {1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
@@ -143,7 +143,7 @@ TEST_F(groupby_max_string_test, basic)
 TEST_F(groupby_max_string_test, zero_valid_values)
 {
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
-  cudf::test::strings_column_wrapper vals({"año", "bit", "₹1"}, all_nulls());
+  cudf::test::strings_column_wrapper vals({"", "", ""}, all_nulls());
 
   cudf::test::fixed_width_column_wrapper<K> expect_keys{1};
   cudf::test::strings_column_wrapper expect_vals({""}, all_nulls());
@@ -482,12 +482,7 @@ TEST_F(groupby_max_list_test, null_keys_and_values)
 
   // Null child element.
   {
-    auto const vals        = lists{lists{{0, null}, null_at(1)},
-                            lists{1, 2},
-                            lists{3, 4},
-                            lists{5, 6, 7},
-                            lists{0, 8},
-                            lists{9, 10}};
+    auto const vals = lists{{{0, null}, null_at(1)}, {1, 2}, {3, 4}, {5, 6, 7}, {0, 8}, {9, 10}};
     auto const expect_vals = lists{{0, 8}, {9, 10}, {3, 4}};
     test_single_agg(keys,
                     vals,
@@ -516,7 +511,7 @@ TYPED_TEST(groupby_max_floating_point_test, values_with_infinity)
   auto const expected_keys = int32s_col{1, 2};
   auto const expected_vals = floats_col{inf, static_cast<T>(2)};
 
-  // Related issue: https://github.com/rapidsai/cudf/issues/11352
+  // Related issue: https://github.com/NVIDIA/cudf/issues/11352
   // The issue only occurs in sort-based cudf::aggregation.
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   test_single_agg(
@@ -569,6 +564,27 @@ TEST_F(groupby_max_hash_based_shmem_kernel_test, all_unique_keys)
   auto agg = cudf::make_max_aggregation<cudf::groupby_aggregation>();
   // Keys are the same as values.
   test_single_agg(keys, keys, expect_keys, expect_keys, std::move(agg));
+
+  cudf::test::fixed_width_column_wrapper<int> nullable_keys(
+    h_keys.begin(), h_keys.end(), null_at(0));
+  cudf::test::fixed_width_column_wrapper<int> nullable_values(
+    h_keys.begin(), h_keys.end(), null_at(1));
+  cudf::test::fixed_width_column_wrapper<int> excluded_keys(
+    h_keys.begin() + 1, h_keys.end(), no_nulls());
+  cudf::test::fixed_width_column_wrapper<int> excluded_values(
+    h_keys.begin() + 1, h_keys.end(), null_at(0));
+
+  // Including the null key keeps every row as a group; excluding it must omit that row.
+  for (auto null_handling : {cudf::null_policy::INCLUDE, cudf::null_policy::EXCLUDE}) {
+    auto const include_null = null_handling == cudf::null_policy::INCLUDE;
+    test_single_agg(nullable_keys,
+                    nullable_values,
+                    include_null ? nullable_keys : excluded_keys,
+                    include_null ? nullable_values : excluded_values,
+                    cudf::make_max_aggregation<cudf::groupby_aggregation>(),
+                    force_use_sort_impl::NO,
+                    null_handling);
+  }
 }
 
 TEST_F(groupby_max_hash_based_shmem_kernel_test, repeated_keys)

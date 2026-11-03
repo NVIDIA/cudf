@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,11 +13,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 
 namespace cudf {
 namespace strings {
@@ -48,7 +48,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
                                    size_type source_begin,
                                    size_type source_end,
                                    size_type target_begin,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   auto target_end = target_begin + (source_end - source_begin);
@@ -66,11 +66,11 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   // create null mask
   auto [null_mask, null_count] = [&] {
     if (!target.parent().nullable() && !source.parent().nullable()) {
-      return std::pair(rmm::device_buffer{}, 0);
+      return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
     }
     return cudf::detail::valid_if(
-      thrust::make_counting_iterator<size_type>(0),
-      thrust::make_counting_iterator<size_type>(target.size()),
+      cuda::counting_iterator<size_type>{0},
+      cuda::counting_iterator<size_type>{target.size()},
       [d_source, d_target, source_begin, target_begin, target_end] __device__(size_type idx) {
         return (idx >= target_begin && idx < target_end)
                  ? d_source.is_valid(source_begin + (idx - target_begin))
@@ -91,13 +91,13 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr);
   auto d_chars    = chars_data.data();
   thrust::for_each(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator(target.size()),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{target.size()},
     [d_source, d_target, source_begin, target_begin, target_end, d_offsets, d_chars] __device__(
       size_type idx) {
       if (d_offsets[idx + 1] - d_offsets[idx] > 0) {
-        const auto source = (idx >= target_begin && idx < target_end)
+        auto const source = (idx >= target_begin && idx < target_end)
                               ? d_source.element<string_view>(source_begin + (idx - target_begin))
                               : d_target.element<string_view>(idx);
         memcpy(d_chars + d_offsets[idx], source.data(), source.size_bytes());

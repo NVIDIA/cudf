@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -8,17 +8,14 @@ import pytest
 
 import polars as pl
 
-import pylibcudf as plc
-
-from cudf_polars import Translator
-from cudf_polars.dsl.ir import IRExecutionContext
-from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.utils.versions import POLARS_VERSION_LT_135
+from cudf_polars.testing.asserts import (
+    assert_gpu_result_equal,
+)
 
 
 @pytest.mark.parametrize("descending", [False, True])
 @pytest.mark.parametrize("nulls_last", [False, True])
-def test_sort_expression(descending, nulls_last):
+def test_sort_expression(engine: pl.GPUEngine, descending, nulls_last):
     ldf = pl.LazyFrame(
         {
             "a": [5, -1, 3, 4, None, 8, 6, 7, None],
@@ -26,7 +23,7 @@ def test_sort_expression(descending, nulls_last):
     )
 
     query = ldf.select(pl.col("a").sort(descending=descending, nulls_last=nulls_last))
-    assert_gpu_result_equal(query)
+    assert_gpu_result_equal(query, engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -36,7 +33,9 @@ def test_sort_expression(descending, nulls_last):
     "nulls_last", itertools.combinations_with_replacement([False, True], 3)
 )
 @pytest.mark.parametrize("maintain_order", [False, True], ids=["unstable", "stable"])
-def test_sort_by_expression(descending, nulls_last, maintain_order):
+def test_sort_by_expression(
+    engine: pl.GPUEngine, descending, nulls_last, maintain_order
+):
     ldf = pl.LazyFrame(
         {
             "a": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
@@ -55,41 +54,64 @@ def test_sort_by_expression(descending, nulls_last, maintain_order):
             maintain_order=maintain_order,
         )
     )
-    assert_gpu_result_equal(query, check_row_order=maintain_order)
+    assert_gpu_result_equal(query, engine=engine, check_row_order=maintain_order)
+
+
+@pytest.mark.parametrize(
+    "scalar_key", [pl.lit(1), pl.col("b").max()], ids=["literal", "aggregation"]
+)
+def test_sort_by_scalar_key(engine: pl.GPUEngine, scalar_key):
+    ldf = pl.LazyFrame({"a": [3, 1, 2, 5, 4], "b": [2, 1, 2, 1, 2]})
+    query = ldf.select(
+        pl.col("a").sort_by(scalar_key, pl.col("b"), maintain_order=True)
+    )
+    assert_gpu_result_equal(query, engine=engine)
 
 
 @pytest.mark.parametrize("descending", [False, True])
 @pytest.mark.parametrize("nulls_last", [False, True])
-def test_setsorted(request, descending, nulls_last, with_nulls):
-    if not POLARS_VERSION_LT_135:
-        request.applymarker(
-            pytest.mark.xfail(reason="See https://github.com/pola-rs/polars/pull/24981")
-        )
-    values = sorted([1, 2, 3, 4, 5, 6, -2], reverse=descending)
-    if with_nulls:
+@pytest.mark.parametrize("with_nulls", ["no_nulls", "nulls"])
+def test_setsorted(engine: pl.GPUEngine, descending, nulls_last, with_nulls):
+    sorted_values = sorted([1, 2, 3, 4, 5, 6, -2], reverse=descending)
+    values: list[int | None] = [*sorted_values]
+    if with_nulls == "nulls":
         values[-1 if nulls_last else 0] = None
-    df = pl.LazyFrame({"a": values})
+    ldf = pl.LazyFrame({"a": values})
 
-    q = df.set_sorted("a", descending=descending)
+    q = ldf.set_sorted("a", descending=descending)
 
-    assert_gpu_result_equal(q)
-    translator = Translator(q._ldf.visit(), pl.GPUEngine())
+    assert_gpu_result_equal(q, engine=engine)
 
-    df = translator.translate_ir().evaluate(
-        cache={},
-        timer=None,
-        context=IRExecutionContext.from_config_options(translator.config_options),
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_setsorted_expr_with_nulls(engine: pl.GPUEngine, descending, nulls_last):
+    sorted_values = sorted([1, 2, 3, 4, 5], reverse=descending)
+    values: list[int | None] = [*sorted_values]
+    if nulls_last:
+        values.append(None)
+    else:
+        values.insert(0, None)
+    ldf = pl.LazyFrame({"a": values})
+    q = ldf.select(pl.col("a").set_sorted(descending=descending))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_arg_sort_expression(engine: pl.GPUEngine, descending, nulls_last):
+    ldf = pl.LazyFrame(
+        {
+            "a": [5, -1, 3, 4, None, 8, 6, 7, None, 3],
+        }
     )
-
-    a = df.column_map["a"]
-
-    assert a.is_sorted == plc.types.Sorted.YES
-    null_order = (
-        plc.types.NullOrder.AFTER
-        if (descending ^ nulls_last) and with_nulls
-        else plc.types.NullOrder.BEFORE
+    query = ldf.select(
+        pl.col("a").arg_sort(descending=descending, nulls_last=nulls_last)
     )
-    assert a.null_order == null_order
-    assert a.order == (
-        plc.types.Order.DESCENDING if descending else plc.types.Order.ASCENDING
-    )
+    assert_gpu_result_equal(query, engine=engine)
+
+
+def test_sort_concat_filtered_to_empty(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3]})
+    q = pl.concat([df.filter(pl.col("a") == 0), df.filter(pl.col("a") == 4)]).sort("a")
+    assert_gpu_result_equal(q, engine=engine)

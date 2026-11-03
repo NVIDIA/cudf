@@ -1,19 +1,18 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "cudf/aggregation.hpp"
-#include "cudf/detail/aggregation/aggregation.hpp"
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 #include <benchmarks/common/table_utilities.hpp>
 
+#include <cudf/aggregation.hpp>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/reduction.hpp>
-#include <cudf/reduction/detail/histogram.hpp>
 #include <cudf/types.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -37,12 +36,15 @@ static void nvbench_reduction_histogram(nvbench::state& state, nvbench::type_lis
                                  .cardinality(cardinality)
                                  .distribution(dtype, distribution_id::UNIFORM, 0, num_rows);
 
-  auto const input = create_random_column(dtype, row_count{num_rows}, profile);
-  auto agg         = cudf::make_histogram_aggregation<cudf::reduce_aggregation>();
+  auto const input            = create_random_column(dtype, row_count{num_rows}, profile);
+  auto agg                    = cudf::make_histogram_aggregation<cudf::reduce_aggregation>();
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    rmm::cuda_stream_view stream_view{launch.get_stream()};
+    cuda::stream_ref stream_view{launch.get_stream()};
     auto result = cudf::reduce(*input, *agg, input->type(), stream_view);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   state.add_element_count(input->size());
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,7 +20,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <string>
@@ -43,7 +43,7 @@ class writer::impl {
   /**
    * @brief Constructor with writer options.
    *
-   * @param sink data_sink's for storing dataset
+   * @param sinks data_sink's for storing dataset
    * @param options Settings for controlling behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -51,12 +51,12 @@ class writer::impl {
   explicit impl(std::vector<std::unique_ptr<data_sink>> sinks,
                 parquet_writer_options const& options,
                 cudf::io::detail::single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Constructor with chunked writer options.
    *
-   * @param sink data_sink's for storing dataset
+   * @param sinks data_sink's for storing dataset
    * @param options Settings for controlling behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -64,7 +64,7 @@ class writer::impl {
   explicit impl(std::vector<std::unique_ptr<data_sink>> sinks,
                 chunked_parquet_writer_options const& options,
                 cudf::io::detail::single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Destructor to complete any incomplete write and release resources.
@@ -104,9 +104,11 @@ class writer::impl {
   /**
    * @brief Finishes the chunked/streamed write process.
    *
-   * @param[in] column_chunks_file_path Column chunks file path to be set in the raw output metadata
-   * @return A parquet-compatible blob that contains the data for all rowgroups in the list only if
-   * `column_chunks_file_path` is provided, else null.
+   * @param[in] column_chunks_file_path Column chunks file path to be set in the raw output
+   * metadata
+   * @return A parquet-compatible blob that contains the file header and footer metadata. If
+   * `column_chunks_file_path` is non-empty, the output metadata blob will also have row group file
+   * paths set.
    */
   std::unique_ptr<std::vector<uint8_t>> close(
     std::vector<std::string> const& column_chunks_file_path = {});
@@ -135,7 +137,7 @@ class writer::impl {
                                   host_span<uint8_t> bounce_buffer);
 
   // Cuda stream to be used
-  rmm::cuda_stream_view _stream;
+  cuda::stream_ref _stream;
 
   // Writer options.
   compression_type const _compression;

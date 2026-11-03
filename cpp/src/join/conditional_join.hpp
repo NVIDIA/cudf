@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,7 +11,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -25,8 +25,11 @@ namespace detail {
  * @param left  Table of left columns to join
  * @param right Table of right  columns to join
  * tables have been flipped, meaning the output indices should also be flipped
+ * @param binary_predicate The predicate expression to evaluate
  * @param JoinKind The type of join to be performed
+ * @param output_size Optional pre-computed output size
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned device memory
  *
  * @return Join output indices vector pair
  */
@@ -37,7 +40,7 @@ conditional_join(table_view const& left,
                  ast::expression const& binary_predicate,
                  join_kind JoinKind,
                  std::optional<std::size_t> output_size,
-                 rmm::cuda_stream_view stream,
+                 cuda::stream_ref stream,
                  rmm::device_async_resource_ref mr);
 
 /**
@@ -47,8 +50,10 @@ conditional_join(table_view const& left,
  * @param left  Table of left columns to join
  * @param right Table of right  columns to join
  * tables have been flipped, meaning the output indices should also be flipped
+ * @param binary_predicate The predicate expression to evaluate
  * @param JoinKind The type of join to be performed
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned device memory
  *
  * @return Join output indices vector pair
  */
@@ -56,7 +61,7 @@ std::size_t compute_conditional_join_output_size(table_view const& left,
                                                  table_view const& right,
                                                  ast::expression const& binary_predicate,
                                                  join_kind JoinKind,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr);
 
 }  // namespace detail

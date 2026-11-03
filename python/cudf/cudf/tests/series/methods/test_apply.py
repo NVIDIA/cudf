@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 
@@ -6,17 +6,18 @@ import numpy as np
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.core.udf.utils import precompiled
 from cudf.testing import assert_eq
 
 
-def run_masked_udf_series(func, data, args=(), **kwargs):
+def run_masked_udf_series(func, data, args=(), nullable=True, **kwargs):
     gsr = data
-    psr = data.to_pandas(nullable=True)
+    psr = data.to_pandas(nullable=nullable)
 
     expect = psr.apply(func, args=args)
-    obtain = gsr.apply(func, args=args)
+    obtain = gsr.apply(func, args=args).to_pandas(nullable=nullable)
+    if "check_dtype" in kwargs and not kwargs.get("check_dtype", True):
+        obtain = obtain.astype(expect.dtype, errors="ignore")
     assert_eq(expect, obtain, **kwargs)
 
 
@@ -137,7 +138,6 @@ def test_masked_udf_scalar_args_binops_multiple_series(
                 operator.gt,
                 operator.ge,
             ]
-            and PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION
             and data.dtype.kind != "b",
             reason="https://github.com/pandas-dev/pandas/issues/57390",
         )
@@ -182,7 +182,6 @@ def test_series_apply_basic(data, name):
 
 
 @pytest.mark.xfail(
-    PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION,
     reason="https://github.com/pandas-dev/pandas/issues/57390",
 )
 def test_series_apply_null_conditional():
@@ -206,7 +205,6 @@ def test_series_arith_masked_vs_masked(arithmetic_op):
 
 
 @pytest.mark.xfail(
-    PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION,
     reason="https://github.com/pandas-dev/pandas/issues/57390",
 )
 def test_series_compare_masked_vs_masked(comparison_op):
@@ -236,7 +234,7 @@ def test_series_arith_masked_vs_constant(request, arithmetic_op, constant):
                 constant is cudf.NA
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_series(func, data, check_dtype=False)
@@ -260,14 +258,13 @@ def test_series_arith_masked_vs_constant_reflected(
                 constant in {1}
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_series(func, data, check_dtype=False)
 
 
 @pytest.mark.xfail(
-    PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION,
     reason="https://github.com/pandas-dev/pandas/issues/57390",
 )
 def test_series_masked_is_null_conditional():

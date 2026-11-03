@@ -2,10 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pandas as pd
 
 import cudf
@@ -19,6 +17,8 @@ from cudf.core.groupby.groupby import (
 )
 
 if TYPE_CHECKING:
+    import pylibcudf as plc
+
     from cudf._typing import DataFrameOrSeries
     from cudf.core.index import Index
 
@@ -30,6 +30,19 @@ class _Resampler(GroupBy):
         by = _ResampleGrouping(obj, by)
         super().__init__(obj, by=by)
 
+    def _restore_freq(self, result: DataFrameOrSeries) -> DataFrameOrSeries:
+        if self.grouping._freq is not None and isinstance(
+            result.index, cudf.DatetimeIndex
+        ):
+            if result is self.obj:
+                result = result.copy(deep=False)
+            result.index = cudf.DatetimeIndex._from_column(
+                result.index._column,
+                name=result.index.name,
+                freq=self.grouping._freq,
+            )
+        return result
+
     def agg(self, func, *args, engine=None, engine_kwargs=None, **kwargs):
         result = super().agg(
             func, *args, engine=engine, engine_kwargs=engine_kwargs, **kwargs
@@ -38,21 +51,46 @@ class _Resampler(GroupBy):
             index = cudf.Index(
                 self.grouping.bin_labels, name=self.grouping.names[0]
             )
-            return result._align_to_index(
-                index, how="right", sort=False, allow_non_unique=True
+            return self._restore_freq(
+                result._align_to_index(
+                    index, how="right", sort=False, allow_non_unique=True
+                )
             )
         else:
-            return result.sort_index()
+            return self._restore_freq(result.sort_index())
 
     def asfreq(self):
-        return self.obj._align_to_index(
-            self.grouping.bin_labels,
-            how="right",
-            sort=False,
-            allow_non_unique=True,
+        return self._restore_freq(
+            self.obj._align_to_index(
+                self.grouping.bin_labels,
+                how="right",
+                sort=False,
+                allow_non_unique=True,
+            )
         )
 
-    def _scan_fill(self, method: str, limit: int) -> DataFrameOrSeries:
+    def size(self):
+        # GroupBy.size bypasses _Resampler.agg and so doesn't pick up the
+        # bin-label freq. Re-align to the full set of bins (filling empty
+        # buckets with 0, since size is non-null in pandas) and re-attach
+        # the freq.
+        result = super().size()
+        if len(self.grouping.bin_labels) != len(result):
+            index = cudf.Index(
+                self.grouping.bin_labels, name=self.grouping.names[0]
+            )
+            result = (
+                result._align_to_index(
+                    index, how="right", sort=False, allow_non_unique=True
+                )
+                .fillna(0)
+                .astype(result.dtype)
+            )
+        return self._restore_freq(result.sort_index())
+
+    def _scan_fill(
+        self, method: plc.replace.ReplacePolicy, limit: int | None
+    ) -> DataFrameOrSeries:
         # TODO: can this be more efficient?
 
         # first, compute the outer join between `self.obj` and the `bin_labels`
@@ -64,18 +102,17 @@ class _Resampler(GroupBy):
             allow_non_unique=True,
         )
 
-        # fill the gaps:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            filled = upsampled.fillna(method=method)
+        filled = upsampled._fillna(method=method, limit=limit)
 
         # filter the result to only include the values corresponding
         # to the bin labels:
-        return filled._align_to_index(
-            self.grouping.bin_labels,
-            how="right",
-            sort=False,
-            allow_non_unique=True,
+        return self._restore_freq(
+            filled._align_to_index(
+                self.grouping.bin_labels,
+                how="right",
+                sort=False,
+                allow_non_unique=True,
+            )
         )
 
     def serialize(self):
@@ -164,6 +201,7 @@ class _ResampleGrouping(_Grouping):
         return out
 
     def _handle_frequency_grouper(self, by):
+        from pandas.tseries.offsets import Day
         # if `by` is a time frequency grouper, we bin the key column
         # using bin intervals specified by `by.freq`, then use *that*
         # as the groupby key
@@ -221,6 +259,13 @@ class _ResampleGrouping(_Grouping):
             closed=closed,
         )
 
+        # Track the natural end before adding the safety margin.
+        # When closed='right' and max_date falls exactly on a bin right
+        # boundary, _get_timestamp_range_edges returns end == max_date
+        # (the "already the end of the road" case in _adjust_dates_anchored).
+        # In that case pandas includes one trailing empty bin, so we must too.
+        natural_end = end
+
         # in some cases, an extra time stamp is required in order to
         # bin all the values. It's OK if we generate more labels than
         # we need, as we remove any unused labels below
@@ -233,26 +278,12 @@ class _ResampleGrouping(_Grouping):
             freq=freq,
         )
 
-        # We want the (resampled) column of timestamps in the result
-        # to have a resolution closest to the resampling
-        # frequency. For example, if resampling from '1T' to '1s', we
-        # want the resulting timestamp column to by of dtype
-        # 'datetime64[s]'.  libcudf requires the bin labels and key
-        # column to have the same dtype, so we compute a `result_type`
+        # Pandas resample preserves the input column's resolution, so the
+        # resulting timestamp column should match `key_column.dtype` rather
+        # than be derived from the offset. libcudf requires the bin labels
+        # and key column to share a dtype, so we compute a `result_type`
         # and cast them both to that type.
-        if offset.rule_code.lower() in {"d", "h"}:
-            # unsupported resolution (we don't support resolutions >s)
-            result_type = np.dtype("datetime64[s]")
-        else:
-            try:
-                result_type = np.dtype(f"datetime64[{offset.rule_code}]")
-                # TODO: Ideally, we can avoid one cast by having `date_range`
-                # generate timestamps of a given dtype.  Currently, it can
-                # only generate timestamps with 'ns' precision
-            except TypeError:
-                # unsupported resolution (we don't support resolutions >s)
-                # fall back to using datetime64[s]
-                result_type = np.dtype("datetime64[s]")
+        result_type = key_column.dtype
         cast_key_column = key_column.astype(result_type)
         cast_bin_labels = bin_labels.astype(result_type)
 
@@ -269,8 +300,19 @@ class _ResampleGrouping(_Grouping):
         else:
             cast_bin_labels = cast_bin_labels[:-1]
 
-        # if we have more labels than bins, remove the extras labels:
+        # if we have more labels than bins, remove the extra labels.
+        # When closed='right' and max_date was exactly on a bin right boundary
+        # (natural_end == max_date), include one trailing empty bin to match
+        # pandas behavior. This only applies to Day offsets; sub-day Tick
+        # offsets (e.g. Second) do not exhibit this behaviour.
+
         nbins = bin_numbers.max() + 1
+        if (
+            isinstance(offset, Day)
+            and closed == "right"
+            and natural_end == pd.Timestamp(max_date)
+        ):
+            nbins = min(nbins + 1, len(cast_bin_labels))
         if len(cast_bin_labels) > nbins:
             cast_bin_labels = cast_bin_labels[:nbins]
 
@@ -329,7 +371,7 @@ def _get_timestamp_range_edges(
     """
     from pandas.tseries.offsets import Day, Tick
 
-    if isinstance(freq, Tick):
+    if isinstance(freq, (Tick, Day)):
         index_tz = first.tz
         if isinstance(origin, pd.Timestamp) and (origin.tz is None) != (
             index_tz is None

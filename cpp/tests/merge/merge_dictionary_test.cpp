@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,13 +30,12 @@ TEST_F(MergeDictionaryTest, Merge1Column)
   std::vector<cudf::order> column_order{cudf::order::ASCENDING};
   std::vector<cudf::null_order> null_precedence{};
 
-  auto result = cudf::merge({left_view, right_view}, key_cols, column_order, null_precedence);
+  auto result  = cudf::merge({left_view, right_view}, key_cols, column_order, null_precedence);
+  auto decoded = cudf::dictionary::decode(result->view().column(0));
 
-  cudf::test::strings_column_wrapper expected_w(
+  auto expected = cudf::test::strings_column_wrapper(
     {"ab", "ab", "ab", "cd", "cd", "de", "de", "de", "fg", "fg", "gh", "gh", "gh"});
-  auto expected = cudf::dictionary::encode(expected_w);
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->get_column(0).view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
 }
 
 TEST_F(MergeDictionaryTest, Merge2Columns)

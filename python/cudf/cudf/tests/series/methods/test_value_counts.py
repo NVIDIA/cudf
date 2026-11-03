@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from string import ascii_letters, digits
 
@@ -138,12 +138,30 @@ def test_series_value_counts_optional_arguments(ascending, dropna, normalize):
     )
 
 
-def test_series_categorical_missing_value_count():
-    ps = pd.Series(pd.Categorical(list("abcccb"), categories=list("cabd")))
+@pytest.mark.parametrize(
+    "categorical",
+    [
+        # No nulls
+        pd.Categorical(list("abcccb"), categories=list("cabd")),
+        # With nulls (used to drop the NaN group when ``dropna=False``)
+        pd.Categorical(
+            [*list("aaaaa"), None, *list("bbbcc")], categories=list("abc")
+        ),
+        # With nulls + ordered (used to lose the ``ordered`` flag too)
+        pd.Categorical(
+            [*list("aaaa"), None, *list("bbbcc")],
+            categories=list("bac"),
+            ordered=True,
+        ),
+    ],
+    ids=["no-nulls", "with-nulls", "with-nulls-ordered"],
+)
+def test_series_categorical_missing_value_count(categorical, dropna):
+    ps = pd.Series(categorical)
     gs = cudf.from_pandas(ps)
 
-    expected = ps.value_counts()
-    actual = gs.value_counts()
+    expected = ps.value_counts(dropna=dropna)
+    actual = gs.value_counts(dropna=dropna)
 
     assert_eq(expected, actual, check_dtype=False)
 
@@ -172,4 +190,61 @@ def test_numeric_alpha_value_counts():
         pdf.alpha.value_counts().sort_index(),
         gdf.alpha.value_counts().sort_index(),
         check_dtype=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        "Float32",
+        "Float64",
+        "Int8",
+        "Int16",
+        "Int32",
+        "Int64",
+        "UInt8",
+        "UInt16",
+        "UInt32",
+        "UInt64",
+        "boolean",
+    ],
+)
+def test_value_counts_empty_pandas_nullable(dtype, normalize, dropna):
+    psr = pd.Series([], dtype=dtype)
+    gsr = cudf.from_pandas(psr)
+
+    expected = psr.value_counts(dropna=dropna, normalize=normalize)
+    got = gsr.value_counts(dropna=dropna, normalize=normalize)
+
+    assert_eq(expected, got, check_dtype=True, check_index_type=True)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["Float64", "Int64", "UInt32", "boolean"],
+)
+def test_value_counts_all_null_pandas_nullable(dtype, normalize, dropna):
+    psr = pd.Series([pd.NA, pd.NA, pd.NA], dtype=dtype)
+    gsr = cudf.from_pandas(psr)
+
+    expected = psr.value_counts(dropna=dropna, normalize=normalize)
+    got = gsr.value_counts(dropna=dropna, normalize=normalize)
+
+    assert_eq(
+        expected.sort_index(),
+        got.sort_index(),
+        check_dtype=True,
+        check_index_type=True,
+    )
+
+
+def test_value_counts_first_appearance_order(sort):
+    # pandas returns groups in order of first appearance with sort=False
+    # and keeps that order for equal counts with sort=True (GH 63155).
+    arr = np.random.default_rng(2).integers(0, 32, 64)
+    psr = pd.Series(arr)
+    gsr = cudf.Series(arr)
+    assert_eq(
+        psr.value_counts(sort=sort),
+        gsr.value_counts(sort=sort),
     )

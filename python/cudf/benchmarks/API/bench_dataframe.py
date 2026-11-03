@@ -322,6 +322,14 @@ def bench_groupby_sample(
     benchmark(grouper.sample, **kwargs)
 
 
+@benchmark_with_object(cls="dataframe", dtype="float", nulls=False, cols=6)
+@pytest.mark.parametrize("num_key_cols", [1, 2])
+@pytest.mark.parametrize("q", [0.5, [0.25, 0.5, 0.75]])
+def bench_groupby_quantile(benchmark, dataframe, num_key_cols, q):
+    grouper = dataframe.groupby(by=list(dataframe.columns[:num_key_cols]))
+    benchmark(grouper.quantile, q)
+
+
 @benchmark_with_object(cls="dataframe", dtype="int")
 @pytest.mark.parametrize("num_cols_to_sort", [1])
 def bench_sort_values(benchmark, dataframe, num_cols_to_sort):

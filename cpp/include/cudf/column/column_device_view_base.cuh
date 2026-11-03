@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include <cudf/column/column_child_offsets.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -11,11 +12,9 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/algorithm>
 #include <cuda/std/optional>
 #include <cuda/std/type_traits>
-
-#include <algorithm>
-#include <type_traits>
 
 /**
  * @file column_device_view_base.cuh
@@ -63,22 +62,45 @@ struct nullate {
   };
 };
 
+/**
+ * @brief A type tag to specify that a column should be treated as a dictionary column
+ *
+ * @tparam IndexType The type of the dictionary indices
+ * @tparam KeyType The type of the dictionary keys
+ */
+template <typename IndexType, typename KeyType>
+  requires(is_index_type<IndexType>() && is_relationally_comparable<KeyType, KeyType>())
+struct dictionary_element {
+  using index_type = IndexType;  ///< The type of the dictionary indices
+  using key_type   = KeyType;    ///< The type of the dictionary keys
+
+  key_type key{};  ///< The dictionary key for this element
+};
+
+/**
+ * @brief A type trait to determine if a type is a dictionary encoded type.
+ * @tparam T The type to check
+ */
+template <typename T>
+inline constexpr bool is_dictionary_encoded = false;
+
+/**
+ * @brief A type trait to determine if a type is a dictionary encoded type.
+ * @tparam IndexType The type of the dictionary indices
+ * @tparam KeyType The type of the dictionary keys
+ */
+template <typename IndexType, typename KeyType>
+inline constexpr bool is_dictionary_encoded<dictionary_element<IndexType, KeyType>> = true;
+
 namespace detail {
 /**
  * @brief An immutable, non-owning view of device data as a column of elements
  * that is trivially copyable and usable in CUDA device code.
- *
- * column_device_view_base and derived classes do not support has_nulls() or
- * null_count().  The primary reason for this is that creation of column_device_views
- * from column_views that have UNKNOWN null counts would require an on-the-spot, and
- * not-obvious computation of null count, which could lead to undesirable performance issues.
- * This information is also generally not needed in device code, and on the host-side
- * is easily accessible from the associated column_view.
  */
 class alignas(16) column_device_view_base {
  public:
-  // TODO: merge this offsets column index with `strings_column_view::offsets_column_index`
-  static constexpr size_type offsets_column_index{0};  ///< Child index of the offsets column
+  static constexpr size_type offsets_column_index =
+    cudf::offsets_column_index;  ///< Child index of the offsets column
 
   column_device_view_base()                               = delete;
   ~column_device_view_base()                              = default;
@@ -110,7 +132,7 @@ class alignas(16) column_device_view_base {
    * This function will only participate in overload resolution if `is_rep_layout_compatible<T>()`
    * or `std::is_same_v<T,void>` are true.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,
@@ -276,10 +298,13 @@ class alignas(16) column_device_view_base {
   data_type _type{type_id::EMPTY};   ///< Element type
   cudf::size_type _size{};           ///< Number of elements
   void const* _data{};               ///< Pointer to device memory containing elements
+  size_type _null_count{};           ///< The number of nulls
   bitmask_type const* _null_mask{};  ///< Pointer to device memory containing
                                      ///< bitmask representing null elements.
   size_type _offset{};               ///< Index position of the first element.
                                      ///< Enables zero-copy slicing
+  void* _children{};                 ///< Array of `column_device_view` objects in device memory.
+  size_type _num_children{};         ///< The number of child columns
 
   /**
    * @brief Constructs a column with the specified type, size, data, nullmask and offset.
@@ -287,27 +312,34 @@ class alignas(16) column_device_view_base {
    * @param type The type of the column
    * @param size The number of elements in the column
    * @param data Pointer to device memory containing elements
+   * @param null_count The number of nulls in the column
    * @param null_mask Pointer to device memory containing bitmask representing valid elements
    * @param offset Index position of the first element
+   * @param children Pointer to device memory containing child `column_device_view` objects
+   * @param num_children The number of child columns
    */
   CUDF_HOST_DEVICE column_device_view_base(data_type type,
                                            size_type size,
                                            void const* data,
+                                           size_type null_count,
                                            bitmask_type const* null_mask,
-                                           size_type offset)
-    : _type{type}, _size{size}, _data{data}, _null_mask{null_mask}, _offset{offset}
+                                           size_type offset,
+                                           void* children,
+                                           size_type num_children)
+    : _type{type},
+      _size{size},
+      _data{data},
+      _null_count{null_count},
+      _null_mask{null_mask},
+      _offset{offset},
+      _children{children},
+      _num_children{num_children}
   {
   }
 
-  template <typename C, typename T, typename = void>
-  struct has_element_accessor_impl : cuda::std::false_type {};
-
   template <typename C, typename T>
-  struct has_element_accessor_impl<
-    C,
-    T,
-    void_t<decltype(cuda::std::declval<C>().template element<T>(cuda::std::declval<size_type>()))>>
-    : cuda::std::true_type {};
+  static constexpr bool has_element_accessor_impl =
+    requires { cuda::std::declval<C>().template element<T>(cuda::std::declval<size_type>()); };
 };
 // @cond
 // Forward declaration
@@ -332,6 +364,9 @@ struct mutable_value_accessor;
  */
 class alignas(16) column_device_view_core : public detail::column_device_view_base {
  public:
+  static constexpr bool is_mutable =
+    false;  ///< Indicates whether this view allows mutation of the underlying data
+
   column_device_view_core()                               = delete;
   ~column_device_view_core()                              = default;
   column_device_view_core(column_device_view_core const&) = default;  ///< Copy constructor
@@ -382,14 +417,17 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
     return column_device_view_core{this->type(),
                                    size,
                                    this->head(),
+                                   this->null_count(),
                                    this->null_mask(),
                                    this->offset() + offset,
-                                   d_children,
+                                   static_cast<column_device_view_core*>(_children),
                                    this->num_child_columns()};
   }
 
   /**
    * @brief Returns a copy of the element at the specified index
+   *
+   * Boolean values are normalized: zero is false and any nonzero byte is true.
    *
    * If the element at the specified index is NULL, i.e.,
    * `is_null(element_index) == true`, then any attempt to use the result will
@@ -408,7 +446,13 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
-    return data<T>()[element_index];
+    if constexpr (cuda::std::is_same_v<cuda::std::remove_cv_t<T>, bool>) {
+      // BOOL8 permits any nonzero byte for true. Read the storage as a byte before converting
+      // to bool, since loading a noncanonical representation as bool is undefined behavior.
+      return data<uint8_t>()[element_index] != 0;
+    } else {
+      return data<T>()[element_index];
+    }
   }
 
   /**
@@ -454,6 +498,49 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
   }
 
   /**
+   * @brief Returns a decoded copy of the element at the specified index.
+   *
+   * If the element at the specified index is NULL, i.e.,
+   * `is_null(element_index) == true`, then any attempt to use the result will
+   * lead to undefined behavior.
+   *
+   * This function accounts for the offset.
+   *
+   * This function does not participate in overload resolution if `is_dictionary_encoded<T>` is
+   * false.
+   *
+   * @tparam T The element type, e.g., `dictionary_element<int32_t, float>` for a dictionary column
+   * with `int32_t` indices and `float` keys
+   * @param element_index Position of the desired element
+   * @return The element at the specified index
+   */
+  template <typename T, CUDF_ENABLE_IF(is_dictionary_encoded<T>)>
+  [[nodiscard]] __device__ decltype(auto) element(size_type element_index) const noexcept
+  {
+    auto const& indices = child(dictionary_indices_column_index);
+    auto const& keys    = child(dictionary_keys_column_index);
+    auto const index    = indices.template element<typename T::index_type>(
+      element_index + offset());  // account for this view's _offset
+    return keys.template element<typename T::key_type>(index);
+  }
+
+  /**
+   * @brief Returns a nullable element at the specified index. If the element is null, returns
+   * `nullopt`.
+   *
+   * @param element_index Position of the desired element
+   * @return `optional` containing the element at the specified index, or `nullopt` if the element
+   * is null
+   */
+  template <typename T>
+  [[nodiscard]] __device__ cuda::std::optional<T> nullable_element(
+    size_type element_index) const noexcept
+  {
+    if (is_null(element_index)) { return cuda::std::nullopt; }
+    return element<T>(element_index);
+  }
+
+  /**
    * @brief Returns the specified child
    *
    * @param child_index The index of the desired child
@@ -461,7 +548,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    */
   [[nodiscard]] __device__ column_device_view_core child(size_type child_index) const noexcept
   {
-    return d_children[child_index];
+    return static_cast<column_device_view_core*>(_children)[child_index];
   }
 
   /**
@@ -474,6 +561,13 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
     return _num_children;
   }
 
+  /**
+   * @brief Returns the number of nulls in this column
+   *
+   * @return The number of nulls
+   */
+  [[nodiscard]] CUDF_HOST_DEVICE size_type null_count() const noexcept { return _null_count; }
+
  protected:
   /**
    * @brief Creates an instance of this class using pre-existing device memory pointers to data,
@@ -482,6 +576,7 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @param type The type of the column
    * @param size The number of elements in the column
    * @param data Pointer to the device memory containing the data
+   * @param null_count The number of nulls in the column
    * @param null_mask Pointer to the device memory containing the null bitmask
    * @param offset The index of the first element in the column
    * @param children Pointer to the device memory containing child data
@@ -490,32 +585,29 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
   CUDF_HOST_DEVICE column_device_view_core(data_type type,
                                            size_type size,
                                            void const* data,
+                                           size_type null_count,
                                            bitmask_type const* null_mask,
                                            size_type offset,
                                            column_device_view_core* children,
                                            size_type num_children)
-    : column_device_view_base(type, size, data, null_mask, offset),
-      d_children(children),
-      _num_children(num_children)
+    : column_device_view_base(
+        type, size, data, null_count, null_mask, offset, children, num_children)
   {
   }
-
- protected:
-  column_device_view_core* d_children{};  ///< Array of `raw_column_device_view`
-                                          ///< objects in device memory.
-                                          ///< Based on element type, children
-                                          ///< may contain additional data
-  size_type _num_children{};              ///< The number of child columns
 };
 
 /**
  * @brief A mutable, non-owning view of device data as a column of elements
- * that is trivially copyable and usable in CUDA device code and offline-compiled code (i.e. NVRTC).
+ * that is trivially copyable and usable in CUDA device code and offline-compiled code (i.e.
+ * NVRTC).
  *
  * @ingroup column_classes
  */
 class alignas(16) mutable_column_device_view_core : public detail::column_device_view_base {
  public:
+  static constexpr bool is_mutable =
+    true;  ///< Indicates whether this view allows mutation of the underlying data
+
   mutable_column_device_view_core()  = delete;
   ~mutable_column_device_view_core() = default;
   mutable_column_device_view_core(mutable_column_device_view_core const&) =
@@ -548,12 +640,12 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * a column, and instead, accessing the elements should be done via
    * `data<T>()`.
    *
-   * @tparam The type to cast to
+   * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
   template <typename T = void,
             CUDF_ENABLE_IF(cuda::std::is_same_v<T, void> or is_rep_layout_compatible<T>())>
-  CUDF_HOST_DEVICE T* head() const noexcept
+  [[nodiscard]] CUDF_HOST_DEVICE T* head() const noexcept
   {
     return const_cast<T*>(detail::column_device_view_base::head<T>());
   }
@@ -571,7 +663,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @return Typed pointer to underlying data, including the offset
    */
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
-  CUDF_HOST_DEVICE T* data() const noexcept
+  [[nodiscard]] CUDF_HOST_DEVICE T* data() const noexcept
   {
     return const_cast<T*>(detail::column_device_view_base::data<T>());
   }
@@ -594,6 +686,63 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
   [[nodiscard]] __device__ T& element(size_type element_index) const noexcept
   {
     return data<T>()[element_index];
+  }
+
+  /**
+   * @brief Returns `string_view` to the string element at the specified index.
+   *
+   * If the element at the specified index is NULL, i.e., `is_null(element_index)
+   * == true`, then using the result is undefined behavior.
+   *
+   * This function accounts for the offset.
+   *
+   * @param element_index Position of the desired string element
+   * @return string_view instance representing this element at this index
+   */
+  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
+  [[nodiscard]] __device__ T element(size_type element_index) const noexcept
+  {
+    size_type index       = element_index + offset();  // account for this view's _offset
+    char const* d_strings = static_cast<char const*>(_data);
+    auto const offsets    = child(offsets_column_index);
+    auto const itr        = cudf::detail::input_offsetalator(offsets.head(), offsets.type());
+    auto const offset     = itr[index];
+    return string_view{d_strings + offset, static_cast<cudf::size_type>(itr[index + 1] - offset)};
+  }
+
+  /**
+   * @brief Returns a `numeric::fixed_point` element at the specified index for a `fixed_point`
+   * column.
+   *
+   * If the element at the specified index is NULL, i.e., `is_null(element_index) == true`,
+   * then using the result is undefined behavior.
+   *
+   * @param element_index Position of the desired element
+   * @return numeric::fixed_point representing the element at this index
+   */
+  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  [[nodiscard]] __device__ T element(size_type element_index) const noexcept
+  {
+    using namespace numeric;
+    using rep        = typename T::rep;
+    auto const scale = scale_type{_type.scale()};
+    return T{scaled_integer<rep>{data<rep>()[element_index], scale}};
+  }
+
+  /**
+   * @brief Returns a nullable element at the specified index. If the element is null, returns
+   * `nullopt`.
+   *
+   * @param element_index Position of the desired element
+   * @return `optional` containing the element at the specified index, or `nullopt` if the element
+   * is null
+   */
+  template <typename T>
+  [[nodiscard]] __device__ cuda::std::optional<T> nullable_element(
+    size_type element_index) const noexcept
+  {
+    if (is_null(element_index)) { return cuda::std::nullopt; }
+    return element<T>(element_index);
   }
 
   /**
@@ -648,7 +797,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
   [[nodiscard]] __device__ mutable_column_device_view_core
   child(size_type child_index) const noexcept
   {
-    return d_children[child_index];
+    return static_cast<mutable_column_device_view_core*>(_children)[child_index];
   }
 
 #ifdef __CUDACC__  // because set_bit in bit.hpp is wrapped with __CUDACC__
@@ -726,17 +875,16 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
                                                    size_type offset,
                                                    mutable_column_device_view_core* children,
                                                    size_type num_children)
-    : column_device_view_base(type, size, data, null_mask, offset),
-      d_children(children),
-      _num_children(num_children)
+    : column_device_view_base(type,
+                              size,
+                              data,
+                              0,  // unused
+                              null_mask,
+                              offset,
+                              children,
+                              num_children)
   {
   }
-
-  mutable_column_device_view_core* d_children{};  ///< Array of `raw_mutable_column_device_view`
-                                                  ///< objects in device memory.
-                                                  ///< Based on element type, children
-                                                  ///< may contain additional data
-  size_type _num_children{};                      ///< The number of child columns
 };
 
 }  // namespace CUDF_EXPORT cudf

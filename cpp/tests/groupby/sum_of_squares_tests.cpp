@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,11 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
+
+#include <cuda/std/type_traits>
+
+#include <type_traits>
 
 using namespace cudf::test::iterators;
 
@@ -25,7 +29,7 @@ TYPED_TEST(groupby_sum_of_squares_test, basic)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::SUM_OF_SQUARES>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -43,7 +47,7 @@ TYPED_TEST(groupby_sum_of_squares_test, empty_cols)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::SUM_OF_SQUARES>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> vals{};
@@ -59,7 +63,7 @@ TYPED_TEST(groupby_sum_of_squares_test, zero_valid_keys)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::SUM_OF_SQUARES>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys({1, 2, 3}, all_nulls());
   cudf::test::fixed_width_column_wrapper<V> vals{3, 4, 5};
@@ -75,7 +79,7 @@ TYPED_TEST(groupby_sum_of_squares_test, zero_valid_values)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::SUM_OF_SQUARES>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5}, all_nulls());
@@ -91,7 +95,7 @@ TYPED_TEST(groupby_sum_of_squares_test, null_keys_and_values)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::SUM_OF_SQUARES>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys(
     {1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
@@ -112,7 +116,7 @@ TYPED_TEST(groupby_sum_of_squares_test, dictionary)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::SUM_OF_SQUARES>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};

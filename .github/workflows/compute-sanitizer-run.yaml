@@ -1,16 +1,7 @@
-name: Compute Sanitizer Run
+name: Compute Sanitizer
+run-name: "Compute Sanitizer ${{ inputs.tool_name }}"
 
 on:
-  workflow_call:
-    inputs:
-      tool_name:
-        required: true
-        type: string
-        description: "Compute sanitizer tool to run (memcheck, racecheck, initcheck, synccheck)"
-      test_names:
-        required: true
-        type: string
-        description: "JSON array of test names to run"
   workflow_dispatch:
     inputs:
       tool_name:
@@ -23,25 +14,53 @@ on:
           - initcheck
           - synccheck
       test_names:
-        required: true
+        required: false
         type: string
-        description: "JSON array of test names to run"
+        description: "JSON array of test names to run (discovers all tests if empty)"
+        default: ""
+
+permissions: {}
 
 jobs:
+  discover-sanitizer-tests:
+    if: ${{ inputs.test_names == '' }}
+    runs-on: linux-amd64-cpu4
+    permissions:
+      contents: read
+    container:
+      image: rapidsai/ci-conda:26.12-latest
+    outputs:
+      tests: ${{ steps.find-tests.outputs.tests }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Discover test executables
+        id: find-tests
+        shell: bash
+        run: |
+          ./ci/discover_libcudf_tests.sh
   run-sanitizer-tests:
     name: Run ${{ inputs.tool_name }} on ${{ matrix.test_name }}
-    runs-on: linux-amd64-gpu-l4-latest-1
+    needs: discover-sanitizer-tests
+    if: ${{ !cancelled() }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    permissions:
+      contents: read
     container:
-      image: rapidsai/ci-conda:26.04-latest
+      image: rapidsai/ci-conda:26.12-latest
       options: --gpus all
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        test_name: ${{ fromJson(inputs.test_names) }}
+        test_name: ${{ fromJson(inputs.test_names || needs.discover-sanitizer-tests.outputs.tests) }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
       - name: Run compute-sanitizer ${{ inputs.tool_name }} on ${{ matrix.test_name }}
         shell: bash
         env:

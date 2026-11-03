@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,24 +8,28 @@
 #include "common_internal.hpp"
 #include "cudf/utilities/memory_resource.hpp"
 #include "gpuinflate.hpp"
-#include "io/utilities/getenv_or.hpp"
 #include "nvcomp_adapter.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/bit>
 
 #include <BS_thread_pool.hpp>
 #include <zlib.h>  // GZIP compression
 #include <zstd.h>
 
+#include <algorithm>
 #include <numeric>
 
 namespace cudf::io::detail {
@@ -86,7 +90,7 @@ std::vector<std::uint8_t> compress_zstd(host_span<uint8_t const> src)
   auto const compressed_size_actual =
     ZSTD_compress(reinterpret_cast<void*>(compressed_buffer.data()),
                   compressed_size_estimate,
-                  reinterpret_cast<const void*>(src.data()),
+                  reinterpret_cast<void const*>(src.data()),
                   src.size(),
                   1);
   check_error_code(ZSTD_isError(compressed_size_actual), __LINE__);
@@ -112,7 +116,7 @@ class hash_table {
  public:
   hash_table() : tbl(1 << hash_table_bits, 0) {}
 
-  void clear() { std::fill(tbl.begin(), tbl.end(), 0); }
+  void clear() { std::ranges::fill(tbl, 0); }
 
   [[nodiscard]] uint16_t* entry(uint32_t bytes)
   {
@@ -292,7 +296,8 @@ void device_compress(compression_type compression,
                      device_span<device_span<uint8_t const> const> inputs,
                      device_span<device_span<uint8_t> const> outputs,
                      device_span<codec_exec_result> results,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -301,7 +306,7 @@ void device_compress(compression_type compression,
   auto nvcomp_disabled   = nvcomp_type.has_value() ? nvcomp::is_compression_disabled(*nvcomp_type)
                                                    : "invalid compression type";
   if (not nvcomp_disabled) {
-    return nvcomp::batched_compress(*nvcomp_type, inputs, outputs, results, stream);
+    return nvcomp::batched_compress(*nvcomp_type, inputs, outputs, results, stream, mr);
   }
 
   switch (compression) {
@@ -314,7 +319,7 @@ void host_compress(compression_type compression,
                    device_span<device_span<uint8_t const> const> inputs,
                    device_span<device_span<uint8_t> const> outputs,
                    device_span<codec_exec_result> results,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (compression == compression_type::NONE or inputs.empty()) { return; }
@@ -322,11 +327,12 @@ void host_compress(compression_type compression,
   auto const num_chunks = inputs.size();
   auto const h_inputs   = cudf::detail::make_host_vector_async(inputs, stream);
   auto const h_outputs  = cudf::detail::make_host_vector_async(outputs, stream);
-  stream.synchronize();
+  stream.sync();
 
   auto h_results = cudf::detail::make_pinned_vector<codec_exec_result>(results, stream);
 
   std::vector<std::future<std::pair<size_t, size_t>>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   auto const num_streams =
     std::min<std::size_t>(num_chunks, cudf::detail::host_worker_pool().get_thread_count());
   auto const streams = cudf::detail::fork_streams(stream, num_streams);
@@ -362,7 +368,7 @@ void host_compress(compression_type compression,
   if (not has_device_support) { return host_engine_state::ON; }
 
   // If both host and device compression are supported, dispatch based on the environment variable
-  auto const env_var = getenv_or("LIBCUDF_HOST_COMPRESSION", std::string{"OFF"});
+  auto const env_var = cudf::detail::getenv_or("LIBCUDF_HOST_COMPRESSION", std::string{"OFF"});
 
   if (env_var == "AUTO") {
     return host_engine_state::AUTO;
@@ -425,36 +431,40 @@ void compress(compression_type compression,
               device_span<device_span<uint8_t const> const> inputs,
               device_span<device_span<uint8_t> const> outputs,
               device_span<codec_exec_result> results,
-              rmm::cuda_stream_view stream)
+              cuda::stream_ref stream,
+              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
+  auto const temp_mr = mr.get_temporary_mr();
 
   if (inputs.empty()) { return; }
 
   // sort inputs by size, largest first
   auto const [sorted_inputs, sorted_outputs, order] =
-    sort_compression_tasks(inputs, outputs, stream, cudf::get_current_device_resource_ref());
-  auto inputs_view  = device_span<device_span<uint8_t const> const>(sorted_inputs);
-  auto outputs_view = device_span<device_span<uint8_t> const>(sorted_outputs);
+    sort_compression_tasks(inputs, outputs, stream, {temp_mr, temp_mr});
+  device_span<device_span<uint8_t const> const> inputs_view = sorted_inputs;
+  device_span<device_span<uint8_t> const> outputs_view      = sorted_outputs;
 
-  auto const split_idx = split_compression_tasks(
-    inputs_view,
-    outputs_view,
-    get_host_engine_state(compression),
-    getenv_or("LIBCUDF_HOST_COMPRESSION_THRESHOLD", default_host_compression_auto_threshold),
-    getenv_or("LIBCUDF_HOST_COMPRESSION_RATIO", default_host_device_compression_cost_ratio),
-    stream);
+  auto const split_idx =
+    split_compression_tasks(inputs_view,
+                            outputs_view,
+                            get_host_engine_state(compression),
+                            cudf::detail::getenv_or("LIBCUDF_HOST_COMPRESSION_THRESHOLD",
+                                                    default_host_compression_auto_threshold),
+                            cudf::detail::getenv_or("LIBCUDF_HOST_COMPRESSION_RATIO",
+                                                    default_host_device_compression_cost_ratio),
+                            stream);
 
-  auto tmp_results = cudf::detail::make_device_uvector_async<detail::codec_exec_result>(
-    results, stream, cudf::get_current_device_resource_ref());
-  auto results_view = device_span<codec_exec_result>(tmp_results);
+  auto tmp_results = cuda::device_buffer<codec_exec_result>(stream, temp_mr, results);
+  device_span<codec_exec_result> results_view = tmp_results;
 
   auto const streams = cudf::detail::fork_streams(stream, 2);
   detail::device_compress(compression,
                           inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
                           outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
                           results_view.subspan(split_idx, results_view.size() - split_idx),
-                          streams[0]);
+                          streams[0],
+                          mr);
   detail::host_compress(compression,
                         inputs_view.subspan(0, split_idx),
                         outputs_view.subspan(0, split_idx),
@@ -462,7 +472,7 @@ void compress(compression_type compression,
                         streams[1]);
   cudf::detail::join_streams(streams, stream);
 
-  copy_results_to_original_order(results_view, results, order, stream);
+  copy_results_to_original_order(results_view, results, order, stream, mr);
 }
 
 [[nodiscard]] bool is_host_compression_supported(compression_type compression)

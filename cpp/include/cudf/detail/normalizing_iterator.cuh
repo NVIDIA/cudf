@@ -1,19 +1,20 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
-#ifndef CUDF_RUNTIME_JIT
+#ifndef __CUDACC_RTC__
 
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #endif
 
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <type_traits>
+#include <cuda/std/type_traits>
 
 namespace cudf {
 namespace detail {
@@ -33,7 +34,7 @@ struct alignas(16) base_normalator {
   using difference_type   = std::ptrdiff_t;
   using value_type        = Integer;
   using pointer           = Integer*;
-  using iterator_category = std::random_access_iterator_tag;
+  using iterator_category = cuda::std::random_access_iterator_tag;
 
   base_normalator()                                  = default;
   base_normalator(base_normalator const&)            = default;
@@ -199,7 +200,7 @@ struct alignas(16) base_normalator {
 
  private:
   struct integer_sizeof_fn {
-    template <typename T, CUDF_ENABLE_IF(not cudf::is_integral_not_bool<T>())>
+    template <typename T>
     CUDF_HOST_DEVICE std::size_t operator()() const
     {
 #ifndef __CUDA_ARCH__
@@ -208,7 +209,7 @@ struct alignas(16) base_normalator {
       CUDF_UNREACHABLE("only integral types are supported");
 #endif
     }
-    template <typename T, CUDF_ENABLE_IF(cudf::is_integral_not_bool<T>())>
+    template <cudf::concepts::integral_not_bool T>
     CUDF_HOST_DEVICE std::size_t operator()() const noexcept
     {
       return sizeof(T);
@@ -216,7 +217,7 @@ struct alignas(16) base_normalator {
   };
 
  protected:
-#ifndef CUDF_RUNTIME_JIT  // TODO: refactor type_dispatcher to support NVRTC
+#ifndef __CUDACC_RTC__
 
   /**
    * @brief Constructor assigns width and type member variables for base class.

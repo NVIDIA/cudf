@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -60,31 +60,20 @@ def test_intersection_index(idx1, idx2, sort, pandas_compatible):
         )
 
 
-@pytest.mark.parametrize(
-    "idx1, idx2",
-    [
-        (pd.Index(["a", "b", "c"], dtype="category"), pd.Index([1, 2, 3])),
-    ],
-)
 @pytest.mark.parametrize("sort", [None, False, True])
 @pytest.mark.parametrize("pandas_compatible", [True, False])
-def test_intersection_index_error(idx1, idx2, sort, pandas_compatible):
+def test_intersection_index_mixed_string_categorical_integer(
+    sort, pandas_compatible
+):
+    idx1 = pd.Index(["a", "b", "c"], dtype="category")
+    idx2 = pd.Index([1, 2, 3])
     expected = idx1.intersection(idx2, sort=sort)
 
     with cudf.option_context("mode.pandas_compatible", pandas_compatible):
         idx1 = cudf.from_pandas(idx1) if isinstance(idx1, pd.Index) else idx1
         idx2 = cudf.from_pandas(idx2) if isinstance(idx2, pd.Index) else idx2
-
-        if pandas_compatible:
-            with pytest.raises(
-                ValueError,
-                match="Cannot convert numerical column to string column when dtype is an object dtype in pandas compatibility mode.",
-            ):
-                idx1.intersection(idx2, sort=sort)
-        else:
-            actual = idx1.intersection(idx2, sort=sort)
-
-            assert_eq(
-                expected,
-                actual,
-            )
+        actual = idx1.intersection(idx2, sort=sort)
+    # As of pandas 3.0, empty default type of object isn't
+    # necessarily equivalent to cuDF's empty default type of
+    # pandas.StringDtype
+    assert_eq(expected.astype(actual.dtype), actual)

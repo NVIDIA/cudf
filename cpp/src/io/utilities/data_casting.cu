@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,16 +19,19 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/block/block_reduce.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/warp/warp_scan.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/copy.h>
-#include <thrust/functional.h>
 #include <thrust/transform_reduce.h>
 
 #include <memory>
@@ -526,7 +529,7 @@ CUDF_KERNEL void parse_fn_string_parallel(str_tuple_it str_tuples,
     // 0-31, 32-63, ... i*32-n.
     // entire warp executes but with mask.
     for (thread_index_type char_index = lane;
-         char_index < cudf::util::round_up_safe(in_end - in_begin, static_cast<long>(BLOCK_SIZE));
+         char_index < cudf::detail::round_up_safe(in_end - in_begin, static_cast<long>(BLOCK_SIZE));
          char_index += BLOCK_SIZE) {
       bool const is_within_bounds = char_index < (in_end - in_begin);
       auto const c                = is_within_bounds ? in_begin[char_index] : '\0';
@@ -791,72 +794,73 @@ struct to_string_view_pair {
 template <typename string_view_pair_it>
 static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
                                             size_type col_size,
-                                            rmm::device_buffer&& null_mask,
+                                            cuda::device_buffer<cudf::bitmask_type>&& null_mask,
                                             cudf::detail::device_scalar<size_type>& d_null_count,
                                             cudf::io::parse_options_view const& options,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   //  CUDF_FUNC_RANGE();
 
   auto const max_length = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     str_tuples,
     str_tuples + col_size,
     cuda::proclaim_return_type<std::size_t>([] __device__(auto t) { return t.second; }),
     size_type{0},
     cuda::maximum<size_type>{});
 
-  auto sizes           = rmm::device_uvector<size_type>(col_size, stream);
+  cuda::device_buffer<size_type> sizes(
+    stream, cudf::get_current_device_resource_ref(), col_size, cuda::no_init);
   auto d_sizes         = sizes.data();
   auto null_count_data = d_null_count.data();
 
   auto single_thread_fn = string_parse<decltype(str_tuples)>{
-    str_tuples, static_cast<bitmask_type*>(null_mask.data()), null_count_data, options, d_sizes};
-  thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::make_counting_iterator<size_type>(0),
+    str_tuples, null_mask.data(), null_count_data, options, d_sizes};
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<size_type>{0},
                      col_size,
                      single_thread_fn);
 
   constexpr auto warps_per_block  = 8;
   constexpr int threads_per_block = cudf::detail::warp_size * warps_per_block;
-  auto num_blocks                 = cudf::util::div_rounding_up_safe(col_size, warps_per_block);
-  auto str_counter                = cudf::numeric_scalar(size_type{0}, true, stream);
+  auto num_blocks                 = cudf::detail::div_rounding_up_safe(col_size, warps_per_block);
+  auto str_counter =
+    cudf::numeric_scalar(size_type{0}, true, stream, cudf::get_current_device_resource_ref());
 
   // TODO run these independent kernels in parallel streams.
   if (max_length > SINGLE_THREAD_THRESHOLD) {
     parse_fn_string_parallel<true, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
-        str_tuples,
-        col_size,
-        str_counter.data(),
-        static_cast<bitmask_type*>(null_mask.data()),
-        null_count_data,
-        options,
-        d_sizes,
-        cudf::detail::input_offsetalator{},
-        nullptr);
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(str_tuples,
+                                                           col_size,
+                                                           str_counter.data(),
+                                                           null_mask.data(),
+                                                           null_count_data,
+                                                           options,
+                                                           d_sizes,
+                                                           cudf::detail::input_offsetalator{},
+                                                           nullptr);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   if (max_length > WARP_THRESHOLD) {
     // for strings longer than WARP_THRESHOLD, 1 block per string
     str_counter.set_value(0, stream);
     parse_fn_string_parallel<false, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
-        str_tuples,
-        col_size,
-        str_counter.data(),
-        static_cast<bitmask_type*>(null_mask.data()),
-        null_count_data,
-        options,
-        d_sizes,
-        cudf::detail::input_offsetalator{},
-        nullptr);
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(str_tuples,
+                                                           col_size,
+                                                           str_counter.data(),
+                                                           null_mask.data(),
+                                                           null_count_data,
+                                                           options,
+                                                           d_sizes,
+                                                           cudf::detail::input_offsetalator{},
+                                                           nullptr);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
-  auto [offsets, bytes] =
-    cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
-  auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
+  auto [offsets, bytes] = cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
+  auto d_offsets        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // CHARS column
   rmm::device_uvector<char> chars(bytes, stream, mr);
@@ -865,40 +869,40 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
   single_thread_fn.d_chars   = d_chars;
   single_thread_fn.d_offsets = d_offsets;
 
-  thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::make_counting_iterator<size_type>(0),
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<size_type>{0},
                      col_size,
                      single_thread_fn);
 
   if (max_length > SINGLE_THREAD_THRESHOLD) {
     str_counter.set_value(0, stream);
     parse_fn_string_parallel<true, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
-        str_tuples,
-        col_size,
-        str_counter.data(),
-        static_cast<bitmask_type*>(null_mask.data()),
-        null_count_data,
-        options,
-        d_sizes,
-        d_offsets,
-        d_chars);
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(str_tuples,
+                                                           col_size,
+                                                           str_counter.data(),
+                                                           null_mask.data(),
+                                                           null_count_data,
+                                                           options,
+                                                           d_sizes,
+                                                           d_offsets,
+                                                           d_chars);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   if (max_length > WARP_THRESHOLD) {
     str_counter.set_value(0, stream);
     // for strings longer than WARP_THRESHOLD, 1 block per string
     parse_fn_string_parallel<false, warps_per_block>
-      <<<num_blocks, threads_per_block, 0, stream.value()>>>(
-        str_tuples,
-        col_size,
-        str_counter.data(),
-        static_cast<bitmask_type*>(null_mask.data()),
-        null_count_data,
-        options,
-        d_sizes,
-        d_offsets,
-        d_chars);
+      <<<num_blocks, threads_per_block, 0, stream.get()>>>(str_tuples,
+                                                           col_size,
+                                                           str_counter.data(),
+                                                           null_mask.data(),
+                                                           null_count_data,
+                                                           options,
+                                                           d_sizes,
+                                                           d_offsets,
+                                                           d_chars);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   return make_strings_column(col_size,
@@ -910,26 +914,27 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
 
 std::unique_ptr<column> parse_data(
   char const* data,
-  thrust::zip_iterator<cuda::std::tuple<size_type const*, size_type const*>> offset_length_begin,
+  cuda::zip_iterator<size_type const*, size_type const*> offset_length_begin,
   size_type col_size,
   data_type col_type,
-  rmm::device_buffer&& null_mask,
+  cuda::device_buffer<cudf::bitmask_type>&& null_mask,
   size_type null_count,
   cudf::io::parse_options_view const& options,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
   if (col_size == 0) { return make_empty_column(col_type); }
-  auto d_null_count    = cudf::detail::device_scalar<size_type>(null_count, stream);
+  auto d_null_count = cudf::detail::device_scalar<size_type>(
+    null_count, stream, cudf::get_current_device_resource_ref());
   auto null_count_data = d_null_count.data();
-  if (null_mask.is_empty()) {
+  if (null_mask.empty()) {
     null_mask = cudf::create_null_mask(col_size, mask_state::ALL_VALID, stream, mr);
   }
 
   // Prepare iterator that returns (string_ptr, string_length)-pairs needed by type conversion
-  auto str_tuples = thrust::make_transform_iterator(offset_length_begin, to_string_view_pair{data});
+  auto str_tuples = cuda::transform_iterator(offset_length_begin, to_string_view_pair{data});
 
   if (col_type == cudf::data_type{cudf::type_id::STRING}) {
     return parse_string(
@@ -942,8 +947,8 @@ std::unique_ptr<column> parse_data(
 
   // use `ConvertFunctor` to convert non-string values
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator<size_type>(0),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
     col_size,
     [str_tuples, col = *output_dv_ptr, options, col_type, null_count_data] __device__(
       size_type row) {

@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
@@ -19,26 +20,28 @@ void cudftable_write_common(cudf::table_view const& view, io_type sink_type, nvb
   auto const data_size          = static_cast<size_t>(state.get_int64("data_size"));
   std::size_t encoded_file_size = 0;
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
-  state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
-             [&](nvbench::launch&, auto& timer) {
-               try_drop_l3_cache();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
-               cuio_source_sink_pair source_sink(sink_type);
+  state.exec(
+    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch&, auto& timer) {
+      cuio_source_sink_pair source_sink(sink_type);
+      auto const& sink_info = source_sink.make_sink_info();
+      drop_page_cache_if_enabled(sink_info.filepaths());
 
-               timer.start();
-               cudf::io::experimental::write_cudftable(
-                 cudf::io::experimental::cudftable_writer_options::builder(
-                   source_sink.make_sink_info(), view)
-                   .build());
-               timer.stop();
+      timer.start();
+      cudf::io::experimental::write_cudftable(
+        cudf::io::experimental::cudftable_writer_options::builder(sink_info, view).build());
+      timer.stop();
 
-               encoded_file_size = source_sink.size();
-             });
+      encoded_file_size = source_sink.size();
+    });
 
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count(static_cast<double>(data_size) / time, "bytes_per_second");
   state.add_buffer_size(encoded_file_size, "encoded_file_size", "encoded_file_size");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void BM_cudftable_write_data_sizes(nvbench::state& state)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,11 +12,11 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/functional>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -24,7 +24,7 @@ namespace detail {
 std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                                       size_type begin_bit,
                                       size_type end_bit,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   auto const length = end_bit - begin_bit;
@@ -37,11 +37,12 @@ std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
   if (length > 0) {
     auto mutable_view = out_col->mutable_view();
 
-    thrust::transform(rmm::exec_policy_nosync(stream),
-                      thrust::make_counting_iterator<cudf::size_type>(begin_bit),
-                      thrust::make_counting_iterator<cudf::size_type>(end_bit),
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                      cuda::counting_iterator<cudf::size_type>{begin_bit},
+                      cuda::counting_iterator<cudf::size_type>{end_bit},
                       mutable_view.begin<bool>(),
-                      [bitmask] __device__(auto index) { return bit_is_set(bitmask, index); });
+                      cuda::proclaim_copyable_arguments(
+                        [bitmask] __device__(auto index) { return bit_is_set(bitmask, index); }));
   }
 
   return out_col;
@@ -51,7 +52,7 @@ std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
 std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                                       size_type begin_bit,
                                       size_type end_bit,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

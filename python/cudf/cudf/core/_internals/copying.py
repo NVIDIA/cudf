@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def gather(
     columns: Sequence[ColumnBase],
     gather_map: NumericalColumn,
     nullify: bool = False,
-) -> list[plc.Column]:
+) -> tuple[plc.Column, ...]:
     with access_columns(
         *columns, gather_map, mode="read", scope="internal"
     ) as (*columns, gather_map):
@@ -30,7 +30,7 @@ def gather(
             if nullify
             else plc.copying.OutOfBoundsPolicy.DONT_CHECK,
         )
-        return plc_tbl.columns()
+    return plc_tbl.columns()
 
 
 def scatter(
@@ -38,7 +38,7 @@ def scatter(
     scatter_map: NumericalColumn,
     target_columns: list[ColumnBase],
     bounds_check: bool = True,
-):
+) -> tuple[plc.Column, ...]:
     """
     Scattering source into target as per the scatter map.
     `source` can be a list of scalars, or a list of columns. The number of
@@ -51,7 +51,7 @@ def scatter(
         raise ValueError("Mismatched number of source and target columns.")
 
     if len(sources) == 0:
-        return []
+        return ()
 
     if bounds_check:
         n_rows = len(target_columns[0])
@@ -66,7 +66,7 @@ def scatter(
         *target_columns, mode="write", scope="internal"
     ) as target_columns:
         plc_tbl = plc.copying.scatter(
-            cast(list[plc.Scalar], sources)
+            cast("list[plc.Scalar]", sources)
             if isinstance(sources[0], plc.Scalar)
             else plc.Table(
                 [col.plc_column for col in cast("list[ColumnBase]", sources)]
@@ -80,7 +80,7 @@ def scatter(
 
 def columns_split(
     input_columns: Sequence[ColumnBase], splits: list[int]
-) -> list[list[plc.Column]]:
+) -> list[tuple[plc.Column, ...]]:
     with access_columns(
         *input_columns, mode="read", scope="internal"
     ) as input_columns:

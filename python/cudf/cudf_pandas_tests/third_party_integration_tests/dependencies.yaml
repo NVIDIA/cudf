@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # Dependency list for https://github.com/rapidsai/dependency-file-generator
 files:
@@ -63,13 +63,14 @@ files:
       - py_version
       - test_base
       - test_stumpy
-  test_tensorflow:
-    output: none
-    includes:
-      - cuda_version
-      - py_version
-      - test_base
-      - test_tensorflow
+  # TODO: Re-enable https://github.com/NVIDIA/cudf/issues/21875
+  # test_tensorflow:
+  #   output: none
+  #   includes:
+  #     - cuda_version
+  #     - py_version
+  #     - test_base
+  #     - test_tensorflow
   test_xgboost:
     output: none
     includes:
@@ -138,14 +139,12 @@ dependencies:
       - output_types: conda
         packages:
           - pre-commit
+  # 'cuda_version' intentionally does not contain fallback entries... we want
+  # a loud error if an unsupported 'cuda' value is passed
   cuda_version:
     specific:
       - output_types: conda
         matrices:
-          - matrix:
-              cuda: "12.0"
-            packages:
-              - cuda-version=12.0
           - matrix:
               cuda: "12.2"
             packages:
@@ -170,14 +169,82 @@ dependencies:
               cuda: "13.1"
             packages:
               - cuda-version=13.1
+          - matrix:
+              cuda: "13.2"
+            packages:
+              - cuda-version=13.2
+          - matrix:
+              cuda: "13.3"
+            packages:
+              - cuda-version=13.3
+          - matrix:
+              cuda: "13.4"
+            packages:
+              - cuda-version=13.4
+      - output_types: requirements
+        matrices:
+          # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
+          # (e.g. for DLFW and pip devcontainers)
+          - matrix:
+              use_cuda_wheels: "false"
+            packages:
+          - matrix:
+              arch: aarch64
+              cuda: "12.2"
+              use_cuda_wheels: "true"
+            packages:
+              # some components (like nvidia-cublas-cu12 and nvidia-cuda-nvcc-cu12) didn't have
+              # aarch64 wheels until CTK 12.3, so allow a slightly looser bound here
+              - cuda-toolkit>=12.2,<12.4
+          - matrix:
+              cuda: "12.2"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==12.2.*
+          - matrix:
+              cuda: "12.5"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==12.5.*
+          - matrix:
+              cuda: "12.8"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==12.8.*
+          - matrix:
+              cuda: "12.9"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==12.9.*
+          - matrix:
+              cuda: "13.0"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.0.*
+          - matrix:
+              cuda: "13.1"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.1.*
+          - matrix:
+              cuda: "13.2"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.2.*
+          - matrix:
+              cuda: "13.3"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.3.*
+          - matrix:
+              cuda: "13.4"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.4.*
   py_version:
     specific:
       - output_types: conda
         matrices:
-          - matrix:
-              py: "3.11"
-            packages:
-              - python=3.11
           - matrix:
               py: "3.12"
             packages:
@@ -187,13 +254,17 @@ dependencies:
             packages:
               - python=3.13
           - matrix:
+              py: "3.14"
             packages:
-              - python>=3.11,<3.14
+              - python=3.14
+          - matrix:
+            packages:
+              - python>=3.12
   test_base:
     common:
       - output_types: conda
         packages:
-          - cudf==26.4.*,>=0.0.0a0
+          - cudf==26.12.*,>=0.0.0a0
           - pandas
           - pytest
           - pytest-xdist
@@ -218,6 +289,17 @@ dependencies:
         packages:
           - numpy
           - pytorch>=2.4.0
+    specific:
+      - output_types: conda
+        matrices:
+          - matrix:
+              arch: x86_64
+            packages:
+              # mkl 2026.2.0 is missing libmkl_gf_lp64, which aborts numpy imports
+              # https://github.com/conda-forge/intel_repack-feedstock/issues/145
+              - mkl<2026.2
+          - matrix:
+            packages:
   test_seaborn:
     common:
       - output_types: conda
@@ -250,12 +332,10 @@ dependencies:
     common:
       - output_types: conda
         packages:
-        # TODO: Remove hypothesis pinning once https://github.com/HypothesisWorks/hypothesis/issues/4365 is resolved
-          - hypothesis>=6.131.7
+          - hypothesis
           - numpy
           - scipy
           - scikit-learn
-          - pip
           - xgboost>=2.0.1
   test_catboost:
     common:
@@ -269,25 +349,19 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - cuml==26.4.*,>=0.0.0a0
+          - cuml==26.12.*,>=0.0.0a0
           - scikit-learn
   test_cugraph:
     common:
       - output_types: conda
         packages:
-          - cugraph==26.4.*,>=0.0.0a0
+          - cugraph==26.12.*,>=0.0.0a0
           - networkx
   test_ibis:
     common:
       - output_types: conda
         packages:
-          - pip
-          - pip:
-              # ibis 11 is the first version that supports duckdb 1.4.0
-              - ibis-framework[duckdb]>=11.0.0
-              - duckdb>=1.4.0
-              # Exclude broken version: https://github.com/tobymao/sqlglot/issues/6908
-              - sqlglot!=28.7.*
+          - ibis-duckdb
   test_hvplot:
     common:
       - output_types: conda

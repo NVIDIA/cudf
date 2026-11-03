@@ -1,13 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
-#include "generate_input_tables.cuh"
+#include "generate_input_tables.hpp"
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 #include <benchmarks/common/table_utilities.hpp>
 #include <benchmarks/join/nvbench_helpers.hpp>
@@ -22,7 +23,9 @@
 #include <vector>
 
 auto const JOIN_SIZE_RANGE = std::vector<nvbench::int64_t>{1000, 100'000, 10'000'000};
-using JOIN_NULLABLE_RANGE  = nvbench::enum_type_list<false, true>;
+auto const JOIN_SELECTIVITY_RANGE =
+  std::vector<double>{0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
+using JOIN_NULLABLE_RANGE = nvbench::enum_type_list<false, true>;
 
 using JOIN_ALGORITHM = nvbench::enum_type_list<join_t::HASH, join_t::SORT_MERGE>;
 using JOIN_DATATYPES = nvbench::enum_type_list<data_type::INT32,
@@ -36,6 +39,7 @@ using JOIN_NULL_EQUALITY =
   nvbench::enum_type_list<cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL>;
 
 using DEFAULT_JOIN_DATATYPES     = nvbench::enum_type_list<data_type::INT32>;
+using SELECTIVITY_JOIN_DATATYPES = nvbench::enum_type_list<data_type::INT32, data_type::STRING>;
 using DEFAULT_JOIN_NULL_EQUALITY = nvbench::enum_type_list<cudf::null_equality::UNEQUAL>;
 
 inline void create_complex_ast_expression(cudf::ast::tree& tree, cudf::size_type ast_levels)
@@ -57,6 +61,26 @@ inline void create_complex_ast_expression(cudf::ast::tree& tree, cudf::size_type
   }
 }
 
+// Returns true (and marks `state` as skipped) when the `skip_large_sizes` axis is enabled and
+// the build side of this benchmark is larger than the probe side. `build_is_right` selects which
+// side is the build side: true for hash-style benches that preprocess the right table, false for
+// benches like `mark_join` that preprocess the left.
+inline bool should_skip_large_sizes(nvbench::state& state, bool build_is_right = true)
+{
+  if (state.get_int64("skip_large_sizes") == 0) { return false; }
+  auto const left_size  = state.get_int64("left_size");
+  auto const right_size = state.get_int64("right_size");
+  if (build_is_right && right_size > left_size) {
+    state.skip("build (right) should be smaller than probe (left)");
+    return true;
+  }
+  if (!build_is_right && left_size > right_size) {
+    state.skip("build (left) should be smaller than probe (right)");
+    return true;
+  }
+  return false;
+}
+
 template <bool Nullable,
           join_t join_type                  = join_t::HASH,
           cudf::null_equality compare_nulls = cudf::null_equality::UNEQUAL,
@@ -65,14 +89,18 @@ template <bool Nullable,
 void BM_join(state_type& state,
              std::vector<cudf::type_id>& key_types,
              Join JoinFunc,
-             int multiplicity   = 1,
-             double selectivity = 0.3)
+             int multiplicity    = 1,
+             double selectivity  = 0.3,
+             bool build_is_right = true)
 {
+  if (should_skip_large_sizes(state, build_is_right)) { return; }
+
   auto const right_size = static_cast<size_t>(state.get_int64("right_size"));
   auto const left_size  = static_cast<size_t>(state.get_int64("left_size"));
 
-  if (right_size > left_size) {
-    state.skip("Skip large right table");
+  // The generator requires at least one distinct build row.
+  if (static_cast<size_t>(multiplicity) > right_size) {
+    state.skip("multiplicity exceeds right_size");
     return;
   }
 
@@ -88,7 +116,8 @@ void BM_join(state_type& state,
   // Setup join parameters and result table
   std::vector<cudf::size_type> columns_to_join(num_keys);
   std::iota(columns_to_join.begin(), columns_to_join.end(), 0);
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   if constexpr (join_type == join_t::HASH || join_type == join_t::SORT_MERGE) {
     state.add_element_count(join_input_size, "join_input_size");  // number of bytes
@@ -133,4 +162,7 @@ void BM_join(state_type& state,
     });
     set_throughputs(state);
   }
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

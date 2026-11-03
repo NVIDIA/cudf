@@ -1,6 +1,6 @@
 name: "Auto Assign PR"
 
-on:
+on: # zizmor: ignore[dangerous-triggers]
   pull_request_target:
     types:
       - opened
@@ -10,9 +10,11 @@ on:
 jobs:
   add_assignees:
     runs-on: ubuntu-latest
-    if: ${{ ! github.event.pull_request.merged }}
+    permissions:
+      pull-requests: write
+    if: ${{ ! github.event.pull_request.merged && ! endsWith(github.actor, '[bot]') }}
     steps:
-      - uses: actions-ecosystem/action-add-assignees@v1
+      - uses: actions-ecosystem/action-add-assignees@ce5019e63cc4f35aba27308dc88d19c8f3686747 # v1
         with:
           github_token: "${{ secrets.GITHUB_TOKEN }}"
           assignees: ${{ github.actor }}

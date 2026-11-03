@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,16 +14,16 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/span>
-#include <thrust/iterator/counting_iterator.h>
 
 #include <memory>
 
 template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() or cudf::is_chrono<T>())>
 std::unique_ptr<cudf::column> example_column()
 {
-  auto begin = thrust::make_counting_iterator(1);
-  auto end   = thrust::make_counting_iterator(16);
+  auto begin = cuda::counting_iterator<int32_t>{1};
+  auto end   = cuda::counting_iterator<int32_t>{16};
   return cudf::test::fixed_width_column_wrapper<T>(begin, end).release();
 }
 

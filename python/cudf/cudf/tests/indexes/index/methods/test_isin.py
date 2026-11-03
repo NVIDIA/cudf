@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -7,9 +7,7 @@ import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_GE_220
 from cudf.testing import assert_eq
-from cudf.testing._utils import expect_warning_if
 
 
 @pytest.mark.parametrize(
@@ -33,16 +31,8 @@ from cudf.testing._utils import expect_warning_if
 def test_isin_index(index, values):
     pidx = index
     gidx = cudf.Index(pidx)
-
-    is_dt_str = (
-        next(iter(values), None) == "2019-01-01 04:00:00"
-        and len(pidx)
-        and pidx.dtype.kind == "M"
-    )
-    with expect_warning_if(is_dt_str):
-        got = gidx.isin(values)
-    with expect_warning_if(PANDAS_GE_220 and is_dt_str):
-        expected = pidx.isin(values)
+    got = gidx.isin(values)
+    expected = pidx.isin(values)
 
     assert_eq(got, expected)
 

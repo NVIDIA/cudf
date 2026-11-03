@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -15,6 +16,8 @@
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
+
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -54,7 +57,7 @@ TYPED_TEST(MergeTest_, SingleTableInput)
 {
   cudf::size_type inputRows = 40;
 
-  auto sequence = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto sequence = cuda::counting_iterator{0};
   cudf::test::fixed_width_column_wrapper<TypeParam, typename decltype(sequence)::value_type>
     colWrap1(sequence, sequence + inputRows);
 
@@ -80,12 +83,10 @@ class MergeTest : public cudf::test::BaseFixture {};
 TEST_F(MergeTest, KeysWithNulls)
 {
   cudf::size_type nrows = 13200;  // Ensures that thrust::merge uses more than one tile/block
-  auto data_iter        = thrust::make_counting_iterator<int32_t>(0);
-  auto valids1 =
-    cudf::detail::make_counting_transform_iterator(0, [](auto row) { return row % 10 != 0; });
+  auto data_iter        = cuda::counting_iterator<int32_t>{0};
+  auto valids1          = cudf::test::iterators::nulls_at_multiples_of(10);
   cudf::test::fixed_width_column_wrapper<int32_t> data1(data_iter, data_iter + nrows, valids1);
-  auto valids2 =
-    cudf::detail::make_counting_transform_iterator(0, [](auto row) { return row % 15 != 0; });
+  auto valids2 = cudf::test::iterators::nulls_at_multiples_of(15);
   cudf::test::fixed_width_column_wrapper<int32_t> data2(data_iter, data_iter + nrows, valids2);
   auto all_data = cudf::concatenate(std::vector<cudf::column_view>{{data1, data2}},
                                     cudf::test::get_default_stream());

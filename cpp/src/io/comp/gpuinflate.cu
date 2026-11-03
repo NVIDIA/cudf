@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (C) 2002-2013 Mark Adler, all rights reserved
- * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0 AND Zlib
  */
 
@@ -39,12 +39,16 @@ Mark Adler    madler@alumni.caltech.edu
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/algorithm>
+#include <cuda/std/cmath>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 #include <thrust/gather.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
@@ -108,9 +112,9 @@ struct prefetch_queue_s {
 };
 
 template <typename T>
-inline __device__ volatile uint32_t* prefetch_addr32(volatile prefetch_queue_s& q, T* ptr)
+inline __device__ volatile uint32_t* prefetch_addr32(prefetch_queue_s volatile& q, T* ptr)
 {
-  return reinterpret_cast<volatile uint32_t*>(&q.pref_data[(prefetch_size - 4) & (size_t)(ptr)]);
+  return reinterpret_cast<uint32_t volatile*>(&q.pref_data[(prefetch_size - 4) & (size_t)(ptr)]);
 }
 
 #endif  // ENABLE_PREFETCH
@@ -140,7 +144,7 @@ struct inflate_state_s {
   uint16_t first_slow_dist;
   uint16_t index_slow_dist;
 
-  volatile xwarp_s x;
+  xwarp_s volatile x;
 #if ENABLE_PREFETCH
   volatile prefetch_queue_s pref;
 #endif
@@ -316,7 +320,7 @@ __device__ int construct(
 }
 
 /// permutation of code length codes
-static const __device__ __constant__ uint8_t g_code_order[19 + 1] = {
+static __device__ const __constant__ uint8_t g_code_order[19 + 1] = {
   16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15, 0xff};
 
 /// Dynamic block (custom huffman tables)
@@ -491,18 +495,18 @@ __device__ int init_fixed(inflate_state_s* s)
  */
 
 /// permutation of code length codes
-static const __device__ __constant__ uint16_t g_lens[29] = {  // Size base for length codes 257..285
+static __device__ const __constant__ uint16_t g_lens[29] = {  // Size base for length codes 257..285
   3,  4,  5,  6,  7,  8,  9,  10, 11,  13,  15,  17,  19,  23, 27,
   31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
-static const __device__ __constant__ uint16_t
+static __device__ const __constant__ uint16_t
   g_lext[29] = {  // Extra bits for length codes 257..285
     0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
 
-static const __device__ __constant__ uint16_t
+static __device__ const __constant__ uint16_t
   g_dists[30] = {  // Offset base for distance codes 0..29
     1,   2,   3,   4,   5,   7,    9,    13,   17,   25,   33,   49,   65,    97,    129,
     193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
-static const __device__ __constant__ uint16_t g_dext[30] = {  // Extra bits for distance codes 0..29
+static __device__ const __constant__ uint16_t g_dext[30] = {  // Extra bits for distance codes 0..29
   0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
 /// @brief Thread 0 only: decode bitstreams and output symbols into the symbol queue
@@ -516,11 +520,11 @@ __device__ void decode_symbols(inflate_state_s* s)
   int32_t sym, batch_len;
 
   do {
-    volatile uint32_t* b = &s->x.u.symqueue[batch * batch_size];
+    uint32_t volatile* b = &s->x.u.symqueue[batch * batch_size];
     // Wait for the next batch entry to be empty
 #if ENABLE_PREFETCH
     // Wait for prefetcher to fetch a worst-case of 48 bits per symbol
-    while ((*(volatile int32_t*)&s->pref.cur_p - (int32_t)(size_t)cur < batch_size * 6) ||
+    while ((*(int32_t volatile*)&s->pref.cur_p - (int32_t)(size_t)cur < batch_size * 6) ||
            (s->x.batch_len[batch] != 0)) {}
 #else
     while (s->x.batch_len[batch] != 0) {}
@@ -779,7 +783,7 @@ __device__ void process_symbols(inflate_state_s* s, int t)
   int batch              = 0;
 
   do {
-    volatile uint32_t* b = &s->x.u.symqueue[batch * batch_size];
+    uint32_t volatile* b = &s->x.u.symqueue[batch * batch_size];
     int batch_len        = 0;
     if (t == 0) {
       while ((batch_len = s->x.batch_len[batch]) == 0) {}
@@ -944,14 +948,14 @@ __device__ void init_prefetcher(inflate_state_s* s, int t)
   }
 }
 
-__device__ void prefetch_warp(volatile inflate_state_s* s, int t)
+__device__ void prefetch_warp(inflate_state_s volatile* s, int t)
 {
   uint8_t const* cur_p = s->pref.cur_p;
   uint8_t const* end   = s->end;
   while (shuffle((t == 0) ? s->pref.run : 0)) {
     auto cur_lo = (int32_t)(size_t)cur_p;
     int do_pref =
-      shuffle((t == 0) ? (cur_lo - *(volatile int32_t*)&s->cur < prefetch_size - 32 * 4 - 4) : 0);
+      shuffle((t == 0) ? (cur_lo - *(int32_t volatile*)&s->cur < prefetch_size - 32 * 4 - 4) : 0);
     if (do_pref) {
       uint8_t const* p             = cur_p + 4 * t;
       *prefetch_addr32(s->pref, p) = (p < end) ? *reinterpret_cast<uint32_t const*>(p) : 0;
@@ -969,7 +973,7 @@ __device__ void prefetch_warp(volatile inflate_state_s* s, int t)
 
 /**
  * @brief Parse GZIP header
- * See https://tools.ietf.org/html/rfc1952
+ * See https://datatracker.ietf.org/doc/html/rfc1952
  */
 __device__ int parse_gzip_header(uint8_t const* src, size_t src_size)
 {
@@ -1143,65 +1147,6 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   }
 }
 
-/**
- * @brief Copy a group of buffers
- *
- * blockDim {1024,1,1}
- *
- * @param inputs Source and destination information per block
- */
-CUDF_KERNEL void __launch_bounds__(1024)
-  copy_uncompressed_kernel(device_span<device_span<uint8_t const> const> inputs,
-                           device_span<device_span<uint8_t> const> outputs)
-{
-  __shared__ uint8_t const* volatile src_g;
-  __shared__ uint8_t* volatile dst_g;
-  __shared__ uint32_t volatile copy_len_g;
-
-  uint32_t t = threadIdx.x;
-  uint32_t z = blockIdx.x;
-  uint8_t const* src;
-  uint8_t* dst;
-  uint32_t len, src_align_bytes, src_align_bits, dst_align_bytes;
-
-  if (!t) {
-    src        = inputs[z].data();
-    dst        = outputs[z].data();
-    len        = static_cast<uint32_t>(min(inputs[z].size(), outputs[z].size()));
-    src_g      = src;
-    dst_g      = dst;
-    copy_len_g = len;
-  }
-  __syncthreads();
-  src = src_g;
-  dst = dst_g;
-  len = copy_len_g;
-  // Align output to 32-bit
-  dst_align_bytes = 3 & -reinterpret_cast<intptr_t>(dst);
-  if (dst_align_bytes != 0) {
-    uint32_t align_len = min(dst_align_bytes, len);
-    if (t < align_len) { dst[t] = src[t]; }
-    src += align_len;
-    dst += align_len;
-    len -= align_len;
-  }
-  src_align_bytes = (uint32_t)(3 & reinterpret_cast<uintptr_t>(src));
-  src_align_bits  = src_align_bytes << 3;
-  while (len >= 32) {
-    auto const* src32 = reinterpret_cast<uint32_t const*>(src - src_align_bytes);
-    uint32_t copy_cnt = min(len >> 2, 1024);
-    if (t < copy_cnt) {
-      uint32_t v = src32[t];
-      if (src_align_bits != 0) { v = __funnelshift_r(v, src32[t + 1], src_align_bits); }
-      reinterpret_cast<uint32_t*>(dst)[t] = v;
-    }
-    src += copy_cnt * 4;
-    dst += copy_cnt * 4;
-    len -= copy_cnt * 4;
-  }
-  if (t < len) { dst[t] = src[t]; }
-}
-
 enum class task_type { DECOMPRESSION, COMPRESSION };
 
 class cost_model {
@@ -1216,7 +1161,8 @@ class cost_model {
                                              task_type task_type)
   {
     if (task_type == task_type::DECOMPRESSION) {
-      auto const compression_ratio = std::max(1., static_cast<double>(output_size) / input_size);
+      auto const compression_ratio =
+        cuda::std::max(1., static_cast<double>(output_size) / input_size);
       // When the compression ratio is one, the cost factor is the same as the copy cost ratio,
       // meaning that the cost of decompressing the block is the same as the cost of copying it. The
       // cost factor asymptotes to one as the compression ratio increases, meaning that the cost
@@ -1255,18 +1201,21 @@ class cost_model {
 sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const> inputs,
                                    device_span<device_span<uint8_t> const> outputs,
                                    task_type task_type,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  rmm::device_uvector<std::size_t> order(inputs.size(), stream, mr);
-  thrust::sequence(rmm::exec_policy_nosync(stream), order.begin(), order.end());
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+  cuda::device_buffer<std::size_t> order(stream, output_mr, inputs.size(), cuda::no_init);
+  thrust::sequence(
+    rmm::exec_policy_nosync(stream, temp_mr), order.data(), (order.data() + order.size()));
 
   // Precompute costs to avoid repeated computation during sorting
-  rmm::device_uvector<double> costs(inputs.size(), stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::make_zip_iterator(inputs.begin(), outputs.begin()),
-                    thrust::make_zip_iterator(inputs.end(), outputs.end()),
+  cuda::device_buffer<double> costs(stream, temp_mr, inputs.size(), cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                    cuda::make_zip_iterator(inputs.begin(), outputs.begin()),
+                    cuda::make_zip_iterator(inputs.end(), outputs.end()),
                     costs.begin(),
                     [task_type] __device__(auto const& input_output_pair) {
                       auto const& input  = cuda::std::get<0>(input_output_pair);
@@ -1274,22 +1223,24 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
                       return cost_model::task_device_cost(input.size(), output.size(), task_type);
                     });
 
-  thrust::sort(rmm::exec_policy_nosync(stream),
+  thrust::sort(rmm::exec_policy_nosync(stream, temp_mr),
                order.begin(),
                order.end(),
                [costs = costs.data()] __device__(std::size_t a, std::size_t b) {
                  return costs[a] > costs[b];
                });
 
-  auto sorted_inputs = rmm::device_uvector<device_span<uint8_t const>>(inputs.size(), stream, mr);
-  thrust::gather(rmm::exec_policy_nosync(stream),
+  cuda::device_buffer<device_span<uint8_t const>> sorted_inputs(
+    stream, output_mr, inputs.size(), cuda::no_init);
+  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
                  order.begin(),
                  order.end(),
                  inputs.begin(),
                  sorted_inputs.begin());
 
-  auto sorted_outputs = rmm::device_uvector<device_span<uint8_t>>(outputs.size(), stream, mr);
-  thrust::gather(rmm::exec_policy_nosync(stream),
+  cuda::device_buffer<device_span<uint8_t>> sorted_outputs(
+    stream, output_mr, outputs.size(), cuda::no_init);
+  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
                  order.begin(),
                  order.end(),
                  outputs.begin(),
@@ -1304,7 +1255,7 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
                                  size_t auto_mode_threshold,
                                  size_t hybrid_mode_cost_ratio,
                                  task_type task,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (host_state == host_engine_state::OFF or inputs.empty()) { return 0; }
@@ -1359,38 +1310,29 @@ void gpuinflate(device_span<device_span<uint8_t const> const> inputs,
                 device_span<device_span<uint8_t> const> outputs,
                 device_span<codec_exec_result> results,
                 gzip_header_included parse_hdr,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream)
 {
   constexpr int block_size = 128;  // Threads per block
   if (inputs.size() > 0) {
     inflate_kernel_no_racecheck<block_size>
-      <<<inputs.size(), block_size, 0, stream.value()>>>(inputs, outputs, results, parse_hdr);
-  }
-}
-
-void gpu_copy_uncompressed_blocks(device_span<device_span<uint8_t const> const> inputs,
-                                  device_span<device_span<uint8_t> const> outputs,
-                                  rmm::cuda_stream_view stream)
-{
-  constexpr auto block_size = 1024;
-  if (inputs.size() > 0) {
-    copy_uncompressed_kernel<<<inputs.size(), block_size, 0, stream.value()>>>(inputs, outputs);
+      <<<inputs.size(), block_size, 0, stream.get()>>>(inputs, outputs, results, parse_hdr);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 }
 
 sorted_codec_parameters sort_decompression_tasks(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   return sort_tasks(inputs, outputs, task_type::DECOMPRESSION, stream, mr);
 }
 
 sorted_codec_parameters sort_compression_tasks(device_span<device_span<uint8_t const> const> inputs,
                                                device_span<device_span<uint8_t> const> outputs,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   return sort_tasks(inputs, outputs, task_type::COMPRESSION, stream, mr);
 }
@@ -1398,9 +1340,10 @@ sorted_codec_parameters sort_compression_tasks(device_span<device_span<uint8_t c
 void copy_results_to_original_order(device_span<codec_exec_result const> sorted_results,
                                     device_span<codec_exec_result> original_results,
                                     device_span<std::size_t const> order,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
-  thrust::scatter(rmm::exec_policy_nosync(stream),
+  thrust::scatter(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   sorted_results.begin(),
                   sorted_results.end(),
                   order.begin(),
@@ -1412,7 +1355,7 @@ size_t split_compression_tasks(device_span<device_span<uint8_t const> const> inp
                                host_engine_state host_state,
                                size_t auto_mode_threshold,
                                size_t hybrid_mode_cost_ratio,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   return split_tasks(inputs,
                      outputs,
@@ -1428,7 +1371,7 @@ size_t split_decompression_tasks(device_span<device_span<uint8_t const> const> i
                                  host_engine_state host_state,
                                  size_t auto_mode_threshold,
                                  size_t hybrid_mode_cost_ratio,
-                                 rmm::cuda_stream_view stream)
+                                 cuda::stream_ref stream)
 {
   return split_tasks(inputs,
                      outputs,

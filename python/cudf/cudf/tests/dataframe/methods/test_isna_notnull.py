@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -34,24 +34,12 @@ from cudf.testing import assert_eq
 )
 @pytest.mark.parametrize("api_call", ["isnull", "isna", "notna", "notnull"])
 def test_dataframe_isnull_isna_and_reverse(na_data, nan_as_null, api_call):
-    def detect_nan(x):
-        # Check if the input is a float and if it is nan
-        return x.apply(lambda v: isinstance(v, float) and np.isnan(v))
+    gdf = cudf.DataFrame(na_data, nan_as_null=nan_as_null)
 
-    df = na_data
-    nan_contains = df.select_dtypes(object).apply(detect_nan)
-    if nan_as_null is False and (
-        nan_contains.any().any() and not nan_contains.all().all()
-    ):
-        with pytest.raises(cudf.errors.MixedTypeError):
-            cudf.DataFrame(df, nan_as_null=nan_as_null)
-    else:
-        gdf = cudf.DataFrame(df, nan_as_null=nan_as_null)
+    assert_eq(getattr(na_data, api_call)(), getattr(gdf, api_call)())
 
-        assert_eq(getattr(df, api_call)(), getattr(gdf, api_call)())
-
-        # Test individual columns
-        for col in df:
-            assert_eq(
-                getattr(df[col], api_call)(), getattr(gdf[col], api_call)()
-            )
+    # Test individual columns
+    for col in na_data:
+        assert_eq(
+            getattr(na_data[col], api_call)(), getattr(gdf[col], api_call)()
+        )

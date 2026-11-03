@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include "strings/regex/glushkov.cuh"
 #include "strings/regex/regex.cuh"
 
 #include <cudf/column/column_factories.hpp>
@@ -16,10 +17,10 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/scan.h>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <stdexcept>
 
@@ -29,13 +30,13 @@ namespace detail {
 
 constexpr auto regex_launch_kernel_block_size = 256;
 
-template <typename ForEachFunction>
-CUDF_KERNEL void for_each_kernel(ForEachFunction fn, reprog_device const d_prog, size_type size)
+template <typename ForEachFunction, typename ProgDevice>
+CUDF_KERNEL void for_each_kernel(ForEachFunction fn, ProgDevice const d_prog, size_type size)
 {
   extern __shared__ u_char shmem[];
   if (threadIdx.x == 0) { d_prog.store(shmem); }
   __syncthreads();
-  auto const s_prog = reprog_device::load(d_prog, shmem);
+  auto s_prog = ProgDevice::load(d_prog, shmem);
 
   auto const thread_idx = cudf::detail::grid_1d::global_thread_id();
   auto const stride     = s_prog.thread_count();
@@ -46,33 +47,35 @@ CUDF_KERNEL void for_each_kernel(ForEachFunction fn, reprog_device const d_prog,
   }
 }
 
-template <typename ForEachFunction>
+template <typename ForEachFunction, typename ProgDevice>
 void launch_for_each_kernel(ForEachFunction fn,
-                            reprog_device& d_prog,
+                            ProgDevice& d_prog,
                             size_type size,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
-  auto d_buffer = rmm::device_buffer(buffer_size, stream);
+  auto d_buffer = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
   cudf::detail::grid_1d grid{thread_count, regex_launch_kernel_block_size};
-  for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+  for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
     fn, d_prog, size);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-template <typename TransformFunction, typename OutputType>
+template <typename TransformFunction, typename ProgDevice, typename OutputType>
 CUDF_KERNEL void transform_kernel(TransformFunction fn,
-                                  reprog_device const d_prog,
+                                  ProgDevice const d_prog,
                                   OutputType* d_output,
                                   size_type size)
 {
   extern __shared__ u_char shmem[];
   if (threadIdx.x == 0) { d_prog.store(shmem); }
   __syncthreads();
-  auto const s_prog = reprog_device::load(d_prog, shmem);
+  auto s_prog = ProgDevice::load(d_prog, shmem);
 
   auto const thread_idx = cudf::detail::grid_1d::global_thread_id();
   auto const stride     = s_prog.thread_count();
@@ -83,45 +86,50 @@ CUDF_KERNEL void transform_kernel(TransformFunction fn,
   }
 }
 
-template <typename TransformFunction, typename OutputType>
+template <typename TransformFunction, typename ProgDevice, typename OutputType>
 void launch_transform_kernel(TransformFunction fn,
-                             reprog_device& d_prog,
+                             ProgDevice& d_prog,
                              OutputType* d_output,
                              size_type size,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
-  auto d_buffer = rmm::device_buffer(buffer_size, stream);
+  auto d_buffer = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
   cudf::detail::grid_1d grid{thread_count, regex_launch_kernel_block_size};
-  transform_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+  transform_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
     fn, d_prog, d_output, size);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-template <typename SizeAndExecuteFunction>
+template <typename SizeAndExecuteFunction, typename ProgDevice>
 auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
-                           reprog_device& d_prog,
+                           ProgDevice& d_prog,
                            size_type strings_count,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref mr)
 {
-  auto output_sizes        = rmm::device_uvector<size_type>(strings_count, stream);
+  auto output_sizes = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   size_and_exec_fn.d_sizes = output_sizes.data();
 
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(strings_count);
 
-  auto d_buffer = rmm::device_buffer(buffer_size, stream);
+  auto d_buffer = cuda::device_buffer<std::byte>(
+    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
   auto const shmem_size = d_prog.compute_shared_memory_size();
   cudf::detail::grid_1d grid{thread_count, 256};
 
   // Compute the output size for each row
   if (strings_count > 0) {
-    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
       size_and_exec_fn, d_prog, strings_count);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
   // Convert the sizes to offsets
   auto [offsets, char_bytes] = cudf::strings::detail::make_offsets_child_column(
@@ -133,8 +141,9 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
   rmm::device_uvector<char> chars(char_bytes, stream, mr);
   if (char_bytes > 0) {
     size_and_exec_fn.d_chars = chars.data();
-    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.value()>>>(
+    for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
       size_and_exec_fn, d_prog, strings_count);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   return std::make_pair(std::move(offsets), std::move(chars));

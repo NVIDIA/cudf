@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import array
 import datetime
@@ -11,13 +11,9 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
+from packaging.version import parse
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_GE_210,
-    PANDAS_VERSION,
-)
 from cudf.core.buffer.spill_manager import get_global_manager
 from cudf.core.column.column import as_column
 from cudf.errors import MixedTypeError
@@ -285,13 +281,7 @@ def test_series_unitness_np_datetimelike_units():
 
 
 def test_from_numpyextensionarray_string_object_pandas_compat_mode():
-    NumpyExtensionArray = (
-        pd.arrays.NumpyExtensionArray
-        if PANDAS_GE_210
-        else pd.arrays.PandasArray
-    )
-
-    data = NumpyExtensionArray(np.array(["a", None], dtype=object))
+    data = pd.arrays.NumpyExtensionArray(np.array(["a", None], dtype=object))
     with cudf.option_context("mode.pandas_compatible", True):
         result = cudf.Series(data)
     expected = pd.Series(data)
@@ -460,7 +450,7 @@ def test_default_float_bitwidth_construction(default_float_bitwidth, data):
 
 
 def test_series_ordered_dedup():
-    # part of https://github.com/rapidsai/cudf/issues/11486
+    # part of https://github.com/NVIDIA/cudf/issues/11486
     rng = np.random.default_rng(seed=0)
     sr = cudf.Series(rng.integers(0, 100, 1000))
     # pandas unique() preserves order
@@ -519,12 +509,7 @@ def test_series_init_scalar_with_index(data, index):
     pandas_series = pd.Series(data, index=index)
     cudf_series = cudf.Series(data, index=index)
 
-    assert_eq(
-        pandas_series,
-        cudf_series,
-        check_index_type=data is not None or index is not None,
-        check_dtype=data is not None,
-    )
+    assert_eq(pandas_series, cudf_series)
 
 
 @pytest.mark.parametrize(
@@ -563,11 +548,6 @@ def test_series_constructor_unbounded_sequence():
 
     with pytest.raises(TypeError):
         cudf.Series(A())
-
-
-def test_series_constructor_error_mixed_type():
-    with pytest.raises(MixedTypeError):
-        cudf.Series(["abc", np.nan, "123"], nan_as_null=False)
 
 
 def test_series_from_pandas_sparse():
@@ -805,13 +785,34 @@ def test_series_all_valid_nan(num_elements):
 def test_series_empty_dtype():
     expected = pd.Series([])
     actual = cudf.Series([])
-    assert_eq(expected, actual, check_dtype=True)
+    assert expected.dtype == actual.dtype
+    assert_eq(expected, actual)
 
 
 @pytest.mark.parametrize("data", [None, {}, []])
 def test_series_empty_index_rangeindex(data):
     expected = cudf.RangeIndex(0)
     result = cudf.Series(data).index
+    assert_eq(result, expected)
+
+
+@pytest.mark.parametrize("index", [None, []])
+def test_series_no_data_empty_index_defaults_to_object(index):
+    # When no data is supplied and the index is empty (None or []), the
+    # resulting dtype should be object to match pandas. Only a non-empty
+    # index without explicit dtype should default to float64.
+    expected = pd.Series(index=index)
+    result = cudf.Series(index=index)
+    assert result.dtype == np.dtype("object")
+    assert_eq(result, expected)
+
+
+def test_series_no_data_nonempty_index_defaults_to_float64():
+    # Sanity check: a non-empty index without explicit dtype keeps the
+    # float64 default that pandas uses.
+    expected = pd.Series(index=[1, 2, 3])
+    result = cudf.Series(index=[1, 2, 3])
+    assert result.dtype == np.dtype("float64")
     assert_eq(result, expected)
 
 
@@ -906,17 +907,14 @@ def test_series_arrow_category_types_roundtrip():
     pi = pd.Index(ps)
     pdf = pi.to_frame()
 
-    with cudf.option_context("mode.pandas_compatible", True):
-        with pytest.raises(NotImplementedError):
-            cudf.from_pandas(ps)
+    with pytest.raises(TypeError):
+        cudf.from_pandas(ps)
 
-    with cudf.option_context("mode.pandas_compatible", True):
-        with pytest.raises(NotImplementedError):
-            cudf.from_pandas(pi)
+    with pytest.raises(TypeError):
+        cudf.from_pandas(pi)
 
-    with cudf.option_context("mode.pandas_compatible", True):
-        with pytest.raises(NotImplementedError):
-            cudf.from_pandas(pdf)
+    with pytest.raises(TypeError):
+        cudf.from_pandas(pdf)
 
 
 @pytest.mark.parametrize(
@@ -1138,7 +1136,7 @@ def test_series_arrow_list_types_roundtrip():
 
 
 def test_series_error_nan_mixed_types():
-    ps = pd.Series([np.nan, "ab", "cd"])
+    ps = pd.Series([np.nan, "ab", "cd"], dtype=object)
     with cudf.option_context("mode.pandas_compatible", True):
         with pytest.raises(MixedTypeError):
             cudf.from_pandas(ps)
@@ -1211,6 +1209,8 @@ def test_series_np_array_all_nan_object_raises():
 def test_roundtrip_series_plc_column(ps):
     expect = cudf.Series(ps)
     actual = cudf.Series.from_pylibcudf(*expect.to_pylibcudf())
+    if expect.dtype == "object":
+        actual = actual.astype("object")
     assert_eq(expect, actual)
 
 
@@ -1290,11 +1290,36 @@ def test_datetime_array_timeunit_cast(dtype):
     assert_eq(pdf, gdf)
 
 
-@pytest.mark.parametrize("timeunit", ["D", "W", "M", "Y"])
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
+@pytest.mark.parametrize(
+    "data",
+    [
+        np.array(["2263-01-01"], dtype="datetime64[D]"),
+        np.array([datetime.datetime(2263, 1, 1)], dtype=object),
+        np.array([np.datetime64("2263-01-01", "D")], dtype=object),
+        np.array(["2263-01-01"], dtype=object),
+        np.array(["1600-01-01"], dtype="datetime64[D]"),
+    ],
+    ids=[
+        "datetime64[D]",
+        "object-datetime.datetime",
+        "object-numpy-scalar",
+        "object-string",
+        "pre-epoch",
+    ],
 )
+@pytest.mark.parametrize("box", ["Series", "Index", "DataFrame"])
+def test_constructor_datetime_out_of_bounds(box, data):
+    # Forcing values beyond the target unit's representable range must
+    # raise like pandas instead of silently wrapping around int64.
+    assert_exceptions_equal(
+        lfunc=getattr(pd, box),
+        rfunc=getattr(cudf, box),
+        lfunc_args_and_kwargs=([data], {"dtype": "datetime64[ns]"}),
+        rfunc_args_and_kwargs=([data], {"dtype": "datetime64[ns]"}),
+    )
+
+
+@pytest.mark.parametrize("timeunit", ["D", "W", "M", "Y"])
 def test_datetime_scalar_timeunit_cast(timeunit):
     testscalar = np.datetime64("2016-11-20", timeunit)
 
@@ -1315,10 +1340,6 @@ def test_datetime_scalar_timeunit_cast(timeunit):
     assert_eq(pdf, gdf, check_dtype=True)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
-)
 def test_datetime_string_to_datetime_resolution_loss_raises():
     data = ["2020-01-01 00:00:00.00001"]
     dtype = "datetime64[s]"
@@ -1342,7 +1363,7 @@ def test_string_ingest(one_dimensional_array_types):
     expect = ["a", "a", "b", "c", "a"]
     data = one_dimensional_array_types(expect)
     got = cudf.Series(data)
-    assert got.dtype == np.dtype("object")
+    assert got.dtype == pd.StringDtype(na_value=np.nan)
     assert len(got) == 5
     for idx, val in enumerate(expect):
         assert expect[idx] == got[idx]
@@ -1433,6 +1454,23 @@ def test_categorical_creation(codes, categories):
     assert_eq(expected, got)
 
 
+@pytest.mark.parametrize("tz", ["US/Eastern", "Asia/Tokyo", "UTC"])
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["2024-01-01", "2024-02-01", "2024-01-01"],
+        ["2024-01-01", None, "2024-02-01"],
+    ],
+)
+def test_categorical_creation_tz_aware(data, tz):
+    cats = pd.to_datetime(data).tz_localize(tz)
+    pd_cat = pd.Categorical(cats)
+    expected = pd.Series(pd_cat)
+    got = cudf.Series(pd_cat)
+    assert_eq(expected, got)
+    assert got.cat.categories.dtype == expected.cat.categories.dtype
+
+
 @pytest.mark.parametrize("input_obj", [[1, cudf.NA, 3]])
 def test_series_construction_with_nulls_as_category(
     input_obj, all_supported_types_as_str
@@ -1513,17 +1551,15 @@ def test_as_column_types():
     assert_eq(pds, gds)
 
     col = as_column(cudf.Series([], dtype="float64"), dtype=cudf.dtype("str"))
-    assert_eq(col.dtype, np.dtype("object"))
+    assert_eq(col.dtype, pd.StringDtype(na_value=np.nan))
     gds = cudf.Series._from_column(col)
     pds = pd.Series(pd.Series([], dtype="str"))
-
     assert_eq(pds, gds)
 
     col = as_column(cudf.Series([], dtype="float64"), dtype=cudf.dtype("str"))
-    assert_eq(col.dtype, np.dtype("object"))
+    assert_eq(col.dtype, pd.StringDtype(na_value=np.nan))
     gds = cudf.Series._from_column(col)
-    pds = pd.Series(pd.Series([], dtype="object"))
-
+    pds = pd.Series(pd.Series([], dtype="str"))
     assert_eq(pds, gds)
 
     pds = pd.Series(np.array([1, 2, 3]), dtype="float32")
@@ -1544,7 +1580,7 @@ def test_as_column_types():
 
     pds = pd.Series([1, 2, 4], dtype="int64")
     gds = cudf.Series._from_column(
-        as_column(cudf.Series([1, 2, 4]), dtype="int64")
+        as_column(cudf.Series([1, 2, 4]), dtype=np.dtype("int64"))
     )
 
     assert_eq(pds, gds)
@@ -1573,3 +1609,52 @@ def test_series_type_invalid_error():
     with cudf.option_context("mode.pandas_compatible", True):
         with pytest.raises(ValueError):
             cudf.Series(["a", "b", "c"], dtype="Int64")
+
+
+def test_series_constructor_numpy_dtype_str(pandas_compatible):
+    data = ["a"]
+    dtype = np.dtype(str)
+    expected = pd.Series(data, dtype=dtype)
+    result = cudf.Series(data, dtype=dtype)
+    assert result.dtype == np.dtype(object)
+    assert_eq(result, expected)
+
+
+def test_series_constructor_dtype_is_pandas_nullable_extension_type(
+    all_supported_pandas_nullable_extension_dtypes,
+):
+    scalar, dtype = all_supported_pandas_nullable_extension_dtypes
+    result = cudf.Series([scalar], dtype=dtype)
+    expected = pd.Series([scalar], dtype=dtype)
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
+def test_series_constructor_dtype_is_pandas_arrowdtype(
+    all_supported_pandas_arrowdtypes,
+):
+    scalar, dtype = all_supported_pandas_arrowdtypes
+    if (
+        pa.types.is_decimal32(dtype.pyarrow_dtype)
+        or pa.types.is_decimal64(dtype.pyarrow_dtype)
+    ) and parse(pa.__version__) < parse("20"):
+        pytest.skip("pyarrow < 19 converts decimal32/64 to object")
+    result = cudf.Series([scalar], dtype=dtype)
+    expected = pd.Series([scalar], dtype=dtype)
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
+def test_build_series_from_nullable_pandas_dtype(
+    all_supported_pandas_nullable_extension_dtypes,
+):
+    scalar, dtype = all_supported_pandas_nullable_extension_dtypes
+    expected = pd.Series([scalar, pd.NA], dtype=dtype)
+    result = cudf.Series(expected)
+
+    assert result.dtype == expected.dtype
+
+    expect_mask = expected.isna()
+    got_mask = result.isna().to_numpy()
+
+    np.testing.assert_array_equal(expect_mask, got_mask)

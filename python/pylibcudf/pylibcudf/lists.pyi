@@ -1,16 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
-from rmm.pylibrmm.stream import Stream
 
 from pylibcudf.column import Column
 from pylibcudf.copying import OutOfBoundsPolicy
 from pylibcudf.scalar import Scalar
 from pylibcudf.table import Table
 from pylibcudf.types import NanEquality, NullEquality, NullOrder, Order
+from pylibcudf.utils import CudaStreamLike
 
 class ConcatenateNullPolicy(IntEnum):
     IGNORE = ...
@@ -23,66 +23,66 @@ class DuplicateFindOption(IntEnum):
 def explode_outer(
     input: Table,
     explode_column_idx: int,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...
 def concatenate_rows(
     input: Table,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def concatenate_list_elements(
     input: Column,
     null_policy: ConcatenateNullPolicy,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def contains(
     input: Column,
     search_key: Column | Scalar,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def contains_nulls(
     input: Column,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def index_of(
     input: Column,
     search_key: Column | Scalar,
     find_option: DuplicateFindOption,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def reverse(
     input: Column,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def segmented_gather(
     input: Column,
     gather_map_list: Column,
     bounds_policy: OutOfBoundsPolicy = OutOfBoundsPolicy.DONT_CHECK,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def extract_list_element(
     input: Column,
     index: Column | int,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def count_elements(
     input: Column,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def sequences(
     starts: Column,
     sizes: Column,
     steps: Column | None = None,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def sort_lists(
@@ -90,7 +90,7 @@ def sort_lists(
     sort_order: Order,
     na_position: NullOrder,
     stable: bool = False,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def difference_distinct(
@@ -98,7 +98,7 @@ def difference_distinct(
     rhs: Column,
     nulls_equal: NullEquality = NullEquality.EQUAL,
     nans_equal: NanEquality = NanEquality.ALL_EQUAL,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def have_overlap(
@@ -106,7 +106,7 @@ def have_overlap(
     rhs: Column,
     nulls_equal: NullEquality = NullEquality.EQUAL,
     nans_equal: NanEquality = NanEquality.ALL_EQUAL,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def intersect_distinct(
@@ -114,7 +114,7 @@ def intersect_distinct(
     rhs: Column,
     nulls_equal: NullEquality = NullEquality.EQUAL,
     nans_equal: NanEquality = NanEquality.ALL_EQUAL,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def union_distinct(
@@ -122,19 +122,31 @@ def union_distinct(
     rhs: Column,
     nulls_equal: NullEquality = NullEquality.EQUAL,
     nans_equal: NanEquality = NanEquality.ALL_EQUAL,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Column: ...
+def apply_retention_mask(
+    input: Column,
+    retention_mask: Column,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def apply_boolean_mask(
     input: Column,
     boolean_mask: Column,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> Column: ...
+def apply_deletion_mask(
+    input: Column,
+    deletion_mask: Column,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def distinct(
     input: Column,
     nulls_equal: NullEquality,
     nans_equal: NanEquality,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...

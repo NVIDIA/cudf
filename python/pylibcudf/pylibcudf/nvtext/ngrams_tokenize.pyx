@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -6,6 +6,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext.ngrams_tokenize cimport (
     ngrams_tokenize as cpp_ngrams_tokenize,
 )
@@ -13,8 +14,13 @@ from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
+from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["ngrams_tokenize"]
 
@@ -23,7 +29,7 @@ cpdef Column ngrams_tokenize(
     size_type ngrams,
     Scalar delimiter,
     Scalar separator,
-    Stream stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -52,16 +58,18 @@ cpdef Column ngrams_tokenize(
         New strings columns of tokens
     """
     cdef unique_ptr[column] c_result
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_ngrams_tokenize(
-            input.view(),
+            c_input,
             ngrams,
             dereference(<const string_scalar*>delimiter.get()),
             dereference(<const string_scalar*>separator.get()),
-            stream.view(),
+            _cs,
             mr.get_mr()
         )
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)

@@ -1,11 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
-from rmm.pylibrmm.stream cimport Stream
 
 ctypedef fused ColumnOrScalar:
     Column
@@ -16,7 +15,7 @@ cpdef Column find(
     ColumnOrScalar target,
     size_type start=*,
     size_type stop=*,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )
 
@@ -25,27 +24,27 @@ cpdef Column rfind(
     Scalar target,
     size_type start=*,
     size_type stop=*,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )
 
 cpdef Column contains(
     Column input,
     ColumnOrScalar target,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )
 
 cpdef Column starts_with(
     Column input,
     ColumnOrScalar target,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )
 
 cpdef Column ends_with(
     Column input,
     ColumnOrScalar target,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )

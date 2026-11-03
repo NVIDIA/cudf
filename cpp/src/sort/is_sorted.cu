@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,13 +11,14 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/count.h>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
 
@@ -27,7 +28,7 @@ namespace detail {
 bool is_sorted(cudf::table_view const& in,
                std::vector<order> const& column_order,
                std::vector<null_order> const& null_precedence,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
 {
   auto const comparator =
     detail::row::lexicographic::self_comparator{in, column_order, null_precedence, stream};
@@ -38,24 +39,28 @@ bool is_sorted(cudf::table_view const& in,
     // Using a temporary buffer for intermediate transform results from the lambda containing
     // the comparator speeds up compile-time significantly over using the comparator directly
     // in thrust::is_sorted.
-    auto d_results = rmm::device_uvector<bool>(in.num_rows(), stream);
-    thrust::transform(rmm::exec_policy_nosync(stream),
-                      thrust::counting_iterator<size_type>(0),
-                      thrust::counting_iterator<size_type>(in.num_rows()),
+    auto d_results = cuda::device_buffer<bool>(
+      stream, cudf::get_current_device_resource_ref(), in.num_rows(), cuda::no_init);
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                      cuda::counting_iterator<size_type>{0},
+                      cuda::counting_iterator<size_type>{in.num_rows()},
                       d_results.begin(),
                       [device_comparator] __device__(auto idx) -> bool {
                         return (idx == 0) || device_comparator(idx - 1, idx);
                       });
 
-    return thrust::count(
-             rmm::exec_policy_nosync(stream), d_results.begin(), d_results.end(), false) == 0;
+    return thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                         d_results.begin(),
+                         d_results.end(),
+                         false) == 0;
   } else {
     auto const device_comparator = comparator.less<false>(has_nested_nulls(in));
 
-    return thrust::is_sorted(rmm::exec_policy_nosync(stream),
-                             thrust::counting_iterator<size_type>(0),
-                             thrust::counting_iterator<size_type>(in.num_rows()),
-                             device_comparator);
+    return thrust::is_sorted(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::counting_iterator<size_type>{0},
+      cuda::counting_iterator<size_type>{in.num_rows()},
+      device_comparator);
   }
 }
 
@@ -64,7 +69,7 @@ bool is_sorted(cudf::table_view const& in,
 bool is_sorted(cudf::table_view const& in,
                std::vector<order> const& column_order,
                std::vector<null_order> const& null_precedence,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   if (in.num_columns() == 0 || in.num_rows() == 0) { return true; }

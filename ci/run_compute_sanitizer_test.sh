@@ -66,12 +66,17 @@ if [ ! -x "${TEST_EXECUTABLE}" ]; then
 fi
 
 CS_EXCLUDE_NAMES="kns=nvcomp,kns=zstd,kns=_no_sanitize,kns=_no_${TOOL_NAME}"
+CS_STREAM_ORDERED_RACES="all"
+if [ "${TEST_NAME}" == "LARGE_STRINGS_TEST" ]; then
+  CS_STREAM_ORDERED_RACES="no"
+fi
 
 # Run compute-sanitizer on the specified test
 compute-sanitizer \
   --tool "${TOOL_NAME}" \
   --force-blocking-launches \
   --kernel-name-exclude "${CS_EXCLUDE_NAMES}" \
+  --track-stream-ordered-races "${CS_STREAM_ORDERED_RACES}" \
   --error-exitcode=1 \
   "${TEST_EXECUTABLE}" \
   "$@"

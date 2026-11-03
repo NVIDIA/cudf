@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,6 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
 
@@ -77,7 +76,7 @@ TYPED_TEST_SUITE(GroupbyM2TypedTest, TestTypes);
 TYPED_TEST(GroupbyM2TypedTest, EmptyInput)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   auto const keys = keys_col<T>{};
   auto const vals = vals_col<T>{};
@@ -92,7 +91,7 @@ TYPED_TEST(GroupbyM2TypedTest, EmptyInput)
 TYPED_TEST(GroupbyM2TypedTest, AllNullKeysInput)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   auto const keys = keys_col<T>{{1, 2, 3}, all_nulls()};
   auto const vals = vals_col<T>{3, 4, 5};
@@ -108,7 +107,7 @@ TYPED_TEST(GroupbyM2TypedTest, AllNullKeysInput)
 TYPED_TEST(GroupbyM2TypedTest, AllNullValuesInput)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   auto const keys = keys_col<T>{1, 2, 3};
   auto const vals = vals_col<T>{{3, 4, 5}, all_nulls()};
@@ -123,7 +122,7 @@ TYPED_TEST(GroupbyM2TypedTest, AllNullValuesInput)
 TYPED_TEST(GroupbyM2TypedTest, SimpleInput)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // key = 1: vals = [0, 3, 6]
   // key = 2: vals = [1, 4, 5, 9]
@@ -142,7 +141,7 @@ TYPED_TEST(GroupbyM2TypedTest, SimpleInput)
 TYPED_TEST(GroupbyM2TypedTest, SimpleInputHavingNegativeValues)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // key = 1: vals = [0,  3, -6]
   // key = 2: vals = [1, -4, -5, 9]
@@ -161,7 +160,7 @@ TYPED_TEST(GroupbyM2TypedTest, SimpleInputHavingNegativeValues)
 TYPED_TEST(GroupbyM2TypedTest, ValuesHaveNulls)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   auto const keys = keys_col<T>{1, 2, 3, 4, 5, 2, 3, 2};
   auto const vals = vals_col<T>{{0, null, 2, 3, null, 5, 6, 7}, nulls_at({1, 4})};
@@ -177,7 +176,7 @@ TYPED_TEST(GroupbyM2TypedTest, ValuesHaveNulls)
 TYPED_TEST(GroupbyM2TypedTest, KeysAndValuesHaveNulls)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // key = 1: vals = [null, 3, 6]
   // key = 2: vals = [1, 4, null, 9]
@@ -197,7 +196,7 @@ TYPED_TEST(GroupbyM2TypedTest, KeysAndValuesHaveNulls)
 TYPED_TEST(GroupbyM2TypedTest, InputHaveNullsAndNaNs)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // key = 1: vals = [0, 3, 6]
   // key = 2: vals = [1, 4, NaN, 9]
@@ -219,7 +218,7 @@ TYPED_TEST(GroupbyM2TypedTest, InputHaveNullsAndNaNs)
 TYPED_TEST(GroupbyM2TypedTest, SlicedColumnsInput)
 {
   using T = TypeParam;
-  using R = cudf::detail::target_type_t<T, cudf::aggregation::M2>;
+  using R = double;
 
   // This test should compute M2 aggregation on the same dataset as the InputHaveNullsAndNaNs test.
   // i.e.:

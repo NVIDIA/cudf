@@ -1,14 +1,89 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from cython.operator cimport dereference
+from libc.stdint cimport uint8_t
+from cuda.bindings.cyruntime cimport cudaStream_t
+from cpython.bytes cimport PyBytes_FromStringAndSize
+from libcpp.memory cimport make_unique, unique_ptr
+from libcpp.optional cimport optional
+from libcpp.span cimport span as std_span
+from libcpp.string cimport string
+from libcpp.utility cimport move
+from libcpp.vector cimport vector
+
 from pylibcudf.io.types cimport SourceInfo
+from pylibcudf.libcudf.io.datasource cimport datasource, make_datasources
+from pylibcudf.libcudf.io.hybrid_scan cimport (
+    const_uint8_t,
+    hybrid_scan_reader as cpp_hybrid_scan_reader,
+)
+from pylibcudf.libcudf.io.parquet cimport parquet_reader_options
 from pylibcudf.libcudf.io cimport parquet_metadata as cpp_parquet_metadata
+from pylibcudf.libcudf.io.parquet_schema cimport (
+    ColumnChunk as cpp_ColumnChunk,
+    ColumnChunkMetaData as cpp_ColumnChunkMetaData,
+    DecimalType as cpp_DecimalType,
+    FileMetaData as cpp_FileMetaData,
+    IntType as cpp_IntType,
+    LogicalType as cpp_LogicalType,
+    RowGroup as cpp_RowGroup,
+    SchemaElement as cpp_SchemaElement,
+    SortingColumn as cpp_SortingColumn,
+    Statistics as cpp_Statistics,
+    TimestampType as cpp_TimestampType,
+    TimeType as cpp_TimeType,
+)
+from pylibcudf.libcudf.table.table cimport table as cpp_table
+from pylibcudf.libcudf.types cimport type_id
+from pylibcudf.libcudf.utilities.span cimport host_span
+from pylibcudf.table cimport Table
+from pylibcudf.types cimport DataType
+from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
+from rmm.pylibrmm.stream cimport Stream
+
+from typing import TYPE_CHECKING
+
+from pylibcudf.libcudf.io.parquet_schema import (
+    FieldRepetitionType,  # no-cython-lint
+    LogicalTypeId,  # no-cython-lint
+    TimeUnit,  # no-cython-lint
+    Type as PhysicalType,  # no-cython-lint
+)
+from pylibcudf.types import TypeId
+
+if TYPE_CHECKING:
+    from typing_extensions import Buffer
+    from pylibcudf.typing import CudaStreamLike
+
+ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
+ctypedef const string const_string
+ctypedef const cpp_FileMetaData const_cpp_FileMetaData
 
 
 __all__ = [
+    "ColumnChunk",
+    "ColumnChunkMetaData",
+    "ColumnChunkStatistics",
+    "DecimalType",
+    "FieldRepetitionType",
+    "FileMetaData",
+    "IntType",
+    "LogicalType",
+    "LogicalTypeId",
     "ParquetColumnSchema",
     "ParquetMetadata",
     "ParquetSchema",
+    "PhysicalType",
+    "RowGroup",
+    "SchemaElement",
+    "SortingColumn",
+    "TimeType",
+    "TimeUnit",
+    "TimestampType",
+    "read_parquet_column_chunk_bounds",
+    "read_parquet_footers",
     "read_parquet_metadata",
 ]
 
@@ -69,7 +144,7 @@ cdef class ParquetColumnSchema:
         """
         return ParquetColumnSchema.from_column_schema(self.column_schema.child(idx))
 
-    cpdef list children(self):
+    cpdef list[ParquetColumnSchema] children(self):
         """
         Returns schemas of all child columns.
 
@@ -83,6 +158,20 @@ cdef class ParquetColumnSchema:
             ParquetColumnSchema.from_column_schema(child)
             for child in self.column_schema.children()
         ]
+
+    cpdef DataType cudf_type(self):
+        """
+        Returns the cudf data type for this column.
+
+        This is the resolved cudf data type mapped from the parquet
+        physical/logical types.
+
+        Returns
+        -------
+        DataType
+            cudf data type
+        """
+        return DataType.from_libcudf(self.column_schema.cudf_type())
 
 
 cdef class ParquetSchema:
@@ -113,6 +202,21 @@ cdef class ParquetSchema:
             Root column schema
         """
         return ParquetColumnSchema.from_column_schema(self.schema.root())
+
+    cpdef dict[str, DataType] column_types(self):
+        """
+        Returns a dictionary mapping column names to their cudf data types.
+
+        Returns
+        -------
+        dict[str, DataType]
+            Dictionary mapping column names to DataType objects
+        """
+        cdef ParquetColumnSchema root_schema = self.root()
+        result = {}
+        for i in range(root_schema.num_children()):
+            result[root_schema.child(i).name()] = root_schema.child(i).cudf_type()
+        return result
 
 
 cdef class ParquetMetadata:
@@ -166,13 +270,13 @@ cdef class ParquetMetadata:
         """
         return self.meta.num_rowgroups()
 
-    cpdef list num_rowgroups_per_file(self):
+    cpdef list[int] num_rowgroups_per_file(self):
         """
         Returns the number of rowgroups in each file.
         """
         return self.meta.num_rowgroups_per_file()
 
-    cpdef dict metadata(self):
+    cpdef dict[str, str] metadata(self):
         """
         Returns the key-value metadata in the file footer.
 
@@ -181,9 +285,12 @@ cdef class ParquetMetadata:
         dict[str, str]
             Key value metadata as a map.
         """
-        return {key.decode(): val.decode() for key, val in self.meta.metadata()}
+        result = {}
+        for key, val in self.meta.metadata():
+            result[key.decode()] = val.decode()
+        return result
 
-    cpdef list rowgroup_metadata(self):
+    cpdef list[dict[str, int]] rowgroup_metadata(self):
         """
         Returns the row group metadata in the file footer.
 
@@ -192,12 +299,15 @@ cdef class ParquetMetadata:
         list[dict[str, int]]
             Vector of row group metadata as maps.
         """
-        return [
-            {key.decode(): val for key, val in metadata}
-            for metadata in self.meta.rowgroup_metadata()
-        ]
+        result = []
+        for metadata in self.meta.rowgroup_metadata():
+            decoded_metadata = {}
+            for key, val in metadata:
+                decoded_metadata[key.decode()] = val
+            result.append(decoded_metadata)
+        return result
 
-    cpdef dict columnchunk_metadata(self):
+    cpdef dict[str, list[int]] columnchunk_metadata(self):
         """
         Returns a map of leaf column names to lists of `total_uncompressed_size`
         metadata from all column chunks in the file footer.
@@ -214,6 +324,729 @@ cdef class ParquetMetadata:
         }
 
 
+cdef class DecimalType:
+    """Parameters of a ``DECIMAL`` logical type."""
+
+    def __init__(self):
+        raise ValueError("DecimalType cannot be constructed directly")
+
+    @staticmethod
+    cdef DecimalType from_cpp(cpp_DecimalType decimal_type):
+        cdef DecimalType result = DecimalType.__new__(DecimalType)
+        result.c_obj = decimal_type
+        return result
+
+    @property
+    def scale(self) -> int:
+        """Number of digits after the decimal point."""
+        return self.c_obj.scale
+
+    @property
+    def precision(self) -> int:
+        """Total number of digits."""
+        return self.c_obj.precision
+
+
+cdef class TimeType:
+    """Parameters of a ``TIME`` logical type."""
+
+    def __init__(self):
+        raise ValueError("TimeType cannot be constructed directly")
+
+    @staticmethod
+    cdef TimeType from_cpp(cpp_TimeType time_type):
+        cdef TimeType result = TimeType.__new__(TimeType)
+        result.c_obj = time_type
+        return result
+
+    @property
+    def is_adjusted_to_utc(self) -> bool:
+        """Whether the values are adjusted to UTC."""
+        return self.c_obj.isAdjustedToUTC
+
+    @property
+    def unit(self) -> TimeUnit:
+        """Unit of the values."""
+        return TimeUnit(<int>self.c_obj.unit.type)
+
+
+cdef class TimestampType:
+    """Parameters of a ``TIMESTAMP`` logical type."""
+
+    def __init__(self):
+        raise ValueError("TimestampType cannot be constructed directly")
+
+    @staticmethod
+    cdef TimestampType from_cpp(cpp_TimestampType timestamp_type):
+        cdef TimestampType result = TimestampType.__new__(TimestampType)
+        result.c_obj = timestamp_type
+        return result
+
+    @property
+    def is_adjusted_to_utc(self) -> bool:
+        """Whether the values are adjusted to UTC."""
+        return self.c_obj.isAdjustedToUTC
+
+    @property
+    def unit(self) -> TimeUnit:
+        """Unit of the values."""
+        return TimeUnit(<int>self.c_obj.unit.type)
+
+
+cdef class IntType:
+    """Parameters of an ``INTEGER`` logical type."""
+
+    def __init__(self):
+        raise ValueError("IntType cannot be constructed directly")
+
+    @staticmethod
+    cdef IntType from_cpp(cpp_IntType int_type):
+        cdef IntType result = IntType.__new__(IntType)
+        result.c_obj = int_type
+        return result
+
+    @property
+    def bit_width(self) -> int:
+        """Number of bits: 8, 16, 32, or 64."""
+        return self.c_obj.bitWidth
+
+    @property
+    def is_signed(self) -> bool:
+        """Whether the integer is signed."""
+        return self.c_obj.isSigned
+
+
+cdef class LogicalType:
+    """Logical type annotation of a Parquet schema element."""
+
+    def __init__(self):
+        raise ValueError("LogicalType cannot be constructed directly")
+
+    @staticmethod
+    cdef LogicalType from_cpp(cpp_LogicalType logical_type):
+        cdef LogicalType result = LogicalType.__new__(LogicalType)
+        result.c_obj = logical_type
+        return result
+
+    @property
+    def type(self) -> LogicalTypeId:
+        """Kind of logical type."""
+        return LogicalTypeId(<int>self.c_obj.type)
+
+    @property
+    def decimal_type(self) -> DecimalType | None:
+        """Parameters of a ``DECIMAL`` type, otherwise ``None``."""
+        if not self.c_obj.decimal_type.has_value():
+            return None
+        return DecimalType.from_cpp(self.c_obj.decimal_type.value())
+
+    @property
+    def time_type(self) -> TimeType | None:
+        """Parameters of a ``TIME`` type, otherwise ``None``."""
+        if not self.c_obj.time_type.has_value():
+            return None
+        return TimeType.from_cpp(self.c_obj.time_type.value())
+
+    @property
+    def timestamp_type(self) -> TimestampType | None:
+        """Parameters of a ``TIMESTAMP`` type, otherwise ``None``."""
+        if not self.c_obj.timestamp_type.has_value():
+            return None
+        return TimestampType.from_cpp(self.c_obj.timestamp_type.value())
+
+    @property
+    def int_type(self) -> IntType | None:
+        """Parameters of an ``INTEGER`` type, otherwise ``None``."""
+        if not self.c_obj.int_type.has_value():
+            return None
+        return IntType.from_cpp(self.c_obj.int_type.value())
+
+
+cdef class SchemaElement:
+    """An element of a Parquet file's schema tree."""
+
+    def __init__(self):
+        raise ValueError("SchemaElement cannot be constructed directly")
+
+    @staticmethod
+    cdef SchemaElement from_cpp(cpp_SchemaElement schema_element):
+        cdef SchemaElement result = SchemaElement.__new__(SchemaElement)
+        result.c_obj = schema_element
+        return result
+
+    @property
+    def name(self) -> str:
+        """Name of the field, as recorded by the writer."""
+        return self.c_obj.name.decode("utf-8")
+
+    @property
+    def num_children(self) -> int:
+        """Number of child elements; zero for leaf columns."""
+        return self.c_obj.num_children
+
+    @property
+    def field_id(self) -> int | None:
+        """Field ID from the original schema, if the writer recorded one."""
+        if not self.c_obj.field_id.has_value():
+            return None
+        return self.c_obj.field_id.value()
+
+    @property
+    def type(self) -> PhysicalType:
+        """Physical type of the field; ``UNDEFINED`` for non-leaf elements."""
+        return PhysicalType(<int>self.c_obj.type)
+
+    @property
+    def type_length(self) -> int:
+        """Byte length of ``FIXED_LEN_BYTE_ARRAY`` values, or the bit length."""
+        return self.c_obj.type_length
+
+    @property
+    def logical_type(self) -> LogicalType | None:
+        """Logical type annotation, if the writer recorded one."""
+        if not self.c_obj.logical_type.has_value():
+            return None
+        return LogicalType.from_cpp(self.c_obj.logical_type.value())
+
+    @property
+    def repetition_type(self) -> FieldRepetitionType:
+        """Whether the field is required, optional, or repeated."""
+        return FieldRepetitionType(<int>self.c_obj.repetition_type)
+
+    @property
+    def output_as_byte_array(self) -> bool:
+        """Whether the writer stores the column as a byte array."""
+        return self.c_obj.output_as_byte_array
+
+    @property
+    def arrow_type(self) -> TypeId | None:
+        """cudf type recorded in the file's arrow schema, if any was applied."""
+        if not self.c_obj.arrow_type.has_value():
+            return None
+        cdef type_id arrow_type = self.c_obj.arrow_type.value()
+        return TypeId(<int>arrow_type)
+
+    @property
+    def max_definition_level(self) -> int:
+        """Maximum definition level of the field."""
+        return self.c_obj.max_definition_level
+
+    @property
+    def max_repetition_level(self) -> int:
+        """Maximum repetition level of the field."""
+        return self.c_obj.max_repetition_level
+
+    @property
+    def parent_idx(self) -> int:
+        """Index of the parent element in ``FileMetaData.schema``."""
+        return self.c_obj.parent_idx
+
+    @property
+    def children_idx(self) -> list[int]:
+        """Indices of the child elements in ``FileMetaData.schema``."""
+        return list(self.c_obj.children_idx)
+
+    def is_stub(self) -> bool:
+        """
+        Whether the element is a repeated group that is not a nesting level.
+
+        Returns
+        -------
+        bool
+            ``True`` for the repeated wrapper of a three-level list encoding.
+        """
+        return self.c_obj.is_stub()
+
+    def is_one_level_list(self, SchemaElement parent not None) -> bool:
+        """
+        Whether the element is a list in the one-level list encoding.
+
+        Parameters
+        ----------
+        parent : SchemaElement
+            Parent of this element.
+
+        Returns
+        -------
+        bool
+            ``True`` for a repeated leaf whose parent is not a list.
+        """
+        return self.c_obj.is_one_level_list(parent.c_obj)
+
+    def is_struct(self) -> bool:
+        """
+        Whether the element is a struct.
+
+        Returns
+        -------
+        bool
+            ``True`` for a group that is a level of struct nesting.
+        """
+        return self.c_obj.is_struct()
+
+
+cdef class SortingColumn:
+    """Sort metadata for a row group column."""
+
+    def __init__(self):
+        raise ValueError("SortingColumn cannot be constructed directly")
+
+    @staticmethod
+    cdef SortingColumn from_cpp(cpp_SortingColumn sorting_column):
+        cdef SortingColumn result = SortingColumn.__new__(SortingColumn)
+        result.c_obj = sorting_column
+        return result
+
+    @property
+    def column_idx(self) -> int:
+        """Column index (within the row group)."""
+        return self.c_obj.column_idx
+
+    @property
+    def descending(self) -> bool:
+        """Whether this column is sorted in descending order."""
+        return self.c_obj.descending
+
+    @property
+    def nulls_first(self) -> bool:
+        """Whether null values are ordered before non-null values."""
+        return self.c_obj.nulls_first
+
+
+cdef object optional_bytes(optional[vector[uint8_t]] value):
+    cdef vector[uint8_t]* buffer
+    if not value.has_value():
+        return None
+    buffer = &value.value()
+    if buffer.size() == 0:
+        return b""
+    return PyBytes_FromStringAndSize(
+        <const char*>buffer.data(), buffer.size()
+    )
+
+
+cdef class ColumnChunkStatistics:
+    """Column chunk statistics."""
+
+    def __init__(self):
+        raise ValueError("ColumnChunkStatistics cannot be constructed directly")
+
+    @staticmethod
+    cdef ColumnChunkStatistics from_cpp(cpp_Statistics statistics):
+        cdef ColumnChunkStatistics result = ColumnChunkStatistics.__new__(
+            ColumnChunkStatistics
+        )
+        result.c_obj = statistics
+        return result
+
+    @property
+    def has_min_max(self) -> bool:
+        """Whether this column chunk has encoded minimum and maximum values."""
+        return (
+            (self.c_obj.min_value.has_value() or self.c_obj.min.has_value())
+            and (self.c_obj.max_value.has_value() or self.c_obj.max.has_value())
+        )
+
+    @property
+    def min_encoded(self) -> bytes | None:
+        """Encoded minimum value, preferring ``min_value`` over deprecated ``min``.
+
+        The bytes are the raw Parquet statistics payload and must be
+        interpreted using the column's Parquet physical and logical type
+        metadata.
+        """
+        if self.c_obj.min_value.has_value():
+            return optional_bytes(self.c_obj.min_value)
+        return optional_bytes(self.c_obj.min)
+
+    @property
+    def max_encoded(self) -> bytes | None:
+        """Encoded maximum value, preferring ``max_value`` over deprecated ``max``.
+
+        The bytes are the raw Parquet statistics payload and must be
+        interpreted using the column's Parquet physical and logical type
+        metadata.
+        """
+        if self.c_obj.max_value.has_value():
+            return optional_bytes(self.c_obj.max_value)
+        return optional_bytes(self.c_obj.max)
+
+    @property
+    def null_count(self) -> int | None:
+        """Number of null values in the column chunk."""
+        if not self.c_obj.null_count.has_value():
+            return None
+        return self.c_obj.null_count.value()
+
+    @property
+    def distinct_count(self) -> int | None:
+        """Number of distinct values in the column chunk."""
+        if not self.c_obj.distinct_count.has_value():
+            return None
+        return self.c_obj.distinct_count.value()
+
+    @property
+    def is_min_value_exact(self) -> bool | None:
+        """Whether ``min_value`` is the exact column-chunk minimum."""
+        if not self.c_obj.is_min_value_exact.has_value():
+            return None
+        return self.c_obj.is_min_value_exact.value()
+
+    @property
+    def is_max_value_exact(self) -> bool | None:
+        """Whether ``max_value`` is the exact column-chunk maximum."""
+        if not self.c_obj.is_max_value_exact.has_value():
+            return None
+        return self.c_obj.is_max_value_exact.value()
+
+
+cdef class ColumnChunk:
+    """Metadata for a row group's column chunk."""
+
+    def __init__(self):
+        raise ValueError("ColumnChunk cannot be constructed directly")
+
+    @staticmethod
+    cdef ColumnChunk from_cpp(cpp_ColumnChunk column_chunk):
+        cdef ColumnChunk result = ColumnChunk.__new__(ColumnChunk)
+        result.c_obj = column_chunk
+        return result
+
+    @property
+    def file_path(self) -> str:
+        """Relative file path for this column chunk."""
+        return self.c_obj.file_path.decode("utf-8")
+
+    @property
+    def file_offset(self) -> int:
+        """Deprecated byte offset to column metadata."""
+        return self.c_obj.file_offset
+
+    @property
+    def offset_index_offset(self) -> int:
+        """File offset of the chunk's OffsetIndex."""
+        return self.c_obj.offset_index_offset
+
+    @property
+    def offset_index_length(self) -> int:
+        """Size of the chunk's OffsetIndex, in bytes."""
+        return self.c_obj.offset_index_length
+
+    @property
+    def column_index_offset(self) -> int:
+        """File offset of the chunk's ColumnIndex."""
+        return self.c_obj.column_index_offset
+
+    @property
+    def column_index_length(self) -> int:
+        """Size of the chunk's ColumnIndex, in bytes."""
+        return self.c_obj.column_index_length
+
+    @property
+    def schema_idx(self) -> int:
+        """Derived index in the flattened schema."""
+        return self.c_obj.schema_idx
+
+    @property
+    def meta_data(self) -> ColumnChunkMetaData:
+        """Column metadata for this chunk."""
+        return ColumnChunkMetaData.from_cpp(self.c_obj.meta_data)
+
+
+cdef class ColumnChunkMetaData:
+    """Metadata payload for a column chunk."""
+
+    def __init__(self):
+        raise ValueError("ColumnChunkMetaData cannot be constructed directly")
+
+    @staticmethod
+    cdef ColumnChunkMetaData from_cpp(cpp_ColumnChunkMetaData meta_data):
+        cdef ColumnChunkMetaData result = ColumnChunkMetaData.__new__(
+            ColumnChunkMetaData
+        )
+        result.c_obj = meta_data
+        return result
+
+    @property
+    def path_in_schema(self) -> list[str]:
+        """Column path components in the flattened schema."""
+        cdef string path
+        return [path.decode("utf-8") for path in self.c_obj.path_in_schema]
+
+    @property
+    def num_values(self) -> int:
+        """Number of values in this chunk."""
+        return self.c_obj.num_values
+
+    @property
+    def total_uncompressed_size(self) -> int:
+        """Total uncompressed page bytes for this chunk."""
+        return self.c_obj.total_uncompressed_size
+
+    @property
+    def total_compressed_size(self) -> int:
+        """Total compressed page bytes for this chunk."""
+        return self.c_obj.total_compressed_size
+
+    @property
+    def statistics(self) -> ColumnChunkStatistics:
+        """Column chunk statistics."""
+        return ColumnChunkStatistics.from_cpp(self.c_obj.statistics)
+
+
+cdef class RowGroup:
+    """Parquet row group metadata."""
+
+    def __init__(self):
+        raise ValueError("RowGroup cannot be constructed directly")
+
+    @staticmethod
+    cdef RowGroup from_cpp(cpp_RowGroup row_group):
+        cdef RowGroup result = RowGroup.__new__(RowGroup)
+        result.c_obj = row_group
+        return result
+
+    @property
+    def columns(self) -> list[ColumnChunk]:
+        """Column chunk metadata for each column in this row group."""
+        cdef cpp_ColumnChunk column_chunk
+        return [
+            ColumnChunk.from_cpp(column_chunk) for column_chunk in self.c_obj.columns
+        ]
+
+    @property
+    def total_byte_size(self) -> int:
+        """Total uncompressed byte size in this row group."""
+        return self.c_obj.total_byte_size
+
+    @property
+    def num_rows(self) -> int:
+        """Number of rows in this row group."""
+        return self.c_obj.num_rows
+
+    @property
+    def sorting_columns(self) -> list[SortingColumn] | None:
+        """Optional row sort order metadata."""
+        cdef cpp_SortingColumn sorting_column
+        if not self.c_obj.sorting_columns.has_value():
+            return None
+        return [
+            SortingColumn.from_cpp(sorting_column)
+            for sorting_column in self.c_obj.sorting_columns.value()
+        ]
+
+    @property
+    def file_offset(self) -> int | None:
+        """Optional byte offset to first page in this row group."""
+        if not self.c_obj.file_offset.has_value():
+            return None
+        return self.c_obj.file_offset.value()
+
+    @property
+    def total_compressed_size(self) -> int | None:
+        """Optional total compressed bytes for this row group."""
+        if not self.c_obj.total_compressed_size.has_value():
+            return None
+        return self.c_obj.total_compressed_size.value()
+
+    @property
+    def ordinal(self) -> int | None:
+        """Optional row group ordinal within the file."""
+        if not self.c_obj.ordinal.has_value():
+            return None
+        return self.c_obj.ordinal.value()
+
+
+cdef class FileMetaData:
+    """Parquet file footer metadata.
+
+    For details, see :cpp:class:`cudf::io::parquet::FileMetaData`
+
+    See Also
+    --------
+    pylibcudf.io.parquet_metadata.read_parquet_footers
+        Read one ``FileMetaData`` per source directly from
+        :class:`pylibcudf.io.types.SourceInfo`.
+    """
+
+    def __init__(self):
+        raise ValueError("FileMetaData cannot be constructed directly")
+
+    @staticmethod
+    cdef FileMetaData from_libcudf(unique_ptr[cpp_FileMetaData] metadata):
+        cdef FileMetaData result = FileMetaData.__new__(FileMetaData)
+        result.c_obj = move(metadata)
+        return result
+
+    @property
+    def version(self) -> int:
+        """Get the file format version."""
+        return dereference(self.c_obj).version
+
+    @property
+    def num_rows(self) -> int:
+        """Get the total number of rows."""
+        return dereference(self.c_obj).num_rows
+
+    @property
+    def created_by(self) -> str:
+        """Get the application that created the file."""
+        return dereference(self.c_obj).created_by.decode("utf-8")
+
+    @property
+    def schema(self) -> list[SchemaElement]:
+        """
+        Get the file's schema tree, flattened by a depth-first traversal.
+
+        The first element is the root. Each element's ``num_children``
+        gives the number of elements that follow it at the next level,
+        which is what allows the tree to be reconstructed from the flat
+        list.
+
+        Returns
+        -------
+        list[SchemaElement]
+            One entry per schema element, in depth-first order.
+        """
+        cdef cpp_SchemaElement schema_element
+        return [
+            SchemaElement.from_cpp(schema_element)
+            for schema_element in dereference(self.c_obj).schema
+        ]
+
+    @property
+    def row_groups(self) -> list[RowGroup]:
+        """Get row group metadata in this file."""
+        cdef cpp_RowGroup row_group
+        return [
+            RowGroup.from_cpp(row_group)
+            for row_group in dereference(self.c_obj).row_groups
+        ]
+
+    @property
+    def row_group_num_rows(self) -> list[int]:
+        """
+        Get row counts for each row group in this file.
+
+        Returns
+        -------
+        list
+            A list with the row count per row group in this file.
+
+        Notes
+        -----
+        Equivalent to, but faster than, checking each row groups' num_rows:
+
+        .. code-block:: python
+
+           >>> [rg.num_rows for rg in file_metadata.row_groups]
+        """
+        cdef Py_ssize_t i
+        cdef Py_ssize_t n = dereference(self.c_obj).row_groups.size()
+        return [
+            dereference(self.c_obj).row_groups[i].num_rows for i in range(n)
+        ]
+
+    @property
+    def columnchunk_metadata(self) -> dict[str, list[int]]:
+        """
+        Get a map of dotted column paths to lists of
+        `total_uncompressed_size` values from every column chunk in
+        this file.
+
+        Returns
+        -------
+        dict[str, list[int]]
+            Map of dotted column paths (``".".join(path_in_schema)``)
+            to lists of `total_uncompressed_size` metadata from all
+            their column chunks.
+
+        Notes
+        -----
+        Equivalent to, but faster than, walking each row group's columns:
+
+        .. code-block:: python
+
+           >>> result: dict[str, list[int]] = {}
+           >>> for rg in file_metadata.row_groups:
+           ...     for col in rg.columns:
+           ...         name = ".".join(col.meta_data.path_in_schema)
+           ...         result.setdefault(name, []).append(
+           ...             col.meta_data.total_uncompressed_size
+           ...         )
+        """
+        cdef Py_ssize_t i, j, k, n_path, n_col
+        cdef Py_ssize_t n_rg = dereference(self.c_obj).row_groups.size()
+        cdef dict result = {}
+        cdef str name
+        cdef list path_parts
+        for i in range(n_rg):
+            n_col = dereference(self.c_obj).row_groups[i].columns.size()
+            for j in range(n_col):
+                n_path = (
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.path_in_schema.size()
+                )
+                path_parts = [
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.path_in_schema[k]
+                    .decode("utf-8")
+                    for k in range(n_path)
+                ]
+                name = ".".join(path_parts)
+                result.setdefault(name, []).append(
+                    dereference(self.c_obj)
+                    .row_groups[i]
+                    .columns[j]
+                    .meta_data.total_uncompressed_size
+                )
+        return result
+
+    @classmethod
+    def from_bytes(
+        cls, const uint8_t[::1] footer_bytes: Buffer
+    ) -> FileMetaData:
+        """Build ``FileMetaData`` from parquet footer bytes.
+
+        Parameters
+        ----------
+        footer_bytes : Buffer
+            A contiguous bytes-like object containing parquet footer bytes.
+            The bytes are forwarded as-is to
+            :cpp:class:`cudf::io::parquet::experimental::hybrid_scan_reader`
+            without Python-side preprocessing. This method does not strip the
+            parquet footer suffix (4-byte footer length + ``PAR1`` magic), so
+            callers should generally pass only the footer region bytes.
+
+        Returns
+        -------
+        FileMetaData
+            Parsed parquet file footer metadata.
+        """
+        cdef parquet_reader_options options = parquet_reader_options()
+        cdef unique_ptr[cpp_hybrid_scan_reader] reader
+        cdef unique_ptr[cpp_FileMetaData] metadata
+        cdef const uint8_t* footer_ptr = <const uint8_t*>0
+
+        if len(footer_bytes) > 0:
+            footer_ptr = &footer_bytes[0]
+
+        with nogil:
+            reader = make_unique[cpp_hybrid_scan_reader](
+                host_span[const_uint8_t](footer_ptr, len(footer_bytes)),
+                options,
+            )
+            metadata = make_unique[cpp_FileMetaData](
+                reader.get()[0].parquet_metadata()
+            )
+
+        return FileMetaData.from_libcudf(move(metadata))
+
+
 cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
     """
     Reads metadata of parquet dataset.
@@ -228,6 +1061,12 @@ cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
     ParquetMetadata
         Parquet_metadata with parquet schema, number of rows,
         number of row groups and key-value metadata.
+
+    See Also
+    --------
+    read_parquet_footers
+        To read the pre-materialized file footer metadata used
+        in :func:`pylibcudf.io.parquet.read_parquet`.
     """
     cdef cpp_parquet_metadata.parquet_metadata c_result
 
@@ -235,3 +1074,106 @@ cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info):
         c_result = cpp_parquet_metadata.read_parquet_metadata(src_info.c_obj)
 
     return ParquetMetadata.from_metadata(c_result)
+
+
+cpdef list[FileMetaData] read_parquet_footers(SourceInfo src_info):
+    """
+    Read parquet file footers as ``FileMetaData`` objects.
+
+    Parameters
+    ----------
+    src_info : SourceInfo
+        Dataset source.
+
+    Returns
+    -------
+    list[FileMetaData]
+        One footer metadata object per input source.
+    """
+    cdef vector[unique_ptr[datasource]] sources
+    cdef vector[cpp_FileMetaData] c_result
+    cdef vector[unique_ptr[cpp_FileMetaData]] owned
+    cdef size_t i, n
+    with nogil:
+        sources = make_datasources(src_info.c_obj)
+        c_result = cpp_parquet_metadata.read_parquet_footers(
+            host_span[const_unique_ptr_datasource](
+                <const_unique_ptr_datasource*>sources.data(),
+                sources.size(),
+            )
+        )
+        n = c_result.size()
+        owned.reserve(n)
+        for i in range(n):
+            owned.push_back(
+                move(make_unique[cpp_FileMetaData](move(c_result[i])))
+            )
+
+    # GIL held only for Python object allocation + list build
+    return [FileMetaData.from_libcudf(move(owned[i])) for i in range(n)]
+
+
+cpdef Table read_parquet_column_chunk_bounds(
+    object file_metadatas,
+    object columns,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """
+    Decode parquet column-chunk min/max statistics for selected columns.
+
+    Missing min/max statistics are returned as nulls. Parquet min/max
+    exactness flags are not interpreted by this function.
+
+    Parameters
+    ----------
+    file_metadatas : Sequence[FileMetaData]
+        Parquet footer metadata objects, one per source.
+    columns : Sequence[str]
+        Dotted leaf-column paths to decode statistics for.
+    stream : CudaStreamLike, optional
+        CUDA stream used for device memory operations.
+    mr : DeviceMemoryResource, optional
+        Device memory resource used for device memory allocation.
+
+    Returns
+    -------
+    Table
+        Table containing file indices in column 0, file-local row-group
+        indices in column 1, and one ``(min, max)`` column pair per requested
+        column after that. For ``columns[i]``, the minimum column is at
+        ``2 + 2 * i`` and the maximum column is at ``3 + 2 * i``.
+    """
+    cdef vector[cpp_FileMetaData] c_metadatas
+    cdef vector[string] c_columns
+    cdef unique_ptr[cpp_table] c_result
+    cdef object metadata_obj
+    cdef object column_name
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
+
+    for metadata_obj in file_metadatas:
+        if not isinstance(metadata_obj, FileMetaData):
+            raise TypeError("file_metadatas must contain only FileMetaData objects")
+        c_metadatas.push_back(dereference((<FileMetaData>metadata_obj).c_obj))
+
+    if isinstance(columns, str):
+        raise TypeError("columns must be a sequence of strings")
+
+    for column_name in columns:
+        if not isinstance(column_name, str):
+            raise TypeError("columns must contain only strings")
+        c_columns.push_back(column_name.encode())
+
+    with nogil:
+        c_result = cpp_parquet_metadata.read_parquet_column_chunk_bounds(
+            std_span[const_cpp_FileMetaData](
+                c_metadatas.data(), c_metadatas.size()
+            ),
+            std_span[const_string](c_columns.data(), c_columns.size()),
+            _cs,
+            mr.get_mr(),
+        )
+
+    return Table.from_libcudf(move(c_result), _stream, mr)

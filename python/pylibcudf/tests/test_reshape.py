@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -50,7 +50,7 @@ def test_tile(reshape_data, cnt):
         ("float64", TypeId.FLOAT64),
     ],
 )
-def test_table_to_array(dtype, type_id):
+def test_table_to_array(dtype, type_id, patch_cupy_stream):
     arrow_type = pa.from_numpy_dtype(getattr(cp, dtype))
     arrs = [
         pa.array([1, 2, 3], type=arrow_type),
@@ -68,5 +68,12 @@ def test_table_to_array(dtype, type_id):
         got.nbytes,
     )
 
-    expect = cp.array([[1, 4], [2, 5], [3, 6]], dtype=dtype)
-    cp.testing.assert_array_equal(expect, got)
+    with patch_cupy_stream:
+        expect = cp.array([[1, 4], [2, 5], [3, 6]], dtype=dtype)
+        cp.testing.assert_array_equal(expect, got)
+
+
+def test_tile_zero_columns_preserves_num_rows():
+    result = plc.reshape.tile(plc.Table([], num_rows=3), 4)
+    assert result.num_columns() == 0
+    assert result.num_rows() == 12

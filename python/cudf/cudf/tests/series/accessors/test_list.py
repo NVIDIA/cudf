@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import functools
 import operator
+import re
 
 import numpy as np
 import pandas as pd
@@ -57,12 +58,12 @@ def test_leaves(data):
 )
 def test_len(data):
     gsr = cudf.Series(data)
-    psr = gsr.to_pandas()
-
-    expect = psr.map(lambda x: len(x) if x is not None else None)
-    got = gsr.list.len()
-
-    assert_eq(expect, got, check_dtype=False)
+    psr = gsr.to_pandas(arrow_type=True)
+    if pa.types.is_null(psr.dtype.pyarrow_dtype):
+        psr = psr.astype(pd.ArrowDtype(gsr.dtype.to_arrow()))
+    expect = psr.list.len()
+    got = gsr.list.len().to_pandas(arrow_type=True)
+    assert_eq(expect, got)
 
 
 @pytest.mark.parametrize(
@@ -87,28 +88,18 @@ def test_take(data, idx):
 
 
 @pytest.mark.parametrize(
-    ("invalid", "exception"),
+    "invalid",
     [
-        ([[0]], pytest.raises(ValueError, match="different size")),
-        ([1, 2, 3, 4], pytest.raises(ValueError, match="should be list type")),
-        (
-            [["a", "b"], ["c"]],
-            pytest.raises(
-                TypeError, match="should be column of values of index types"
-            ),
-        ),
-        (
-            [[[1], [0]], [[0]]],
-            pytest.raises(
-                TypeError, match="should be column of values of index types"
-            ),
-        ),
-        ([[0, 1], None], pytest.raises(ValueError, match="contains null")),
+        [[0]],
+        [1, 2, 3, 4],
+        [["a", "b"], ["c"]],
+        [[[1], [0]], [[0]]],
+        [[0, 1], None],
     ],
 )
-def test_take_invalid(invalid, exception):
+def test_take_invalid(invalid):
     gs = cudf.Series([[0, 1], [2, 3]])
-    with exception:
+    with pytest.raises(ValueError, match="input must be list type"):
         gs.list.take(invalid)
 
 
@@ -175,9 +166,11 @@ def test_sort_values(data, index, ascending, na_position, ignore_index):
     gs = cudf.from_pandas(ps)
 
     expected = ps.apply(
-        lambda x: sorted(x, key=key_func, reverse=not ascending)
-        if x is not None
-        else None
+        lambda x: (
+            sorted(x, key=key_func, reverse=not ascending)
+            if x is not None
+            else None
+        )
     )
     if ignore_index:
         expected.reset_index(drop=True, inplace=True)
@@ -203,7 +196,7 @@ def test_get(data, index, expect):
     expect = cudf.Series(expect)
     got = sr.list.get(index)
 
-    assert_eq(expect, got, check_dtype=not expect.isnull().all())
+    assert_eq(expect, got)
 
 
 @pytest.mark.parametrize(
@@ -366,7 +359,7 @@ def test_contains_invalid(data, scalar):
     sr = cudf.Series(data)
     with pytest.raises(
         TypeError,
-        match="Type/Scale of search key does not "
+        match=r"Type/Scale of search key does not "
         "match list column element type.",
     ):
         sr.list.contains(scalar)
@@ -456,7 +449,7 @@ def test_index_invalid_type(data, search_key):
     sr = cudf.Series(data)
     with pytest.raises(
         TypeError,
-        match="Type/Scale of search key does not "
+        match=r"Type/Scale of search key does not "
         "match list column element type.",
     ):
         sr.list.index(search_key)
@@ -479,7 +472,7 @@ def test_index_invalid_length(data, search_key):
     sr = cudf.Series(data)
     with pytest.raises(
         RuntimeError,
-        match="Number of search keys must match list column size.",
+        match=r"Number of search keys must match list column size.",
     ):
         sr.list.index(search_key)
 
@@ -519,7 +512,7 @@ def test_concat_elements_raise():
     s = cudf.Series([[1, 2, 3]])  # no nesting
     with pytest.raises(
         ValueError,
-        match=".*Child of the input lists column must also be a lists column",
+        match=r".*Child of the input lists column must also be a lists column",
     ):
         s.list.concat()
 
@@ -568,3 +561,17 @@ def test_lists_contains_bool():
 
     assert data.list.contains(True)[0]
     assert not data.list.contains(False)[0]
+
+
+def test_list_accessor_invalid_dtype_message():
+    # The .list accessor error message names the required 'list[pyarrow]'
+    # dtype and reports the offending dtype, matching pandas.
+    gs = cudf.Series([1, 2, 3])
+    with pytest.raises(
+        AttributeError,
+        match=re.escape(
+            "Can only use the '.list' accessor with 'list[pyarrow]' dtype, "
+            "not int64."
+        ),
+    ):
+        gs.list

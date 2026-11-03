@@ -1,17 +1,20 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include "in_reg_array.cuh"
 
-#include <cub/cub.cuh>
+#include <cub/agent/single_pass_scan_operators.cuh>
+#include <cub/block/block_load.cuh>
+#include <cub/block/block_scan.cuh>
+#include <cub/util_type.cuh>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/array>
 #include <cuda/std/type_traits>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/discard_iterator.h>
 #include <thrust/sequence.h>
 
 namespace cudf::io::fst::detail {
@@ -129,14 +132,14 @@ class DFAWriteCallbackWrapper {
             typename SymbolIndexT,
             typename SymbolT,
             int MaxTranslatedOutChars_>
-  __device__ __forceinline__
-    typename ::cuda::std::enable_if<(MaxTranslatedOutChars_ <= 2), void>::type
-    ReadSymbol(CharIndexT const character_index,
-               StateIndexT const old_state,
-               StateIndexT const new_state,
-               SymbolIndexT const symbol_id,
-               SymbolT const read_symbol,
-               cuda::std::integral_constant<int, MaxTranslatedOutChars_> /*MaxTranslatedOutChars*/)
+  __device__ __forceinline__ void ReadSymbol(
+    CharIndexT const character_index,
+    StateIndexT const old_state,
+    StateIndexT const new_state,
+    SymbolIndexT const symbol_id,
+    SymbolT const read_symbol,
+    cuda::std::integral_constant<int, MaxTranslatedOutChars_> /*MaxTranslatedOutChars*/)
+    requires(MaxTranslatedOutChars_ <= 2)
   {
     uint32_t const count = transducer_table(old_state, symbol_id, read_symbol);
 
@@ -156,14 +159,14 @@ class DFAWriteCallbackWrapper {
             typename SymbolIndexT,
             typename SymbolT,
             int MaxTranslatedOutChars_>
-  __device__ __forceinline__
-    typename ::cuda::std::enable_if<(MaxTranslatedOutChars_ > 2), void>::type
-    ReadSymbol(CharIndexT const character_index,
-               StateIndexT const old_state,
-               StateIndexT const new_state,
-               SymbolIndexT const symbol_id,
-               SymbolT const read_symbol,
-               cuda::std::integral_constant<int, MaxTranslatedOutChars_>)
+  __device__ __forceinline__ void ReadSymbol(
+    CharIndexT const character_index,
+    StateIndexT const old_state,
+    StateIndexT const new_state,
+    SymbolIndexT const symbol_id,
+    SymbolT const read_symbol,
+    cuda::std::integral_constant<int, MaxTranslatedOutChars_>)
+    requires(MaxTranslatedOutChars_ > 2)
   {
     uint32_t const count = transducer_table(old_state, symbol_id, read_symbol);
 
@@ -772,9 +775,9 @@ __launch_bounds__(int32_t(AgentDFAPolicy::BLOCK_THREADS)) CUDF_KERNEL
   // static constexpr int32_t MIN_TRANSLATED_OUT = DfaT::MIN_TRANSLATED_OUT;
   static constexpr int32_t num_max_translated_out = DfaT::MAX_TRANSLATED_OUT;
   static constexpr bool discard_out_index =
-    ::cuda::std::is_same<TransducedIndexOutItT, thrust::discard_iterator<>>::value;
+    ::cuda::std::is_same<TransducedIndexOutItT, cuda::discard_iterator>::value;
   static constexpr bool discard_out_it =
-    ::cuda::std::is_same<TransducedOutItT, thrust::discard_iterator<>>::value;
+    ::cuda::std::is_same<TransducedOutItT, cuda::discard_iterator>::value;
   using NonWriteCoalescingT =
     DFAWriteCallbackWrapper<num_max_translated_out,
                             decltype(dfa.InitTranslationTable(transducer_table_storage)),

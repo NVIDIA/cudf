@@ -8,9 +8,8 @@ import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.testing import assert_eq
-from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
+from cudf.testing._utils import assert_exceptions_equal
 
 
 @pytest.mark.parametrize(
@@ -341,16 +340,11 @@ def test_series_indexing(i1, i2, i3):
             assert series[i] == a1[i]
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.parametrize(
     "arg",
     [
         1,
         -1,
-        "b",
         np.int32(1),
         np.uint32(1),
         np.int8(1),
@@ -361,18 +355,15 @@ def test_series_indexing(i1, i2, i3):
         np.uint64(1),
     ],
 )
-def test_series_get_item_iloc_defer(arg):
+def test_series_get_item_integer_label_non_integer_index_raises(arg):
     # Indexing for non-numeric dtype Index
     ps = pd.Series([1, 2, 3], index=pd.Index(["a", "b", "c"]))
     gs = cudf.from_pandas(ps)
 
-    arg_not_str = not isinstance(arg, str)
-    with expect_warning_if(arg_not_str):
-        expect = ps[arg]
-    with expect_warning_if(arg_not_str):
-        got = gs[arg]
-
-    assert_eq(expect, got)
+    with pytest.raises(KeyError):
+        ps[arg]
+    with pytest.raises(KeyError):
+        gs[arg]
 
 
 def test_series_indexing_large_size():

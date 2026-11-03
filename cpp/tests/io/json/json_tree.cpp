@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,9 +11,11 @@
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <numeric>
 #include <stack>
@@ -33,13 +35,15 @@ struct tree_meta_t2 {
   std::vector<cuio_json::SymbolOffsetT> node_range_end;
 };
 
-tree_meta_t2 to_cpu_tree(cuio_json::tree_meta_t const& d_value, rmm::cuda_stream_view stream)
+tree_meta_t2 to_cpu_tree(cuio_json::tree_meta_t const& d_value, cuda::stream_ref stream)
 {
-  return {cudf::detail::make_std_vector_async(d_value.node_categories, stream),
-          cudf::detail::make_std_vector_async(d_value.parent_node_ids, stream),
-          cudf::detail::make_std_vector_async(d_value.node_levels, stream),
-          cudf::detail::make_std_vector_async(d_value.node_range_begin, stream),
-          cudf::detail::make_std_vector_async(d_value.node_range_end, stream)};
+  tree_meta_t2 result{cudf::detail::make_std_vector_async(d_value.node_categories, stream),
+                      cudf::detail::make_std_vector_async(d_value.parent_node_ids, stream),
+                      cudf::detail::make_std_vector_async(d_value.node_levels, stream),
+                      cudf::detail::make_std_vector_async(d_value.node_range_begin, stream),
+                      cudf::detail::make_std_vector_async(d_value.node_range_end, stream)};
+  stream.sync();
+  return result;
 }
 
 // change this to non-zero and recompile to dump debug info to stdout
@@ -141,10 +145,11 @@ bool compare_vector(std::vector<T> const& cpu_vec,
 
 template <typename T>
 bool compare_vector(std::vector<T> const& cpu_vec,
-                    rmm::device_uvector<T> const& d_vec,
+                    cuda::device_buffer<T> const& d_vec,
                     std::string const& name)
 {
-  auto gpu_vec = cudf::detail::make_std_vector_async(d_vec, cudf::get_default_stream());
+  auto stream  = cudf::get_default_stream();
+  auto gpu_vec = cudf::detail::make_std_vector(d_vec, stream);
   return compare_vector(cpu_vec, gpu_vec, name);
 }
 
@@ -216,7 +221,7 @@ tree_meta_t2 get_tree_representation_cpu(
   cudf::device_span<cuio_json::PdaTokenT const> tokens_gpu,
   cudf::device_span<cuio_json::SymbolOffsetT const> token_indices_gpu1,
   cudf::io::json_reader_options const& options,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   constexpr bool include_quote_char = true;
   // Copy the JSON tokens to the host
@@ -224,7 +229,7 @@ tree_meta_t2 get_tree_representation_cpu(
   auto token_indices = cudf::detail::make_host_vector_async(token_indices_gpu1, stream);
 
   // Make sure tokens have been copied to the host
-  stream.synchronize();
+  stream.sync();
 
 #if LIBCUDF_JSON_DEBUG_DUMP
   // DEBUG print
@@ -412,12 +417,12 @@ records_orient_tree_traversal_cpu(cudf::host_span<cuio_json::SymbolT const> inpu
                                   tree_meta_t2 const& tree,
                                   bool is_array_of_arrays,
                                   bool is_enabled_lines,
-                                  rmm::cuda_stream_view stream)
+                                  cuda::stream_ref stream)
 {
   std::vector<cuio_json::NodeIndexT> node_ids(tree.parent_node_ids.size());
   std::iota(node_ids.begin(), node_ids.end(), 0);
 
-  const cuio_json::NodeIndexT row_array_children_level = is_enabled_lines ? 1 : 2;
+  cuio_json::NodeIndexT const row_array_children_level = is_enabled_lines ? 1 : 2;
   std::unordered_map<cuio_json::NodeIndexT, cuio_json::NodeIndexT> list_indices;
   if (is_array_of_arrays) {
     cuio_json::NodeIndexT parent_node = -1, child_index = 0;
@@ -882,7 +887,8 @@ TEST_P(JsonTreeTraversalTest, CPUvsGPUTraversal)
 #endif
 
   // convert to sequence because gpu col id might be have random id
-  auto gpu_col_id2 = translate_col_id(cudf::detail::make_std_vector_async(gpu_col_id, stream));
+  auto gpu_col_id_vec = cudf::detail::make_std_vector(gpu_col_id, stream);
+  auto gpu_col_id2    = translate_col_id(gpu_col_id_vec);
   EXPECT_FALSE(compare_vector(cpu_col_id, gpu_col_id2, "col_id"));
   EXPECT_FALSE(compare_vector(cpu_row_offsets, gpu_row_offsets, "row_offsets"));
 }

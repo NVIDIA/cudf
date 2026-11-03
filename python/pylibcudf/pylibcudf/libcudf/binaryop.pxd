@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t
 from libcpp cimport bool
@@ -10,8 +10,8 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport scalar
 from pylibcudf.libcudf.types cimport data_type
 
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
-from rmm.librmm.memory_resource cimport device_memory_resource
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
 cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
@@ -44,12 +44,17 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         LESS_EQUAL
         GREATER_EQUAL
         NULL_EQUALS
+        NULL_NOT_EQUALS
         NULL_MAX
         NULL_MIN
-        NULL_NOT_EQUALS
         GENERIC_BINARY
         NULL_LOGICAL_AND
         NULL_LOGICAL_OR
+        ADD_OVERFLOW
+        SUB_OVERFLOW
+        MUL_OVERFLOW
+        DIV_OVERFLOW
+        MOD_OVERFLOW
         INVALID_BINARY
 
     cdef unique_ptr[column] binary_operation (
@@ -57,8 +62,8 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         const column_view& rhs,
         binary_operator op,
         data_type output_type,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] binary_operation (
@@ -66,8 +71,8 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         const scalar& rhs,
         binary_operator op,
         data_type output_type,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] binary_operation (
@@ -75,8 +80,8 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         const column_view& rhs,
         binary_operator op,
         data_type output_type,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] binary_operation (
@@ -84,8 +89,8 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         const column_view& rhs,
         const string& op,
         data_type output_type,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
 cdef extern from "cudf/binaryop.hpp" namespace "cudf::binops" nogil:

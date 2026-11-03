@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,8 @@
 #include <cudf/column/column.hpp>
 #include <cudf/strings/repeat_strings.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+
+#include <cuda/iterator>
 
 #include <map>
 #include <memory>
@@ -77,7 +79,7 @@ cudf::column_view StringsLargeTest::long_column()
 {
   std::string name("long1");
   if (!g_ls_data->has_key(name)) {
-    auto itr = thrust::constant_iterator<std::string_view>(
+    auto itr = cuda::constant_iterator<std::string_view>(
       "abcdefghijklmnopqrstuvwxyABCDEFGHIJKLMNOPQRSTUVWXY");                // 50 bytes
     auto input = cudf::test::strings_column_wrapper(itr, itr + 5'000'000);  // 250MB
     g_ls_data->add_column(name, input.release());
@@ -89,7 +91,7 @@ cudf::column_view StringsLargeTest::very_long_column()
 {
   std::string name("long2");
   if (!g_ls_data->has_key(name)) {
-    auto itr   = thrust::constant_iterator<std::string_view>("12345");
+    auto itr   = cuda::constant_iterator<std::string_view>("12345");
     auto input = cudf::test::strings_column_wrapper(itr, itr + 30'000'000);
     g_ls_data->add_column(name, input.release());
   }
@@ -117,12 +119,13 @@ int main(int argc, char** argv)
   auto lsd = cudf::test::StringsLargeTest::get_ls_data();
 
   if (std::getenv("GTEST_CUDF_MEMORY_PEAK")) {
-    auto mr = rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource>(
-      cudf::get_current_device_resource_ref());
-    cudf::set_current_device_resource(&mr);
+    auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+    cudf::set_current_device_resource(mr);
     auto rc = RUN_ALL_TESTS();
     std::cout << "Peak memory usage " << mr.get_bytes_counter().peak << " bytes" << std::endl;
+    rmm::mr::reset_current_device_resource();
     return rc;
   }
+  rmm::mr::reset_current_device_resource();
   return RUN_ALL_TESTS();
 }

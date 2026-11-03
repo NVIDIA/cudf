@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,16 +11,18 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/utility>
+#include <cuda/stream>
+
+/**
+ * @file
+ * @brief Column factory APIs
+ */
 
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup column_factories
  * @{
- * @file
- * @brief Column factory APIs
  */
 
 /**
@@ -65,7 +67,7 @@ std::unique_ptr<column> make_numeric_column(
   data_type type,
   size_type size,
   mask_state state                  = mask_state::UNALLOCATED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -91,7 +93,7 @@ std::unique_ptr<column> make_numeric_column(
   size_type size,
   B&& null_mask,
   size_type null_count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_EXPECTS(is_numeric(type), "Invalid, non-numeric type.");
@@ -123,7 +125,7 @@ std::unique_ptr<column> make_fixed_point_column(
   data_type type,
   size_type size,
   mask_state state                  = mask_state::UNALLOCATED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -148,7 +150,7 @@ std::unique_ptr<column> make_fixed_point_column(
   size_type size,
   B&& null_mask,
   size_type null_count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_EXPECTS(is_fixed_point(type), "Invalid, non-fixed_point type.");
@@ -181,7 +183,7 @@ std::unique_ptr<column> make_timestamp_column(
   data_type type,
   size_type size,
   mask_state state                  = mask_state::UNALLOCATED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -207,7 +209,7 @@ std::unique_ptr<column> make_timestamp_column(
   size_type size,
   B&& null_mask,
   size_type null_count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_EXPECTS(is_timestamp(type), "Invalid, non-timestamp type.");
@@ -240,7 +242,7 @@ std::unique_ptr<column> make_duration_column(
   data_type type,
   size_type size,
   mask_state state                  = mask_state::UNALLOCATED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -266,7 +268,7 @@ std::unique_ptr<column> make_duration_column(
   size_type size,
   B&& null_mask,
   size_type null_count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_EXPECTS(is_duration(type), "Invalid, non-duration type.");
@@ -299,7 +301,7 @@ std::unique_ptr<column> make_fixed_width_column(
   data_type type,
   size_type size,
   mask_state state                  = mask_state::UNALLOCATED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -325,7 +327,7 @@ std::unique_ptr<column> make_fixed_width_column(
   size_type size,
   B&& null_mask,
   size_type null_count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_EXPECTS(is_fixed_width(type), "Invalid, non-fixed-width type.");
@@ -364,7 +366,7 @@ std::unique_ptr<column> make_fixed_width_column(
  */
 std::unique_ptr<column> make_strings_column(
   cudf::device_span<cuda::std::pair<char const*, size_type> const> strings,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -384,7 +386,7 @@ std::unique_ptr<column> make_strings_column(
  */
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cudf::device_span<cuda::std::pair<char const*, size_type> const>> const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -416,7 +418,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
 std::unique_ptr<column> make_strings_column(
   cudf::device_span<string_view const> string_views,
   string_view const null_placeholder,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -440,7 +442,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             std::unique_ptr<column> offsets_column,
                                             rmm::device_buffer&& chars_buffer,
                                             size_type null_count,
-                                            rmm::device_buffer&& null_mask);
+                                            cuda::device_buffer<cudf::bitmask_type>&& null_mask);
 
 /**
  * @brief Construct a LIST type column given offsets column, child column, null mask and null
@@ -480,22 +482,19 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
  * data    (depth 2)   {1, 2, 3, 4, 5, 6, 7}
  * @endcode
  *
- * @param[in] num_rows The number of lists the column represents.
- * @param[in] offsets_column The column of offset values for this column. Each value should
+ * @param num_rows The number of lists the column represents.
+ * @param offsets_column The column of offset values for this column. Must be of type
+ * `type_id::INT32` -- per the Arrow columnar format, a LIST column's offsets are always 32-bit
+ * (a 64-bit offsets variant would be a distinct LARGE_LIST type, which cudf does not have).
+ * This is deliberately independent of `cudf::size_type`. Each value should
  * represent the starting offset into the child elements that corresponds to the beginning of the
  * row, with the first row starting at 0. The length of row N can be determined by subtracting
- * offsets[N+1] - offsets[N]. The total number of offsets should be 1 longer than the # of rows in
- * the column.
- * @param[in] child_column The column of nested data referenced by the lists represented by the
- *                     offsets_column. Note: the child column may itself be
- *                     further nested.
- * @param[in] null_count The number of null list entries.
- * @param[in] null_mask The bits specifying the null lists in device memory.
- *                  Arrow format for nulls is used for interpreting this bitmask.
- * @param[in] stream Optional stream for use with all memory allocation
- *               and device kernels
- * @param[in] mr Optional resource to use for device memory
- *           allocation of the column's `null_mask` and children.
+ * `offsets[N+1] - offsets[N]`. The total number of offsets should be 1 longer than the
+ * number of rows in the column.
+ * @param child_column The column of nested data referenced by the lists represented by the
+ * offsets_column. Note: the child column may itself be further nested.
+ * @param null_count The number of null list entries.
+ * @param null_mask The bits specifying the null lists in device memory.
  * @return Constructed lists column
  */
 std::unique_ptr<cudf::column> make_lists_column(
@@ -503,9 +502,7 @@ std::unique_ptr<cudf::column> make_lists_column(
   std::unique_ptr<column> offsets_column,
   std::unique_ptr<column> child_column,
   size_type null_count,
-  rmm::device_buffer&& null_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::device_buffer<cudf::bitmask_type>&& null_mask);
 
 /**
  * @brief Create an empty LIST column
@@ -513,14 +510,9 @@ std::unique_ptr<cudf::column> make_lists_column(
  * A list column requires a child type and so cannot be created with `make_empty_column`.
  *
  * @param child_type The type used for the empty child column
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
  * @return New empty lists column
  */
-std::unique_ptr<column> make_empty_lists_column(
-  data_type child_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> make_empty_lists_column(data_type child_type);
 
 /**
  * @brief Construct a STRUCT column using specified child columns as members.
@@ -549,8 +541,8 @@ std::unique_ptr<cudf::column> make_structs_column(
   size_type num_rows,
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
-  rmm::device_buffer&& null_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::device_buffer<cudf::bitmask_type>&& null_mask,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -583,8 +575,8 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   size_type num_rows,
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
-  rmm::device_buffer&& null_mask,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::device_buffer<cudf::bitmask_type>&& null_mask,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -604,7 +596,7 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
 std::unique_ptr<column> make_column_from_scalar(
   scalar const& s,
   size_type size,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -624,7 +616,7 @@ std::unique_ptr<column> make_column_from_scalar(
 std::unique_ptr<column> make_dictionary_from_scalar(
   scalar const& s,
   size_type size,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

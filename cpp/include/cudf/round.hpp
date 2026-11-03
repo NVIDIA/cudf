@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,13 +10,16 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Column APIs for round
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup transformation_unaryops
  * @{
- * @file
- * @brief Column APIs for round
  */
 
 /**
@@ -67,7 +70,7 @@ enum class rounding_method : int32_t { HALF_UP, HALF_EVEN };
   column_view const& input,
   int32_t decimal_places            = 0,
   rounding_method method            = rounding_method::HALF_UP,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -106,7 +109,7 @@ std::unique_ptr<column> round_decimal(
   column_view const& input,
   int32_t decimal_places            = 0,
   rounding_method method            = rounding_method::HALF_UP,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

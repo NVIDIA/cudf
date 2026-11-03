@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 
@@ -8,11 +8,6 @@ import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_GE_220,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
@@ -129,52 +124,6 @@ def test_timedelta_fillna(data, timedelta_types_as_str, fill_value):
     assert_eq(expected, actual)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
-@pytest.mark.parametrize(
-    "data",
-    [
-        [1, None, None, 2, 3, 4],
-        [None, None, 1, 2, None, 3, 4],
-        [1, 2, None, 3, 4, None, None],
-        [0] + [None] * 14,
-        [None] * 14 + [0],
-    ],
-)
-@pytest.mark.parametrize("container", [pd.Series, pd.DataFrame])
-@pytest.mark.parametrize("method", ["ffill", "bfill"])
-def test_fillna_method_numerical(
-    data, container, numeric_types_as_str, method, inplace
-):
-    if container == pd.DataFrame:
-        data = {"a": data, "b": data, "c": data}
-
-    pdata = container(data)
-
-    data_dtype = numeric_types_as_str
-    if np.dtype(numeric_types_as_str).kind != "f":
-        data_dtype = cudf.utils.dtypes.np_dtypes_to_pandas_dtypes[
-            np.dtype(numeric_types_as_str)
-        ]
-    pdata = pdata.astype(data_dtype)
-
-    # Explicitly using nans_as_nulls=True
-    gdata = cudf.from_pandas(pdata, nan_as_null=True)
-
-    with pytest.warns(FutureWarning):
-        expected = pdata.fillna(method=method, inplace=inplace)
-    with pytest.warns(FutureWarning):
-        actual = gdata.fillna(method=method, inplace=inplace)
-
-    if inplace:
-        expected = pdata
-        actual = gdata
-
-    assert_eq(expected, actual, check_dtype=False)
-
-
 @pytest.mark.parametrize(
     "gsr_data, dtype",
     [
@@ -213,7 +162,7 @@ def test_fillna_method_numerical(
         lambda: decimal.Decimal("-12.87"),
         lambda: cudf.Series(
             [None, -854, 9533, -274, -845, 7924], dtype="int32"
-        ),
+        ).astype(cudf.Decimal64Dtype(7, 2)),
         lambda: cudf.Series(
             ["-53.5", "13.4", "-64.3", None, "42.42", None]
         ).astype(cudf.Decimal64Dtype(7, 2)),
@@ -224,15 +173,21 @@ def test_fillna_method_numerical(
 )
 def test_fillna_decimal(gsr_data, dtype, fill_value, inplace):
     gsr = cudf.Series(gsr_data).astype(dtype)
-    psr = gsr.to_pandas()
+    psr = gsr.to_pandas(arrow_type=True)
     fill_value = fill_value()
     if isinstance(fill_value, cudf.Series):
-        p_fill_value = fill_value.to_pandas()
+        p_fill_value = fill_value.to_pandas(arrow_type=True)
     else:
         p_fill_value = fill_value
 
-    expected = psr.fillna(p_fill_value, inplace=inplace)
-    got = gsr.fillna(fill_value, inplace=inplace)
+    if inplace:
+        psr.fillna(p_fill_value, inplace=inplace)
+        gsr.fillna(fill_value, inplace=inplace)
+        expected = psr
+        got = gsr
+    else:
+        expected = psr.fillna(p_fill_value, inplace=inplace)
+        got = gsr.fillna(fill_value, inplace=inplace)
 
     assert_eq(expected, got, check_dtype=False)
 
@@ -315,7 +270,7 @@ def test_fillna_categorical(psr, fill_value, inplace):
             pd.date_range(
                 "2010-01-01",
                 "2020-01-10",
-                freq="1YE" if PANDAS_GE_220 else "1y",
+                freq="1YE",
             )
         ),
         pd.Series(["2010-01-01", None, "2011-10-10"], dtype="datetime64[ns]"),
@@ -362,7 +317,7 @@ def test_fillna_categorical(psr, fill_value, inplace):
             pd.date_range(
                 "2010-01-01",
                 "2020-01-10",
-                freq="1YE" if PANDAS_GE_220 else "1y",
+                freq="1YE",
             )
         )
         + pd.Timedelta(days=1),
@@ -422,105 +377,11 @@ def test_fillna_datetime(psr, fill_value, inplace):
     assert_eq(expected, got)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
-@pytest.mark.parametrize(
-    "data",
-    [
-        # Categorical
-        pd.Categorical([1, 2, None, None, 3, 4]),
-        pd.Categorical([None, None, 1, None, 3, 4]),
-        pd.Categorical([1, 2, None, 3, 4, None, None]),
-        pd.Categorical(["1", "20", None, None, "3", "40"]),
-        pd.Categorical([None, None, "10", None, "30", "4"]),
-        pd.Categorical(["1", "20", None, "30", "4", None, None]),
-        # Datetime
-        np.array(
-            [
-                "2020-01-01 08:00:00",
-                "2020-01-01 09:00:00",
-                None,
-                "2020-01-01 10:00:00",
-                None,
-                "2020-01-01 10:00:00",
-            ],
-            dtype="datetime64[ns]",
-        ),
-        np.array(
-            [
-                None,
-                None,
-                "2020-01-01 09:00:00",
-                "2020-01-01 10:00:00",
-                None,
-                "2020-01-01 10:00:00",
-            ],
-            dtype="datetime64[ns]",
-        ),
-        np.array(
-            [
-                "2020-01-01 09:00:00",
-                None,
-                None,
-                "2020-01-01 10:00:00",
-                None,
-                None,
-            ],
-            dtype="datetime64[ns]",
-        ),
-        # Timedelta
-        np.array(
-            [10, 100, 1000, None, None, 10, 100, 1000], dtype="datetime64[ns]"
-        ),
-        np.array(
-            [None, None, 10, None, 1000, 100, 10], dtype="datetime64[ns]"
-        ),
-        np.array(
-            [10, 100, None, None, 1000, None, None], dtype="datetime64[ns]"
-        ),
-        # String
-        np.array(
-            ["10", "100", "1000", None, None, "10", "100", "1000"],
-            dtype="object",
-        ),
-        np.array(
-            [None, None, "1000", None, "10", "100", "10"], dtype="object"
-        ),
-        np.array(
-            ["10", "100", None, None, "1000", None, None], dtype="object"
-        ),
-    ],
-)
-@pytest.mark.parametrize("container", [pd.Series, pd.DataFrame])
-@pytest.mark.parametrize("method", ["ffill", "bfill"])
-def test_fillna_method_fixed_width_non_num(data, container, method, inplace):
-    if container == pd.DataFrame:
-        data = {"a": data, "b": data, "c": data}
-
-    pdata = container(data)
-
-    # Explicitly using nans_as_nulls=True
-    gdata = cudf.from_pandas(pdata, nan_as_null=True)
-
-    with pytest.warns(FutureWarning):
-        expected = pdata.fillna(method=method, inplace=inplace)
-    with pytest.warns(FutureWarning):
-        actual = gdata.fillna(method=method, inplace=inplace)
-
-    if inplace:
-        expected = pdata
-        actual = gdata
-
-    assert_eq(expected, actual)
-
-
 @pytest.mark.parametrize(
     "psr",
     [
         pd.Series(["a", "b", "c", "d"]),
-        pd.Series([None] * 4, dtype="object"),
+        pd.Series([None] * 4, dtype="str"),
         pd.Series(["z", None, "z", None]),
         pd.Series(["x", "y", None, None, None]),
         pd.Series([None, None, None, "i", "P"]),

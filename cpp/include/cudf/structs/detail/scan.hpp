@@ -1,17 +1,16 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
-#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace structs::detail {
 /**
  * @brief Scan function for struct column type
@@ -27,8 +26,8 @@ namespace structs::detail {
  */
 template <typename Op>
 std::unique_ptr<column> scan_inclusive(column_view const& input,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr);
 
 }  // namespace structs::detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

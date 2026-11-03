@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import rich.pretty
 import polars as pl
 
 from cudf_polars.dsl.translate import Translator
-from cudf_polars.experimental.base import PartitionInfo
+from cudf_polars.streaming.base import PartitionInfo
 
 
 def test_partition_info_rich_repr() -> None:

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from polars.exceptions import ShapeError
 
 import pylibcudf as plc
 
@@ -34,6 +36,9 @@ class Ternary(Expr):
         self.dtype = dtype
         self.children = (when, then, otherwise)
         self.is_pointwise = True
+        if when.dtype.plc_type.id() != plc.TypeId.BOOL8:
+            # polars raises a SchemaError for a non-boolean predicate; let it.
+            raise NotImplementedError("Ternary with a non-boolean predicate")
 
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
@@ -42,6 +47,18 @@ class Ternary(Expr):
         when, then, otherwise = (
             child.evaluate(df, context=context) for child in self.children
         )
+
+        if (
+            not then.is_scalar
+            and not otherwise.is_scalar
+            and then.size != otherwise.size
+            and then.size != 1
+            and otherwise.size != 1
+        ):
+            raise ShapeError(
+                "then and otherwise branches have incompatible lengths "
+                f"({then.size} and {otherwise.size})"
+            )
 
         if when.is_scalar:
             # For scalar predicates: lowering to copy_if_else would require

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """A datatype, preserving polars metadata."""
@@ -40,18 +40,56 @@ SCALAR_NAME_TO_POLARS_TYPE_MAP: dict[str, pl.DataType] = {
 }
 
 
-def _dtype_to_header(dtype: pl.DataType) -> DataTypeHeader:
+def _contains_dtype(
+    dtype: PolarsDataType, types: tuple[type[pl.DataType], ...]
+) -> bool:
+    """Return whether ``dtype`` is or contains an instance of any of ``types``."""
+    if isinstance(dtype, type):
+        dtype = dtype()
+    if isinstance(dtype, types):
+        return True
+    if isinstance(dtype, (pl.List, pl.Array)):
+        return _contains_dtype(dtype.inner, types)
+    if isinstance(dtype, pl.Struct):
+        return any(_contains_dtype(field.dtype, types) for field in dtype.fields)
+    return False
+
+
+_UNSUPPORTED_NESTED_DTYPES: tuple[tuple[str, tuple[type[pl.DataType], ...]], ...] = (
+    ("Categorical", (pl.Categorical, pl.Enum)),
+    ("Array", (pl.Array,)),
+    ("Time", (pl.Time,)),
+)
+
+
+def _check_nested_dtype(inner: PolarsDataType) -> None:
+    for name, types in _UNSUPPORTED_NESTED_DTYPES:
+        if _contains_dtype(inner, types):
+            raise NotImplementedError(
+                f"{name} nested inside another dtype is not supported"
+            )
+
+
+def _dtype_to_header(dtype: PolarsDataType) -> DataTypeHeader:
+    if isinstance(dtype, type):
+        dtype = dtype()
+    if isinstance(dtype, pl.Enum):
+        return {"kind": "enum", "categories": dtype.categories.to_list()}
+    if isinstance(dtype, pl.Categorical):
+        cats = dtype.categories
+        return {
+            "kind": "categorical",
+            "name": cats.name(),
+            "namespace": cats.namespace(),
+            "physical": str(cats.physical()),
+        }
     name = type(dtype).__name__
     if name in SCALAR_NAME_TO_POLARS_TYPE_MAP:
         return {"kind": "scalar", "name": name}
     if isinstance(dtype, pl.Decimal):
-        # TODO: Add version guard once we support polars 1.34
-        # Also keep in mind the typing change in polars:
-        # https://github.com/pola-rs/polars/pull/25227
-        precision = dtype.precision if dtype.precision is not None else 38
         return {
             "kind": "decimal",
-            "precision": precision,
+            "precision": dtype.precision,
             "scale": dtype.scale,
         }
     if isinstance(dtype, pl.Datetime):
@@ -66,14 +104,24 @@ def _dtype_to_header(dtype: pl.DataType) -> DataTypeHeader:
         # isinstance narrows dtype to pl.List, but .inner returns DataTypeClass | DataType
         return {
             "kind": "list",
-            "inner": _dtype_to_header(cast(pl.DataType, dtype.inner)),
+            "inner": _dtype_to_header(cast("pl.DataType", dtype.inner)),
+        }
+    if isinstance(dtype, pl.Array):
+        # isinstance narrows dtype to pl.Array, but .inner returns DataTypeClass | DataType
+        return {
+            "kind": "array",
+            "inner": _dtype_to_header(cast("pl.DataType", dtype.inner)),
+            "width": dtype.size,
         }
     if isinstance(dtype, pl.Struct):
         # isinstance narrows dtype to pl.Struct, but field.dtype returns DataTypeClass | DataType
         return {
             "kind": "struct",
             "fields": [
-                {"name": f.name, "dtype": _dtype_to_header(cast(pl.DataType, f.dtype))}
+                {
+                    "name": f.name,
+                    "dtype": _dtype_to_header(cast("pl.DataType", f.dtype)),
+                }
                 for f in dtype.fields
             ],
         }
@@ -91,15 +139,17 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
         return pl.Decimal(header["precision"], header["scale"])
     if header["kind"] == "datetime":
         return pl.Datetime(
-            time_unit=cast(Literal["ns", "us", "ms"], header["time_unit"]),
+            time_unit=cast("Literal['ns', 'us', 'ms']", header["time_unit"]),
             time_zone=header["time_zone"],
         )
     if header["kind"] == "duration":
         return pl.Duration(
-            time_unit=cast(Literal["ns", "us", "ms"], header["time_unit"])
+            time_unit=cast("Literal['ns', 'us', 'ms']", header["time_unit"])
         )
     if header["kind"] == "list":
         return pl.List(_dtype_from_header(header["inner"]))
+    if header["kind"] == "array":
+        return pl.Array(_dtype_from_header(header["inner"]), header["width"])
     if header["kind"] == "struct":
         return pl.Struct(
             [
@@ -107,6 +157,16 @@ def _dtype_from_header(header: DataTypeHeader) -> pl.DataType:
                 for f in header["fields"]
             ]
         )
+    if header["kind"] == "categorical":
+        return pl.Categorical(
+            pl.Categories(
+                header["name"],
+                header["namespace"],
+                SCALAR_NAME_TO_POLARS_TYPE_MAP[header["physical"]],
+            )
+        )
+    if header["kind"] == "enum":
+        return pl.Enum(header["categories"])
     raise NotImplementedError(f"Unsupported kind {header['kind']!r}")
 
 
@@ -154,7 +214,7 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
     elif isinstance(dtype, pl.Date):
         return plc.DataType(plc.TypeId.TIMESTAMP_DAYS)
     elif isinstance(dtype, pl.Time):
-        raise NotImplementedError("Time of day dtype not implemented")
+        return plc.DataType(plc.TypeId.TIMESTAMP_NANOSECONDS)
     elif isinstance(dtype, pl.Datetime):
         if dtype.time_unit == "ms":
             return plc.DataType(plc.TypeId.TIMESTAMP_MILLISECONDS)
@@ -180,14 +240,26 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
     elif isinstance(dtype, pl.Null):
         # TODO: Hopefully
         return plc.DataType(plc.TypeId.EMPTY)
+    elif isinstance(dtype, (pl.Enum, pl.Categorical)):
+        return plc.DataType(plc.TypeId.DICTIONARY32)
     elif isinstance(dtype, pl.List):
+        _check_nested_dtype(dtype.inner)
         # Recurse to catch unsupported inner types
-        _ = _from_polars(dtype.inner)
+        _ = DataType(dtype.inner)
+        return plc.DataType(plc.TypeId.LIST)
+    elif isinstance(dtype, pl.Array):
+        _check_nested_dtype(dtype.inner)
+        inner = DataType(dtype.inner).plc_type
+        if not plc.traits.is_fixed_width(inner):
+            raise NotImplementedError(
+                f"{dtype=} conversion requires a fixed-width scalar inner dtype"
+            )
         return plc.DataType(plc.TypeId.LIST)
     elif isinstance(dtype, pl.Struct):
         # Recurse to catch unsupported field types
         for field in dtype.fields:
-            _ = _from_polars(field.dtype)
+            _check_nested_dtype(field.dtype)
+            _ = DataType(field.dtype)
         return plc.DataType(plc.TypeId.STRUCT)
     else:
         raise NotImplementedError(f"{dtype=} conversion not supported")
@@ -205,8 +277,13 @@ class DataType:
         if isinstance(polars_dtype, type):
             polars_dtype = polars_dtype()
         # After conversion, it's guaranteed to be a DataType instance
-        self.polars_type = cast(pl.DataType, polars_dtype)
+        self.polars_type = cast("pl.DataType", polars_dtype)
         self.plc_type = _from_polars(self.polars_type)
+
+    @property
+    def is_categorical(self) -> bool:
+        """Whether this is a Polars Categorical or Enum dtype."""
+        return isinstance(self.polars_type, (pl.Categorical, pl.Enum))
 
     def id(self) -> plc.TypeId:
         """The pylibcudf.TypeId of this DataType."""
@@ -219,27 +296,14 @@ class DataType:
         if self.plc_type.id() == plc.TypeId.STRUCT:
             # field.dtype returns DataTypeClass | DataType, need to cast to DataType
             return [
-                DataType(cast(pl.DataType, field.dtype))
-                for field in cast(pl.Struct, self.polars_type).fields
+                DataType(cast("pl.DataType", field.dtype))
+                for field in cast("pl.Struct", self.polars_type).fields
             ]
         elif self.plc_type.id() == plc.TypeId.LIST:
-            # .inner returns DataTypeClass | DataType, need to cast to DataType
-            return [DataType(cast(pl.DataType, cast(pl.List, self.polars_type).inner))]
+            dtype = self.polars_type
+            assert isinstance(dtype, (pl.List, pl.Array))
+            return [DataType(dtype.inner)]
         return []
-
-    def scale(self) -> int:
-        """The scale of this DataType."""
-        return self.plc_type.scale()
-
-    @staticmethod
-    def common_decimal_dtype(left: DataType, right: DataType) -> DataType:
-        """Return a common decimal DataType for the two inputs."""
-        if not (
-            plc.traits.is_fixed_point(left.plc_type)
-            and plc.traits.is_fixed_point(right.plc_type)
-        ):
-            raise ValueError("Both inputs required to be decimal types.")
-        return DataType(pl.Decimal(38, abs(min(left.scale(), right.scale()))))
 
     def __eq__(self, other: object) -> bool:
         """Equality of DataTypes."""

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -6,7 +6,7 @@ from __future__ import annotations
 import cupy
 import cupy._core.flags
 import numpy
-from packaging import version
+from numpy._core.multiarray import flagsobj as _numpy_flagsobj
 
 from cudf.options import _env_get_bool
 
@@ -25,7 +25,6 @@ from ..proxy_base import ProxyNDarrayBase
 from .common import (
     array_interface,
     array_method,
-    arrow_array_method,
     cuda_array_interface,
     custom_iter,
 )
@@ -117,7 +116,20 @@ def wrap_ndarray(cls, arr: cupy.ndarray | numpy.ndarray, constructor):
         return super(cls, cls)._fsproxy_wrap(arr, constructor)
 
 
+def _other_has_higher_priority(self, other) -> bool:
+    self_priority = float(getattr(self, "__array_priority__", 0.0))
+    try:
+        other_priority = float(getattr(other, "__array_priority__", 0.0))
+    except (TypeError, ValueError):
+        return False
+    return other_priority > self_priority
+
+
 def ndarray__array_ufunc__(self, ufunc, method, *inputs, **kwargs):
+    if method == "__call__" and len(inputs) > 1:
+        for inp in inputs:
+            if _other_has_higher_priority(self, inp):
+                return NotImplemented
     result, _ = _fast_slow_function_call(
         getattr(ufunc, method),
         None,
@@ -134,6 +146,21 @@ def ndarray__array_ufunc__(self, ufunc, method, *inputs, **kwargs):
     ):
         return numpy.asarray(result)
     return result
+
+
+def make_binary_op_method(op_func, reflected=False):
+    if reflected:
+
+        def method(self, other):
+            return op_func(other, self)
+    else:
+        # Delegate to the other operand if it has higher priority
+        def method(self, other):
+            if _other_has_higher_priority(self, other):
+                return NotImplemented
+            return op_func(self, other)
+
+    return method
 
 
 def ndarray__reduce__(self):
@@ -194,6 +221,23 @@ def ndarray__array_function__(self, func, types, args, kwargs):
     )
 
 
+def _ndarray_fsproxy_fast_to_slow(self):
+    from ..fast_slow_proxy import _State
+
+    # Preserve view semantics when the proxy was originally wrapped
+    # around a numpy view (``.base is not None``).  Without this, a
+    # round-trip through cupy would convert the stored numpy view into
+    # a cupy array and then back into a freshly-allocated numpy array
+    # whose ``.base`` is None, breaking callers that rely on the view
+    # relationship.
+    if self._fsproxy_state is _State.FAST:
+        original = getattr(self, "_fsproxy_original_slow", None)
+        if original is not None:
+            return original
+        return cupy.ndarray.get(self._fsproxy_wrapped)
+    return self._fsproxy_wrapped
+
+
 ndarray = make_final_proxy_type(
     "ndarray",
     cupy.ndarray,
@@ -204,11 +248,55 @@ ndarray = make_final_proxy_type(
     additional_attributes={
         "__array__": array_method,
         "__array_function__": ndarray__array_function__,
-        # So that pa.array(wrapped-numpy-array) works
-        "__arrow_array__": arrow_array_method,
+        # Note: __arrow_array__ is intentionally NOT defined here. The proxy
+        # already exposes __array_interface__, which pyarrow uses to ingest
+        # numpy data. Exposing __arrow_array__ on a plain numpy.ndarray proxy
+        # makes pa.array(proxy, mask=...) reject the mask= kwarg, since pyarrow
+        # does not allow combining mask= with the __arrow_array__ protocol.
         "__cuda_array_interface__": cuda_array_interface,
         "__array_interface__": array_interface,
         "__array_ufunc__": ndarray__array_ufunc__,
+        # Emulate numpy's __array_priority__ behavior
+        "__add__": make_binary_op_method(numpy.add),
+        "__radd__": make_binary_op_method(numpy.add, reflected=True),
+        "__sub__": make_binary_op_method(numpy.subtract),
+        "__rsub__": make_binary_op_method(numpy.subtract, reflected=True),
+        "__mul__": make_binary_op_method(numpy.multiply),
+        "__rmul__": make_binary_op_method(numpy.multiply, reflected=True),
+        "__truediv__": make_binary_op_method(numpy.true_divide),
+        "__rtruediv__": make_binary_op_method(
+            numpy.true_divide, reflected=True
+        ),
+        "__floordiv__": make_binary_op_method(numpy.floor_divide),
+        "__rfloordiv__": make_binary_op_method(
+            numpy.floor_divide, reflected=True
+        ),
+        "__mod__": make_binary_op_method(numpy.mod),
+        "__rmod__": make_binary_op_method(numpy.mod, reflected=True),
+        "__pow__": make_binary_op_method(numpy.power),
+        "__rpow__": make_binary_op_method(numpy.power, reflected=True),
+        "__divmod__": make_binary_op_method(numpy.divmod),
+        "__rdivmod__": make_binary_op_method(numpy.divmod, reflected=True),
+        "__matmul__": make_binary_op_method(numpy.matmul),
+        "__rmatmul__": make_binary_op_method(numpy.matmul, reflected=True),
+        "__and__": make_binary_op_method(numpy.bitwise_and),
+        "__rand__": make_binary_op_method(numpy.bitwise_and, reflected=True),
+        "__or__": make_binary_op_method(numpy.bitwise_or),
+        "__ror__": make_binary_op_method(numpy.bitwise_or, reflected=True),
+        "__xor__": make_binary_op_method(numpy.bitwise_xor),
+        "__rxor__": make_binary_op_method(numpy.bitwise_xor, reflected=True),
+        "__lshift__": make_binary_op_method(numpy.left_shift),
+        "__rlshift__": make_binary_op_method(numpy.left_shift, reflected=True),
+        "__rshift__": make_binary_op_method(numpy.right_shift),
+        "__rrshift__": make_binary_op_method(
+            numpy.right_shift, reflected=True
+        ),
+        "__lt__": make_binary_op_method(numpy.less),
+        "__le__": make_binary_op_method(numpy.less_equal),
+        "__gt__": make_binary_op_method(numpy.greater),
+        "__ge__": make_binary_op_method(numpy.greater_equal),
+        "__eq__": make_binary_op_method(numpy.equal),
+        "__ne__": make_binary_op_method(numpy.not_equal),
         "__reduce__": ndarray__reduce__,
         # ndarrays are unhashable
         "__hash__": None,
@@ -218,6 +306,7 @@ ndarray = make_final_proxy_type(
         "__iter__": custom_iter,
         # Special wrapping to handle scalar values
         "_fsproxy_wrap": classmethod(wrap_ndarray),
+        "_fsproxy_fast_to_slow": _ndarray_fsproxy_fast_to_slow,
         "base": _FastSlowAttribute("base", private=True),
         "data": _FastSlowAttribute("data", private=True),
     },
@@ -234,14 +323,6 @@ flatiter = make_final_proxy_type(
         "__array__": array_method,
     },
 )
-
-if version.parse(numpy.__version__) >= version.parse("2.0"):
-    # NumPy 2 introduced `_core` and gives warnings for access to `core`.
-    from numpy._core.multiarray import flagsobj as _numpy_flagsobj
-else:
-    from numpy.core.multiarray import (  # type: ignore[no-redef]
-        flagsobj as _numpy_flagsobj,
-    )
 
 # Mapping flags between slow and fast types
 _ndarray_flags = make_intermediate_proxy_type(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,11 +13,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_HostUDFWrapper_close(JNIEnv* env,
                                                                 jclass class_object,
                                                                 jlong ptr)
 {
-  JNI_TRY
-  {
-    auto to_del = reinterpret_cast<cudf::host_udf_base*>(ptr);
-    delete to_del;
-  }
+  JNI_TRY { cudf::jni::safe_delete<cudf::host_udf_base>(ptr); }
   JNI_CATCH(env, );
 }
 

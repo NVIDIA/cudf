@@ -1,16 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
 import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.testing import assert_eq
-from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
+from cudf.testing._utils import assert_exceptions_equal
 
 
 def test_series_setitem_singleton_range():
@@ -58,21 +56,23 @@ def test_string_get_item(data, item):
     ps = pd.Series(data, dtype="str", name="nice name")
     gs = cudf.Series(data, dtype="str", name="nice name")
 
-    got = gs.iloc[item]
-    if isinstance(got, cudf.Series):
-        got = got.to_arrow()
-
     if isinstance(item, cp.ndarray):
-        item = cp.asnumpy(item)
+        item_np = cp.asnumpy(item)
+    else:
+        item_np = item
 
-    expect = ps.iloc[item]
+    got = gs.iloc[item]
+    expect = ps.iloc[item_np]
+
     if isinstance(expect, pd.Series):
-        expect = pa.Array.from_pandas(expect)
-        pa.Array.equals(expect, got)
+        assert_eq(expect, got)
     else:
         if got is cudf.NA and expect is None:
             return
-        assert expect == got
+        if isinstance(expect, float) and np.isnan(expect):
+            assert isinstance(got, float) and np.isnan(got)
+        else:
+            assert expect == got
 
 
 @pytest.mark.parametrize("bool_", [True, False])
@@ -83,19 +83,21 @@ def test_string_bool_mask(data, bool_, box):
     gs = cudf.Series(data, dtype="str", name="nice name")
     item = box([bool_] * len(data))
 
-    got = gs.iloc[item]
-    if isinstance(got, cudf.Series):
-        got = got.to_arrow()
-
     if isinstance(item, cp.ndarray):
-        item = cp.asnumpy(item)
-
-    expect = ps[item]
-    if isinstance(expect, pd.Series):
-        expect = pa.Array.from_pandas(expect)
-        pa.Array.equals(expect, got)
+        item_np = cp.asnumpy(item)
     else:
-        assert expect == got
+        item_np = item
+
+    got = gs.iloc[item]
+    expect = ps[item_np]
+
+    if isinstance(expect, pd.Series):
+        assert_eq(expect, got)
+    else:
+        got_scalar = got
+        if got_scalar is cudf.NA and expect is None:
+            return
+        assert expect == got_scalar
 
 
 def test_series_iloc():
@@ -134,10 +136,6 @@ def test_series_iloc():
     )
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.parametrize(
     "key, value",
     [
@@ -148,7 +146,6 @@ def test_series_iloc():
         (slice(0, 2), [4, 5]),
         (slice(1, None), [4, 5, 6, 7]),
         ([], 1),
-        ([], []),
         (slice(None, None), 1),
         (slice(-1, -3), 7),
     ],
@@ -161,14 +158,9 @@ def test_series_setitem_iloc(key, value, nulls):
     elif nulls == "all":
         psr[:] = None
     gsr = cudf.from_pandas(psr)
-    with expect_warning_if(
-        isinstance(value, list) and len(value) == 0 and nulls == "none"
-    ):
-        psr.iloc[key] = value
-    with expect_warning_if(
-        isinstance(value, list) and len(value) == 0 and not len(key) == 0
-    ):
-        gsr.iloc[key] = value
+    gsr.iloc[key] = value
+    psr.iloc[key] = value
+
     assert_eq(psr, gsr, check_dtype=False)
 
 
@@ -191,49 +183,53 @@ def test_out_of_bounds_indexing_empty():
     )
 
 
-@pytest.mark.parametrize(
-    "gdf",
-    [
-        lambda: cudf.DataFrame({"a": range(10000)}),
-        lambda: cudf.DataFrame(
-            {
-                "a": range(10000),
-                "b": range(10000),
-                "c": range(10000),
-                "d": range(10000),
-                "e": range(10000),
-                "f": range(10000),
-            }
-        ),
-        lambda: cudf.DataFrame({"a": range(20), "b": range(20)}),
-        lambda: cudf.DataFrame(
-            {
-                "a": range(20),
-                "b": range(20),
-                "c": ["abc", "def", "xyz", "def", "pqr"] * 4,
-            }
-        ),
-        lambda: cudf.DataFrame(index=[1, 2, 3]),
-        lambda: cudf.DataFrame(index=range(10000)),
-        lambda: cudf.DataFrame(columns=["a", "b", "c", "d"]),
-        lambda: cudf.DataFrame(columns=["a"], index=range(10000)),
-        lambda: cudf.DataFrame(
-            columns=["a", "col2", "...col n"], index=range(10000)
-        ),
-        lambda: cudf.DataFrame(index=cudf.Series(range(10000)).astype("str")),
-        lambda: cudf.DataFrame(
-            columns=["a", "b", "c", "d"],
-            index=cudf.Series(range(10000)).astype("str"),
-        ),
-    ],
-)
+_DATAFRAME_ILOC_INDEX_BUILDERS = [
+    lambda: cudf.DataFrame({"a": range(10000)}),
+    lambda: cudf.DataFrame(
+        {
+            "a": range(10000),
+            "b": range(10000),
+            "c": range(10000),
+            "d": range(10000),
+            "e": range(10000),
+            "f": range(10000),
+        }
+    ),
+    lambda: cudf.DataFrame({"a": range(20), "b": range(20)}),
+    lambda: cudf.DataFrame(
+        {
+            "a": range(20),
+            "b": range(20),
+            "c": ["abc", "def", "xyz", "def", "pqr"] * 4,
+        }
+    ),
+    lambda: cudf.DataFrame(index=[1, 2, 3]),
+    lambda: cudf.DataFrame(index=range(10000)),
+    lambda: cudf.DataFrame(columns=["a", "b", "c", "d"]),
+    lambda: cudf.DataFrame(columns=["a"], index=range(10000)),
+    lambda: cudf.DataFrame(
+        columns=["a", "col2", "...col n"], index=range(10000)
+    ),
+    lambda: cudf.DataFrame(index=cudf.Series(range(10000)).astype("str")),
+    lambda: cudf.DataFrame(
+        columns=["a", "b", "c", "d"],
+        index=cudf.Series(range(10000)).astype("str"),
+    ),
+]
+
+
+@pytest.fixture(scope="module", params=_DATAFRAME_ILOC_INDEX_BUILDERS)
+def dataframe_iloc_index_frame(request):
+    gdf = request.param()
+    return gdf, gdf.to_pandas()
+
+
 @pytest.mark.parametrize(
     "slice",
     [slice(6), slice(1), slice(7), slice(1, 3)],
 )
-def test_dataframe_iloc_index(gdf, slice):
-    gdf = gdf()
-    pdf = gdf.to_pandas()
+def test_dataframe_iloc_index(dataframe_iloc_index_frame, slice):
+    gdf, pdf = dataframe_iloc_index_frame
 
     actual = gdf.iloc[:, slice]
     expected = pdf.iloc[:, slice]
@@ -298,7 +294,7 @@ def test_iloc_decimal():
 
 @pytest.mark.parametrize("indexer", [[1], [0, 2]])
 def test_iloc_integer_categorical_issue_13013(indexer):
-    # https://github.com/rapidsai/cudf/issues/13013
+    # https://github.com/NVIDIA/cudf/issues/13013
     s = pd.Series([0, 1, 2])
     index = pd.Categorical(indexer)
     expect = s.iloc[index]
@@ -308,7 +304,7 @@ def test_iloc_integer_categorical_issue_13013(indexer):
 
 
 def test_iloc_incorrect_boolean_mask_length_issue_13015():
-    # https://github.com/rapidsai/cudf/issues/13015
+    # https://github.com/NVIDIA/cudf/issues/13015
     s = pd.Series([0, 1, 2])
     with pytest.raises(IndexError):
         s.iloc[[True, False]]

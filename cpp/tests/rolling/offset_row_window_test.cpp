@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/rolling.hpp>
 
 template <typename T>
@@ -27,7 +28,7 @@ using cudf::test::iterators::nulls_at;
 auto constexpr null = int32_t{0};  // NULL representation for int32_t;
 
 // clang-tidy doesn't think std::transform can handle a
-// thrust::constant_iterator, so this is a workaround that uses nulls_at
+// cuda::constant_iterator, so this is a workaround that uses nulls_at
 // instead of no_nulls
 auto no_nulls_list() { return nulls_at({}); }
 
@@ -252,10 +253,10 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Ungrouped_0_to_2)
 TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
 {
   auto const grp_iter =
-    thrust::make_transform_iterator(thrust::make_counting_iterator(0), [](auto const& i) {
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [](auto const& i) {
       return i / 10;  // 0-9 in the first group, 10-19 in the second, etc.
     });
-  auto const agg_iter = thrust::make_constant_iterator(1);
+  auto const agg_iter = cuda::make_constant_iterator(1);
 
   auto const grp = ints_column(grp_iter, grp_iter + 30);
   auto const agg = ints_column(agg_iter, agg_iter + 30);
@@ -276,7 +277,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
       return int64_t{10 - start};
     };
     auto const expected_iter =
-      thrust::make_transform_iterator(thrust::make_counting_iterator(0), expected_fun);
+      cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, expected_fun);
     auto const expected = bigints_column(expected_iter, expected_iter + 30, no_nulls());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -291,7 +292,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
       return int64_t{end + 1};
     };
     auto const expected_iter =
-      thrust::make_transform_iterator(thrust::make_counting_iterator(0), expected_fun);
+      cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, expected_fun);
     auto const expected = bigints_column(expected_iter, expected_iter + 30, no_nulls());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -300,7 +301,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
 TEST_F(OffsetRowWindowTest, CheckGroupBoundaries)
 {
   auto grp_iter =
-    thrust::make_transform_iterator(thrust::make_counting_iterator(0), [](auto const& i) {
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [](auto const& i) {
       if (i < 10) return 1;
       if (i < 20) return 2;
       return 3;
@@ -315,7 +316,7 @@ TEST_F(OffsetRowWindowTest, CheckGroupBoundaries)
                                    100,
                                    1,
                                    *cudf::make_max_aggregation<cudf::rolling_aggregation>());
-    auto const null_iter = thrust::make_constant_iterator<int32_t>(null);
+    auto const null_iter = cuda::make_constant_iterator<int32_t>(null);
     auto const expected  = ints_column(null_iter, null_iter + 30, all_nulls());
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);

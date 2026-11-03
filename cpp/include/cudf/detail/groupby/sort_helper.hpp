@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,10 +11,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
-namespace CUDF_EXPORT cudf {
+#include <cuda/stream>
+
+namespace cudf {
 namespace groupby::detail::sort {
 /**
  * @brief Helper class for computing sort-based groupby
@@ -71,10 +72,12 @@ struct sort_groupby_helper {
    * @throw cudf::logic_error if `values.size() != keys.num_rows()`
    *
    * @param values The value column to group and sort
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned device memory
    * @return the sorted and grouped column
    */
   std::unique_ptr<column> sorted_values(column_view const& values,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr);
 
   /**
@@ -85,10 +88,12 @@ struct sort_groupby_helper {
    * @throw cudf::logic_error if `values.size() != keys.num_rows()`
    *
    * @param values The value column to group
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned device memory
    * @return the grouped column
    */
   std::unique_ptr<column> grouped_values(column_view const& values,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr);
 
   /**
@@ -96,21 +101,19 @@ struct sort_groupby_helper {
    *
    * @return a new table in which each row is a unique row in the sorted key table.
    */
-  std::unique_ptr<table> unique_keys(rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr);
+  std::unique_ptr<table> unique_keys(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
    * @brief Get a table of sorted keys
    *
    * @return a new table containing the sorted keys.
    */
-  std::unique_ptr<table> sorted_keys(rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr);
+  std::unique_ptr<table> sorted_keys(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
    * @brief Get the number of groups in `keys`
    */
-  size_type num_groups(rmm::cuda_stream_view stream) { return group_offsets(stream).size() - 1; }
+  size_type num_groups(cuda::stream_ref stream) { return group_offsets(stream).size() - 1; }
 
   /**
    * @brief check if the groupby keys are presorted
@@ -124,7 +127,7 @@ struct sort_groupby_helper {
    * When include_null_keys = NO, returned value is the number of rows in `keys`
    *  in which no element is null
    */
-  size_type num_keys(rmm::cuda_stream_view stream);
+  size_type num_keys(cuda::stream_ref stream);
 
   /**
    * @brief Get the sorted order of `keys`.
@@ -139,7 +142,7 @@ struct sort_groupby_helper {
    *
    * @return the sort order indices for `keys`.
    */
-  column_view key_sort_order(rmm::cuda_stream_view stream);
+  column_view key_sort_order(cuda::stream_ref stream);
 
   /**
    * @brief Get each group's offset into the sorted order of `keys`.
@@ -152,7 +155,7 @@ struct sort_groupby_helper {
    * @return vector of offsets of the starting point of each group in the sorted
    * key table
    */
-  index_vector const& group_offsets(rmm::cuda_stream_view stream);
+  index_vector const& group_offsets(cuda::stream_ref stream);
 
   /**
    * @brief Get the group labels corresponding to the sorted order of `keys`.
@@ -167,7 +170,7 @@ struct sort_groupby_helper {
    *
    * @return vector of group labels for each row in the sorted key column
    */
-  index_vector const& group_labels(rmm::cuda_stream_view stream);
+  index_vector const& group_labels(cuda::stream_ref stream);
 
  private:
   /**
@@ -184,7 +187,7 @@ struct sort_groupby_helper {
    * @return A nullable column of `INT32` containing group labels in the order
    *         of the unsorted key table
    */
-  column_view unsorted_keys_labels(rmm::cuda_stream_view stream);
+  column_view unsorted_keys_labels(cuda::stream_ref stream);
 
   /**
    * @brief Get the column representing the row bitmask for the `keys`
@@ -198,7 +201,7 @@ struct sort_groupby_helper {
    * Computes and stores bitmask on first invocation and returns stored column
    * on subsequent calls.
    */
-  column_view keys_bitmask_column(rmm::cuda_stream_view stream);
+  column_view keys_bitmask_column(cuda::stream_ref stream);
 
   column_ptr _key_sorted_order;      ///< Indices to produce _keys in sorted order
   column_ptr _unsorted_keys_labels;  ///< Group labels for unsorted _keys
@@ -216,4 +219,4 @@ struct sort_groupby_helper {
 };
 
 }  // namespace groupby::detail::sort
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

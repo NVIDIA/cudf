@@ -1,17 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-import numpy as np
-from numba.np import numpy_support
-
 import pylibcudf as plc
 
 from cudf.api.types import is_scalar
-from cudf.core.udf.utils import compile_udf
-from cudf.utils.dtypes import SUPPORTED_NUMPY_TO_PYLIBCUDF_TYPES
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -152,15 +147,25 @@ class Aggregation:
         )
 
     @classmethod
-    def first(cls) -> Self:
+    def first(cls, skipna: bool = True) -> Self:
         return cls(
-            plc.aggregation.nth_element(0, plc.types.NullPolicy.EXCLUDE)
+            plc.aggregation.nth_element(
+                0,
+                plc.types.NullPolicy.EXCLUDE
+                if skipna
+                else plc.types.NullPolicy.INCLUDE,
+            )
         )
 
     @classmethod
-    def last(cls) -> Self:
+    def last(cls, skipna: bool = True) -> Self:
         return cls(
-            plc.aggregation.nth_element(-1, plc.types.NullPolicy.EXCLUDE)
+            plc.aggregation.nth_element(
+                -1,
+                plc.types.NullPolicy.EXCLUDE
+                if skipna
+                else plc.types.NullPolicy.INCLUDE,
+            )
         )
 
     @classmethod
@@ -228,28 +233,6 @@ class Aggregation:
     def all(cls) -> Self:
         return cls(plc.aggregation.all())
 
-    # Rolling aggregations
-    @classmethod
-    def from_udf(cls, op, *args, **kwargs) -> Self:
-        # Handling UDF type
-        nb_type = numpy_support.from_dtype(kwargs["dtype"])
-        type_signature = (nb_type[:],)
-        ptx_code, output_dtype = compile_udf(op, type_signature)
-        output_np_dtype = np.dtype(output_dtype)
-        if output_np_dtype not in SUPPORTED_NUMPY_TO_PYLIBCUDF_TYPES:
-            raise TypeError(
-                f"Result of window function has unsupported dtype {op[1]}"
-            )
-
-        return cls(
-            plc.aggregation.udf(
-                ptx_code,
-                plc.DataType(
-                    SUPPORTED_NUMPY_TO_PYLIBCUDF_TYPES[output_np_dtype]
-                ),
-            )
-        )
-
 
 def make_aggregation(
     op: str | Callable, kwargs: dict | None = None
@@ -258,15 +241,10 @@ def make_aggregation(
     Parameters
     ----------
     op : str or callable
-        If callable, must meet one of the following requirements:
-
-        * Is of the form lambda x: x.agg(*args, **kwargs), where
-          `agg` is the name of a supported aggregation. Used to
-          to specify aggregations that take arguments, e.g.,
-          `lambda x: x.quantile(0.5)`.
-        * Is a user defined aggregation function that operates on
-          group values. In this case, the output dtype must be
-          specified in the `kwargs` dictionary.
+        If callable, must be of the form lambda x: x.agg(*args, **kwargs),
+        where `agg` is the name of a supported aggregation. Used to
+        specify aggregations that take arguments, e.g.,
+        `lambda x: x.quantile(0.5)`.
     \*\*kwargs : dict, optional
         Any keyword arguments to be passed to the op.
 
@@ -282,8 +260,6 @@ def make_aggregation(
     elif callable(op):
         if op is list:
             return Aggregation.collect()
-        elif "dtype" in kwargs:
-            return Aggregation.from_udf(op, **kwargs)
         else:
             return op(Aggregation)
     raise TypeError(f"Unknown aggregation {op}")

@@ -42,29 +42,6 @@ TYPED_TEST(IndexalatorTest, input_iterator)
   this->iterator_test_thrust(expected_values, it_dev, host_values.size());
 }
 
-TYPED_TEST(IndexalatorTest, pair_iterator)
-{
-  using T = TypeParam;
-
-  auto host_values = cudf::test::make_type_param_vector<T>({0, 6, 0, -14, 13, 64, -13, -120, 115});
-  auto validity    = std::vector<bool>({0, 1, 1, 1, 1, 1, 0, 1, 1});
-
-  auto d_col = cudf::test::fixed_width_column_wrapper<T>(
-    host_values.begin(), host_values.end(), validity.begin());
-
-  auto expected_values =
-    thrust::host_vector<cuda::std::pair<cudf::size_type, bool>>(host_values.size());
-  std::transform(
-    host_values.begin(),
-    host_values.end(),
-    validity.begin(),
-    expected_values.begin(),
-    [](T v, bool b) { return cuda::std::make_pair(static_cast<cudf::size_type>(v), b); });
-
-  auto it_dev = cudf::detail::indexalator_factory::make_input_pair_iterator(d_col);
-  this->iterator_test_thrust(expected_values, it_dev, host_values.size());
-}
-
 TYPED_TEST(IndexalatorTest, optional_iterator)
 {
   using T = TypeParam;

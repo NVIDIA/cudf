@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,13 +15,11 @@ template <typename T>
 struct NaNsToNullTest : public cudf::test::BaseFixture {
   void run_test(cudf::column_view const& input, cudf::column_view const& expected)
   {
-    auto [null_mask, null_count] = cudf::nans_to_nulls(input);
-    cudf::column got(input);
-    got.set_null_mask(std::move(*null_mask), null_count);
+    auto got = cudf::column_nans_to_nulls(input);
 
-    EXPECT_EQ(expected.null_count(), null_count);
+    EXPECT_EQ(expected.null_count(), got->null_count());
 
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, got.view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, got->view());
   }
 
   std::unique_ptr<cudf::column> create_expected(std::vector<T> const& input,
@@ -96,14 +94,30 @@ TYPED_TEST(NaNsToNullTest, NoNANNoMask)
   this->run_test(input_column, expected_column->view());
 }
 
+TYPED_TEST(NaNsToNullTest, WithOffset)
+{
+  using T                = TypeParam;
+  std::vector<T> input   = {1, NAN, 3, NAN, 0, NAN, 7, NAN, 9};
+  std::vector<bool> mask = {true, true, true, true, false, false, true, true, true};
+
+  auto input_column =
+    cudf::test::fixed_width_column_wrapper<T>(input.begin(), input.end(), mask.begin());
+  auto sliced_column = cudf::slice(input_column, {1, 5}).front();
+
+  std::vector<T> expected         = {0, 3, 0, 0};
+  std::vector<bool> expected_mask = {false, true, false, false};
+
+  auto expected_column = cudf::test::fixed_width_column_wrapper<T>(
+    expected.begin(), expected.end(), expected_mask.begin());
+  this->run_test(sliced_column, expected_column);
+}
+
 TYPED_TEST(NaNsToNullTest, EmptyColumn)
 {
   using T = TypeParam;
 
-  std::vector<T> input = {};
-  auto input_column    = cudf::test::fixed_width_column_wrapper<T>(input.begin(), input.end());
-  auto expected_column = this->create_expected(input);
-  this->run_test(input_column, expected_column->view());
+  auto input_column = cudf::test::fixed_width_column_wrapper<T>({});
+  this->run_test(input_column, input_column);
 }
 
 struct NaNsToNullFailTest : public cudf::test::BaseFixture {};
@@ -114,7 +128,7 @@ TEST_F(NaNsToNullFailTest, StringType)
     "", "this", "is", "a", "column", "of", "strings", "with", "in", "valid"};
   cudf::test::strings_column_wrapper input(strings.begin(), strings.end());
 
-  EXPECT_THROW(cudf::nans_to_nulls(input), cudf::logic_error);
+  EXPECT_THROW(cudf::column_nans_to_nulls(input), std::invalid_argument);
 }
 
 TEST_F(NaNsToNullFailTest, IntegerType)
@@ -122,5 +136,11 @@ TEST_F(NaNsToNullFailTest, IntegerType)
   std::vector<int32_t> input = {1, 2, 3, 4, 5, 6};
   auto input_column = cudf::test::fixed_width_column_wrapper<int32_t>(input.begin(), input.end());
 
-  EXPECT_THROW(cudf::nans_to_nulls(input_column), cudf::logic_error);
+  EXPECT_THROW(cudf::column_nans_to_nulls(input_column), std::invalid_argument);
+}
+
+TEST_F(NaNsToNullFailTest, EmptyColumn)
+{
+  auto input_column = cudf::test::fixed_width_column_wrapper<int32_t>({});
+  EXPECT_THROW(cudf::column_nans_to_nulls(input_column), std::invalid_argument);
 }

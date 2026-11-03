@@ -1,10 +1,13 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/detail/aggregation/aggregation.cuh>
 #include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/table/table_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -38,54 +41,17 @@ struct identity_initializer {
   template <typename T, aggregation::Kind k>
   static constexpr bool is_supported()
   {
-    return (cudf::is_fixed_width<T>() and
-            (k == aggregation::SUM or k == aggregation::MIN or k == aggregation::MAX or
-             k == aggregation::COUNT_VALID or k == aggregation::COUNT_ALL or
-             k == aggregation::ARGMAX or k == aggregation::ARGMIN or
-             k == aggregation::SUM_OF_SQUARES or k == aggregation::M2 or k == aggregation::STD or
-             k == aggregation::VARIANCE or
-             (k == aggregation::PRODUCT and is_product_supported<T>()))) or
-           (k == aggregation::SUM_WITH_OVERFLOW and std::is_same_v<T, cudf::struct_view>);
-  }
-
-  template <typename T, aggregation::Kind k>
-  T identity_from_operator()
-    requires(not std::is_same_v<corresponding_operator_t<k>, void>)
-  {
-    using DeviceType = device_storage_type_t<T>;
-    return corresponding_operator_t<k>::template identity<DeviceType>();
-  }
-
-  template <typename T, aggregation::Kind k>
-  T identity_from_operator()
-    requires(std::is_same_v<corresponding_operator_t<k>, void>)
-  {
-    CUDF_FAIL("Unable to get identity/sentinel from device operator");
-  }
-
-  template <typename T, aggregation::Kind k>
-  T get_identity()
-  {
-    if (k == aggregation::ARGMAX || k == aggregation::ARGMIN) {
-      if constexpr (cudf::is_timestamp<T>())
-        return k == aggregation::ARGMAX ? T{typename T::duration(ARGMAX_SENTINEL)}
-                                        : T{typename T::duration(ARGMIN_SENTINEL)};
-      else {
-        using DeviceType = device_storage_type_t<T>;
-        return k == aggregation::ARGMAX ? static_cast<DeviceType>(ARGMAX_SENTINEL)
-                                        : static_cast<DeviceType>(ARGMIN_SENTINEL);
-      }
-    }
-    return identity_from_operator<T, k>();
+    return is_identity_supported<T, k>() or
+           (k == aggregation::SUM_OVERFLOW and std::is_same_v<T, cudf::struct_view>);
   }
 
  public:
   template <typename T, aggregation::Kind k>
-  void operator()(mutable_column_view const& col, rmm::cuda_stream_view stream)
+  void operator()(mutable_column_view const& col, cuda::stream_ref stream)
     requires(is_supported<T, k>())
   {
-    if constexpr (k == aggregation::SUM_WITH_OVERFLOW) {
-      // SUM_WITH_OVERFLOW uses a struct with sum and overflow children
+    if constexpr (k == aggregation::SUM_OVERFLOW) {
+      // SUM_OVERFLOW uses a struct with sum and overflow children
       auto sum_col      = col.child(0);
       auto overflow_col = col.child(1);
 
@@ -93,13 +59,16 @@ struct identity_initializer {
       dispatch_type_and_aggregation(
         sum_col.type(), aggregation::SUM, identity_initializer{}, sum_col, stream);
       thrust::uninitialized_fill_n(
-        rmm::exec_policy_nosync(stream), overflow_col.begin<bool>(), col.size(), false);
+        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        overflow_col.begin<bool>(),
+        col.size(),
+        false);
     } else if constexpr (std::is_same_v<T, cudf::struct_view>) {
-      // This should only happen for SUM_WITH_OVERFLOW, but handle it just in case
-      CUDF_FAIL("Struct columns are only supported for SUM_WITH_OVERFLOW aggregation");
+      // This should only happen for SUM_OVERFLOW, but handle it just in case
+      CUDF_FAIL("Struct columns are only supported for SUM_OVERFLOW aggregation");
     } else {
       using DeviceType = device_storage_type_t<T>;
-      thrust::fill(rmm::exec_policy_nosync(stream),
+      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    col.begin<DeviceType>(),
                    col.end<DeviceType>(),
                    get_identity<DeviceType, k>());
@@ -107,7 +76,7 @@ struct identity_initializer {
   }
 
   template <typename T, aggregation::Kind k>
-  void operator()(mutable_column_view const& col, rmm::cuda_stream_view stream)
+  void operator()(mutable_column_view const& col, cuda::stream_ref stream)
     requires(not is_supported<T, k>())
   {
     CUDF_FAIL("Unsupported aggregation for initializing values");
@@ -117,7 +86,7 @@ struct identity_initializer {
 
 void initialize_with_identity(mutable_table_view const& table,
                               host_span<cudf::aggregation::Kind const> aggs,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
 {
   // TODO: Initialize all the columns in a single kernel instead of invoking one
   // kernel per column

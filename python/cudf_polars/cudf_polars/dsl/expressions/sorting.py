@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -12,6 +12,7 @@ import pylibcudf as plc
 
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
+from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils import sorting
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ class Sort(Expr):
             [descending], nulls_last=[nulls_last], num_keys=1
         )
         do_sort = plc.sorting.stable_sort if stable else plc.sorting.sort
-        table = do_sort(plc.Table([column.obj]), order, null_order)
+        table = do_sort(plc.Table([column.obj]), order, null_order, stream=df.stream)
         return Column(
             table.columns()[0],
             is_sorted=plc.types.Sorted.YES,
@@ -74,12 +75,23 @@ class SortBy(Expr):
     ) -> Column:
         """Evaluate this expression given a dataframe for context."""
         column, *by = (child.evaluate(df, context=context) for child in self.children)
+        # Scalar keys (e.g. a literal or an aggregation) apply to every row.
+        by = [
+            key
+            if key.size == column.size
+            else broadcast(key, target_length=column.size, stream=df.stream)[0]
+            for key in by
+        ]
         (stable, nulls_last, descending) = self.options
         order, null_order = sorting.sort_order(
             descending, nulls_last=nulls_last, num_keys=len(by)
         )
         do_sort = plc.sorting.stable_sort_by_key if stable else plc.sorting.sort_by_key
         table = do_sort(
-            plc.Table([column.obj]), plc.Table([c.obj for c in by]), order, null_order
+            plc.Table([column.obj]),
+            plc.Table([c.obj for c in by]),
+            order,
+            null_order,
+            stream=df.stream,
         )
         return Column(table.columns()[0], dtype=self.dtype)

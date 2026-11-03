@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -11,19 +11,21 @@
 
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/null_mask.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+
+#include <cstdint>
 #include <stdexcept>
+#include <type_traits>
 
 struct BitmaskUtilitiesTest : public cudf::test::BaseFixture {};
 
@@ -46,6 +48,36 @@ TEST_F(BitmaskUtilitiesTest, BitmaskAllocationSize)
   EXPECT_EQ(192u, cudf::bitmask_allocation_size_bytes(1025));
 }
 
+TEST_F(BitmaskUtilitiesTest, CreateNullMaskPaddingAndAlignment)
+{
+  auto const stream = cudf::get_default_stream();
+  for (auto const size : {0, 1, 31, 32, 33, 512, 513, 1025}) {
+    for (auto const state : {cudf::mask_state::UNALLOCATED,
+                             cudf::mask_state::UNINITIALIZED,
+                             cudf::mask_state::ALL_NULL,
+                             cudf::mask_state::ALL_VALID}) {
+      auto mask = cudf::create_null_mask(size, state, stream);
+      static_assert(std::is_same_v<decltype(mask), cuda::device_buffer<cudf::bitmask_type>>);
+      auto const expected_bytes =
+        state == cudf::mask_state::UNALLOCATED ? 0 : cudf::bitmask_allocation_size_bytes(size);
+      EXPECT_EQ(mask.size() * sizeof(cudf::bitmask_type), expected_bytes);
+      EXPECT_EQ(mask.alignment(), alignof(cudf::bitmask_type));
+      if (expected_bytes == 0) {
+        EXPECT_EQ(mask.data(), nullptr);
+        continue;
+      }
+      EXPECT_EQ(reinterpret_cast<std::uintptr_t>(mask.data()) % alignof(cudf::bitmask_type), 0);
+      if (state == cudf::mask_state::UNINITIALIZED) { continue; }
+      std::vector<cudf::bitmask_type> words(mask.size());
+      CUDF_CUDA_TRY(cudaMemcpyAsync(
+        words.data(), mask.data(), expected_bytes, cudaMemcpyDefault, stream.get()));
+      stream.sync();
+      auto const expected_word = state == cudf::mask_state::ALL_VALID ? ~cudf::bitmask_type{0} : 0;
+      EXPECT_THAT(words, ::testing::Each(expected_word));
+    }
+  }
+}
+
 TEST_F(BitmaskUtilitiesTest, NumBitmaskWords)
 {
   EXPECT_EQ(0, cudf::num_bitmask_words(0));
@@ -62,31 +94,30 @@ struct CountBitmaskTest : public cudf::test::BaseFixture {};
 
 TEST_F(CountBitmaskTest, NullMask)
 {
-  EXPECT_THROW(cudf::detail::count_set_bits(nullptr, 0, 32, cudf::get_default_stream()),
-               cudf::logic_error);
-  EXPECT_EQ(32, cudf::detail::valid_count(nullptr, 0, 32, cudf::get_default_stream()));
+  EXPECT_EQ(0, cudf::null_count(nullptr, 0, 32));
 
   std::vector<cudf::size_type> indices = {0, 32, 7, 25};
-  EXPECT_THROW(cudf::detail::segmented_count_set_bits(nullptr, indices, cudf::get_default_stream()),
-               cudf::logic_error);
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(nullptr, indices, cudf::get_default_stream());
-  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{32, 18}));
+
+  auto counts = cudf::segmented_null_count(nullptr, indices);
+  EXPECT_THAT(counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+  counts = cudf::segmented_valid_count(nullptr, indices);
+  EXPECT_THAT(counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{32, 18}));
 }
 
 // Utility to construct a mask vector. If fill_valid is false (default), it is initialized to all
 // null. Otherwise it is initialized to all valid.
-rmm::device_uvector<cudf::bitmask_type> make_mask(cudf::size_type size, bool fill_valid = false)
+auto make_mask(cudf::size_type size, bool fill_valid = false)
 {
   if (!fill_valid) {
-    return cudf::detail::make_zeroed_device_uvector<cudf::bitmask_type>(
+    return cudf::detail::make_zeroed_device_buffer<cudf::bitmask_type>(
       size, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   } else {
-    auto ret = rmm::device_uvector<cudf::bitmask_type>(size, cudf::get_default_stream());
+    auto ret = cuda::device_buffer<cudf::bitmask_type>(
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), size, cuda::no_init);
     CUDF_CUDA_TRY(cudaMemsetAsync(ret.data(),
                                   ~cudf::bitmask_type{0},
                                   size * sizeof(cudf::bitmask_type),
-                                  cudf::get_default_stream().value()));
+                                  cudf::get_default_stream().get()));
     return ret;
   }
 }
@@ -94,247 +125,227 @@ rmm::device_uvector<cudf::bitmask_type> make_mask(cudf::size_type size, bool fil
 TEST_F(CountBitmaskTest, NegativeStart)
 {
   auto mask = make_mask(1);
-  EXPECT_THROW(cudf::detail::count_set_bits(mask.data(), -1, 32, cudf::get_default_stream()),
-               std::invalid_argument);
-  EXPECT_THROW(cudf::detail::valid_count(mask.data(), -1, 32, cudf::get_default_stream()),
-               std::invalid_argument);
+  EXPECT_THROW(cudf::null_count(mask.data(), -1, 32), std::invalid_argument);
   EXPECT_THROW(cudf::index_of_first_set_bit(mask.data(), -1, 32), std::invalid_argument);
 
-  std::vector<cudf::size_type> indices = {0, 16, -1, 32};
-  EXPECT_THROW(
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream()),
-    std::out_of_range);
-  EXPECT_THROW(
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream()),
-    std::out_of_range);
+  auto indices = std::vector<cudf::size_type>{0, 16, -1, 32};
+  EXPECT_THROW(cudf::segmented_null_count(mask.data(), indices), std::out_of_range);
+  EXPECT_THROW(cudf::segmented_valid_count(mask.data(), indices), std::out_of_range);
 }
 
 TEST_F(CountBitmaskTest, StartLargerThanStop)
 {
   auto mask = make_mask(1);
-  EXPECT_THROW(cudf::detail::count_set_bits(mask.data(), 32, 31, cudf::get_default_stream()),
-               std::invalid_argument);
-  EXPECT_THROW(cudf::detail::valid_count(mask.data(), 32, 31, cudf::get_default_stream()),
-               std::invalid_argument);
+  EXPECT_THROW(cudf::null_count(mask.data(), 32, 31), std::invalid_argument);
   EXPECT_THROW(cudf::index_of_first_set_bit(mask.data(), 32, 31), std::invalid_argument);
 
-  std::vector<cudf::size_type> indices = {0, 16, 31, 30};
-  EXPECT_THROW(
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream()),
-    std::invalid_argument);
-  EXPECT_THROW(
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream()),
-    std::invalid_argument);
+  auto indices = std::vector<cudf::size_type>{0, 16, 31, 30};
+  EXPECT_THROW(cudf::segmented_null_count(mask.data(), indices), std::invalid_argument);
+  EXPECT_THROW(cudf::segmented_valid_count(mask.data(), indices), std::invalid_argument);
 }
 
 TEST_F(CountBitmaskTest, EmptyRange)
 {
   auto mask = make_mask(1);
-  EXPECT_EQ(0, cudf::detail::count_set_bits(mask.data(), 17, 17, cudf::get_default_stream()));
-  EXPECT_EQ(0, cudf::detail::valid_count(mask.data(), 17, 17, cudf::get_default_stream()));
+  EXPECT_EQ(0, cudf::null_count(mask.data(), 17, 17));
   EXPECT_THROW(cudf::index_of_first_set_bit(mask.data(), 17, 17), std::invalid_argument);
 
-  std::vector<cudf::size_type> indices = {0, 0, 17, 17};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{0, 0, 17, 17};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+  auto const valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
 }
 
 TEST_F(CountBitmaskTest, SingleWordAllZero)
 {
-  auto mask = make_mask(1);
-  EXPECT_EQ(0, cudf::detail::count_set_bits(mask.data(), 0, 32, cudf::get_default_stream()));
-  EXPECT_EQ(0, cudf::detail::valid_count(mask.data(), 0, 32, cudf::get_default_stream()));
+  auto mask = make_mask(1, false);
+  EXPECT_EQ(32, cudf::null_count(mask.data(), 0, 32));
 
-  std::vector<cudf::size_type> indices = {0, 32, 0, 32};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
-  auto valid_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{0, 32, 0, 32};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{32, 32}));
+  auto const valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
 }
 
 TEST_F(CountBitmaskTest, SingleBitAllZero)
 {
-  auto mask = make_mask(1);
-  EXPECT_EQ(0, cudf::detail::count_set_bits(mask.data(), 17, 18, cudf::get_default_stream()));
-  EXPECT_EQ(0, cudf::detail::valid_count(mask.data(), 17, 18, cudf::get_default_stream()));
+  auto mask = make_mask(1, false);
+  EXPECT_EQ(1, cudf::null_count(mask.data(), 17, 18));
 
-  std::vector<cudf::size_type> indices = {17, 18, 7, 8};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{17, 18, 7, 8};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1}));
+  auto const valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
 }
 
 TEST_F(CountBitmaskTest, SingleBitAllSet)
 {
   auto mask = make_mask(1, true);
-  EXPECT_EQ(1, cudf::detail::count_set_bits(mask.data(), 13, 14, cudf::get_default_stream()));
-  EXPECT_EQ(1, cudf::detail::valid_count(mask.data(), 13, 14, cudf::get_default_stream()));
+  EXPECT_EQ(0, cudf::null_count(mask.data(), 13, 14));
 
-  std::vector<cudf::size_type> indices = {13, 14, 0, 1};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{13, 14, 0, 1};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+  auto const valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1}));
 }
 
 TEST_F(CountBitmaskTest, SingleWordAllBitsSet)
 {
   auto mask = make_mask(1, true);
-  EXPECT_EQ(32, cudf::detail::count_set_bits(mask.data(), 0, 32, cudf::get_default_stream()));
-  EXPECT_EQ(32, cudf::detail::valid_count(mask.data(), 0, 32, cudf::get_default_stream()));
+  EXPECT_EQ(0, cudf::null_count(mask.data(), 0, 32));
 
-  std::vector<cudf::size_type> indices = {0, 32, 0, 32};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{32, 32}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{0, 32, 0, 32};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+  auto const valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{32, 32}));
 }
 
 TEST_F(CountBitmaskTest, SingleWordPreSlack)
 {
-  auto mask = make_mask(1, true);
-  EXPECT_EQ(25, cudf::detail::count_set_bits(mask.data(), 7, 32, cudf::get_default_stream()));
-  EXPECT_EQ(25, cudf::detail::valid_count(mask.data(), 7, 32, cudf::get_default_stream()));
+  auto mask = make_mask(1, false);
+  EXPECT_EQ(25, cudf::null_count(mask.data(), 7, 32));
 
-  std::vector<cudf::size_type> indices = {7, 32, 8, 32};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{25, 24}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{7, 32, 8, 32};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{25, 24}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(1, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{25, 24}));
 }
 
 TEST_F(CountBitmaskTest, SingleWordPostSlack)
 {
-  auto mask = make_mask(1, true);
-  EXPECT_EQ(17, cudf::detail::count_set_bits(mask.data(), 0, 17, cudf::get_default_stream()));
-  EXPECT_EQ(17, cudf::detail::valid_count(mask.data(), 0, 17, cudf::get_default_stream()));
+  auto mask = make_mask(1, false);
+  EXPECT_EQ(17, cudf::null_count(mask.data(), 0, 17));
 
-  std::vector<cudf::size_type> indices = {0, 17, 0, 18};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{17, 18}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{0, 17, 0, 18};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{17, 18}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(1, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{17, 18}));
 }
 
 TEST_F(CountBitmaskTest, SingleWordSubset)
 {
-  auto mask = make_mask(1, true);
-  EXPECT_EQ(30, cudf::detail::count_set_bits(mask.data(), 1, 31, cudf::get_default_stream()));
-  EXPECT_EQ(30, cudf::detail::valid_count(mask.data(), 1, 31, cudf::get_default_stream()));
+  auto mask = make_mask(1, false);
+  EXPECT_EQ(30, cudf::null_count(mask.data(), 1, 31));
 
-  std::vector<cudf::size_type> indices = {1, 31, 7, 17};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{30, 10}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{1, 31, 7, 17};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{30, 10}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(1, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{30, 10}));
 }
 
 TEST_F(CountBitmaskTest, SingleWordSubset2)
 {
-  auto mask = make_mask(1, true);
-  EXPECT_EQ(28, cudf::detail::count_set_bits(mask.data(), 2, 30, cudf::get_default_stream()));
-  EXPECT_EQ(28, cudf::detail::valid_count(mask.data(), 2, 30, cudf::get_default_stream()));
+  auto mask = make_mask(1, false);
+  EXPECT_EQ(28, cudf::null_count(mask.data(), 2, 30));
 
-  std::vector<cudf::size_type> indices = {4, 16, 2, 30};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{12, 28}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{4, 16, 2, 30};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{12, 28}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(1, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{12, 28}));
 }
 
 TEST_F(CountBitmaskTest, MultipleWordsAllBits)
 {
-  auto mask = make_mask(10, true);
-  EXPECT_EQ(320, cudf::detail::count_set_bits(mask.data(), 0, 320, cudf::get_default_stream()));
-  EXPECT_EQ(320, cudf::detail::valid_count(mask.data(), 0, 320, cudf::get_default_stream()));
+  auto mask = make_mask(10, false);
+  EXPECT_EQ(320, cudf::null_count(mask.data(), 0, 320));
 
-  std::vector<cudf::size_type> indices = {0, 320, 0, 320};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{320, 320}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{0, 320, 0, 320};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{320, 320}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(10, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{320, 320}));
 }
 
 TEST_F(CountBitmaskTest, MultipleWordsSubsetWordBoundary)
 {
-  auto mask = make_mask(10, true);
-  EXPECT_EQ(256, cudf::detail::count_set_bits(mask.data(), 32, 288, cudf::get_default_stream()));
-  EXPECT_EQ(256, cudf::detail::valid_count(mask.data(), 32, 288, cudf::get_default_stream()));
+  auto mask = make_mask(10, false);
+  EXPECT_EQ(256, cudf::null_count(mask.data(), 32, 288));
 
-  std::vector<cudf::size_type> indices = {32, 192, 32, 288};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{160, 256}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{32, 192, 32, 288};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{160, 256}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(10, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{160, 256}));
 }
 
 TEST_F(CountBitmaskTest, MultipleWordsSplitWordBoundary)
 {
-  auto mask = make_mask(10, true);
-  EXPECT_EQ(2, cudf::detail::count_set_bits(mask.data(), 31, 33, cudf::get_default_stream()));
-  EXPECT_EQ(2, cudf::detail::valid_count(mask.data(), 31, 33, cudf::get_default_stream()));
+  auto mask = make_mask(10, false);
+  EXPECT_EQ(2, cudf::null_count(mask.data(), 31, 33));
 
-  std::vector<cudf::size_type> indices = {31, 33, 60, 67};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{2, 7}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{31, 33, 60, 67};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{2, 7}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(10, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{2, 7}));
 }
 
 TEST_F(CountBitmaskTest, MultipleWordsSubset)
 {
-  auto mask = make_mask(10, true);
-  EXPECT_EQ(226, cudf::detail::count_set_bits(mask.data(), 67, 293, cudf::get_default_stream()));
-  EXPECT_EQ(226, cudf::detail::valid_count(mask.data(), 67, 293, cudf::get_default_stream()));
+  auto mask = make_mask(10, false);
+  EXPECT_EQ(226, cudf::null_count(mask.data(), 67, 293));
 
-  std::vector<cudf::size_type> indices = {67, 293, 37, 319};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{226, 282}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{67, 293, 37, 319};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{226, 282}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
+
+  mask         = make_mask(10, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{226, 282}));
 }
 
 TEST_F(CountBitmaskTest, MultipleWordsSingleBit)
 {
-  auto mask = make_mask(10, true);
-  EXPECT_EQ(1, cudf::detail::count_set_bits(mask.data(), 67, 68, cudf::get_default_stream()));
-  EXPECT_EQ(1, cudf::detail::valid_count(mask.data(), 67, 68, cudf::get_default_stream()));
+  auto mask = make_mask(10, false);
+  EXPECT_EQ(1, cudf::null_count(mask.data(), 67, 68));
 
-  std::vector<cudf::size_type> indices = {67, 68, 31, 32, 192, 193};
-  auto set_counts =
-    cudf::detail::segmented_count_set_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(set_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1, 1}));
-  auto valid_counts =
-    cudf::detail::segmented_valid_count(mask.data(), indices, cudf::get_default_stream());
+  auto const indices     = std::vector<cudf::size_type>{67, 68, 31, 32, 192, 193};
+  auto const null_counts = cudf::segmented_null_count(mask.data(), indices);
+  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1, 1}));
+  auto valid_counts = cudf::segmented_valid_count(mask.data(), indices);
+  EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0, 0}));
+
+  mask         = make_mask(10, true);
+  valid_counts = cudf::segmented_valid_count(mask.data(), indices);
   EXPECT_THAT(valid_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1, 1}));
 }
 
@@ -405,195 +416,13 @@ TEST_F(CountBitmaskTest, IndexOfFirstUnsetBit)
   }
 }
 
-using CountUnsetBitsTest = CountBitmaskTest;
-
-TEST_F(CountUnsetBitsTest, SingleBitAllSet)
-{
-  auto mask = make_mask(1, true);
-  EXPECT_EQ(0, cudf::detail::count_unset_bits(mask.data(), 13, 14, cudf::get_default_stream()));
-  EXPECT_EQ(0, cudf::detail::null_count(mask.data(), 13, 14, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {13, 14, 31, 32};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
-  auto null_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
-}
-
-TEST_F(CountUnsetBitsTest, NullMask)
-{
-  EXPECT_THROW(cudf::detail::count_unset_bits(nullptr, 0, 32, cudf::get_default_stream()),
-               cudf::logic_error);
-  EXPECT_EQ(0, cudf::detail::null_count(nullptr, 0, 32, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {0, 32, 7, 25};
-  EXPECT_THROW(
-    cudf::detail::segmented_count_unset_bits(nullptr, indices, cudf::get_default_stream()),
-    cudf::logic_error);
-  auto null_counts =
-    cudf::detail::segmented_null_count(nullptr, indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{0, 0}));
-}
-
-TEST_F(CountUnsetBitsTest, SingleWordAllBits)
-{
-  auto mask = make_mask(1);
-  EXPECT_EQ(32, cudf::detail::count_unset_bits(mask.data(), 0, 32, cudf::get_default_stream()));
-  EXPECT_EQ(32, cudf::detail::null_count(mask.data(), 0, 32, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {0, 32, 0, 32};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{32, 32}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{32, 32}));
-}
-
-TEST_F(CountUnsetBitsTest, SingleWordPreSlack)
-{
-  auto mask = make_mask(1);
-  EXPECT_EQ(25, cudf::detail::count_unset_bits(mask.data(), 7, 32, cudf::get_default_stream()));
-  EXPECT_EQ(25, cudf::detail::null_count(mask.data(), 7, 32, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {7, 32, 8, 32};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{25, 24}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{25, 24}));
-}
-
-TEST_F(CountUnsetBitsTest, SingleWordPostSlack)
-{
-  auto mask = make_mask(1);
-  EXPECT_EQ(17, cudf::detail::count_unset_bits(mask.data(), 0, 17, cudf::get_default_stream()));
-  EXPECT_EQ(17, cudf::detail::null_count(mask.data(), 0, 17, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {0, 17, 0, 18};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{17, 18}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{17, 18}));
-}
-
-TEST_F(CountUnsetBitsTest, SingleWordSubset)
-{
-  auto mask = make_mask(1);
-  EXPECT_EQ(30, cudf::detail::count_unset_bits(mask.data(), 1, 31, cudf::get_default_stream()));
-  EXPECT_EQ(30, cudf::detail::null_count(mask.data(), 1, 31, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {1, 31, 7, 17};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{30, 10}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{30, 10}));
-}
-
-TEST_F(CountUnsetBitsTest, SingleWordSubset2)
-{
-  auto mask = make_mask(1);
-  EXPECT_EQ(28, cudf::detail::count_unset_bits(mask.data(), 2, 30, cudf::get_default_stream()));
-  EXPECT_EQ(28, cudf::detail::null_count(mask.data(), 2, 30, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {4, 16, 2, 30};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{12, 28}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{12, 28}));
-}
-
-TEST_F(CountUnsetBitsTest, MultipleWordsAllBits)
-{
-  auto mask = make_mask(10);
-  EXPECT_EQ(320, cudf::detail::count_unset_bits(mask.data(), 0, 320, cudf::get_default_stream()));
-  EXPECT_EQ(320, cudf::detail::null_count(mask.data(), 0, 320, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {0, 320, 0, 320};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{320, 320}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{320, 320}));
-}
-
-TEST_F(CountUnsetBitsTest, MultipleWordsSubsetWordBoundary)
-{
-  auto mask = make_mask(10);
-  EXPECT_EQ(256, cudf::detail::count_unset_bits(mask.data(), 32, 288, cudf::get_default_stream()));
-  EXPECT_EQ(256, cudf::detail::null_count(mask.data(), 32, 288, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {32, 192, 32, 288};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{160, 256}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{160, 256}));
-}
-
-TEST_F(CountUnsetBitsTest, MultipleWordsSplitWordBoundary)
-{
-  auto mask = make_mask(10);
-  EXPECT_EQ(2, cudf::detail::count_unset_bits(mask.data(), 31, 33, cudf::get_default_stream()));
-  EXPECT_EQ(2, cudf::detail::null_count(mask.data(), 31, 33, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {31, 33, 60, 67};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{2, 7}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{2, 7}));
-}
-
-TEST_F(CountUnsetBitsTest, MultipleWordsSubset)
-{
-  auto mask = make_mask(10);
-  EXPECT_EQ(226, cudf::detail::count_unset_bits(mask.data(), 67, 293, cudf::get_default_stream()));
-  EXPECT_EQ(226, cudf::detail::null_count(mask.data(), 67, 293, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {67, 293, 37, 319};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{226, 282}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{226, 282}));
-}
-
-TEST_F(CountUnsetBitsTest, MultipleWordsSingleBit)
-{
-  auto mask = make_mask(10);
-  EXPECT_EQ(1, cudf::detail::count_unset_bits(mask.data(), 67, 68, cudf::get_default_stream()));
-  EXPECT_EQ(1, cudf::detail::null_count(mask.data(), 67, 68, cudf::get_default_stream()));
-
-  std::vector<cudf::size_type> indices = {67, 68, 31, 32, 192, 193};
-  auto unset_counts =
-    cudf::detail::segmented_count_unset_bits(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(unset_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1, 1}));
-  auto null_counts =
-    cudf::detail::segmented_null_count(mask.data(), indices, cudf::get_default_stream());
-  EXPECT_THAT(null_counts, ::testing::ElementsAreArray(std::vector<cudf::size_type>{1, 1, 1}));
-}
-
 struct CopyBitmaskTest : public cudf::test::BaseFixture, cudf::test::UniformRandomGenerator<int> {
   CopyBitmaskTest() : cudf::test::UniformRandomGenerator<int>{0, 1} {}
 };
 
-void cleanEndWord(rmm::device_buffer& mask, int begin_bit, int end_bit)
+void cleanEndWord(cuda::device_buffer<cudf::bitmask_type>& mask, int begin_bit, int end_bit)
 {
-  auto ptr = static_cast<cudf::bitmask_type*>(mask.data());
+  auto ptr = mask.data();
 
   auto number_of_mask_words = cudf::num_bitmask_words(static_cast<size_t>(end_bit - begin_bit));
   auto number_of_bits       = end_bit - begin_bit;
@@ -646,8 +475,7 @@ TEST_F(CopyBitmaskTest, TestZeroOffset)
   auto gold_splice_mask = std::get<0>(cudf::test::detail::make_null_mask(
     validity_bit.begin() + begin_bit, validity_bit.begin() + end_bit));
 
-  auto splice_mask = cudf::copy_bitmask(
-    static_cast<cudf::bitmask_type const*>(input_mask.data()), begin_bit, end_bit);
+  auto splice_mask = cudf::copy_bitmask(input_mask.data(), begin_bit, end_bit);
 
   cleanEndWord(splice_mask, begin_bit, end_bit);
   auto number_of_bits = end_bit - begin_bit;
@@ -669,8 +497,7 @@ TEST_F(CopyBitmaskTest, TestNonZeroOffset)
   auto gold_splice_mask = std::get<0>(cudf::test::detail::make_null_mask(
     validity_bit.begin() + begin_bit, validity_bit.begin() + end_bit));
 
-  auto splice_mask = cudf::copy_bitmask(
-    static_cast<cudf::bitmask_type const*>(input_mask.data()), begin_bit, end_bit);
+  auto splice_mask = cudf::copy_bitmask(input_mask.data(), begin_bit, end_bit);
 
   cleanEndWord(splice_mask, begin_bit, end_bit);
   auto number_of_bits = end_bit - begin_bit;
@@ -689,7 +516,7 @@ TEST_F(CopyBitmaskTest, TestCopyColumnViewVectorContiguous)
   auto [gold_mask, null_count] =
     cudf::test::detail::make_null_mask(validity_bit.begin(), validity_bit.end());
 
-  rmm::device_buffer copy_mask{gold_mask, cudf::get_default_stream()};
+  auto copy_mask = cudf::copy_bitmask(gold_mask.data(), 0, num_elements);
   cudf::column original{t,
                         num_elements,
                         rmm::device_buffer{num_elements * sizeof(int), cudf::get_default_stream()},
@@ -713,8 +540,8 @@ TEST_F(CopyBitmaskTest, TestCopyColumnViewVectorContiguous)
                                        760,
                                        760,
                                        num_elements};
-  std::vector<cudf::column_view> views    = cudf::slice(original, indices);
-  rmm::device_buffer concatenated_bitmask = cudf::concatenate_masks(views);
+  std::vector<cudf::column_view> views                         = cudf::slice(original, indices);
+  cuda::device_buffer<cudf::bitmask_type> concatenated_bitmask = cudf::concatenate_masks(views);
   cleanEndWord(concatenated_bitmask, 0, num_elements);
   CUDF_TEST_EXPECT_EQUAL_BUFFERS(
     concatenated_bitmask.data(), gold_mask.data(), cudf::num_bitmask_words(num_elements));
@@ -745,7 +572,7 @@ TEST_F(CopyBitmaskTest, TestCopyColumnViewVectorDiscontiguous)
       null_count);
     views.push_back(cols.back());
   }
-  rmm::device_buffer concatenated_bitmask = cudf::concatenate_masks(views);
+  cuda::device_buffer<cudf::bitmask_type> concatenated_bitmask = cudf::concatenate_masks(views);
   cleanEndWord(concatenated_bitmask, 0, num_elements);
   CUDF_TEST_EXPECT_EQUAL_BUFFERS(
     concatenated_bitmask.data(), gold_mask.data(), cudf::num_bitmask_words(num_elements));
@@ -773,8 +600,7 @@ TEST_F(MergeBitmaskTest, TestBitmaskAnd)
   EXPECT_EQ(result2_null_count, gold_null_count);
   EXPECT_EQ(result3_null_count, gold_null_count);
 
-  auto odd_indices =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
+  auto odd_indices = cudf::test::iterators::nulls_at_multiples_of(2);
   auto odd =
     std::get<0>(cudf::test::detail::make_null_mask(odd_indices, odd_indices + input2.num_rows()));
 
@@ -813,8 +639,7 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndSingleSegment)
     EXPECT_EQ(result_null_count.size(), 1);
     EXPECT_EQ(result_masks.size(), 1);
     EXPECT_EQ(result_null_count[0], 3);
-    auto odd_indices =
-      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
+    auto odd_indices = cudf::test::iterators::nulls_at_multiples_of(2);
     auto const odd =
       std::get<0>(cudf::test::detail::make_null_mask(odd_indices, odd_indices + num_rows));
     CUDF_TEST_EXPECT_EQUAL_BUFFERS(
@@ -829,8 +654,7 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndSingleSegment)
     EXPECT_EQ(result_null_count.size(), 1);
     EXPECT_EQ(result_masks.size(), 1);
     EXPECT_EQ(result_null_count[0], 3);
-    auto odd_indices =
-      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
+    auto odd_indices = cudf::test::iterators::nulls_at_multiples_of(2);
     auto const odd =
       std::get<0>(cudf::test::detail::make_null_mask(odd_indices, odd_indices + num_rows));
     CUDF_TEST_EXPECT_EQUAL_BUFFERS(
@@ -871,8 +695,7 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndMultipleSegments)
     EXPECT_EQ(result_masks.size(), 2);
     EXPECT_EQ(result_null_count[0], 3);
     EXPECT_EQ(result_null_count[1], 0);
-    auto odd_indices =
-      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
+    auto odd_indices = cudf::test::iterators::nulls_at_multiples_of(2);
     auto const odd =
       std::get<0>(cudf::test::detail::make_null_mask(odd_indices, odd_indices + num_rows));
     CUDF_TEST_EXPECT_EQUAL_BUFFERS(
@@ -881,6 +704,110 @@ TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndMultipleSegments)
                                    static_cast<cudf::column_view>(bools_col3).null_mask(),
                                    cudf::num_bitmask_words(num_rows));
   }
+}
+
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndEmptySegments)
+{
+  // Columns span several bitmask words with a partial last word
+  auto const num_rows = 300;
+  cudf::test::fixed_width_column_wrapper<int32_t> const col1(
+    cuda::make_counting_iterator(0),
+    cuda::make_counting_iterator(num_rows),
+    cudf::test::iterators::nulls_at_multiples_of(3));
+  cudf::test::fixed_width_column_wrapper<int32_t> const col2(
+    cuda::make_counting_iterator(0),
+    cuda::make_counting_iterator(num_rows),
+    cudf::test::iterators::nulls_at_multiples_of(5));
+
+  // An empty segment should yield the identity of bitwise AND: every row valid.
+  auto const expect_all_valid = [&](void const* mask) {
+    EXPECT_EQ(cudf::null_count(static_cast<cudf::bitmask_type const*>(mask), 0, num_rows), 0);
+  };
+
+  // Empty leading, interior and trailing segments
+  {
+    std::vector<cudf::column_view> const colviews{col1, col2};
+    std::vector<cudf::size_type> const segment_offsets{0, 0, 1, 1, 2, 2};
+    auto const [result_masks, result_null_count] =
+      cudf::segmented_bitmask_and(colviews, segment_offsets);
+    ASSERT_EQ(result_masks.size(), 5);
+    EXPECT_EQ(result_null_count, std::vector<cudf::size_type>({0, 100, 0, 60, 0}));
+    expect_all_valid(result_masks[0]->data());
+    CUDF_TEST_EXPECT_EQUAL_BUFFERS(result_masks[1]->data(),
+                                   static_cast<cudf::column_view>(col1).null_mask(),
+                                   cudf::num_bitmask_words(num_rows));
+    expect_all_valid(result_masks[2]->data());
+    CUDF_TEST_EXPECT_EQUAL_BUFFERS(result_masks[3]->data(),
+                                   static_cast<cudf::column_view>(col2).null_mask(),
+                                   cudf::num_bitmask_words(num_rows));
+    expect_all_valid(result_masks[4]->data());
+  }
+
+  // Call the raw-mask overload
+  {
+    std::vector<cudf::bitmask_type const*> const masks{
+      static_cast<cudf::column_view>(col1).null_mask(),
+      static_cast<cudf::column_view>(col2).null_mask()};
+    std::vector<cudf::size_type> const segment_offsets{0, 0, 2};
+    auto const [result_masks, result_null_count] =
+      cudf::segmented_bitmask_and(masks, segment_offsets, num_rows);
+    ASSERT_EQ(result_masks.size(), 2);
+    auto const [expected_mask, expected_null_count] =
+      cudf::bitmask_and(cudf::table_view({col1, col2}));
+    EXPECT_EQ(result_null_count, std::vector<cudf::size_type>({0, expected_null_count}));
+    expect_all_valid(result_masks[0]->data());
+    CUDF_TEST_EXPECT_EQUAL_BUFFERS(
+      result_masks[1]->data(), expected_mask.data(), cudf::num_bitmask_words(num_rows));
+  }
+}
+
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndMultipleBlocksPerSegment)
+{
+  // Wide enough that a segment spans more than one block of the reduction kernel
+  auto const num_rows = 100'003;
+  cudf::test::fixed_width_column_wrapper<int32_t> const col1(
+    cuda::make_counting_iterator(0),
+    cuda::make_counting_iterator(num_rows),
+    cudf::test::iterators::nulls_at_multiples_of(3));
+  cudf::test::fixed_width_column_wrapper<int32_t> const col2(
+    cuda::make_counting_iterator(0),
+    cuda::make_counting_iterator(num_rows),
+    cudf::test::iterators::nulls_at_multiples_of(5));
+  cudf::test::fixed_width_column_wrapper<int32_t> const col3(
+    cuda::make_counting_iterator(0),
+    cuda::make_counting_iterator(num_rows),
+    cudf::test::iterators::nulls_at_multiples_of(7));
+
+  auto const multiples_of = [&](int n) { return (num_rows - 1) / n + 1; };
+  std::vector<cudf::size_type> const expected_null_counts{
+    multiples_of(3) + multiples_of(5) - multiples_of(15), multiples_of(7)};
+
+  std::vector<cudf::column_view> const colviews{col1, col2, col3};
+  std::vector<cudf::size_type> const segment_offsets{0, 2, 3};
+  auto const [result_masks, result_null_count] =
+    cudf::segmented_bitmask_and(colviews, segment_offsets);
+
+  ASSERT_EQ(result_masks.size(), 2);
+  EXPECT_EQ(result_null_count, expected_null_counts);
+
+  auto const [expected_mask, expected_null_count] =
+    cudf::bitmask_and(cudf::table_view({col1, col2}));
+  EXPECT_EQ(expected_null_count, expected_null_counts[0]);
+  CUDF_TEST_EXPECT_EQUAL_BUFFERS(
+    result_masks[0]->data(), expected_mask.data(), cudf::num_bitmask_words(num_rows));
+  CUDF_TEST_EXPECT_EQUAL_BUFFERS(result_masks[1]->data(),
+                                 static_cast<cudf::column_view>(col3).null_mask(),
+                                 cudf::num_bitmask_words(num_rows));
+}
+
+TEST_F(MergeBitmaskTest, TestSegmentedBitmaskAndNoColumns)
+{
+  std::vector<cudf::column_view> const colviews{};
+  std::vector<cudf::size_type> const segment_offsets{0};
+  auto const [result_masks, result_null_count] =
+    cudf::segmented_bitmask_and(colviews, segment_offsets);
+  EXPECT_TRUE(result_masks.empty());
+  EXPECT_TRUE(result_null_count.empty());
 }
 
 TEST_F(MergeBitmaskTest, TestBitmaskOr)
@@ -901,9 +828,8 @@ TEST_F(MergeBitmaskTest, TestBitmaskOr)
   EXPECT_EQ(result2_null_count, 1);
   EXPECT_EQ(result3_null_count, 0);
 
-  auto all_but_index3 =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 3; });
-  auto null3 = std::get<0>(
+  auto all_but_index3 = cudf::test::iterators::null_at(3);
+  auto null3          = std::get<0>(
     cudf::test::detail::make_null_mask(all_but_index3, all_but_index3 + input2.num_rows()));
 
   EXPECT_EQ(nullptr, result1_mask.data());

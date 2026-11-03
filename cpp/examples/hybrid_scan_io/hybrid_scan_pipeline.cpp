@@ -1,14 +1,16 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "benchmark.hpp"
 #include "common_utils.hpp"
 #include "io_source.hpp"
+#include "io_utils.hpp"
 #include "timer.hpp"
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/concatenate.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/types.hpp>
@@ -18,6 +20,7 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cuda/iterator>
 #include <thrust/host_vector.h>
 
 #include <filesystem>
@@ -59,12 +62,34 @@ enum class split_strategy : uint8_t {
 }
 
 /**
+ * @brief Concatenate a vector of tables and return the resultant table
+ *
+ * @param tables Vector of tables to concatenate
+ * @param stream CUDA stream to use
+ *
+ * @return Unique pointer to the resultant concatenated table.
+ */
+std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>> tables,
+                                                cuda::stream_ref stream)
+{
+  if (tables.size() == 1) { return std::move(tables[0]); }
+
+  std::vector<cudf::table_view> table_views;
+  table_views.reserve(tables.size());
+  std::transform(
+    tables.begin(), tables.end(), std::back_inserter(table_views), [&](auto const& tbl) {
+      return tbl->view();
+    });
+  // Construct the final table
+  return cudf::concatenate(table_views, stream);
+}
+/**
  * @brief Read parquet input using the main parquet reader from io source
  *
  * @param io_source io source to read
  * @return cudf::io::table_with_metadata
  */
-cudf::io::table_with_metadata read_parquet(io_source const& io_source, rmm::cuda_stream_view stream)
+cudf::io::table_with_metadata read_parquet(io_source const& io_source, cuda::stream_ref stream)
 {
   auto source_info = io_source.get_source_info();
   auto options     = cudf::io::parquet_reader_options::builder(source_info).build();
@@ -78,7 +103,7 @@ struct hybrid_scan_fn {
   cudf::host_span<cudf::size_type const> row_groups_indices;
   bool use_page_index;
   cudf::io::parquet_reader_options const& options;
-  rmm::cuda_stream_view const stream;
+  cuda::stream_ref const stream;
   rmm::device_async_resource_ref const mr;
   void operator()() const
   {
@@ -88,20 +113,20 @@ struct hybrid_scan_fn {
       auto const page_index_byte_range = reader->page_index_byte_range();
       if (not page_index_byte_range.is_empty()) {
         auto const page_index_buffer = fetch_page_index_bytes(datasource, page_index_byte_range);
-        reader->setup_page_index(make_host_span(*page_index_buffer));
+        reader->setup_page_index(*page_index_buffer);
       }
     }
 
     auto const all_column_chunk_byte_ranges =
       reader->all_column_chunks_byte_ranges(row_groups_indices, options);
     auto [all_column_chunk_buffers, all_column_chunk_data, all_col_read_tasks] =
-      fetch_byte_ranges(datasource, all_column_chunk_byte_ranges, stream, mr);
+      fetch_byte_ranges_async(datasource, all_column_chunk_byte_ranges, stream, mr);
     all_col_read_tasks.get();
     table.get() = std::move(
       reader
         ->materialize_all_columns(row_groups_indices, all_column_chunk_data, options, stream, mr)
         .tbl);
-    stream.synchronize_no_throw();
+    stream.sync();
   }
 };
 
@@ -138,8 +163,8 @@ auto hybrid_scan_pipelined(io_source const& io_source,
   auto const footer_buffer = fetch_footer_bytes(datasource_ref);
   auto const options       = cudf::io::parquet_reader_options::builder().build();
 
-  auto reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
-    make_host_span(*footer_buffer), options);
+  auto reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
 
   auto const metadata = std::move(reader->parquet_metadata());
 
@@ -234,8 +259,8 @@ auto hybrid_scan_pipelined(io_source const& io_source,
   std::vector<hybrid_scan_fn> read_tasks;
   read_tasks.reserve(num_partitions);
   std::for_each(
-    thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator(num_partitions),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{num_partitions},
     [&](auto task_id) {
       read_tasks.emplace_back(hybrid_scan_fn{.table              = std::ref(tables[task_id]),
                                              .reader             = std::move(readers[task_id]),
@@ -278,7 +303,7 @@ void inline print_usage()
   std::cout
     << std::endl
     << "Usage: hybrid_scan_pipeline <input parquet file> <number of partitions> <io source "
-       "type> <split strategy> <iterations> <verbose>\n\n"
+       "type> <split strategy> <iterations> <verbose:Y/N>\n\n"
     << "Available IO source types: FILEPATH, HOST_BUFFER (Default), PINNED_BUFFER, "
        "DEVICE_BUFFER \n\n"
     << "Available split strategies: ROW_GROUPS (Default), BYTE_RANGES \n\n"
@@ -288,18 +313,18 @@ void inline print_usage()
 }  // namespace
 
 /**
- * @brief Main for hybrid scan example
+ * @brief Main for hybrid scan pipelined example
  *
  * Command line parameters:
  * 1. parquet input file name/path (default: "example.parquet")
  * 2. number of read partitions (default: 2)
  * 3. io source type (default: "HOST_BUFFER")
  * 4. split strategy (default: "ROW_GROUPS")
- * 5. iterations (default: 4)
+ * 5. iterations (default: 2)
  * 6. verbose (default: false)
  *
  * Example invocation from directory `cudf/cpp/examples/hybrid_scan`:
- * ./build/hybrid_scan_pipeline example.parquet 2 FILEPATH HOST_BUFFER 4 true
+ * ./build/hybrid_scan_pipeline example.parquet 2 HOST_BUFFER ROW_GROUPS 2 NO
  *
  */
 int main(int argc, char const** argv)
@@ -308,7 +333,7 @@ int main(int argc, char const** argv)
   auto num_partitions = 2;
   auto io_source_type = io_source_type::FILEPATH;
   auto split_strategy = split_strategy::ROW_GROUPS;
-  auto iterations     = 4;
+  auto iterations     = 2;
   auto verbose        = false;
 
   switch (argc) {
@@ -337,38 +362,47 @@ int main(int argc, char const** argv)
     rmm::cuda_stream_pool(1 + num_partitions, rmm::cuda_stream::flags::non_blocking);
   auto default_stream = stream_pool.get_stream();
   auto mr             = create_memory_resource(is_pool_used);
-  auto stats_mr = rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource>(mr.get());
-  rmm::mr::set_current_device_resource(&stats_mr);
+  auto stats_mr       = rmm::mr::statistics_resource_adaptor{mr};
+  rmm::mr::set_current_device_resource(stats_mr);
 
   // Create io source
   auto const data_source = io_source{input_filepath, io_source_type, default_stream};
 
   constexpr bool use_page_index = false;
+  std::unique_ptr<cudf::table> pipeline_table;
+  std::unique_ptr<cudf::table> main_table;
   {
     std::cout << "Reading " << input_filepath
               << " with next-gen parquet reader and no page index...\n";
     benchmark(
       [&] {
-        std::ignore = hybrid_scan_pipelined<false>(
+        pipeline_table.reset();
+        pipeline_table = hybrid_scan_pipelined<false>(
           data_source, num_partitions, split_strategy, use_page_index, stream_pool, stats_mr);
       },
       iterations);
 
     std::cout << "Reading " << input_filepath << " with main parquet reader...\n";
-    benchmark([&] { std::ignore = read_parquet(data_source, default_stream); }, iterations);
+    benchmark(
+      [&] {
+        main_table.reset();
+        main_table = read_parquet(data_source, default_stream).tbl;
+      },
+      iterations);
   }
 
-  // Check for validity
-  auto pipeline_table = [&] {
+  // Reuse timed results unless diagnostics or zero iterations require a separate read.
+  if (verbose || !pipeline_table) {
+    pipeline_table.reset();
     if (verbose) {
-      return hybrid_scan_pipelined<true>(
+      pipeline_table = hybrid_scan_pipelined<true>(
         data_source, num_partitions, split_strategy, use_page_index, stream_pool, stats_mr);
     } else {
-      return hybrid_scan_pipelined<false>(
+      pipeline_table = hybrid_scan_pipelined<false>(
         data_source, num_partitions, split_strategy, use_page_index, stream_pool, stats_mr);
     }
-  }();
-  auto main_table = std::move(read_parquet(data_source, default_stream).tbl);
+  }
+  if (!main_table) { main_table = read_parquet(data_source, default_stream).tbl; }
   check_tables_equal(pipeline_table->view(), main_table->view(), default_stream);
 
   return 0;

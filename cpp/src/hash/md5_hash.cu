@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_device_view.cuh>
@@ -17,13 +17,13 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/iterator/counting_iterator.h>
 
 #include <iterator>
 
@@ -103,10 +103,10 @@ auto __device__ inline get_element_pointer_and_size(string_view const& element)
 // The MD5 algorithm and its hash/shift constants are officially specified in
 // RFC 1321. For convenience, these values can also be found on Wikipedia:
 // https://en.wikipedia.org/wiki/MD5
-const __constant__ uint32_t md5_shift_constants[16] = {
+__constant__ constexpr uint32_t md5_shift_constants[16] = {
   7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21};
 
-const __constant__ uint32_t md5_hash_constants[64] = {
+__constant__ constexpr uint32_t md5_hash_constants[64] = {
   0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
   0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
   0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
@@ -201,7 +201,7 @@ struct MD5Hasher {
         A = D;
         D = C;
         C = B;
-        B = B + rotate_bits_left(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
+        B = B + cuda::std::rotl(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
       }
 
       hash_values[0] += A;
@@ -275,12 +275,13 @@ inline bool md5_leaf_type_check(data_type dt)
 }  // namespace
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   if (input.num_columns() == 0 || input.num_rows() == 0) {
     // Return the MD5 hash of a zero-length input.
-    string_scalar const string_128bit("d41d8cd98f00b204e9orig98ecf8427e", true, stream);
+    string_scalar const string_128bit(
+      "d41d8cd98f00b204e9orig98ecf8427e", true, stream, cudf::get_current_device_resource_ref());
     return make_column_from_scalar(string_128bit, input.num_rows(), stream, mr);
   }
 
@@ -299,7 +300,7 @@ std::unique_ptr<column> md5(table_view const& input,
   // Digest size in bytes
   auto constexpr digest_size = 32;
   // Result column allocation and creation
-  auto begin = thrust::make_constant_iterator(digest_size);
+  auto begin = cuda::make_constant_iterator(digest_size);
   auto [offsets_column, bytes] =
     cudf::strings::detail::make_offsets_child_column(begin, begin + input.num_rows(), stream, mr);
 
@@ -310,9 +311,9 @@ std::unique_ptr<column> md5(table_view const& input,
 
   // Hash each row, hashing each element sequentially left to right
   thrust::for_each(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator(input.num_rows()),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{input.num_rows()},
     [d_chars, device_input = *device_input] __device__(auto row_index) {
       MD5Hasher hasher(d_chars + (static_cast<int64_t>(row_index) * digest_size));
       for (auto const& col : device_input) {
@@ -323,8 +324,8 @@ std::unique_ptr<column> md5(table_view const& input,
             if (data_col.type().id() == type_id::LIST) {
               CUDF_UNREACHABLE("Nested list unsupported");
             }
-            auto const offset_begin = offsets.element<size_type>(row_index);
-            auto const offset_end   = offsets.element<size_type>(row_index + 1);
+            auto const offset_begin = offsets.element<int32_t>(row_index + col.offset());
+            auto const offset_end   = offsets.element<int32_t>(row_index + 1 + col.offset());
             cudf::type_dispatcher<dispatch_storage_type>(
               data_col.type(), ListHasherDispatcher(&hasher, data_col), offset_begin, offset_end);
           } else {
@@ -335,13 +336,17 @@ std::unique_ptr<column> md5(table_view const& input,
       }
     });
 
-  return make_strings_column(input.num_rows(), std::move(offsets_column), chars.release(), 0, {});
+  return make_strings_column(input.num_rows(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

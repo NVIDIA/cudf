@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,35 +10,32 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace detail {
 
 /**
  * @copydoc cudf::fill_in_place
- *
- * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 void fill_in_place(mutable_column_view& destination,
                    size_type begin,
                    size_type end,
                    scalar const& value,
-                   rmm::cuda_stream_view stream);
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::fill
- *
- * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> fill(column_view const& input,
                              size_type begin,
                              size_type end,
                              scalar const& value,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr);
 
 }  // namespace detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

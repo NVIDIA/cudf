@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 [tool.mypy]
@@ -6,6 +6,7 @@ ignore_missing_imports = true
 ignore_errors = false
 enable_error_code = "ignore-without-code"
 warn_unused_ignores = true
+mypy_path = "python/cudf_polars/quent/bridge"
 exclude = [
     "cudf/_lib/",
     "cudf/cudf/tests/",
@@ -29,19 +30,25 @@ module = ["polars.*"]
 # aren't skipped and assumed to be `Any`.
 follow_imports = "normal"
 
+[[tool.mypy.overrides]]
+module = ["polars._plr"]
+# The stub only declares part of the polars-python API (e.g. no `_expr_nodes`).
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [tool.codespell]
 # note: pre-commit passes explicit lists of files here, which this skip file list doesn't override -
 # this is only to allow you to run codespell interactively
 skip = "./.git,./.github,./cpp/build,.*egg-info.*,./.mypy_cache,./cpp/tests,./python/cudf/cudf/tests,./java/src/test,./cpp/include/cudf_test/cxxopts.hpp"
 # ignore short words, and typename parameters like OffsetT
 ignore-regex = "\\b(.{1,4}|[A-Z]\\w*T)\\b"
-ignore-words-list = "inout,unparseable,falsy,couldn,Couldn,thirdparty"
+ignore-words-list = "inout,unparseable,falsy,couldn,Couldn,thirdparty,womens"
 builtin = "clear"
 quiet-level = 3
 
 [tool.ruff]
 line-length = 79
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 typing-modules = ["cudf._typing"]
@@ -103,7 +110,7 @@ select = [
     # overload-with-docstring
     "D418",
     # flake8-type-checking
-    "TCH",
+    "TC",
     # flake8-future-annotations
     "FA",
     # non-pep585-annotation
@@ -138,10 +145,15 @@ ignore = [
     # Mutable class attributes should be annotated with
     # `typing.ClassVar`
     "RUF012",
+    # import not at top of file (deferred/conditional imports are intentional)
+    "PLC0415",
 ]
 fixable = ["ALL"]
 exclude = [
     "cpp/scripts/gdb-pretty-printers.py",
+    # .pyi stubs use PEP 695 (Python 3.12+) syntax; pylibcudf's own config
+    # sets target-version = "py312" for these
+    "*.pyi",
 ]
 extend-unsafe-fixes = [
     # zip-without-explicit-strict's autofix sets strict to False, but we want to enforce True
@@ -156,14 +168,12 @@ extend-unsafe-fixes = [
 
 [tool.ruff.lint.per-file-ignores]
 # We use "== None" to demonstrate null handling in this notebook
-"docs/cudf/source/user_guide/missing-data.ipynb" = ["E711"]
-# We demonstrate UDFs where numba doesn't support `zip(..., strict=True)` (or
-# any keywords) and we don't want to litter demo notebooks with noqas
-"docs/cudf/source/user_guide/guide-to-udfs.ipynb" = ["B905"]
-# Lots of pytest implicitly injected attributes in conftest-patch.py
-"python/cudf/cudf/pandas/scripts/conftest-patch.py" = ["F821"]
+"docs/cudf/source/cudf/missing-data.ipynb" = ["E711"]
 "python/cudf/cudf/pandas/scripts/*" = ["D"]
 "python/cudf/cudf_pandas_tests/*" = ["D"]
 "ci/*" = ["T201"]
 "docs/*" = ["T201"]
 "cpp/*" = ["T201"]
+
+[tool.cython-lint]
+max-line-length = 120

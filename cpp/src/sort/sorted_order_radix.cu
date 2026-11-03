@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,15 +8,16 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
-#include <thrust/iterator/zip_iterator.h>
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 
@@ -55,24 +56,25 @@ struct float_to_pair_and_seq {
  * Should not be called if `input.has_nulls()==true`
  */
 struct sorted_order_radix_fn {
-  column_view const& input;      // keys to sort
-  mutable_column_view& indices;  // output of sort
-  bool ascending;                // true for ascending sort
-  rmm::cuda_stream_view stream;  // for allocation and kernel launches
+  column_view const& input;                // keys to sort
+  mutable_column_view& indices;            // output of sort
+  bool ascending;                          // true for ascending sort
+  cuda::stream_ref stream;                 // for allocation and kernel launches
+  rmm::device_async_resource_ref temp_mr;  // temporary allocations
 
   template <typename T>
   void radix_sort()
   {
     auto d_in   = input.begin<T>();
-    auto output = rmm::device_uvector<T>(input.size(), stream);
-    auto d_out  = output.begin();  // not returned
-    auto seqs   = rmm::device_uvector<cudf::size_type>(input.size(), stream);
-    thrust::sequence(rmm::exec_policy_nosync(stream), seqs.begin(), seqs.end(), 0);
-    auto dv_in  = seqs.begin();
+    auto output = cuda::device_buffer<T>(stream, temp_mr, input.size(), cuda::no_init);
+    auto d_out  = output.data();  // not returned
+    auto seqs = cuda::device_buffer<cudf::size_type>(stream, temp_mr, input.size(), cuda::no_init);
+    thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr), seqs.begin(), seqs.end(), 0);
+    auto dv_in  = seqs.data();
     auto dv_out = indices.begin<cudf::size_type>();
 
     auto const n       = input.size();
-    auto const sv      = stream.value();
+    auto const sv      = stream.get();
     auto const end_bit = sizeof(T) * 8;
 
     // cub radix sort implementation is always stable
@@ -80,13 +82,13 @@ struct sorted_order_radix_fn {
     if (ascending) {
       cub::DeviceRadixSort::SortPairs(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairs(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortPairsDescending(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairsDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, 0, end_bit, sv);
     }
@@ -96,38 +98,39 @@ struct sorted_order_radix_fn {
   void operator()()
     requires(cudf::is_floating_point<T>())
   {
-    auto pair_in = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_in    = pair_in.begin();
+    auto pair_in = cuda::device_buffer<float_pair<T>>(stream, temp_mr, input.size(), cuda::no_init);
+    auto d_in    = pair_in.data();
     // pair_out/d_out is not returned to the caller but used as an intermediate
-    auto pair_out = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_out    = pair_out.begin();
-    auto vals     = rmm::device_uvector<size_type>(indices.size(), stream);
-    auto dv_in    = vals.begin();
-    auto dv_out   = indices.begin<cudf::size_type>();
+    auto pair_out =
+      cuda::device_buffer<float_pair<T>>(stream, temp_mr, input.size(), cuda::no_init);
+    auto d_out  = pair_out.data();
+    auto vals   = cuda::device_buffer<size_type>(stream, temp_mr, indices.size(), cuda::no_init);
+    auto dv_in  = vals.data();
+    auto dv_out = indices.begin<cudf::size_type>();
 
-    auto zip_out = thrust::make_zip_iterator(d_in, dv_in);
-    thrust::transform(rmm::exec_policy_nosync(stream),
-                      thrust::counting_iterator<size_type>(0),
-                      thrust::counting_iterator<size_type>(input.size()),
+    auto zip_out = cuda::make_zip_iterator(d_in, dv_in);
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                      cuda::counting_iterator<size_type>{0},
+                      cuda::counting_iterator<size_type>{input.size()},
                       zip_out,
                       float_to_pair_and_seq<T>{input.begin<T>()});
 
     auto const decomposer = float_decomposer<T>{};
     auto const end_bit    = sizeof(float_pair<T>) * 8;
-    auto const sv         = stream.value();
+    auto const sv         = stream.get();
     auto const n          = input.size();
     // cub radix sort implementation is always stable
     std::size_t tmp_bytes = 0;
     if (ascending) {
       cub::DeviceRadixSort::SortPairs(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairs(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortPairsDescending(
         nullptr, tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg = rmm::device_buffer(tmp_bytes, stream);
+      auto tmp_stg = cuda::device_buffer<std::byte>(stream, temp_mr, tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortPairsDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, dv_in, dv_out, n, decomposer, 0, end_bit, sv);
     }
@@ -166,14 +169,16 @@ struct sorted_order_radix_fn {
  * @param indices The result of the sort
  * @param ascending Sort order
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param temp_mr Device memory resource used for temporary allocations
  */
 void sorted_order_radix(column_view const& input,
                         mutable_column_view& indices,
                         bool ascending,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream,
+                        rmm::device_async_resource_ref temp_mr)
 {
   cudf::type_dispatcher<dispatch_storage_type>(
-    input.type(), sorted_order_radix_fn{input, indices, ascending, stream});
+    input.type(), sorted_order_radix_fn{input, indices, ascending, stream, temp_mr});
 }
 }  // namespace detail
 }  // namespace cudf

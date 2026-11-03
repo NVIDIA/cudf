@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,13 +8,12 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
-#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace strings::detail {
 /**
  * @brief Returns a single column by vertically concatenating the given vector of
@@ -33,8 +32,8 @@ namespace strings::detail {
  * @return New column with concatenated results.
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 }  // namespace strings::detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

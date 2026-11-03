@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -34,11 +34,13 @@ class StructMethods:
         1    3
         dtype: int64
         """
-        typ = self.d_series._meta.struct.field(key).dtype
+        meta_result = self.d_series._meta.struct.field(key)
+        typ = meta_result.dtype
+        name = meta_result.name
 
         return self.d_series.map_partitions(
             lambda s: s.struct.field(key),
-            meta=self.d_series._meta._constructor([], dtype=typ),
+            meta=self.d_series._meta._constructor([], dtype=typ, name=name),
         )
 
     def explode(self):
@@ -96,7 +98,7 @@ class ListMethods:
         dtype: int32
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.len(), meta=self.d_series._meta
+            lambda s: s.list.len(), meta=self.d_series._meta.list.len()
         )
 
     def contains(self, search_key):
@@ -122,7 +124,8 @@ class ListMethods:
         dtype: bool
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.contains(search_key), meta=self.d_series._meta
+            lambda s: s.list.contains(search_key),
+            meta=self.d_series._meta.list.contains(search_key),
         )
 
     def get(self, index):
@@ -150,7 +153,10 @@ class ListMethods:
         dtype: int64
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.get(index), meta=self.d_series._meta
+            lambda s: s.list.get(index),
+            # The result dtype does not depend on the index, which may also
+            # be a list of per-row positions that the empty meta cannot take.
+            meta=self.d_series._meta.list.get(0),
         )
 
     @property
@@ -177,7 +183,7 @@ class ListMethods:
         dtype: int64
         """
         return self.d_series.map_partitions(
-            lambda s: s.list.leaves, meta=self.d_series._meta
+            lambda s: s.list.leaves, meta=self.d_series._meta.list.leaves
         )
 
     def take(self, lists_indices):

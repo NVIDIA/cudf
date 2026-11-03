@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,11 +19,10 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/copy.h>
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -38,11 +37,12 @@ inline bool __device__ out_of_bounds(size_type size, size_type idx)
   return idx < 0 || idx >= size;
 }
 
-std::pair<rmm::device_buffer, size_type> create_null_mask(column_device_view const& input,
-                                                          size_type offset,
-                                                          scalar const& fill_value,
-                                                          rmm::cuda_stream_view stream,
-                                                          rmm::device_async_resource_ref mr)
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> create_null_mask(
+  column_device_view const& input,
+  size_type offset,
+  scalar const& fill_value,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
 {
   auto const size = input.size();
   auto func_validity =
@@ -50,8 +50,8 @@ std::pair<rmm::device_buffer, size_type> create_null_mask(column_device_view con
       auto src_idx = idx - offset;
       return out_of_bounds(size, src_idx) ? *fill : input.is_valid(src_idx);
     };
-  return detail::valid_if(thrust::make_counting_iterator<size_type>(0),
-                          thrust::make_counting_iterator<size_type>(size),
+  return detail::valid_if(cuda::counting_iterator<size_type>{0},
+                          cuda::counting_iterator<size_type>{size},
                           func_validity,
                           stream,
                           mr);
@@ -69,7 +69,7 @@ struct shift_functor {
   std::unique_ptr<column> operator()(column_view const& input,
                                      size_type offset,
                                      scalar const& fill_value,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(std::is_same_v<cudf::string_view, T>)
   {
@@ -89,7 +89,7 @@ struct shift_functor {
   std::unique_ptr<column> operator()(column_view const& input,
                                      size_type offset,
                                      scalar const& fill_value,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_fixed_width<T>())
   {
@@ -110,18 +110,18 @@ struct shift_functor {
     }
 
     auto const size  = input.size();
-    auto index_begin = thrust::make_counting_iterator<size_type>(0);
-    auto index_end   = thrust::make_counting_iterator<size_type>(size);
+    auto index_begin = cuda::counting_iterator<size_type>{0};
+    auto index_end   = cuda::counting_iterator<size_type>{size};
     auto data        = device_output->data<T>();
 
     // avoid assigning elements we know to be invalid.
     if (not scalar_is_valid) {
       if (std::abs(offset) > size) { return output; }
       if (offset > 0) {
-        index_begin = thrust::make_counting_iterator<size_type>(offset);
+        index_begin = cuda::counting_iterator<size_type>{offset};
         data        = data + offset;
       } else if (offset < 0) {
-        index_end = thrust::make_counting_iterator<size_type>(size + offset);
+        index_end = cuda::counting_iterator<size_type>{size + offset};
       }
     }
 
@@ -131,7 +131,11 @@ struct shift_functor {
         return out_of_bounds(size, src_idx) ? *fill : input.element<T>(src_idx);
       };
 
-    thrust::transform(rmm::exec_policy_nosync(stream), index_begin, index_end, data, func_value);
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                      index_begin,
+                      index_end,
+                      data,
+                      func_value);
 
     return output;
   }
@@ -144,7 +148,7 @@ namespace detail {
 std::unique_ptr<column> shift(column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(input, fill_value),
@@ -162,7 +166,7 @@ std::unique_ptr<column> shift(column_view const& input,
 std::unique_ptr<column> shift(column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

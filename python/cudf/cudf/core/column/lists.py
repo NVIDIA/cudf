@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -14,15 +14,24 @@ import pyarrow as pa
 import pylibcudf as plc
 
 import cudf
-from cudf.core.column.column import ColumnBase, as_column, column_empty
+from cudf.core.column.column import (
+    ColumnBase,
+    ColumnList,
+    PylibcudfFunction,
+    as_column,
+    column_empty,
+    int32_same_kind_policy,
+    same_dtype_policy,
+)
+from cudf.core.dtype.conversions import element_type_from_list_dtype
 from cudf.core.dtype.validators import is_dtype_obj_list
 from cudf.core.dtypes import ListDtype
 from cudf.core.missing import NA
-from cudf.utils.dtypes import get_dtype_of_same_kind
-from cudf.utils.scalar import (
-    maybe_nested_pa_scalar_to_py,
-    pa_scalar_to_plc_scalar,
+from cudf.utils.dtypes import (
+    dtype_from_pylibcudf_column,
+    get_dtype_of_same_kind,
 )
+from cudf.utils.scalar import pa_scalar_to_plc_scalar
 from cudf.utils.utils import is_na_like
 
 if TYPE_CHECKING:
@@ -35,33 +44,30 @@ if TYPE_CHECKING:
 
 class ListColumn(ColumnBase):
     _VALID_BINARY_OPERATIONS = {"__add__", "__radd__", "__eq__", "__ne__"}
-    _VALID_PLC_TYPES = {plc.TypeId.LIST}
 
-    @classmethod
-    def _validate_args(  # type: ignore[override]
-        cls, plc_column: plc.Column, dtype: ListDtype
-    ) -> tuple[plc.Column, ListDtype]:
-        plc_column, dtype = super()._validate_args(plc_column, dtype)  # type: ignore[assignment]
-        if not is_dtype_obj_list(dtype):
-            raise ValueError("dtype must be a cudf.ListDtype")
+    def _plc_memory_usage(self, col: plc.Column) -> int:
+        n = self._plc_memory_usage_buffers(col)
+        if col.size() == 0 or col.num_children() == 0:
+            return n
 
-        child = plc_column.list_view().child()
-        try:
-            ColumnBase._validate_dtype_recursively(child, dtype.element_type)
-        except ValueError as e:
-            raise ValueError(
-                f"List element type validation failed: {e}"
-            ) from e
+        offsets = col.list_view().offsets()
+        offsets_typestr: str = offsets.type().typestr  # type: ignore[assignment]
+        n += (col.size() + 1) * np.dtype(offsets_typestr).itemsize
 
-        return plc_column, dtype
+        sliced_child = col.list_view().get_sliced_child()
+        child = ColumnBase.create(
+            sliced_child, self.element_type, validate=False
+        )
+        return n + child._plc_memory_usage(sliced_child)
 
     def _get_sliced_child(self) -> ColumnBase:
         """Get a child column properly sliced to match the parent's view."""
         sliced_plc_col = self.plc_column.list_view().get_sliced_child()
-        assert isinstance(self.dtype, ListDtype)
-        return ColumnBase.create(sliced_plc_col, self.dtype.element_type)
+        return ColumnBase.create(sliced_plc_col, self.element_type)
 
-    def _prep_pandas_compat_repr(self) -> StringColumn | Self:
+    def _prep_pandas_compat_repr(
+        self, nan_rep: str | None = None
+    ) -> StringColumn | Self:
         """
         Preprocess Column to be compatible with pandas repr, namely handling nulls.
 
@@ -71,31 +77,25 @@ class ListColumn(ColumnBase):
         # TODO: handle if self.has_nulls(): case
         return self
 
-    def element_indexing(self, index: int) -> list:
-        result = super().element_indexing(index)
-        if isinstance(result, pa.Scalar):
-            py_element = maybe_nested_pa_scalar_to_py(result)
-            return self.dtype._recursively_replace_fields(py_element)  # type: ignore[union-attr]
-        return result
-
     def _cast_setitem_value(self, value: Any) -> plc.Scalar:
+        pa_type = (
+            self.dtype.to_arrow()
+            if isinstance(self.dtype, ListDtype)
+            else cast("pd.ArrowDtype", self.dtype).pyarrow_dtype
+        )
         if isinstance(value, list) or value is None:
-            return pa_scalar_to_plc_scalar(
-                pa.scalar(value, type=self.dtype.to_arrow())  # type: ignore[union-attr]
-            )
+            return pa_scalar_to_plc_scalar(pa.scalar(value, type=pa_type))
         elif value is NA or value is None:
-            return pa_scalar_to_plc_scalar(
-                pa.scalar(None, type=self.dtype.to_arrow())  # type: ignore[union-attr]
-            )
+            return pa_scalar_to_plc_scalar(pa.scalar(None, type=pa_type))
         else:
             raise ValueError(f"Can not set {value} into ListColumn")
 
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
         # Lists only support __add__, which concatenates lists.
-        reflect, op = self._check_reflected_op(op)
+        _reflect, op = self._check_reflected_op(op)
         if not isinstance(other, type(self)):
             return NotImplemented
-        if isinstance(other.dtype, ListDtype):
+        if is_dtype_obj_list(other.dtype):
             if op == "__add__":
                 return self.concatenate_rows([other])
             else:
@@ -116,20 +116,6 @@ class ListColumn(ColumnBase):
         raise NotImplementedError(
             "Lists are not yet supported via `__cuda_array_interface__`"
         )
-
-    def _with_type_metadata(self: Self, dtype: DtypeObj) -> Self:
-        if isinstance(dtype, ListDtype):
-            self._dtype = dtype
-        elif isinstance(dtype, pd.ArrowDtype) and isinstance(
-            dtype.pyarrow_dtype, pa.ListType
-        ):
-            self._dtype = dtype
-        return self
-
-    def copy(self, deep: bool = True) -> Self:
-        # Since list columns are immutable, both deep and shallow copies share
-        # the underlying device data and mask.
-        return super().copy(deep=False)
 
     def leaves(self) -> ColumnBase:
         if isinstance(self.elements, ListColumn):
@@ -195,6 +181,8 @@ class ListColumn(ColumnBase):
                 raise TypeError(
                     f"Cannot cast a list from {self.dtype} to {dtype}"
                 )
+        if isinstance(dtype, np.dtype) and dtype.kind == "U":
+            dtype = np.dtype("object")
         lc = self._transform_leaves(
             lambda col, dtype: col.as_string_column(dtype), dtype
         )
@@ -202,9 +190,19 @@ class ListColumn(ColumnBase):
         with self.access(mode="read", scope="internal"):
             plc_column = plc.strings.convert.convert_lists.format_list_column(
                 lc.plc_column,
-                pa_scalar_to_plc_scalar(pa.scalar("None")),
+                plc.Scalar.from_py(
+                    "None", dtype=plc.DataType(plc.TypeId.STRING)
+                ),
                 self._string_separators,
             )
+            # format_list_column converts top-level nulls to the na_rep
+            # string ("None"). Re-apply the original null mask so that
+            # top-level nulls remain as actual nulls, matching pandas.
+            if self.null_count > 0:
+                plc_column = plc_column.with_mask(
+                    self.plc_column.null_mask(),
+                    self.null_count,
+                )
             return cast(
                 "cudf.core.column.string.StringColumn",
                 ColumnBase.create(plc_column, dtype),
@@ -219,13 +217,19 @@ class ListColumn(ColumnBase):
         # Store metadata for reconstruction: (plc_column, list_view)
         # We need to keep the full plc_column for accessing size, mask, null_count, offset
         leaf_queue: list[plc.Column] = []
-        curr_plc_col: plc.Column = self.plc_column
+        curr_plc_col = self.plc_column
         leaf_dtype = self.dtype
 
-        while curr_plc_col.type().id() == plc.TypeId.LIST:
+        while is_dtype_obj_list(leaf_dtype):
             leaf_queue.append(curr_plc_col)
             curr_plc_col = curr_plc_col.list_view().child()
-            leaf_dtype = cast(ListDtype, leaf_dtype).element_type
+            leaf_dtype = (
+                leaf_dtype.element_type
+                if isinstance(leaf_dtype, ListDtype)
+                else pd.ArrowDtype(
+                    cast("pd.ArrowDtype", leaf_dtype).pyarrow_dtype.value_type
+                )
+            )
 
         # Apply the transformation to the leaf column
         # TODO: For now we convert plc.Column to ColumnBase for the func, then back to
@@ -249,24 +253,22 @@ class ListColumn(ColumnBase):
                 parent_plc_col.offset(),
                 [offsets, plc_leaf_col],
             )
-            result_dtype = ListDtype(result_dtype)
+            result_dtype = (
+                ListDtype(result_dtype)
+                if not isinstance(result_dtype, pd.ArrowDtype)
+                else pd.ArrowDtype(pa.list_(result_dtype.pyarrow_dtype))
+            )
         return cast(
             "Self",
             ColumnBase.create(plc_leaf_col, result_dtype),
         )
 
-    @property
+    @cached_property
     def element_type(self) -> DtypeObj:
         """
         Returns the element type of the list column.
         """
-        if isinstance(self.dtype, ListDtype):
-            return self.dtype.element_type
-        else:
-            return get_dtype_of_same_kind(
-                self.dtype,
-                self.dtype.pyarrow_dtype.value_type.to_pandas_dtype(),  # type: ignore[union-attr]
-            )
+        return element_type_from_list_dtype(self.dtype)
 
     def to_pandas(
         self,
@@ -282,13 +284,16 @@ class ListColumn(ColumnBase):
             return pd.Index(self.to_arrow().tolist(), dtype="object")
 
     def count_elements(self) -> ColumnBase:
-        with self.access(mode="read", scope="internal"):
-            return ColumnBase.create(
-                plc.lists.count_elements(self.plc_column),
-                get_dtype_of_same_kind(self.dtype, np.dtype(np.int32)),
-            )
+        return PylibcudfFunction(
+            plc.lists.count_elements,
+            int32_same_kind_policy,
+        ).execute_with_args(self)
 
     def distinct(self, nulls_equal: bool, nans_all_equal: bool) -> ColumnBase:
+        if is_dtype_obj_list(self.element_type):
+            raise NotImplementedError(
+                "distinct is not supported for nested lists."
+            )
         with self.access(mode="read", scope="internal"):
             return ColumnBase.create(
                 plc.lists.distinct(
@@ -310,6 +315,14 @@ class ListColumn(ColumnBase):
     def sort_lists(
         self, ascending: bool, na_position: Literal["first", "last"]
     ) -> ColumnBase:
+        if is_dtype_obj_list(self.element_type):
+            raise NotImplementedError(
+                "sort_lists is not supported for nested lists."
+            )
+        if na_position not in {"first", "last"}:
+            raise ValueError(
+                f"`na_position` must be 'first' or 'last', not {na_position}."
+            )
         with self.access(mode="read", scope="internal"):
             return ColumnBase.create(
                 plc.lists.sort_lists(
@@ -349,49 +362,60 @@ class ListColumn(ColumnBase):
 
     def contains_scalar(self, search_key: pa.Scalar) -> ColumnBase:
         with self.access(mode="read", scope="internal"):
+            plc_result = plc.lists.contains(
+                self.plc_column,
+                pa_scalar_to_plc_scalar(search_key),
+            )
             return ColumnBase.create(
-                plc.lists.contains(
-                    self.plc_column,
-                    pa_scalar_to_plc_scalar(search_key),
+                plc_result,
+                get_dtype_of_same_kind(
+                    self.dtype, dtype_from_pylibcudf_column(plc_result)
                 ),
-                get_dtype_of_same_kind(self.dtype, np.dtype(np.bool_)),
             )
 
     def index_of_scalar(self, search_key: pa.Scalar) -> ColumnBase:
         with self.access(mode="read", scope="internal"):
+            plc_result = plc.lists.index_of(
+                self.plc_column,
+                pa_scalar_to_plc_scalar(search_key),
+                plc.lists.DuplicateFindOption.FIND_FIRST,
+            )
             return ColumnBase.create(
                 plc.lists.index_of(
                     self.plc_column,
                     pa_scalar_to_plc_scalar(search_key),
                     plc.lists.DuplicateFindOption.FIND_FIRST,
                 ),
-                get_dtype_of_same_kind(self.dtype, np.dtype(np.int32)),
+                get_dtype_of_same_kind(
+                    self.dtype, dtype_from_pylibcudf_column(plc_result)
+                ),
             )
 
     def index_of_column(self, search_keys: ColumnBase) -> ColumnBase:
         with self.access(mode="read", scope="internal"):
+            plc_result = plc.lists.index_of(
+                self.plc_column,
+                search_keys.plc_column,
+                plc.lists.DuplicateFindOption.FIND_FIRST,
+            )
             return ColumnBase.create(
                 plc.lists.index_of(
                     self.plc_column,
                     search_keys.plc_column,
                     plc.lists.DuplicateFindOption.FIND_FIRST,
                 ),
-                get_dtype_of_same_kind(self.dtype, np.dtype(np.int32)),
+                get_dtype_of_same_kind(
+                    self.dtype, dtype_from_pylibcudf_column(plc_result)
+                ),
             )
 
     def concatenate_rows(self, other_columns: list[ColumnBase]) -> ColumnBase:
-        with self.access(mode="read", scope="internal"):
-            return ColumnBase.create(
-                plc.lists.concatenate_rows(
-                    plc.Table(
-                        [
-                            col.plc_column
-                            for col in itertools.chain([self], other_columns)
-                        ]
-                    )
-                ),
-                self.dtype,
-            )
+        return PylibcudfFunction(
+            plc.lists.concatenate_rows,
+            same_dtype_policy,
+        ).execute_with_args(
+            ColumnList(*itertools.chain([self], other_columns))
+        )
 
     def concatenate_list_elements(self, dropna: bool) -> ColumnBase:
         with self.access(mode="read", scope="internal"):
@@ -407,11 +431,18 @@ class ListColumn(ColumnBase):
 
     def segmented_gather(self, gather_map: ColumnBase) -> ColumnBase:
         with self.access(mode="read", scope="internal"):
-            return ColumnBase.create(
-                plc.lists.segmented_gather(
+            try:
+                plc_result = plc.lists.segmented_gather(
                     self.plc_column,
                     gather_map.plc_column,
-                ),
+                )
+            except (TypeError, RuntimeError, ValueError) as e:
+                raise ValueError(
+                    f"input must be list type with length {len(self)} "
+                    "and only integer elements"
+                ) from e
+            return ColumnBase.create(
+                plc_result,
                 self.dtype,
             )
 
@@ -424,16 +455,20 @@ class ListColumn(ColumnBase):
     ) -> StringColumn:
         with self.access(mode="read", scope="internal"):
             if isinstance(separator, str):
-                sep: plc.Scalar | plc.Column = pa_scalar_to_plc_scalar(
-                    pa.scalar(separator)
+                sep: plc.Scalar | plc.Column = plc.Scalar.from_py(
+                    separator, dtype=plc.DataType(plc.TypeId.STRING)
                 )
             else:
                 sep = separator.plc_column
             plc_column = plc.strings.combine.join_list_elements(
                 self.plc_column,
                 sep,
-                pa_scalar_to_plc_scalar(pa.scalar(sep_na_rep)),
-                pa_scalar_to_plc_scalar(pa.scalar(string_na_rep)),
+                plc.Scalar.from_py(
+                    sep_na_rep, dtype=plc.DataType(plc.TypeId.STRING)
+                ),
+                plc.Scalar.from_py(
+                    string_na_rep, dtype=plc.DataType(plc.TypeId.STRING)
+                ),
                 plc.strings.combine.SeparatorOnNulls.YES,
                 plc.strings.combine.OutputIfEmptyList.NULL_ELEMENT,
             )

@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/strings/convert/convert_datetime.hpp>
@@ -38,7 +39,9 @@ void bench_convert_datetime(nvbench::state& state, nvbench::type_list<DataType>)
   auto sv     = cudf::strings_column_view(s_col->view());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   if (from_ts) {
     state.add_global_memory_reads<DataType>(num_rows);
@@ -53,6 +56,9 @@ void bench_convert_datetime(nvbench::state& state, nvbench::type_list<DataType>)
       cudf::strings::to_timestamps(sv, data_type, format);
     });
   }
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH_TYPES(bench_convert_datetime, NVBENCH_TYPE_AXES(Types))

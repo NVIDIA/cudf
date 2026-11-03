@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/stream_compaction/stream_compaction_common.hpp>
 
 #include <cudf/column/column_view.hpp>
@@ -43,11 +44,16 @@ void nvbench_distinct(nvbench::state& state, nvbench::type_list<Type>)
   auto input_column = source_column->view();
   auto input_table  = cudf::table_view({input_column, input_column, input_column, input_column});
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = cudf::distinct(
       input_table, {0}, keep, cudf::null_equality::EQUAL, cudf::nan_equality::ALL_EQUAL);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 using data_type = nvbench::type_list<int32_t, int64_t>;
@@ -84,11 +90,16 @@ void nvbench_distinct_list(nvbench::state& state, nvbench::type_list<Type>)
   auto const table = create_random_table(
     {dtype}, table_size_bytes{static_cast<size_t>(size)}, data_profile{builder}, 0);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result =
       cudf::distinct(*table, {0}, keep, cudf::null_equality::EQUAL, cudf::nan_equality::ALL_EQUAL);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH_TYPES(nvbench_distinct_list,

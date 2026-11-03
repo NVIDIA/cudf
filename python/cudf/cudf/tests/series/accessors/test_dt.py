@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import zoneinfo
@@ -6,15 +6,18 @@ import zoneinfo
 import cupy as cp
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_GE_220,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
+
+# Parametrize between numpy datetime64 and pandas ArrowDtype timestamp so
+# every dt accessor test exercises both code paths.
+_DT_DTYPES = [
+    "datetime64[ns]",
+    pd.ArrowDtype(pa.timestamp("ns")),
+]
 
 
 @pytest.fixture(
@@ -104,6 +107,24 @@ def test_timedelta_series_total_seconds(
     assert_eq(expected, actual)
 
 
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+def test_timedelta_total_seconds_arrow_dtype(unit):
+    # ArrowDtype duration: result must be float64[pyarrow] to match pandas.
+    ps = pd.Series(
+        [
+            pd.Timedelta(days=1, seconds=2, microseconds=3, nanoseconds=4),
+            None,
+            pd.Timedelta(seconds=86400.5),
+        ],
+        dtype=pd.ArrowDtype(pa.duration(unit)),
+    )
+    gs = cudf.from_pandas(ps)
+
+    expected = ps.dt.total_seconds()
+    actual = gs.dt.total_seconds()
+    assert_eq(expected, actual)
+
+
 @pytest.mark.parametrize("meth", ["day_name", "month_name"])
 @pytest.mark.parametrize("klass", [cudf.Series, cudf.DatetimeIndex])
 def test_day_month_name_locale_not_implemented(meth, klass):
@@ -143,6 +164,30 @@ def test_day_month_name(meth, klass):
     assert_eq(expect, got)
 
 
+@pytest.mark.parametrize("meth", ["day_name", "month_name"])
+def test_day_month_name_arrow_dtype(meth):
+    data = [
+        "2020-05-31 08:00:00",
+        None,
+        "1999-12-31 18:40:00",
+        "2000-12-31 04:00:00",
+        None,
+        "1900-02-28 07:00:00",
+        "1800-03-14 07:30:00",
+        "2100-03-14 07:30:00",
+        "1970-01-01 00:00:00",
+        "1969-12-31 12:59:00",
+    ]
+
+    ps = pd.Series(data, dtype=pd.ArrowDtype(pa.timestamp("s")))
+    gs = cudf.from_pandas(ps)
+
+    expect = getattr(ps.dt, meth)()
+    got = getattr(gs.dt, meth)()
+
+    assert_eq(expect, got)
+
+
 @pytest.mark.parametrize(
     "freqstr",
     [
@@ -154,12 +199,12 @@ def test_day_month_name(meth, klass):
         "S",
     ],
 )
-def test_datetime_ceil_raise_warning(freqstr):
+def test_datetime_ceil_invalid_freq_raises(freqstr):
     t = cudf.Series(
         ["2001-01-01 00:04:45", "2001-01-01 00:04:58", "2001-01-01 00:05:04"],
         dtype="datetime64[ns]",
     )
-    with pytest.warns(FutureWarning):
+    with pytest.raises(ValueError):
         t.dt.ceil(freqstr)
 
 
@@ -185,10 +230,6 @@ def test_round(datetime_types_as_str, resolution):
     assert_eq(expect, got)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="https://github.com/pandas-dev/pandas/issues/52761",
-)
 @pytest.mark.parametrize(
     "resolution", ["D", "h", "min", "min", "s", "ms", "us", "ns"]
 )
@@ -211,10 +252,6 @@ def test_floor(datetime_types_as_str, resolution):
     assert_eq(expect, got)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="https://github.com/pandas-dev/pandas/issues/52761",
-)
 @pytest.mark.parametrize(
     "resolution", ["D", "h", "min", "min", "s", "ms", "us", "ns"]
 )
@@ -237,7 +274,8 @@ def test_ceil(datetime_types_as_str, resolution):
     assert_eq(expect, got)
 
 
-def test_days_in_months():
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_days_in_months(dtype):
     data = [
         "2020-05-31",
         None,
@@ -250,14 +288,15 @@ def test_days_in_months():
         "1970-01-01",
         "1969-12-11",
     ]
-    ps = pd.Series(data, dtype="datetime64[ns]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     assert_eq(ps.dt.days_in_month, gs.dt.days_in_month)
     assert_eq(ps.dt.daysinmonth, gs.dt.daysinmonth)
 
 
-def test_is_month_start():
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_is_month_start(dtype):
     data = [
         "2020-05-31",
         None,
@@ -270,7 +309,7 @@ def test_is_month_start():
         "1970-01-01",
         "1969-12-11",
     ]
-    ps = pd.Series(data, dtype="datetime64[ns]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expect = ps.dt.is_month_start
@@ -279,7 +318,8 @@ def test_is_month_start():
     assert_eq(expect, got)
 
 
-def test_is_month_end():
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_is_month_end(dtype):
     data = [
         "2020-05-31",
         "2020-02-29",
@@ -293,7 +333,7 @@ def test_is_month_end():
         "1970-01-01",
         "1969-12-11",
     ]
-    ps = pd.Series(data, dtype="datetime64[ns]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expect = ps.dt.is_month_end
@@ -302,7 +342,8 @@ def test_is_month_end():
     assert_eq(expect, got)
 
 
-def test_is_year_start():
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_is_year_start(dtype):
     data = [
         "2020-05-31",
         None,
@@ -318,7 +359,7 @@ def test_is_year_start():
         "2017-12-31",
         "2018-01-01",
     ]
-    ps = pd.Series(data, dtype="datetime64[ns]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expect = ps.dt.is_year_start
@@ -327,7 +368,8 @@ def test_is_year_start():
     assert_eq(expect, got)
 
 
-def test_is_year_end():
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_is_year_end(dtype):
     data = [
         "2020-05-31",
         None,
@@ -347,7 +389,7 @@ def test_is_year_end():
         "2100-12-14 07:30:00",
         "2020-05-31",
     ]
-    ps = pd.Series(data, dtype="datetime64[ns]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expect = ps.dt.is_year_end
@@ -356,7 +398,8 @@ def test_is_year_end():
     assert_eq(expect, got)
 
 
-def test_is_quarter_start():
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_is_quarter_start(dtype):
     data = [
         "2020-05-01",
         "2020-05-31",
@@ -373,7 +416,7 @@ def test_is_quarter_start():
         "1969-12-11",
         "2020-12-31",
     ]
-    ps = pd.Series(data, dtype="datetime64[ns]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expect = ps.dt.is_quarter_start
@@ -382,7 +425,8 @@ def test_is_quarter_start():
     assert_eq(expect, got)
 
 
-def test_is_quarter_end():
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_is_quarter_end(dtype):
     data = [
         "2020-05-01",
         "2020-05-31",
@@ -399,7 +443,7 @@ def test_is_quarter_end():
         "1969-12-11",
         "2020-12-31",
     ]
-    ps = pd.Series(data, dtype="datetime64[ns]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expect = ps.dt.is_quarter_end
@@ -408,7 +452,11 @@ def test_is_quarter_end():
     assert_eq(expect, got)
 
 
-def test_is_leap_year():
+@pytest.mark.parametrize(
+    "dtype",
+    ["datetime64[s]", pd.ArrowDtype(pa.timestamp("s"))],
+)
+def test_is_leap_year(dtype):
     data = [
         "2020-05-31 08:00:00",
         None,
@@ -423,7 +471,7 @@ def test_is_leap_year():
     ]
 
     # Series
-    ps = pd.Series(data, dtype="datetime64[s]")
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expect = ps.dt.is_leap_year
@@ -431,14 +479,16 @@ def test_is_leap_year():
 
     assert_eq(expect, got)
 
-    # DatetimeIndex
-    pIndex = pd.DatetimeIndex(data)
-    gIndex = cudf.from_pandas(pIndex)
+    # DatetimeIndex (ArrowDtype isn't accepted by DatetimeIndex; only
+    # exercise the index code path for the numpy variant.)
+    if isinstance(dtype, str):
+        pIndex = pd.DatetimeIndex(data)
+        gIndex = cudf.from_pandas(pIndex)
 
-    expect2 = pIndex.is_leap_year
-    got2 = gIndex.is_leap_year
+        expect2 = pIndex.is_leap_year
+        got2 = gIndex.is_leap_year
 
-    assert_eq(expect2, got2)
+        assert_eq(expect2, got2)
 
 
 def test_quarter():
@@ -484,6 +534,11 @@ def test_quarter():
             pd.date_range(start="2021-07-25", end="2021-07-30"),
             index=["a", "b", "c", "d", "e", "f"],
         ),
+        pd.Series(
+            ["2010-01-01", "2010-12-31", None],
+            dtype=pd.ArrowDtype(pa.timestamp("ns")),
+        ),
+        pd.Series([None, None], dtype=pd.ArrowDtype(pa.timestamp("us"))),
     ],
 )
 def test_isocalendar_series(data):
@@ -494,6 +549,68 @@ def test_isocalendar_series(data):
     got = gs.dt.isocalendar()
 
     assert_eq(expect, got, check_dtype=False)
+
+
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_isocalendar_dtype(dtype):
+    # isocalendar's year/week/day columns must match pandas' backing dtype:
+    # UInt32 for numpy datetime, int64[pyarrow] for ArrowDtype timestamps.
+    ps = pd.Series(["2010-01-01", "2010-12-31", None], dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expect = ps.dt.isocalendar()
+    got = gs.dt.isocalendar()
+
+    # Exercise both value equality and the exact per-column dtype.
+    assert_eq(expect, got)
+    assert dict(got.dtypes) == dict(expect.dtypes)
+    if isinstance(dtype, pd.ArrowDtype):
+        assert all(dt == pd.ArrowDtype(pa.int64()) for dt in got.dtypes)
+    else:
+        assert all(dt == pd.UInt32Dtype() for dt in got.dtypes)
+
+
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+@pytest.mark.parametrize("attr", ["dayofweek", "day_of_week", "weekday"])
+def test_dayofweek_dtype(dtype, attr):
+    # dayofweek/day_of_week/weekday are aliases. pandas returns int32 for the
+    # numpy-backed variant but int64[pyarrow] for the ArrowDtype variant.
+    ps = pd.Series(["2010-01-01", "2010-12-31", "2011-06-15"], dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expect = getattr(ps.dt, attr)
+    got = getattr(gs.dt, attr)
+
+    assert_eq(expect, got)
+    if isinstance(dtype, pd.ArrowDtype):
+        assert got.dtype == pd.ArrowDtype(pa.int64())
+        assert expect.dtype == pd.ArrowDtype(pa.int64())
+    else:
+        assert got.dtype == np.dtype("int32")
+        assert expect.dtype == np.dtype("int32")
+
+
+@pytest.mark.parametrize(
+    "attr, expected_dtype",
+    [
+        ("days", np.dtype("int64")),
+        ("seconds", np.dtype("int32")),
+        ("microseconds", np.dtype("int32")),
+        ("nanoseconds", np.dtype("int32")),
+    ],
+)
+def test_timedelta_components_dtype(attr, expected_dtype):
+    # pandas returns int64 for .dt.days but int32 for the sub-day components
+    # (seconds/microseconds/nanoseconds); cudf must match.
+    ps = pd.Series([1000000, 200000, 3000000], dtype="timedelta64[ns]")
+    gs = cudf.from_pandas(ps)
+
+    expect = getattr(ps.dt, attr)
+    got = getattr(gs.dt, attr)
+    assert_eq(expect, got)
+    assert got.dtype == expected_dtype
+    # Sanity: our expectation tracks pandas' actual dtype.
+    assert expect.dtype == expected_dtype
 
 
 @pytest.mark.parametrize(
@@ -545,6 +662,40 @@ def test_datetime_strftime_not_implemented_formats(date_format):
 
 
 @pytest.mark.parametrize(
+    "unit",
+    ["s", "ms", "us", "ns"],
+)
+@pytest.mark.parametrize(
+    "date_format",
+    [
+        # %S in pyarrow includes the subsecond fraction at the timestamp's
+        # resolution -- cudf must translate this so the output matches.
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S",
+        "%H:%M:%S no-subsec-after",
+    ],
+)
+def test_datetime_strftime_arrow_dtype(unit, date_format):
+    # ArrowDtype timestamps: pyarrow's "%S" carries the subsecond fraction
+    # at the timestamp's resolution; cudf must produce the same output.
+    # Use second-resolution input strings so each unit can hold them
+    # losslessly.
+    data = [
+        "2023-01-02 03:04:05",
+        None,
+        "2024-12-31 23:59:59",
+    ]
+    ps = pd.Series(data, dtype=pd.ArrowDtype(pa.timestamp(unit)))
+    gs = cudf.from_pandas(ps)
+
+    # pandas' ArrowTemporalProperties.strftime takes the format positionally.
+    expected = ps.dt.strftime(date_format)
+    actual = gs.dt.strftime(date_format)
+
+    assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize(
     "data",
     [
         pd.date_range("20010101", "20020215", freq="400h", name="times"),
@@ -582,13 +733,12 @@ def test_dt_series_datetime_fields(data, field):
 
 
 @pytest.mark.parametrize("fmt", ["%Y-%m-%dT%H:%M%z", "%Y-%m-%dT%H:%M"])
-def test_strftime_tz_aware_as_utc(fmt):
+def test_strftime_tz_aware(fmt):
     data = [datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc)]
     cudf_pacific = cudf.Series(data).dt.tz_convert("US/Pacific")
-    pd_utc = pd.Series(data)
-    assert cudf_pacific.dtype != pd_utc.dtype
+    pd_pacific = pd.Series(data).dt.tz_convert("US/Pacific")
     result = cudf_pacific.dt.strftime(fmt)
-    expected = pd_utc.dt.strftime(fmt)
+    expected = pd_pacific.dt.strftime(fmt)
     assert_eq(result, expected)
 
 
@@ -603,10 +753,12 @@ def test_tz_localize(datetime_types_as_str, all_timezones):
     assert str(s.dtype.tz) == all_timezones
 
 
-def test_localize_ambiguous(request, datetime_types_as_str, all_timezones):
+def test_localize_ambiguous(
+    request, datetime_types_as_str, ambiguous_timezones
+):
     request.applymarker(
         pytest.mark.xfail(
-            condition=(all_timezones == "America/Metlakatla"),
+            condition=(ambiguous_timezones == "America/Metlakatla"),
             reason="https://www.timeanddate.com/news/time/metlakatla-quits-dst.html",
         )
     )
@@ -622,16 +774,20 @@ def test_localize_ambiguous(request, datetime_types_as_str, all_timezones):
         dtype=datetime_types_as_str,
     )
     expect = s.to_pandas().dt.tz_localize(
-        zoneinfo.ZoneInfo(all_timezones), ambiguous="NaT", nonexistent="NaT"
+        zoneinfo.ZoneInfo(ambiguous_timezones),
+        ambiguous="NaT",
+        nonexistent="NaT",
     )
-    got = s.dt.tz_localize(all_timezones)
+    got = s.dt.tz_localize(ambiguous_timezones)
     assert_eq(expect, got)
 
 
-def test_localize_nonexistent(request, datetime_types_as_str, all_timezones):
+def test_localize_nonexistent(
+    request, datetime_types_as_str, nonexistent_timezones
+):
     request.applymarker(
         pytest.mark.xfail(
-            condition=all_timezones == "America/Grand_Turk",
+            condition=nonexistent_timezones == "America/Grand_Turk",
             reason="https://www.worldtimezone.com/dst_news/dst_news_turkscaicos03.html",
         )
     )
@@ -647,9 +803,11 @@ def test_localize_nonexistent(request, datetime_types_as_str, all_timezones):
         dtype=datetime_types_as_str,
     )
     expect = s.to_pandas().dt.tz_localize(
-        zoneinfo.ZoneInfo(all_timezones), ambiguous="NaT", nonexistent="NaT"
+        zoneinfo.ZoneInfo(nonexistent_timezones),
+        ambiguous="NaT",
+        nonexistent="NaT",
     )
-    got = s.dt.tz_localize(all_timezones)
+    got = s.dt.tz_localize(nonexistent_timezones)
     assert_eq(expect, got)
 
 
@@ -690,6 +848,45 @@ def test_convert(from_tz, to_tz):
     gs = gs.dt.tz_localize(from_tz)
     expect = ps.dt.tz_convert(to_tz)
     got = gs.dt.tz_convert(to_tz)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("unit", ["us", "ns"])
+@pytest.mark.parametrize("to_tz", ["US/Eastern", "Europe/London", "UTC", None])
+def test_convert_arrow_dtype(unit, to_tz):
+    # tz_convert on an ArrowDtype timestamp must keep the result as
+    # ArrowDtype (timestamp[unit, tz=...][pyarrow]) rather than falling
+    # back to DatetimeTZDtype.
+    # cudf cannot construct a tz-aware ArrowDtype Series via from_pandas,
+    # so build it by localizing a naive ArrowDtype Series first.
+    ps = pd.Series(
+        ["2023-01-01 03:00", None, "2023-06-15 12:00"],
+        dtype=pd.ArrowDtype(pa.timestamp(unit)),
+    ).dt.tz_localize("US/Pacific")
+    gs = cudf.from_pandas(
+        pd.Series(
+            ["2023-01-01 03:00", None, "2023-06-15 12:00"],
+            dtype=pd.ArrowDtype(pa.timestamp(unit)),
+        )
+    ).dt.tz_localize("US/Pacific")
+
+    expect = ps.dt.tz_convert(to_tz)
+    got = gs.dt.tz_convert(to_tz)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("unit", ["us", "ns"])
+def test_localize_arrow_dtype(unit):
+    # tz_localize on an ArrowDtype timestamp must keep the result as
+    # ArrowDtype rather than DatetimeTZDtype.
+    ps = pd.Series(
+        ["2023-01-02 03:00", None, "2023-06-15 12:00"],
+        dtype=pd.ArrowDtype(pa.timestamp(unit)),
+    )
+    gs = cudf.from_pandas(ps)
+
+    expect = ps.dt.tz_localize("US/Pacific")
+    got = gs.dt.tz_localize("US/Pacific")
     assert_eq(expect, got)
 
 
@@ -740,9 +937,7 @@ def test_convert_edge_cases(data, original_timezone, target_timezone):
     "data",
     [
         pd.date_range("2020-01-01", periods=10, freq="D"),
-        pd.date_range(
-            "1990-01-01", periods=100, freq="ME" if PANDAS_GE_220 else "M"
-        ),
+        pd.date_range("1990-01-01", periods=100, freq="ME"),
         pd.to_datetime(["2023-12-25", "2024-01-01", "2024-06-15", None]),
     ],
 )
@@ -767,3 +962,106 @@ def test_dt_component_dtype_pandas_compat(data, component):
     expect = getattr(ps.dt, component)
     got = getattr(gs.dt, component)
     assert_eq(expect, got, check_dtype=True)
+
+
+@pytest.mark.parametrize(
+    "unit",
+    ["s", "ms", "us", "ns"],
+)
+@pytest.mark.parametrize(
+    "component",
+    [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "microsecond",
+        "nanosecond",
+        "weekday",
+        "day_of_year",
+        "dayofyear",
+        "days_in_month",
+        "daysinmonth",
+        "is_leap_year",
+        "is_month_start",
+        "is_month_end",
+        "is_quarter_start",
+        "is_quarter_end",
+        "is_year_start",
+        "is_year_end",
+    ],
+)
+def test_dt_component_arrow_dtype(unit, component):
+    # Verify dt accessor results on ArrowDtype timestamps match pandas
+    # in both dtype (e.g. int64[pyarrow], bool[pyarrow]) and values
+    # (including null preservation for nullable extension dtype).
+    # Use only second-resolution timestamps so the fixture data is valid
+    # for every unit (pandas can't losslessly downcast ns -> s, etc).
+    data = [
+        "2023-01-02 03:04:05",
+        None,
+        "2024-02-29 23:59:59",
+        "1969-12-31 12:00:00",
+    ]
+    ps = pd.Series(data, dtype=pd.ArrowDtype(pa.timestamp(unit)))
+    gs = cudf.from_pandas(ps)
+
+    expect = getattr(ps.dt, component)
+    got = getattr(gs.dt, component)
+    assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        "datetime64[ns]",
+        "datetime64[us]",
+        pd.ArrowDtype(pa.timestamp("ns")),
+        pd.ArrowDtype(pa.timestamp("us")),
+    ],
+)
+def test_to_pydatetime(dtype):
+    # Verify Series.dt.to_pydatetime returns a Series of datetime.datetime
+    # objects matching pandas, for both numpy datetime and ArrowDtype.
+    data = [
+        datetime.datetime(2022, 1, 1),
+        datetime.datetime(2023, 6, 15, 12, 30, 45),
+    ]
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expect = ps.dt.to_pydatetime()
+    got = gs.dt.to_pydatetime()
+    assert_eq(expect, got)
+    assert all(type(v) is datetime.datetime for v in got)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        "timedelta64[ns]",
+        "timedelta64[us]",
+        pd.ArrowDtype(pa.duration("ns")),
+        pd.ArrowDtype(pa.duration("us")),
+    ],
+)
+def test_to_pytimedelta(dtype):
+    # Verify Series.dt.to_pytimedelta returns an ndarray of
+    # datetime.timedelta objects matching pandas.
+    data = [
+        datetime.timedelta(days=1, seconds=2, microseconds=3),
+        datetime.timedelta(days=2, seconds=4, microseconds=5),
+    ]
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    # pandas emits a Pandas4Warning here; ignore it because the function is
+    # being deprecated upstream and behaviour parity is what we care about.
+    with pytest.warns((DeprecationWarning, FutureWarning, Warning)):
+        expect = ps.dt.to_pytimedelta()
+    with pytest.warns((DeprecationWarning, FutureWarning, Warning)):
+        got = gs.dt.to_pytimedelta()
+    np.testing.assert_array_equal(expect, got)
+    assert all(type(v) is datetime.timedelta for v in got)

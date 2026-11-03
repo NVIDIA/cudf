@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,9 @@
 
 #include <cudf/contiguous_split.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/null_mask.hpp>
+#include <cudf/null_mask.hpp>
+
+#include <cuda/iterator>
 
 #include <limits>
 
@@ -22,7 +24,7 @@ TEST_F(CopyingTest, Gather)
 {
   constexpr cudf::size_type source_size{1000};
 
-  auto data = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto data = cuda::counting_iterator{0};
   cudf::test::fixed_width_column_wrapper<int32_t> source_column(data, data + source_size);
   cudf::test::fixed_width_column_wrapper<int32_t> gather_map(data, data + source_size);
 
@@ -39,7 +41,7 @@ TEST_F(CopyingTest, ReverseTable)
   constexpr cudf::size_type num_values{10};
 
   auto input = cudf::test::fixed_width_column_wrapper<int32_t, int32_t>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + num_values);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + num_values);
 
   auto input_table = cudf::table_view{{input}};
   cudf::reverse(input_table, cudf::test::get_default_stream());
@@ -50,7 +52,7 @@ TEST_F(CopyingTest, ReverseColumn)
   constexpr cudf::size_type num_values{10};
 
   auto input = cudf::test::fixed_width_column_wrapper<int32_t, int32_t>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + num_values);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + num_values);
 
   cudf::reverse(input, cudf::test::get_default_stream());
 }
@@ -70,8 +72,8 @@ TEST_F(CopyingTest, ScatterTable)
 TEST_F(CopyingTest, ScatterScalars)
 {
   auto const source = cudf::scalar_type_t<int32_t>(100, true, cudf::test::get_default_stream());
-  std::reference_wrapper<const cudf::scalar> slr_ref{source};
-  std::vector<std::reference_wrapper<const cudf::scalar>> source_vector{slr_ref};
+  std::reference_wrapper<cudf::scalar const> slr_ref{source};
+  std::vector<std::reference_wrapper<cudf::scalar const>> source_vector{slr_ref};
 
   cudf::test::fixed_width_column_wrapper<int32_t> target({10, 20, 30, 40, 50, 60, 70, 80});
   cudf::test::fixed_width_column_wrapper<int32_t> scatter_map({-3, 3, 1, -1});
@@ -115,7 +117,7 @@ TEST_F(CopyingTest, CopyRangeInPlace)
   constexpr cudf::size_type size{1000};
 
   cudf::test::fixed_width_column_wrapper<int32_t, int32_t> target(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + size);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + size);
 
   auto source_elements =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 2; });
@@ -136,7 +138,7 @@ TEST_F(CopyingTest, CopyRange)
   constexpr cudf::size_type size{1000};
 
   cudf::test::fixed_width_column_wrapper<int32_t, int32_t> target(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + size);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + size);
 
   auto source_elements =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 2; });
@@ -144,7 +146,7 @@ TEST_F(CopyingTest, CopyRange)
     source(source_elements, source_elements + size);
 
   cudf::mutable_column_view target_view{target};
-  const cudf::column_view immutable_view{target_view};
+  cudf::column_view const immutable_view{target_view};
 
   cudf::size_type source_begin{9};
   cudf::size_type source_end{size - 50};
@@ -266,7 +268,7 @@ TEST_F(CopyingTest, BooleanMaskScatter)
 
 TEST_F(CopyingTest, BooleanMaskScatterScalars)
 {
-  std::vector<std::reference_wrapper<const cudf::scalar>> scalars;
+  std::vector<std::reference_wrapper<cudf::scalar const>> scalars;
   auto s = cudf::scalar_type_t<int32_t>(1, true, cudf::test::get_default_stream());
   scalars.emplace_back(s);
   cudf::test::fixed_width_column_wrapper<int32_t, int32_t> target(
@@ -291,7 +293,7 @@ TEST_F(CopyingTest, Sample)
   auto const n_samples             = 10;
   auto const multi_smpl            = cudf::sample_with_replacement::FALSE;
 
-  auto data = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto data = cuda::counting_iterator{0};
   cudf::test::fixed_width_column_wrapper<int16_t> col1(data, data + table_size);
 
   cudf::table_view input({col1});
@@ -320,9 +322,7 @@ TEST_F(CopyingTest, PurgeNonEmptyNulls)
                        .release();
 
   // Set nullmask, post construction.
-  // TODO: Once set_null_mask's public API exposes a stream parameter, use that
-  // instead of the detail API.
-  cudf::detail::set_null_mask(
+  cudf::set_null_mask(
     input->mutable_view().null_mask(), 2, 3, false, cudf::test::get_default_stream());
   input->set_null_count(1);
 
@@ -340,8 +340,8 @@ TEST_F(CopyingTest, ContiguousSplit)
 
   std::vector<std::string> base_strings(
     {"banana", "pear", "apple", "pecans", "vanilla", "cat", "mouse", "green"});
-  auto string_randomizer = thrust::make_transform_iterator(
-    thrust::make_counting_iterator(0),
+  auto string_randomizer = cuda::transform_iterator(
+    cuda::counting_iterator<cudf::size_type>{0},
     [&base_strings](cudf::size_type i) { return base_strings[rand() % base_strings.size()]; });
 
   cudf::test::fixed_width_column_wrapper<double> col(iter, iter + size);

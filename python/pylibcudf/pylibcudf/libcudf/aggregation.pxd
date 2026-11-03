@@ -1,10 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stddef cimport size_t
 from libc.stdint cimport int32_t
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
-from libcpp.string cimport string
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.types cimport (
@@ -50,8 +49,6 @@ cdef extern from "cudf/aggregation.hpp" namespace "cudf" nogil:
         COLLECT_SET
         LEAD
         LAG
-        PTX
-        CUDA
         HOST_UDF
         MERGE_LISTS
         MERGE_SETS
@@ -84,10 +81,6 @@ cdef extern from "cudf/aggregation.hpp" namespace "cudf" nogil:
 
     cdef cppclass scan_aggregation(aggregation):
         pass
-
-    cpdef enum class udf_type(bool):
-        CUDA
-        PTX
 
     cpdef enum class correlation_type(int32_t):
         PEARSON
@@ -168,11 +161,6 @@ cdef extern from "cudf/aggregation.hpp" namespace "cudf" nogil:
     cdef unique_ptr[T] make_collect_set_aggregation[T](
         null_policy null_handling, null_equality nulls_equal, nan_equality nans_equal
     ) except +libcudf_exception_handler
-
-    cdef unique_ptr[T] make_udf_aggregation[T](
-        udf_type type,
-        string user_defined_aggregator,
-        data_type output_type) except +libcudf_exception_handler
 
     cdef unique_ptr[T] make_ewma_aggregation[T](
         double com, ewm_history adjust

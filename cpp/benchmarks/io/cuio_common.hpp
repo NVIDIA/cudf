@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -145,14 +145,24 @@ std::vector<std::string> select_column_names(std::vector<std::string> const& col
 std::vector<cudf::size_type> segments_in_chunk(int num_segments, int num_chunks, int chunk);
 
 /**
- * @brief Drops L3 cache if `CUDF_BENCHMARK_DROP_CACHE` environment variable is set.
+ * @brief Drops the page cache based on the `CUDF_BENCHMARK_DROP_CACHE` environment variable.
  *
- * Has no effect if the environment variable is not set.
- * May require sudo access ro run successfully.
+ * The environment variable controls whether and how page cache is dropped. All options are
+ * case-insensitive.
+ * - Unset, `false`, `off`, `no`, `0`: No cache dropping. The benchmark is to be run with hot
+ * cache with a warning logged.
+ * - `true`, `on`, `yes`, `1`, `file`: Drops page cache for each file in `file_paths` (recommended,
+ * no privileges required)
+ * - `system`: Drops the system-wide page cache (legacy behavior, may require privileges)
  *
- * @throw cudf::logic_error if the environment variable is set and the command fails
+ * @param file_paths Files for which to drop the page cache. Only used when the environment variable
+ * is set to `file`.
+ *
+ * @throw std::invalid_argument if the environment variable has an unrecognized value
+ * @throw cudf::logic_error if system-wide cache dropping is requested but fails
+ * @throw kvikio::GenericSystemError if file-specific cache dropping fails
  */
-void try_drop_l3_cache();
+void drop_page_cache_if_enabled(std::vector<std::string> const& file_paths);
 
 /**
  * @brief Convert a string to the corresponding io_type enum value.

@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/ast/expressions.hpp>
@@ -13,22 +14,32 @@
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 
+#include <array>
+
 class TransformTest : public cudf::test::BaseFixture {};
 
 template <class dtype, class Data>
-void test_udf(char const* udf, Data data_init, cudf::size_type size, bool is_ptx)
+void test_udf(char const* udf,
+              Data data_init,
+              cudf::size_type size,
+              cudf::udf_source_type source_type)
 {
-  auto all_valid = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return true; });
+  auto all_valid = cudf::test::iterators::no_nulls();
   auto data_iter = cudf::detail::make_counting_transform_iterator(0, data_init);
   cudf::test::fixed_width_column_wrapper<dtype, typename decltype(data_iter)::value_type> in(
     data_iter, data_iter + size, all_valid);
-  cudf::transform({in},
-                  udf,
-                  cudf::data_type(cudf::type_to_id<dtype>()),
-                  is_ptx,
-                  std::nullopt,
+
+  cudf::transform_input inputs[] = {in};
+
+  cudf::transform(udf,
+                  source_type,
                   cudf::null_aware::NO,
-                  cudf::output_nullability::PRESERVE,
+                  std::nullopt,
+                  inputs,
+                  std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<dtype>()),
+                                                    cudf::output_nullability::PRESERVE}},
+                  {},
+                  std::nullopt,
                   cudf::test::get_default_stream());
 }
 
@@ -85,8 +96,8 @@ __device__ inline void    fdsf   (
 )***";
 
   auto data_init = [](cudf::size_type row) { return row % 3; };
-  test_udf<float>(cuda, data_init, 500, false);
-  test_udf<float>(ptx, data_init, 500, true);
+  test_udf<float>(cuda, data_init, 500, cudf::udf_source_type::CUDA);
+  test_udf<float>(ptx, data_init, 500, cudf::udf_source_type::PTX);
 }
 
 TEST_F(TransformTest, ComputeColumn)
@@ -142,7 +153,7 @@ TEST_F(TransformTest, NaNsToNulls)
   std::vector<bool> mask   = {true, true, true, true, false, false};
   auto input_column =
     cudf::test::fixed_width_column_wrapper<float>(input.begin(), input.end(), mask.begin());
-  cudf::nans_to_nulls(input_column, cudf::test::get_default_stream());
+  cudf::column_nans_to_nulls(input_column, cudf::test::get_default_stream());
 }
 
 TEST_F(TransformTest, RowBitCount)

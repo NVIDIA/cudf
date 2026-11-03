@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,16 +10,21 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
+
+/**
+ * @file
+ * @brief Table APIs for contiguous_split, pack, unpack, and metadata
+ */
 
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup copy_split
  * @{
- * @file
- * @brief Table APIs for contiguous_split, pack, unpack, and metadata
  */
 
 /**
@@ -40,6 +45,9 @@ namespace CUDF_EXPORT cudf {
  * @note It is the caller's responsibility to ensure that the returned views
  * do not outlive the viewed device memory contained in the `all_data` field of the
  * returned packed_table.
+ *
+ * @note Every output partition of a dictionary column holds a copy of the complete keys child,
+ * including keys that the partition's rows do not reference.
  *
  * @code{.pseudo}
  * Example:
@@ -65,7 +73,7 @@ namespace CUDF_EXPORT cudf {
 std::vector<packed_table> contiguous_split(
   cudf::table_view const& input,
   std::vector<size_type> const& splits,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 namespace detail {
@@ -99,6 +107,7 @@ struct contiguous_split_state;
  * // data. In memory constrained cases, this can be used to set aside scratch memory
  * // for `chunked_pack` at the beginning of a program.
  * auto mr = cudf::get_current_device_resource_ref();
+ * cuda::stream_ref stream = cudf::get_default_stream();
  *
  * // Define a buffer size for each chunk: the larger the buffer is, the more SMs can be
  * // occupied by this algorithm.
@@ -111,7 +120,7 @@ struct contiguous_split_state;
  * //
  * std::size_t user_buffer_size = 128*1024*1024;
  *
- * auto chunked_packer = cudf::chunked_pack::create(tv, user_buffer_size, mr);
+ * auto chunked_packer = cudf::chunked_pack::create(tv, user_buffer_size, stream, mr);
  *
  * std::size_t host_offset = 0;
  * auto host_buffer = ...; // obtain a host buffer you would like to copy to
@@ -129,7 +138,7 @@ struct contiguous_split_state;
  *     user_buffer.data(),
  *     bytes_copied,
  *     cudaMemcpyDefault,
- *     stream);
+ *     stream.get());
  *
  *   host_offset += bytes_copied;
  * }
@@ -150,7 +159,7 @@ class chunked_pack {
   explicit chunked_pack(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+    cuda::stream_ref stream                = cudf::get_default_stream(),
     rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -217,7 +226,7 @@ class chunked_pack {
   [[nodiscard]] static std::unique_ptr<chunked_pack> create(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+    cuda::stream_ref stream                = cudf::get_default_stream(),
     rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
  private:
@@ -239,7 +248,7 @@ class chunked_pack {
  *         and device memory respectively
  */
 packed_columns pack(cudf::table_view const& input,
-                    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+                    cuda::stream_ref stream           = cudf::get_default_stream(),
                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -256,7 +265,7 @@ packed_columns pack(cudf::table_view const& input,
  */
 std::size_t packed_size(
   cudf::table_view const& input,
-  rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+  cuda::stream_ref stream                = cudf::get_default_stream(),
   rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -293,6 +302,20 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
 table_view unpack(packed_columns const& input);
 
 /**
+ * @brief Deserialize packed table data using a sized metadata buffer.
+ *
+ * An empty metadata buffer represents a table with no columns and no rows.
+ * The returned `table_view` must not outlive the device data in `gpu_data`.
+ * No new device memory is allocated.
+ *
+ * @throws cudf::logic_error if non-empty metadata does not describe a valid column tree
+ * @param metadata The host-side metadata buffer resulting from `cudf::pack`
+ * @param gpu_data The device-side contiguous buffer referenced by the resulting `table_view`
+ * @return The unpacked `table_view`
+ */
+table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data);
+
+/**
  * @brief Deserialize the result of `cudf::pack`.
  *
  * Converts the result of a serialized table into a `table_view` that points to the data stored in
@@ -310,6 +333,122 @@ table_view unpack(packed_columns const& input);
  * @return The unpacked `table_view`
  */
 table_view unpack(uint8_t const* metadata, uint8_t const* gpu_data);
+
+/**
+ * @brief A non-owning view over the host metadata produced by `cudf::pack`.
+ *
+ * `packed_metadata_view` enables schema introspection — querying column types,
+ * sizes, null counts, and nesting structure — without requiring device data
+ * and building a `table_view`.
+ *
+ * The view interprets the serialized `packed_columns::metadata` wire
+ * format.
+ *
+ * @code{.cpp}
+ * auto packed = cudf::pack(table);
+ * auto view   = cudf::packed_metadata_view(*packed.metadata);
+ * std::cout << "columns: " << view.num_columns()
+ *           << ", rows: "  << view.num_rows() << "\n";
+ * for (cudf::size_type i = 0; i < view.num_columns(); i++) {
+ *   auto col = view.column(i);
+ *   std::cout << "  type=" << cudf::type_to_name(col.type())
+ *             << " children=" << col.num_children() << "\n";
+ * }
+ * @endcode
+ */
+class packed_metadata_view {
+ public:
+  /**
+   * @brief A non-owning view of a single column's metadata within packed column data.
+   *
+   * This lightweight view (two pointers) wraps a single serialized column entry and provides
+   * access to its schema information (type, size, null count, children) without requiring
+   * device data or building a `column_view`.
+   *
+   * Instances are obtained from `packed_metadata_view::column()` or
+   * `packed_column_metadata::child()`. They remain valid as long as the underlying
+   * metadata byte buffer is alive.
+   */
+  class column_view {
+   public:
+    /**
+     * @brief @return The `data_type` of this column.
+     */
+    [[nodiscard]] data_type type() const;
+
+    /**
+     * @brief @return The number of rows in this column.
+     */
+    [[nodiscard]] size_type num_rows() const;
+
+    /**
+     * @brief @return The null count of this column.
+     */
+    [[nodiscard]] size_type null_count() const;
+
+    /**
+     * @brief @return The number of children of this column.
+     */
+    [[nodiscard]] size_type num_children() const;
+
+    /**
+     * @brief A view of the i-th child column's metadata.
+     *
+     * @throws std::out_of_range if `i` is not contained in `[0, num_children())`
+     * @param i Index of the child column
+     * @return A `packed_column_metadata_view` for the i-th child
+     */
+    [[nodiscard]] column_view child(size_type i) const;
+
+   private:
+    friend class packed_metadata_view;
+    data_type _type{type_id::EMPTY};
+    size_type _size{};
+    size_type _null_count{};
+    size_type _num_children{};
+    // Span from this entry to the end of the metadata buffer (needed for child traversal).
+    std::span<std::uint8_t const> _buffer;
+    explicit column_view(std::span<std::uint8_t const> buffer);
+  };
+
+  /**
+   * @brief Construct a view from a metadata byte buffer.
+   *
+   * An empty buffer represents a table with no columns and no rows.
+   *
+   * @throws cudf::logic_error if a non-empty buffer does not describe a valid column tree.
+   * @param buffer The metadata bytes (as produced by `cudf::pack`)
+   */
+  explicit packed_metadata_view(std::span<std::uint8_t const> buffer);
+
+  /**
+   * @brief @return The number of top-level columns.
+   */
+  [[nodiscard]] size_type num_columns() const;
+
+  /**
+   * @brief The number of rows in the table.
+   *
+   * @return The row count
+   */
+  [[nodiscard]] size_type num_rows() const;
+
+  /**
+   * @brief A view of the i-th top-level column's metadata.
+   *
+   * @throws std::out_of_range if `i` is not contained in `[0, num_columns())`
+   * @param i Index of the top-level column
+   * @return A `packed_metadata_view::column` for the i-th column
+   */
+  [[nodiscard]] column_view column(size_type i) const;
+
+ private:
+  // Span from the first top-level column entry to the end of the metadata buffer.
+  std::span<std::uint8_t const> _entries;
+  size_type _num_columns{};
+  // Table row count, read directly from the serialized table header.
+  size_type _num_rows{};
+};
 
 /** @} */
 }  // namespace CUDF_EXPORT cudf

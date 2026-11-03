@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,7 +16,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
@@ -37,7 +37,7 @@ void bench_row_fixed_rolling_sum(nvbench::state& state, nvbench::type_list<Type>
   auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result =
       cudf::rolling_window(vals->view(), preceding_size, following_size, min_periods, *req);
@@ -63,40 +63,40 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
 
   auto preceding = [&] {
     auto data = std::vector<cudf::size_type>(num_rows);
-    auto it   = thrust::make_counting_iterator<cudf::size_type>(0);
+    auto it   = cuda::counting_iterator<cudf::size_type>{0};
     std::transform(it, it + num_rows, data.begin(), [num_rows, preceding_size](auto i) {
       return std::min(i + 1, std::max(preceding_size, i + 1 - num_rows));
     });
     auto buf = rmm::device_buffer(
       data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
-    cudf::get_default_stream().synchronize();
+    cudf::get_default_stream().sync();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),
-                                          rmm::device_buffer{},
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                           0);
   }();
 
   auto following = [&] {
     auto data = std::vector<cudf::size_type>(num_rows);
-    auto it   = thrust::make_counting_iterator<cudf::size_type>(0);
+    auto it   = cuda::counting_iterator<cudf::size_type>{0};
     std::transform(it, it + num_rows, data.begin(), [num_rows, following_size](auto i) {
       return std::max(-i - 1, std::min(following_size, num_rows - i - 1));
     });
     auto buf = rmm::device_buffer(
       data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
-    cudf::get_default_stream().synchronize();
+    cudf::get_default_stream().sync();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
                                           std::move(buf),
-                                          rmm::device_buffer{},
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                           0);
   }();
 
   auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result =
       cudf::rolling_window(vals->view(), preceding->view(), following->view(), 1, *req);

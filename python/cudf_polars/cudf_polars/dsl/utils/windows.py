@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 """Utilities for rolling window aggregations."""
@@ -72,7 +72,9 @@ def duration_to_int(
             "Invalid duration for parsed_int"
         )  # pragma: no cover; polars raises first
     elif not parsed_int and dtype.id() == plc.TypeId.INT64:
-        raise pl.exceptions.InvalidOperationError("Duration must be a parsed integer")
+        raise pl.exceptions.InvalidOperationError(
+            "Duration must be a parsed integer"
+        )  # pragma: no cover; cc is skipped on RollingWindow too
     value = nanoseconds + 24 * 60 * 60 * 10**9 * (days + 7 * weeks)
     return -value if negative else value
 
@@ -105,7 +107,7 @@ def duration_to_scalar(dtype: plc.DataType, value: int, stream: Stream) -> plc.S
     tid = dtype.id()
     if tid == plc.TypeId.INT64:
         return plc.Scalar.from_py(value, dtype, stream=stream)
-    elif tid == plc.TypeId.TIMESTAMP_NANOSECONDS:
+    elif tid == plc.TypeId.TIMESTAMP_NANOSECONDS:  # pragma: no cover
         return plc.Scalar.from_py(
             value, plc.DataType(plc.TypeId.DURATION_NANOSECONDS), stream=stream
         )
@@ -115,13 +117,13 @@ def duration_to_scalar(dtype: plc.DataType, value: int, stream: Stream) -> plc.S
             plc.DataType(plc.TypeId.DURATION_MICROSECONDS),
             stream=stream,
         )
-    elif tid == plc.TypeId.TIMESTAMP_MILLISECONDS:
+    elif tid == plc.TypeId.TIMESTAMP_MILLISECONDS:  # pragma: no cover
         return plc.Scalar.from_py(
             value // 1_000_000,
             plc.DataType(plc.TypeId.DURATION_MILLISECONDS),
             stream=stream,
         )
-    elif tid == plc.TypeId.TIMESTAMP_DAYS:
+    elif tid == plc.TypeId.TIMESTAMP_DAYS:  # pragma: no cover
         return plc.Scalar.from_py(
             value // 86_400_000_000_000,
             plc.DataType(plc.TypeId.DURATION_DAYS),

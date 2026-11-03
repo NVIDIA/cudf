@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import string
@@ -9,12 +9,8 @@ import pytest
 
 import cudf
 from cudf import DataFrame, option_context
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.testing import assert_eq
-from cudf.testing._utils import (
-    assert_exceptions_equal,
-    expect_warning_if,
-)
+from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
 
 
 def test_dataframe_sort_values(numeric_types_as_str):
@@ -41,11 +37,7 @@ def test_sort_values_nans_pandas_compat():
 
 @pytest.mark.parametrize("index", ["a", "b", ["a", "b"]])
 def test_dataframe_sort_values_ignore_index(index, ignore_index):
-    if (
-        PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION
-        and isinstance(index, list)
-        and not ignore_index
-    ):
+    if isinstance(index, list) and not ignore_index:
         pytest.skip(
             reason="Unstable sorting by pandas(numpy): https://github.com/pandas-dev/pandas/issues/57531"
         )
@@ -58,7 +50,7 @@ def test_dataframe_sort_values_ignore_index(index, ignore_index):
     pdf = gdf.to_pandas()
 
     expect = pdf.sort_values(list(pdf.columns), ignore_index=ignore_index)
-    got = gdf.sort_values((gdf.columns), ignore_index=ignore_index)
+    got = gdf.sort_values(list(gdf.columns), ignore_index=ignore_index)
 
     assert_eq(expect, got)
 

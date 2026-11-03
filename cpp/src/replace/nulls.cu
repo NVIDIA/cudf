@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,15 +32,10 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
+#include <cuda/iterator>
 #include <cuda/std/tuple>
-#include <thrust/functional.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/discard_iterator.h>
-#include <thrust/iterator/reverse_iterator.h>
-#include <thrust/iterator/zip_iterator.h>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
@@ -104,7 +99,7 @@ struct replace_nulls_column_kernel_forwarder {
   template <typename col_type, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<col_type>())>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input,
                                            cudf::column_view const& replacement,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
     cudf::size_type nrows = input.size();
@@ -127,11 +122,13 @@ struct replace_nulls_column_kernel_forwarder {
     auto device_out         = cudf::mutable_column_device_view::create(output_view, stream);
     auto device_replacement = cudf::column_device_view::create(replacement, stream);
 
-    cudf::detail::device_scalar<cudf::size_type> valid_counter(0, stream);
+    cudf::detail::device_scalar<cudf::size_type> valid_counter(
+      0, stream, cudf::get_current_device_resource_ref());
     cudf::size_type* valid_count = valid_counter.data();
 
-    replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.value()>>>(
+    replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.get()>>>(
       *device_in, *device_replacement, *device_out, valid_count);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     if (output_view.nullable()) {
       output->set_null_count(output->size() - valid_counter.value(stream));
@@ -143,7 +140,7 @@ struct replace_nulls_column_kernel_forwarder {
   template <typename col_type, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<col_type>())>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cudf::column_view const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
   {
     CUDF_FAIL("No specialization exists for the given type.");
@@ -154,7 +151,7 @@ template <>
 std::unique_ptr<cudf::column> replace_nulls_column_kernel_forwarder::operator()<cudf::string_view>(
   cudf::column_view const& input,
   cudf::column_view const& replacement,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto d_input       = cudf::column_device_view::create(input, stream);
@@ -181,7 +178,7 @@ template <>
 std::unique_ptr<cudf::column> replace_nulls_column_kernel_forwarder::operator()<cudf::dictionary32>(
   cudf::column_view const& input,
   cudf::column_view const& replacement,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   cudf::dictionary_column_view dict_input(input);
@@ -204,7 +201,7 @@ struct replace_nulls_scalar_kernel_forwarder {
   template <typename col_type, std::enable_if_t<cudf::is_fixed_width<col_type>()>* = nullptr>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input,
                                            cudf::scalar const& replacement,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
     CUDF_EXPECTS(
@@ -218,7 +215,7 @@ struct replace_nulls_scalar_kernel_forwarder {
     auto device_in   = cudf::column_device_view::create(input, stream);
 
     auto func = replace_nulls_functor<col_type>{s1.data()};
-    thrust::transform(rmm::exec_policy_nosync(stream),
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       input.data<col_type>(),
                       input.data<col_type>() + input.size(),
                       cudf::detail::make_validity_iterator(*device_in),
@@ -230,7 +227,7 @@ struct replace_nulls_scalar_kernel_forwarder {
   template <typename col_type, std::enable_if_t<not cudf::is_fixed_width<col_type>()>* = nullptr>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cudf::scalar const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
   {
     CUDF_FAIL("No specialization exists for the given type.");
@@ -241,7 +238,7 @@ template <>
 std::unique_ptr<cudf::column> replace_nulls_scalar_kernel_forwarder::operator()<cudf::string_view>(
   cudf::column_view const& input,
   cudf::scalar const& replacement,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -255,7 +252,7 @@ template <>
 std::unique_ptr<cudf::column> replace_nulls_scalar_kernel_forwarder::operator()<cudf::dictionary32>(
   cudf::column_view const& input,
   cudf::scalar const& replacement,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   cudf::dictionary_column_view dict_input(input);
@@ -268,33 +265,40 @@ std::unique_ptr<cudf::column> replace_nulls_scalar_kernel_forwarder::operator()<
 
 std::unique_ptr<cudf::column> replace_nulls_policy_impl(cudf::column_view const& input,
                                                         cudf::replace_policy const& replace_policy,
-                                                        rmm::cuda_stream_view stream,
+                                                        cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
 {
   auto device_in = cudf::column_device_view::create(input, stream);
-  auto index     = thrust::make_counting_iterator<cudf::size_type>(0);
+  auto index     = cuda::counting_iterator<cudf::size_type>{0};
   auto valid_it  = cudf::detail::make_validity_iterator(*device_in);
-  auto in_begin  = thrust::make_zip_iterator(cuda::std::make_tuple(index, valid_it));
+  auto in_begin  = cuda::make_zip_iterator(cuda::std::make_tuple(index, valid_it));
 
-  rmm::device_uvector<cudf::size_type> gather_map(input.size(), stream);
-  auto gm_begin = thrust::make_zip_iterator(
-    cuda::std::make_tuple(gather_map.begin(), thrust::make_discard_iterator()));
+  cuda::device_buffer<cudf::size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+  auto gm_begin = cuda::make_zip_iterator(
+    cuda::std::make_tuple(gather_map.begin(), cuda::make_discard_iterator()));
 
   auto func = cudf::detail::replace_policy_functor();
   if (replace_policy == cudf::replace_policy::PRECEDING) {
-    thrust::inclusive_scan(
-      rmm::exec_policy_nosync(stream), in_begin, in_begin + input.size(), gm_begin, func);
+    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                           in_begin,
+                           in_begin + input.size(),
+                           gm_begin,
+                           func);
   } else {
-    auto in_rbegin = thrust::make_reverse_iterator(in_begin + input.size());
-    auto gm_rbegin = thrust::make_reverse_iterator(gm_begin + gather_map.size());
-    thrust::inclusive_scan(
-      rmm::exec_policy_nosync(stream), in_rbegin, in_rbegin + input.size(), gm_rbegin, func);
+    auto in_rbegin = cuda::std::make_reverse_iterator(in_begin + input.size());
+    auto gm_rbegin = cuda::std::make_reverse_iterator(gm_begin + gather_map.size());
+    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                           in_rbegin,
+                           in_rbegin + input.size(),
+                           gm_rbegin,
+                           func);
   }
 
   auto output = cudf::detail::gather(cudf::table_view({input}),
                                      gather_map,
                                      cudf::out_of_bounds_policy::DONT_CHECK,
-                                     cudf::detail::negative_index_policy::NOT_ALLOWED,
+                                     cudf::negative_index_policy::NOT_ALLOWED,
                                      stream,
                                      mr);
 
@@ -308,7 +312,7 @@ namespace detail {
 
 std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
                                             cudf::column_view const& replacement,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(
@@ -324,7 +328,7 @@ std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
 
 std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
                                             cudf::scalar const& replacement,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::empty_like(input); }
@@ -338,7 +342,7 @@ std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
 
 std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
                                             cudf::replace_policy const& replace_policy,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::empty_like(input); }
@@ -351,7 +355,7 @@ std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
 
 std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
                                             cudf::column_view const& replacement,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -360,7 +364,7 @@ std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
 
 std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
                                             cudf::scalar const& replacement,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -369,7 +373,7 @@ std::unique_ptr<cudf::column> replace_nulls(cudf::column_view const& input,
 
 std::unique_ptr<cudf::column> replace_nulls(column_view const& input,
                                             replace_policy const& replace_policy,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

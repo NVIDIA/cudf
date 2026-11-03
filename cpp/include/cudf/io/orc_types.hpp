@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,12 +9,16 @@
 
 #include <cstdint>
 
+/**
+ * @file
+ * @brief Enums for ORC-specific compression and encoding types.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io::orc {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 /**

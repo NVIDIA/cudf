@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,12 +9,13 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/normalizing_iterator.cuh>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/optional>
 #include <cuda/std/utility>
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -64,12 +65,12 @@ struct input_indexalator : base_normalator<input_indexalator, cudf::size_type> {
    * @brief Dispatch functor for resolving a Integer value from any integer type
    */
   struct normalize_type {
-    template <typename T, CUDF_ENABLE_IF(cudf::is_index_type<T>())>
+    template <cudf::concepts::index_type T>
     __device__ cudf::size_type operator()(void const* tp)
     {
       return static_cast<cudf::size_type>(*static_cast<T const*>(tp));
     }
-    template <typename T, CUDF_ENABLE_IF(not cudf::is_index_type<T>())>
+    template <typename T>
     __device__ cudf::size_type operator()(void const*)
     {
       CUDF_UNREACHABLE("only integral types are supported");
@@ -120,7 +121,7 @@ struct input_indexalator : base_normalator<input_indexalator, cudf::size_type> {
  * Example output iterator usage.
  * @code
  *  auto result_itr = indexalator_factory::create_output_iterator(indices->mutable_view());
- *  thrust::lower_bound(rmm::exec_policy_nosync(stream),
+ *  thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
  *                      input->begin<Element>(),
  *                      input->end<Element>(),
  *                      values->begin<Element>(),
@@ -162,12 +163,12 @@ struct output_indexalator : base_normalator<output_indexalator, cudf::size_type>
    * @brief Dispatch functor for setting the index value from a size_type value.
    */
   struct normalize_type {
-    template <typename T, CUDF_ENABLE_IF(cudf::is_index_type<T>())>
+    template <cudf::concepts::index_type T>
     __device__ void operator()(void* tp, cudf::size_type const value)
     {
       (*static_cast<T*>(tp)) = static_cast<T>(value);
     }
-    template <typename T, CUDF_ENABLE_IF(not cudf::is_index_type<T>())>
+    template <typename T>
     __device__ void operator()(void*, cudf::size_type const)
     {
       CUDF_UNREACHABLE("only index types are supported");
@@ -207,12 +208,13 @@ struct indexalator_factory {
    * @brief A type_dispatcher functor to create an input iterator from an indices column.
    */
   struct input_indexalator_fn {
-    template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
+    template <cudf::concepts::index_type IndexType>
     input_indexalator operator()(column_view const& indices)
     {
       return input_indexalator(indices.data<IndexType>(), indices.type());
     }
-    template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
+    template <typename IndexType, typename... Args>
+      requires(not cudf::concepts::index_type<IndexType>)
     input_indexalator operator()(Args&&... args)
     {
       CUDF_FAIL("indices must be an index type");
@@ -223,14 +225,15 @@ struct indexalator_factory {
    * @brief Use this class to create an indexalator to a scalar index.
    */
   struct input_indexalator_scalar_fn {
-    template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
+    template <cudf::concepts::index_type IndexType>
     input_indexalator operator()(scalar const& index)
     {
       // note: using static_cast<scalar_type_t<IndexType> const&>(index) creates a copy
       auto const scalar_impl = static_cast<scalar_type_t<IndexType> const*>(&index);
       return input_indexalator(scalar_impl->data(), index.type());
     }
-    template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
+    template <typename IndexType, typename... Args>
+      requires(not cudf::concepts::index_type<IndexType>)
     input_indexalator operator()(Args&&... args)
     {
       CUDF_FAIL("scalar must be an index type");
@@ -241,12 +244,13 @@ struct indexalator_factory {
    * @brief A type_dispatcher functor to create an output iterator from an indices column.
    */
   struct output_indexalator_fn {
-    template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
+    template <cudf::concepts::index_type IndexType>
     output_indexalator operator()(mutable_column_view const& indices)
     {
       return output_indexalator(indices.data<IndexType>(), indices.type());
     }
-    template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
+    template <typename IndexType, typename... Args>
+      requires(not cudf::concepts::index_type<IndexType>)
     output_indexalator operator()(Args&&... args)
     {
       CUDF_FAIL("indices must be an index type");
@@ -275,73 +279,6 @@ struct indexalator_factory {
   static output_indexalator make_output_iterator(mutable_column_view const& indices)
   {
     return type_dispatcher(indices.type(), output_indexalator_fn{}, indices);
-  }
-
-  /**
-   * @brief An index accessor that returns a validity flag along with the index value.
-   *
-   * This is suitable as a `pair_iterator` for calling functions like `copy_if_else`.
-   */
-  struct nullable_index_accessor {
-    input_indexalator iter;
-    bitmask_type const* null_mask{};
-    size_type const offset{};
-    bool const has_nulls{};
-
-    /**
-     * @brief Create an accessor from a column_view.
-     */
-    nullable_index_accessor(column_view const& col, bool has_nulls = false)
-      : null_mask{col.null_mask()}, offset{col.offset()}, has_nulls{has_nulls}
-    {
-      if (has_nulls) { CUDF_EXPECTS(col.nullable(), "Unexpected non-nullable column."); }
-      iter = make_input_iterator(col);
-    }
-
-    __device__ cuda::std::pair<size_type, bool> operator()(size_type i) const
-    {
-      return {iter[i], (has_nulls ? bit_is_set(null_mask, i + offset) : true)};
-    }
-  };
-
-  /**
-   * @brief An index accessor that returns a validity flag along with the index value.
-   *
-   * This is suitable as a `pair_iterator`.
-   */
-  struct scalar_nullable_index_accessor {
-    input_indexalator iter;
-    bool const is_null;
-
-    /**
-     * @brief Create an accessor from a scalar.
-     */
-    scalar_nullable_index_accessor(scalar const& input) : is_null{!input.is_valid()}
-    {
-      iter = indexalator_factory::make_input_iterator(input);
-    }
-
-    __device__ cuda::std::pair<size_type, bool> operator()(size_type) const
-    {
-      return {*iter, is_null};
-    }
-  };
-
-  /**
-   * @brief Create an index iterator with a nullable index accessor.
-   */
-  static auto make_input_pair_iterator(column_view const& col)
-  {
-    return make_counting_transform_iterator(0, nullable_index_accessor{col, col.has_nulls()});
-  }
-
-  /**
-   * @brief Create an index iterator with a nullable index accessor for a scalar.
-   */
-  static auto make_input_pair_iterator(scalar const& input)
-  {
-    return thrust::make_transform_iterator(thrust::make_constant_iterator<size_type>(0),
-                                           scalar_nullable_index_accessor{input});
   }
 
   /**
@@ -384,7 +321,8 @@ struct indexalator_factory {
     /**
      * @brief Create an accessor from a scalar.
      */
-    scalar_optional_index_accessor(scalar const& input) : is_null{!input.is_valid()}
+    scalar_optional_index_accessor(scalar const& input, cuda::stream_ref stream)
+      : is_null{!input.is_valid(stream)}
     {
       iter = indexalator_factory::make_input_iterator(input);
     }
@@ -406,10 +344,10 @@ struct indexalator_factory {
   /**
    * @brief Create an index iterator with an optional index accessor for a scalar.
    */
-  static auto make_input_optional_iterator(scalar const& input)
+  static auto make_input_optional_iterator(scalar const& input, cuda::stream_ref stream)
   {
-    return thrust::make_transform_iterator(thrust::make_constant_iterator<size_type>(0),
-                                           scalar_optional_index_accessor{input});
+    return cuda::transform_iterator(cuda::make_constant_iterator<size_type>(0),
+                                    scalar_optional_index_accessor{input, stream});
   }
 };
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,7 +60,7 @@ class ptx_parser {
    * @brief parse and transform an input parameter line of the PTX code into the
    * corresponding CUDA form
    *
-   * @param src The input parameter line of the PTX code
+   * @param param_decl The input parameter line of the PTX code
    * @return The parsed CUDA input parameter
    */
   static ptx_param parse_param(std::string const& param_decl);
@@ -130,7 +130,7 @@ class ptx_parser {
    *
    * See the implementation for details
    *
-   * @param src The input code
+   * @param register_type Registered type string
    * @return The resulting code
    */
   static std::string register_type_to_cpp_type(std::string const& register_type);

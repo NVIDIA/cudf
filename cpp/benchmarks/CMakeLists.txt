@@ -1,17 +1,20 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
 
 find_package(Threads REQUIRED)
 
-add_library(cudf_datagen STATIC common/generate_input.cu common/generate_nested_types.cpp)
+add_library(
+  cudf_datagen STATIC common/generate_input.cu common/generate_skewed_data.cpp
+                      common/generate_nested_types.cpp
+)
 target_compile_features(cudf_datagen PUBLIC cxx_std_20 cuda_std_20)
 
 target_compile_options(
-  cudf_datagen PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS}>"
+  cudf_datagen PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>"
                       "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>"
 )
 
@@ -36,7 +39,7 @@ add_library(
 target_compile_features(ndsh_data_generator PUBLIC cxx_std_20 cuda_std_20)
 
 target_compile_options(
-  ndsh_data_generator PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS}>"
+  ndsh_data_generator PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>"
                              "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>"
 )
 
@@ -62,7 +65,7 @@ add_library(
 )
 target_link_libraries(
   cudf_benchmark_common PRIVATE cudf_datagen $<TARGET_NAME_IF_EXISTS:conda_env> GTest::gmock
-                                GTest::gtest
+                                GTest::gtest kvikio::kvikio
 )
 
 add_custom_command(
@@ -99,8 +102,8 @@ endfunction()
 # ##################################################################################################
 # * copying benchmarks ----------------------------------------------------------------------------
 ConfigureNVBench(
-  COPYING_NVBENCH copying/concatenate.cpp copying/copy_if_else.cpp copying/gather.cu
-  copying/scatter.cu copying/shift.cpp
+  COPYING_NVBENCH copying/concatenate.cpp copying/copy_if_else.cpp copying/gather.cpp
+  copying/scatter.cpp copying/shift.cpp copying/pack.cpp
 )
 
 # ##################################################################################################
@@ -135,30 +138,32 @@ ConfigureNVBench(FILTER_NVBENCH filter/minmax_filter.cpp)
 # * stream_compaction benchmark -------------------------------------------------------------------
 ConfigureNVBench(
   STREAM_COMPACTION_NVBENCH
-  stream_compaction/apply_boolean_mask.cpp
+  stream_compaction/apply_mask.cpp
   stream_compaction/distinct.cpp
-  stream_compaction/distinct_count.cpp
   stream_compaction/stable_distinct.cpp
   stream_compaction/stream_compaction_common.cpp
   stream_compaction/unique.cpp
-  stream_compaction/unique_count.cpp
 )
 
 # ##################################################################################################
 # * join benchmark --------------------------------------------------------------------------------
 ConfigureNVBench(
   JOIN_NVBENCH
-  join/left_join.cu
-  join/conditional_join.cu
-  join/join.cu
-  join/mixed_join.cu
-  join/distinct_join.cu
-  join/filter_join_indices.cu
-  join/multiplicity_join.cu
-  join/sort_merge_join.cu
-  join/join_heuristics.cu
-  join/key_remap_build.cu
+  join/conditional_join.cpp
+  join/direct_join.cu
+  join/distinct_join.cpp
+  join/filter_join_indices.cpp
+  join/filter_join_indices_jit.cpp
+  join/generate_input_tables.cu
+  join/join.cpp
+  join/join_dictionary.cpp
+  join/join_heuristics.cpp
   join/join_on_int32.cu
+  join/key_remap_build.cpp
+  join/left_join.cpp
+  join/mixed_join.cpp
+  join/multiplicity_join.cpp
+  join/sort_merge_join.cpp
 )
 
 # ##################################################################################################
@@ -188,11 +193,6 @@ ConfigureNVBench(
 )
 
 # ##################################################################################################
-# * structs benchmark
-# --------------------------------------------------------------------------------
-ConfigureNVBench(STRUCT_CREATION_NVBENCH structs/create_structs.cpp)
-
-# ##################################################################################################
 # * quantiles benchmark
 # --------------------------------------------------------------------------------
 ConfigureNVBench(QUANTILES_NVBENCH quantiles/quantiles.cpp)
@@ -212,6 +212,7 @@ ConfigureNVBench(
   REDUCTION_NVBENCH
   reduction/anyall.cpp
   reduction/dictionary.cpp
+  reduction/distinct_count.cpp
   reduction/histogram.cpp
   reduction/minmax.cpp
   reduction/rank.cpp
@@ -219,6 +220,7 @@ ConfigureNVBench(
   reduction/scan.cpp
   reduction/scan_structs.cpp
   reduction/segmented_reduce.cpp
+  reduction/unique_count.cpp
 )
 
 # ##################################################################################################
@@ -247,11 +249,36 @@ ConfigureNVBench(
   groupby/group_struct_keys.cpp
   groupby/group_struct_values.cpp
   groupby/group_sum.cpp
+  groupby/streaming_groupby.cpp
 )
 
 # ##################################################################################################
 # * hashing benchmark -----------------------------------------------------------------------------
 ConfigureNVBench(HASHING_NVBENCH hashing/hash.cpp hashing/partition.cpp)
+
+# ##################################################################################################
+# * hybrid scan filters benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(
+  HYBRID_SCAN_FILTERS_NVBENCH io/parquet/experimental/hybrid_scan/dict_page_filter.cpp
+  io/parquet/experimental/hybrid_scan/page_stats_row_mask.cpp
+)
+
+# ##################################################################################################
+# * hybrid scan metadata benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(
+  HYBRID_SCAN_METADATA_NVBENCH io/parquet/experimental/hybrid_scan/hybrid_scan_metadata.cpp
+  io/parquet/parquet_common.cpp
+)
+
+# ##################################################################################################
+# * hybrid scan multithread benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(
+  HYBRID_SCAN_MULTITHREAD_NVBENCH io/parquet/experimental/hybrid_scan/hybrid_scan_multithread.cpp
+  io/parquet/experimental/hybrid_scan/hybrid_scan_composer.cpp
+)
 
 # ##################################################################################################
 # * interop benchmark ------------------------------------------------------------------------------
@@ -266,23 +293,51 @@ ConfigureNVBench(
 )
 
 # ##################################################################################################
-# * null_mask benchmark ---------------------------------------------------------------------------
-ConfigureNVBench(NULLMASK_NVBENCH bitmask/set_null_mask.cpp)
-
-# ##################################################################################################
 # * bitmask benchmark ---------------------------------------------------------------------------
-ConfigureNVBench(BITMASK_NVBENCH bitmask/bitmask_and.cu)
+ConfigureNVBench(
+  BITMASK_NVBENCH bitmask/bitmask_and.cpp bitmask/mask_to_bools.cpp bitmask/set_null_mask.cpp
+)
 
 # ##################################################################################################
 # * parquet writer benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
   PARQUET_WRITER_NVBENCH io/parquet/parquet_writer.cpp io/parquet/parquet_writer_chunks.cpp
+  io/parquet/parquet_writer_dict.cpp
 )
 
 # ##################################################################################################
 # * parquet reader benchmark ----------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_options.cpp
+  PARQUET_READER_NVBENCH io/parquet/parquet_reader_input.cpp io/parquet/parquet_reader_encoding.cpp
+  io/parquet/parquet_reader_options.cpp io/parquet/parquet_common.cpp
+)
+
+# ##################################################################################################
+# * parquet reader chunks benchmark
+# ------------------------------------------------------------------
+ConfigureNVBench(
+  PARQUET_READER_CHUNKS_NVBENCH io/parquet/parquet_reader_chunks.cpp io/parquet/parquet_common.cpp
+)
+
+# ##################################################################################################
+# * parquet reader compressed benchmark ------------------------------------------------------------
+ConfigureNVBench(
+  PARQUET_READER_COMPRESSED_NVBENCH io/parquet/parquet_reader_compressed.cpp
+  io/parquet/parquet_common.cpp
+)
+
+# ##################################################################################################
+# * parquet reader strings benchmark
+# ------------------------------------------------------------------
+ConfigureNVBench(
+  PARQUET_READER_STRINGS_NVBENCH io/parquet/parquet_reader_strings.cpp
+  io/parquet/parquet_common.cpp
+)
+
+# ##################################################################################################
+# * parquet reader wide benchmark ------------------------------------------------------------------
+ConfigureNVBench(
+  PARQUET_READER_WIDE_NVBENCH io/parquet/parquet_reader_wide.cpp io/parquet/parquet_common.cpp
 )
 
 # ##################################################################################################
@@ -291,17 +346,16 @@ ConfigureNVBench(
 ConfigureNVBench(PARQUET_READER_FILTER_NVBENCH io/parquet/parquet_reader_filter.cpp)
 
 # ##################################################################################################
-# * parquet experimental reader benchmark
+# * parquet reader metadata benchmark
 # ----------------------------------------------------------------------
-ConfigureNVBench(
-  PARQUET_EXPERIMENTAL_READER_NVBENCH io/parquet/experimental/parquet_dictionary_page_filter.cpp
-)
+ConfigureNVBench(PARQUET_READER_METADATA_NVBENCH io/parquet/parquet_reader_metadata.cpp)
 
 # ##################################################################################################
 # * parquet deletion vector benchmark
 # ----------------------------------------------------------------------
 ConfigureNVBench(
-  PARQUET_DELETION_VECTORS_NVBENCH io/parquet/experimental/parquet_deletion_vectors.cpp
+  PARQUET_DELETION_VECTORS_NVBENCH
+  io/parquet/experimental/deletion_vectors/parquet_deletion_vectors.cpp
 )
 target_compile_definitions(
   PARQUET_DELETION_VECTORS_NVBENCH
@@ -309,6 +363,11 @@ target_compile_definitions(
           CROARING_COMPILER_SUPPORTS_AVX512=0
 )
 target_link_libraries(PARQUET_DELETION_VECTORS_NVBENCH PRIVATE roaring)
+
+# ##################################################################################################
+# * parquet variant extract benchmark
+# ----------------------------------------------------------------------
+ConfigureNVBench(VARIANT_NVBENCH io/parquet/experimental/variant/extract.cpp)
 
 # ##################################################################################################
 # * parquet multithread reader benchmark
@@ -348,19 +407,39 @@ ConfigureNVBench(CSV_WRITER_NVBENCH io/csv/csv_writer.cpp)
 
 # ##################################################################################################
 # * ast benchmark ---------------------------------------------------------------------------------
-ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp)
+ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp ast/transform_fp64.cpp)
+
+# ##################################################################################################
+# * LTO Fragments ----------------------------------------------------------------------------
+rtcx_add_embed(cudf_benchmark_fragments)
+add_fragment(cudf_benchmark_fragments FRAGMENT add_f32 SOURCE binaryop/fragments/add_f32.cu)
+add_fragment(cudf_benchmark_fragments FRAGMENT mul_f32 SOURCE binaryop/fragments/mul_f32.cu)
+rtcx_embed(
+  cudf_benchmark_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
+)
 
 # ##################################################################################################
 # * binaryop benchmark ----------------------------------------------------------------------------
 ConfigureNVBench(
   BINARYOP_NVBENCH binaryop/binaryop.cpp binaryop/compiled_binaryop.cpp binaryop/polynomials.cpp
+  ${cudf_benchmark_fragments_SOURCE_DIR}/cudf_benchmark_fragments.s
 )
+target_include_directories(BINARYOP_NVBENCH PRIVATE ${cudf_benchmark_fragments_SOURCE_DIR})
+add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 
 # ##################################################################################################
 # * transform benchmark
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
-  TRANSFORM_NVBENCH transform/encode.cpp transform/polynomials.cpp transform/transform.cpp
+  TRANSFORM_NVBENCH
+  transform/encode.cpp
+  transform/is_null.cpp
+  transform/one_hot_encode.cpp
+  transform/polynomials.cpp
+  transform/polynomials_concurrent.cpp
+  transform/transform.cpp
+  transform/transform_dispatch.cpp
+  transform/transform_widetable.cpp
 )
 
 # ##################################################################################################
@@ -377,7 +456,9 @@ ConfigureNVBench(
   text/replace.cpp
   text/subword.cpp
   text/tokenize.cpp
+  text/unicode_normalize.cpp
   text/vocab.cpp
+  text/byte_pair_encoding.cpp
 )
 
 # ##################################################################################################
@@ -450,8 +531,13 @@ ConfigureNVBench(RESHAPE_NVBENCH reshape/interleave.cpp reshape/table_to_array.c
 # * rolling benchmark
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
-  ROLLING_NVBENCH rolling/grouped_range_rolling_sum.cu rolling/grouped_rolling_sum.cpp
-  rolling/range_rolling_sum.cu rolling/rolling_sum.cpp
+  ROLLING_NVBENCH
+  rolling/grouped_range_rolling_sum.cu
+  rolling/grouped_rolling_sum.cpp
+  rolling/multi_orderby_range_rolling_sum.cpp
+  rolling/range_rolling_column_bounds_sum.cpp
+  rolling/range_rolling_sum.cu
+  rolling/rolling_sum.cpp
 )
 
 # ##################################################################################################
@@ -459,6 +545,7 @@ ConfigureNVBench(
 # ---------------------------------------------------------------------------------
 ConfigureNVBench(
   DICTIONARY_NVBENCH dictionary/encode.cpp dictionary/set_keys.cpp dictionary/sort.cpp
+  dictionary/concatenate.cpp dictionary/match_keys.cpp
 )
 
 add_custom_target(

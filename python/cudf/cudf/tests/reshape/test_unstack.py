@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -14,20 +14,10 @@ from cudf.testing import assert_eq
     "level",
     [
         0,
-        pytest.param(
-            1,
-            marks=pytest.mark.xfail(
-                reason="Categorical column indexes not supported"
-            ),
-        ),
+        1,
         2,
         "foo",
-        pytest.param(
-            "bar",
-            marks=pytest.mark.xfail(
-                reason="Categorical column indexes not supported"
-            ),
-        ),
+        "bar",
         "baz",
         [],
         pytest.param(
@@ -75,12 +65,7 @@ def test_unstack_multiindex(level):
     [
         pd.Index(range(0, 5), name=None),
         pd.Index(range(0, 5), name="row_index"),
-        pytest.param(
-            pd.CategoricalIndex(["d", "e", "f", "g", "h"]),
-            marks=pytest.mark.xfail(
-                reason="Categorical column indexes not supported"
-            ),
-        ),
+        pd.CategoricalIndex(["d", "e", "f", "g", "h"]),
     ],
 )
 @pytest.mark.parametrize(

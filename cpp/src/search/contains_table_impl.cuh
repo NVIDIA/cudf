@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,12 +15,13 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/functional>
+#include <cuda/iterator>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -92,8 +93,8 @@ struct comparator_adapter {
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return A pair of pointer to the output bitmask and the buffer containing the bitmask
  */
-std::pair<rmm::device_buffer, bitmask_type const*> build_row_bitmask(table_view const& input,
-                                                                     rmm::cuda_stream_view stream);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
+  table_view const& input, cuda::stream_ref stream);
 
 /**
  * @brief Helper function to perform the contains operation using a hash set
@@ -120,7 +121,7 @@ void perform_contains(table_view const& haystack,
                       Comparator const& d_equal,
                       ProbingScheme const& probing_scheme,
                       rmm::device_uvector<bool>& contained,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   auto const haystack_iter = cudf::detail::make_counting_transform_iterator(
     size_type{0}, cuda::proclaim_return_type<rhs_index_type>([] __device__(auto idx) {
@@ -132,7 +133,7 @@ void perform_contains(table_view const& haystack,
       return lhs_index_type{idx};
     }));
 
-  auto set = cuco::static_set{cuco::extent{haystack.num_rows()},
+  auto set = cuco::static_set{cuco::extent{static_cast<std::size_t>(haystack.num_rows())},
                               cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
                               cuco::empty_key{rhs_index_type{-1}},
                               d_equal,
@@ -140,7 +141,7 @@ void perform_contains(table_view const& haystack,
                               {},
                               {},
                               rmm::mr::polymorphic_allocator<char>{},
-                              stream.value()};
+                              stream.get()};
 
   if (haystack_has_nulls && compare_nulls == null_equality::UNEQUAL) {
     auto const bitmask_buffer_and_ptr = build_row_bitmask(haystack, stream);
@@ -148,15 +149,15 @@ void perform_contains(table_view const& haystack,
 
     // If the haystack table has nulls but they are compared unequal, don't insert them.
     // Otherwise, it was known to cause performance issue:
-    // - https://github.com/rapidsai/cudf/pull/6943
-    // - https://github.com/rapidsai/cudf/pull/8277
+    // - https://github.com/NVIDIA/cudf/pull/6943
+    // - https://github.com/NVIDIA/cudf/pull/8277
     set.insert_if_async(haystack_iter,
                         haystack_iter + haystack.num_rows(),
-                        thrust::counting_iterator<size_type>(0),  // stencil
+                        cuda::counting_iterator<size_type>{0},  // stencil
                         row_is_valid{row_bitmask_ptr},
-                        stream.value());
+                        stream.get());
   } else {
-    set.insert_async(haystack_iter, haystack_iter + haystack.num_rows(), stream.value());
+    set.insert_async(haystack_iter, haystack_iter + haystack.num_rows(), stream.get());
   }
 
   if (needles_has_nulls && compare_nulls == null_equality::UNEQUAL) {
@@ -164,13 +165,13 @@ void perform_contains(table_view const& haystack,
     auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
     set.contains_if_async(needles_iter,
                           needles_iter + needles.num_rows(),
-                          thrust::counting_iterator<size_type>(0),  // stencil
+                          cuda::counting_iterator<size_type>{0},  // stencil
                           row_is_valid{row_bitmask_ptr},
                           contained.begin(),
-                          stream.value());
+                          stream.get());
   } else {
     set.contains_async(
-      needles_iter, needles_iter + needles.num_rows(), contained.begin(), stream.value());
+      needles_iter, needles_iter + needles.num_rows(), contained.begin(), stream.get());
   }
 }
 
@@ -206,7 +207,7 @@ void dispatch_nan_comparator(table_view const& haystack,
                              cudf::detail::row::equality::two_table_comparator two_table_equal,
                              Hasher const& d_hasher,
                              rmm::device_uvector<bool>& contained,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   // Distinguish probing scheme CG sizes between nested and flat types for better performance
   auto const probing_scheme = [&]() {

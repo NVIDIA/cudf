@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,13 +22,12 @@
 
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/atomic>
-#include <cuda/std/type_traits>
-#include <cuda/utility>
+#include <cuda/std/limits>
 
 namespace cudf {
 namespace detail {
@@ -56,14 +55,14 @@ struct genericAtomicOperationImpl {
 template <typename T>
 struct genericAtomicOperationImpl<T, DeviceSum> {
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceSum op)
-    requires(cuda::std::is_arithmetic_v<T> && !cuda::std::is_same_v<T, bool>)
+    requires(cudf::concepts::arithmetic_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     return atomic_addr.fetch_add(update_value, cuda::memory_order_relaxed);
   }
 
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceSum op)
-    requires(!cuda::std::is_arithmetic_v<T> || cuda::std::is_same_v<T, bool>)
+    requires(not cudf::concepts::arithmetic_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     T old_value = atomic_addr.load(cuda::memory_order_relaxed);
@@ -80,14 +79,14 @@ struct genericAtomicOperationImpl<T, DeviceSum> {
 template <typename T>
 struct genericAtomicOperationImpl<T, DeviceMin> {
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMin op)
-    requires(cuda::std::is_integral_v<T> && !cuda::std::is_same_v<T, bool>)
+    requires(cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     return atomic_addr.fetch_min(update_value, cuda::memory_order_relaxed);
   }
 
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMin op)
-    requires(!cuda::std::is_integral_v<T> || cuda::std::is_same_v<T, bool>)
+    requires(not cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     T old_value = atomic_addr.load(cuda::memory_order_relaxed);
@@ -104,14 +103,14 @@ struct genericAtomicOperationImpl<T, DeviceMin> {
 template <typename T>
 struct genericAtomicOperationImpl<T, DeviceMax> {
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMax op)
-    requires(cuda::std::is_integral_v<T> && !cuda::std::is_same_v<T, bool>)
+    requires(cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     return atomic_addr.fetch_max(update_value, cuda::memory_order_relaxed);
   }
 
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMax op)
-    requires(!cuda::std::is_integral_v<T> || cuda::std::is_same_v<T, bool>)
+    requires(not cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     T old_value = atomic_addr.load(cuda::memory_order_relaxed);
@@ -150,23 +149,21 @@ struct typesAtomicCASImpl {
  * int8_t, int16_t, int32_t, int64_t, float, double
  *
  * @param address The address of old value in global or shared memory
- * @param val The value to be computed
+ * @param update_value The value to be computed
  * @param op  The binary operator used for compute
  *
  * @returns The old value at `address`
  */
-template <typename T, typename BinaryOp>
+template <cudf::concepts::arithmetic T, typename BinaryOp>
 T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_value, BinaryOp op)
-  requires(cudf::is_numeric<T>())
 {
   auto fun = cudf::detail::genericAtomicOperationImpl<T, BinaryOp>{};
   return T(fun(address, update_value, op));
 }
 
 // specialization for cudf::detail::timestamp types
-template <typename T, typename BinaryOp>
+template <cudf::concepts::timestamp T, typename BinaryOp>
 T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_value, BinaryOp op)
-  requires(cudf::is_timestamp<T>())
 {
   using R = typename T::rep;
   // Unwrap the input timestamp to its underlying duration value representation.
@@ -177,9 +174,8 @@ T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_
 }
 
 // specialization for cudf::detail::duration types
-template <typename T, typename BinaryOp>
+template <cudf::concepts::duration T, typename BinaryOp>
 T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_value, BinaryOp op)
-  requires(cudf::is_duration<T>())
 {
   using R = typename T::rep;
   // Unwrap the input duration to its underlying duration value representation.
@@ -356,9 +352,9 @@ __device__ __forceinline__ uint64_t calculate_carry_64(uint64_t old_val,
 /**
  * @brief Atomic addition for __int128_t with architecture-specific optimization
  *
- * Uses native 128-bit CAS on Hopper+ GPUs (compute capability 9.0+) for optimal
- * performance. Falls back to two 64-bit atomic CAS operations with carry propagation
- * on older GPU architectures.
+ * Uses native 128-bit CAS on Hopper+ GPUs for optimal performance, except for CUDA 13.0 on
+ * Blackwell. Other configurations fall back to two 64-bit atomic additions with carry
+ * propagation.
  *
  * @param address Pointer to the __int128_t value
  * @param val Value to add
@@ -366,7 +362,10 @@ __device__ __forceinline__ uint64_t calculate_carry_64(uint64_t old_val,
  */
 __forceinline__ __device__ __int128_t atomic_add(__int128_t* address, __int128_t val)
 {
-#if __CUDA_ARCH__ >= 900
+  // CUDA 13.0 miscompiles the native 128-bit CAS on Blackwell; the fix is confirmed in 13.3, so
+  // gate off all 13.x before 13.3. See https://github.com/NVIDIA/cudf/issues/23150.
+#if __CUDA_ARCH__ >= 900 && \
+  !(__CUDA_ARCH__ >= 1000 && __CUDACC_VER_MAJOR__ == 13 && __CUDACC_VER_MINOR__ < 3)
   __int128_t expected, desired;
 
   do {
@@ -380,30 +379,15 @@ __forceinline__ __device__ __int128_t atomic_add(__int128_t* address, __int128_t
   __uint128_t const add_val_unsigned = static_cast<__uint128_t>(val);
 
   // Split the 128-bit add value into two 64-bit parts
-  uint64_t const add_low  = static_cast<uint64_t>(add_val_unsigned);
-  uint64_t const add_high = static_cast<uint64_t>(add_val_unsigned >> 64);
+  auto const add_low  = static_cast<uint64_t>(add_val_unsigned);
+  auto const add_high = static_cast<uint64_t>(add_val_unsigned >> 64);
 
-  uint64_t carry = 0;
   uint64_t old_parts[2];
+  old_parts[0]     = atomicAdd(reinterpret_cast<unsigned long long*>(target_ptr), add_low);
+  auto const carry = calculate_carry_64(old_parts[0], add_low, 0);
+  old_parts[1] = atomicAdd(reinterpret_cast<unsigned long long*>(target_ptr + 1), add_high + carry);
 
-  cuda::static_for<0, 2>([&](auto i) {
-    uint64_t const current_add = (i == 0) ? add_low : add_high;
-    uint64_t expected_part, new_part;
-
-    cuda::atomic_ref<uint64_t, cuda::thread_scope_device> atomic_part{target_ptr[i]};
-
-    do {
-      expected_part = atomic_part.load();
-      new_part      = expected_part + current_add + carry;
-    } while (
-      !atomic_part.compare_exchange_weak(expected_part, new_part, cuda::memory_order_relaxed));
-
-    old_parts[i] = expected_part;
-    carry        = calculate_carry_64(expected_part, current_add, carry);
-  });
-
-  __uint128_t const old_val_unsigned =
-    (static_cast<__uint128_t>(old_parts[1]) << 64) | old_parts[0];
+  auto const old_val_unsigned = (static_cast<__uint128_t>(old_parts[1]) << 64) | old_parts[0];
   return static_cast<__int128_t>(old_val_unsigned);
 #endif
 }

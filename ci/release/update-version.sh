@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 ########################
 # cuDF Version Updater #
@@ -73,9 +73,12 @@ NEXT_MINOR=$(echo "$NEXT_FULL_TAG" | awk '{split($0, a, "."); print a[2]}')
 NEXT_PATCH=$(echo "$NEXT_FULL_TAG" | awk '{split($0, a, "."); print a[3]}')
 NEXT_SHORT_TAG=${NEXT_MAJOR}.${NEXT_MINOR}
 
+NEXT_UCXX_TAG="$(curl -s https://version.gpuci.io/rapids/"${NEXT_SHORT_TAG}")"
+
 # Need to distutils-normalize the versions for some use cases
 NEXT_SHORT_TAG_PEP440=$(python -c "from packaging.version import Version; print(Version('${NEXT_SHORT_TAG}'))")
 PATCH_PEP440=$(python -c "from packaging.version import Version; print(Version('${NEXT_PATCH}'))")
+NEXT_UCXX_SHORT_TAG_PEP440=$(python -c "from packaging.version import Version; print(Version('${NEXT_UCXX_TAG}'))")
 
 # Set branch references based on RUN_CONTEXT
 if [[ "${RUN_CONTEXT}" == "main" ]]; then
@@ -93,15 +96,59 @@ function sed_runner() {
     sed -i.bak ''"$1"'' "$2" && rm -f "${2}".bak
 }
 
+# latest numba-cuda upper bound
+NUMBA_CUDA_JSON=$(curl -sL https://pypi.org/pypi/numba-cuda/json) || true
+if [[ -n "$NUMBA_CUDA_JSON" ]]; then
+  NUMBA_CUDA_VERSIONS=$(echo "$NUMBA_CUDA_JSON" | python -c "
+import json, sys
+from packaging.version import Version
+try:
+    data = json.load(sys.stdin)
+    releases = [v for v in data.get('releases', []) if not Version(v).is_prerelease]
+    latest = max(releases, key=lambda v: Version(v)) if releases else None
+    if not latest:
+        sys.exit(1)
+    v = Version(latest)
+    r = v.release
+    # exclusive upper bound = next minor (e.g. 0.23.1 -> 0.24.0)
+    upper = '.'.join(str(x) for x in (r[0], r[1] + 1, 0))
+    print(latest, upper)
+except Exception:
+    sys.exit(1)
+") || NUMBA_CUDA_VERSIONS=""
+  if [[ -n "$NUMBA_CUDA_VERSIONS" ]]; then
+    LATEST_NUMBA_CUDA="${NUMBA_CUDA_VERSIONS%% *}"
+    NUMBA_CUDA_UPPER="${NUMBA_CUDA_VERSIONS##* }"
+    CURRENT_LOWER=$(grep -oE 'numba-cuda>=[0-9]+\.[0-9]+\.[0-9][0-9.]*' dependencies.yaml 2>/dev/null | head -1 | cut -d= -f2)
+    echo "Updating numba-cuda: lower bound ${CURRENT_LOWER}, upper bound <${NUMBA_CUDA_UPPER} (latest release: ${LATEST_NUMBA_CUDA})"
+    NUMBA_CUDA_SPEC=">=${CURRENT_LOWER},<${NUMBA_CUDA_UPPER}"
+    for FILE in dependencies.yaml conda/recipes/cudf/recipe.yaml; do
+      for f in $FILE; do
+        [[ -f "$f" ]] || continue
+        sed_runner "s/numba-cuda>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda${NUMBA_CUDA_SPEC}/g" "$f"
+        sed_runner "s/numba-cuda\[cu12\]>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda[cu12]${NUMBA_CUDA_SPEC}/g" "$f"
+        sed_runner "s/numba-cuda\[cu13\]>=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda[cu13]${NUMBA_CUDA_SPEC}/g" "$f"
+        sed_runner "s/numba-cuda >=[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\(,<[0-9]\+\.[0-9]\+\.[0-9][0-9.]*\)\?/numba-cuda ${NUMBA_CUDA_SPEC}/g" "$f"
+      done
+    done
+  else
+    echo "Warning: Could not determine latest numba-cuda version; leaving existing pins unchanged"
+  fi
+else
+  echo "Warning: Could not fetch numba-cuda metadata from PyPI; leaving existing pins unchanged"
+fi
+
 # Centralized version file update
 echo "${NEXT_FULL_TAG}" > VERSION
+# The cudf version file must be a copy, see https://github.com/NVIDIA/cudf/pull/18198
 echo "${NEXT_FULL_TAG}" > python/cudf/cudf/VERSION
 echo "${RAPIDS_BRANCH_NAME}" > RAPIDS_BRANCH
 
 DEPENDENCIES=(
   cudf
-  cudf_kafka
   cudf-polars
+  cudf-streaming
+  cudf_kafka
   cugraph
   cuml
   custreamz
@@ -110,21 +157,39 @@ DEPENDENCIES=(
   kvikio
   libcudf
   libcudf-example
-  libcudf_kafka
+  libcudf-streaming
+  libcudf-streaming-tests
   libcudf-tests
+  libcudf_kafka
   libkvikio
+  librapidsmpf
   librmm
   pylibcudf
   rapids-dask-dependency
   rapidsmpf
   rmm
 )
+
+UCXX_DEPENDENCIES=(
+  libucxx
+  ucxx
+)
+
 for DEP in "${DEPENDENCIES[@]}"; do
   for FILE in dependencies.yaml conda/environments/*.yaml python/cudf/cudf_pandas_tests/third_party_integration_tests/dependencies.yaml; do
     sed_runner "/-.* ${DEP}\(-cu[[:digit:]]\{2\}\)\{0,1\}\(\[.*\]\)\{0,1\}==/ s/==.*/==${NEXT_SHORT_TAG_PEP440}.*,>=0.0.0a0/g" "${FILE}"
   done
   for FILE in python/*/pyproject.toml; do
     sed_runner "/\"${DEP}==/ s/==.*\"/==${NEXT_SHORT_TAG_PEP440}.*,>=0.0.0a0\"/g" "${FILE}"
+  done
+done
+
+for DEP in "${UCXX_DEPENDENCIES[@]}"; do
+  for FILE in dependencies.yaml conda/environments/*.yaml python/cudf/cudf_pandas_tests/third_party_integration_tests/dependencies.yaml; do
+    sed_runner "/-.* ${DEP}\(-cu[[:digit:]]\{2\}\)\{0,1\}==/ s/==.*/==${NEXT_UCXX_SHORT_TAG_PEP440}.*,>=0.0.0a0/g" "${FILE}"
+  done
+  for FILE in python/*/pyproject.toml; do
+    sed_runner "/\"${DEP}\(-cu[[:digit:]]\{2\}\)\{0,1\}==/ s/==.*\"/==${NEXT_UCXX_SHORT_TAG_PEP440}\.*,>=0.0.0a0\"/g" "${FILE}"
   done
 done
 
@@ -142,6 +207,9 @@ sed_runner "s|/tree/\\bmain\\b/|/tree/${RAPIDS_BRANCH_NAME}/|g" python/cudf_pola
 sed_runner "s|CUDF_TAG release/[0-9]\+\.[0-9]\+|CUDF_TAG ${RAPIDS_BRANCH_NAME}|g" cpp/examples/versions.cmake
 sed_runner "s|CUDF_TAG \\bmain\\b|CUDF_TAG ${RAPIDS_BRANCH_NAME}|g" cpp/examples/versions.cmake
 
+# .pre-commit-config.yaml
+sed_runner "/rmm-cu[0-9]*==/ s/==.*\*,/==${NEXT_SHORT_TAG_PEP440}.*,/g" .pre-commit-config.yaml
+
 # CI files
 for FILE in .github/workflows/*.yaml .github/workflows/*.yml; do
   sed_runner "/shared-workflows/ s|@.*|@${WORKFLOW_BRANCH_REF}|g" "${FILE}"
@@ -153,7 +221,11 @@ done
 # Java files
 NEXT_FULL_JAVA_TAG="${NEXT_SHORT_TAG}.${PATCH_PEP440}-SNAPSHOT"
 sed_runner "s|<version>.*-SNAPSHOT</version>|<version>${NEXT_FULL_JAVA_TAG}</version>|g" java/pom.xml
-sed_runner "s|cudf-.*-SNAPSHOT|cudf-${NEXT_FULL_JAVA_TAG}|g" java/ci/README.md
+# Match only concrete CalVer examples. A broad wildcard can start at a
+# <CUDF_VERSION> placeholder and consume punctuation and prose up to a later
+# -SNAPSHOT, corrupting the documentation and leaving delimiters unbalanced.
+sed_runner "s|cudf-[0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]*-SNAPSHOT|cudf-${NEXT_FULL_JAVA_TAG}|g" java/ci/README.md
+sed_runner "s|/ai/rapids/cudf/[0-9]\+\.[0-9]\+\.[0-9]\+-SNAPSHOT/|/ai/rapids/cudf/${NEXT_FULL_JAVA_TAG}/|g" java/ci/README.md
 
 # Java documentation references
 sed_runner "s|release/[0-9]\+\.[0-9]\+|${RAPIDS_BRANCH_NAME}|g" java/ci/README.md
@@ -169,6 +241,7 @@ sed_runner "s|/blob/\\bmain\\b/|/blob/${RAPIDS_BRANCH_NAME}/|g" python/custreamz
 # .devcontainer files
 find .devcontainer/ -type f -name devcontainer.json -print0 | while IFS= read -r -d '' filename; do
     sed_runner "s@rapidsai/devcontainers:[0-9.]*@rapidsai/devcontainers:${NEXT_SHORT_TAG}@g" "${filename}"
+    sed_runner "s@ghcr.io/nvidia/cudf/devcontainer:[0-9.]*@ghcr.io/nvidia/cudf/devcontainer:${NEXT_SHORT_TAG}@g" "${filename}"
     sed_runner "s@rapidsai/devcontainers/features/cuda:[0-9.]*@rapidsai/devcontainers/features/cuda:${NEXT_SHORT_TAG_PEP440}@" "${filename}"
     sed_runner "s@rapidsai/devcontainers/features/rapids-build-utils:[0-9.]*@rapidsai/devcontainers/features/rapids-build-utils:${NEXT_SHORT_TAG_PEP440}@" "${filename}"
     sed_runner "s@rapids-\${localWorkspaceFolderBasename}-[0-9.]*@rapids-\${localWorkspaceFolderBasename}-${NEXT_SHORT_TAG}@g" "${filename}"

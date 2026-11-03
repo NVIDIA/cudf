@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,10 +13,10 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf::strings::detail {
@@ -81,7 +81,7 @@ struct shift_chars_fn {
 std::unique_ptr<column> shift(strings_column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   auto d_fill_str = static_cast<string_scalar const&>(fill_value).value(stream);
@@ -108,15 +108,18 @@ std::unique_ptr<column> shift(strings_column_view const& input,
   auto d_chars = chars.data();
 
   // run kernel to shift all the characters
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::counting_iterator<int64_t>(0),
-                    thrust::counting_iterator<int64_t>(total_bytes),
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<int64_t>{0},
+                    cuda::counting_iterator<int64_t>{total_bytes},
                     d_chars,
                     shift_chars_fn{*d_input, d_fill_str, shift_offset});
 
   // caller sets the null-mask
-  return make_strings_column(
-    input.size(), std::move(offsets_column), chars.release(), 0, rmm::device_buffer{});
+  return make_strings_column(input.size(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace cudf::strings::detail

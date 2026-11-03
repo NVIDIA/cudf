@@ -1,13 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
-from rmm.pylibrmm.stream import Stream
 
 from pylibcudf.column import Column
 from pylibcudf.scalar import Scalar
+from pylibcudf.utils import CudaStreamLike
 
 class StringCharacterTypes(IntEnum):
     DECIMAL = ...
@@ -25,7 +25,7 @@ def all_characters_of_type(
     source_strings: Column,
     types: StringCharacterTypes,
     verify_types: StringCharacterTypes,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def filter_characters_of_type(
@@ -33,6 +33,9 @@ def filter_characters_of_type(
     types_to_remove: StringCharacterTypes,
     replacement: Scalar,
     types_to_keep: StringCharacterTypes,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
+def get_character_flags_table_ptr(
+    stream: CudaStreamLike | None = None,
+) -> int: ...

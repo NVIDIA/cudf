@@ -10,6 +10,7 @@
 
 #include <cudf/detail/offsets_iterator_factory.cuh>
 
+#include <cuda/iterator>
 #include <thrust/binary_search.h>
 #include <thrust/gather.h>
 #include <thrust/host_vector.h>
@@ -117,8 +118,8 @@ TYPED_TEST(OffsetalatorTest, device_offsetalator)
   auto d_input = cudf::column_device_view::create(input, stream);
 
   thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::counting_iterator<int>(0),
-                    thrust::counting_iterator<int>(input.size()),
+                    cuda::counting_iterator<int>{0},
+                    cuda::counting_iterator<int>{input.size()},
                     output.begin<int32_t>(),
                     device_functor_fn{*d_input});
 

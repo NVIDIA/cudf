@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,33 +7,32 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/algorithm.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
-#include <cudf/strings/detail/replace.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/detail/utilities.cuh>
+#include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/replace.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
-#include <thrust/copy.h>
+#include <cuda/stream>
+#include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -126,6 +125,7 @@ struct replace_multi_parallel_fn {
    *
    * @param idx Index of the row in d_strings to be processed
    * @param d_positions Positions of the targets found in the chars column
+   * @param d_indices Indices into the targets array
    * @param d_targets_offsets Offsets identify which target positions go with the current string
    * @return Number of substrings resulting from the replace operations on this row
    */
@@ -178,6 +178,7 @@ struct replace_multi_parallel_fn {
    * @param idx Index of the row in d_strings
    * @param d_offsets Offsets to identify where to store the results of the replace for this string
    * @param d_positions The target positions found in the chars column
+   * @param d_indices Indices into the targets array
    * @param d_targets_offsets The offsets to identify which target positions go with this string
    * @param d_all_strings The output of all the produced string segments
    * @return The size in bytes of the output string for this row
@@ -303,7 +304,7 @@ struct copy_if_fn {
 std::unique_ptr<column> replace_character_parallel(strings_column_view const& input,
                                                    strings_column_view const& targets,
                                                    strings_column_view const& repls,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
@@ -327,28 +328,36 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
 
   // Count the number of targets in the entire column.
   // Note this may over-count in the case where a target spans adjacent strings.
-  cudf::detail::device_scalar<int64_t> d_count(0, stream);
-  auto const num_blocks = util::div_rounding_up_safe(
-    util::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)), block_size);
-  count_targets<<<num_blocks, block_size, 0, stream.value()>>>(fn, chars_bytes, d_count.data());
+  cudf::detail::device_scalar<int64_t> d_count(0, stream, cudf::get_current_device_resource_ref());
+  auto const num_blocks = cudf::detail::div_rounding_up_safe(
+    cudf::detail::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)),
+    block_size);
+  count_targets<<<num_blocks, block_size, 0, stream.get()>>>(fn, chars_bytes, d_count.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   auto target_count = d_count.value(stream);
   // Create a vector of every target position in the chars column.
   // These may also include overlapping targets which will be resolved later.
-  auto targets_positions = rmm::device_uvector<int64_t>(target_count, stream);
-  auto targets_indices   = rmm::device_uvector<size_type>(target_count, stream);
+  // TODO: Replace these with resizable buffers once https://github.com/NVIDIA/cccl/issues/12051 is
+  // resolved
+  cuda::device_buffer<int64_t> targets_positions_storage(
+    stream, cudf::get_current_device_resource_ref(), target_count, cuda::no_init);
+  auto targets_positions = device_span<int64_t>{targets_positions_storage};
+  cuda::device_buffer<size_type> targets_indices_storage(
+    stream, cudf::get_current_device_resource_ref(), target_count, cuda::no_init);
+  auto targets_indices = device_span<size_type>{targets_indices_storage};
 
   // cudf::detail::make_counting_transform_iterator hardcodes size_type
-  auto const copy_itr = thrust::make_transform_iterator(thrust::counting_iterator<int64_t>(0),
-                                                        pair_generator{fn, chars_bytes});
-  auto const out_itr  = thrust::make_zip_iterator(
+  auto const copy_itr =
+    cuda::transform_iterator(cuda::counting_iterator<int64_t>{0}, pair_generator{fn, chars_bytes});
+  auto const out_itr = cuda::make_zip_iterator(
     cuda::std::make_tuple(targets_positions.begin(), targets_indices.begin()));
   auto const copy_end =
     cudf::detail::copy_if(copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream);
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(static_cast<int64_t>(std::distance(out_itr, copy_end)), target_count);
-  targets_positions.resize(target_count, stream);
-  targets_indices.resize(target_count, stream);
+  targets_positions      = targets_positions.first(target_count);
+  targets_indices        = targets_indices.first(target_count);
   auto d_positions       = targets_positions.data();
   auto d_targets_indices = targets_indices.data();
 
@@ -359,10 +368,11 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cudf::detail::offsetalator_factory::make_input_iterator(targets_offsets->view());
 
   // compute the number of string segments produced by replace in each string
-  auto counts = rmm::device_uvector<size_type>(strings_count, stream);
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::counting_iterator<size_type>(0),
-                    thrust::counting_iterator<size_type>(strings_count),
+  auto counts = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<size_type>{0},
+                    cuda::counting_iterator<size_type>{strings_count},
                     counts.begin(),
                     cuda::proclaim_return_type<size_type>(
                       [fn, d_positions, d_targets_indices, d_targets_offsets] __device__(
@@ -378,12 +388,13 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // build a vector of all the positions for all the strings
-  auto indices   = rmm::device_uvector<string_index_pair>(total_strings, stream);
+  auto indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
   auto d_indices = indices.data();
   auto d_sizes   = counts.data();  // reusing this vector to hold output sizes now
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator<size_type>(0),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
     strings_count,
     [fn,
      d_strings_offsets,
@@ -397,12 +408,11 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     });
 
   // use this utility to gather the string parts into a contiguous chars column
-  auto chars      = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto chars      = cudf::make_strings_column(indices, stream, mr);
   auto chars_data = chars->release().data;
 
   // create offsets from the sizes
-  offsets = std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(counts.begin(), counts.end(), stream, mr));
+  offsets = std::get<0>(cudf::strings::detail::make_offsets_child_column(counts, stream, mr));
 
   // build the strings columns from the chars and offsets
   return make_strings_column(strings_count,
@@ -472,7 +482,7 @@ struct replace_multi_fn {
 std::unique_ptr<column> replace_string_parallel(strings_column_view const& input,
                                                 strings_column_view const& targets,
                                                 strings_column_view const& repls,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   auto d_strings      = column_device_view::create(input.parent(), stream);
@@ -490,13 +500,17 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
 }
 
 }  // namespace
+}  // namespace detail
+
+// external API
 
 std::unique_ptr<column> replace_multiple(strings_column_view const& input,
                                          strings_column_view const& targets,
                                          strings_column_view const& repls,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
+  CUDF_FUNC_RANGE();
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   CUDF_EXPECTS(((targets.size() > 0) && (targets.null_count() == 0)),
                "Parameters targets must not be empty and must not have nulls");
@@ -507,23 +521,9 @@ std::unique_ptr<column> replace_multiple(strings_column_view const& input,
 
   return (input.size() == input.null_count() ||
           ((input.chars_size(stream) / (input.size() - input.null_count())) <
-           AVG_CHAR_BYTES_THRESHOLD))
-           ? replace_string_parallel(input, targets, repls, stream, mr)
-           : replace_character_parallel(input, targets, repls, stream, mr);
-}
-
-}  // namespace detail
-
-// external API
-
-std::unique_ptr<column> replace_multiple(strings_column_view const& strings,
-                                         strings_column_view const& targets,
-                                         strings_column_view const& repls,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::replace_multiple(strings, targets, repls, stream, mr);
+           detail::AVG_CHAR_BYTES_THRESHOLD))
+           ? detail::replace_string_parallel(input, targets, repls, stream, mr)
+           : detail::replace_character_parallel(input, targets, repls, stream, mr);
 }
 
 }  // namespace strings

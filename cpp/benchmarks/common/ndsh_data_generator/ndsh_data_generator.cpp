@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,6 @@
 
 #include <cudf_test/column_wrapper.hpp>
 
-#include <cudf/ast/detail/operators.cuh>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
 #include <cudf/filling.hpp>
@@ -25,8 +24,9 @@
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <array>
 #include <string>
@@ -143,7 +143,7 @@ constexpr std::array vocab_containers{
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_orders_independent(double scale_factor,
-                                                         rmm::cuda_stream_view stream,
+                                                         cuda::stream_ref stream,
                                                          rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -190,11 +190,11 @@ std::unique_ptr<cudf::table> generate_orders_independent(double scale_factor,
   // Generate the `o_orderdate` column
   auto o_orderdate_ts = [&]() {
     auto const o_orderdate_year = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(years.data(), years.size()), o_num_rows, stream, mr);
+      cudf::host_span<char const* const>(years.data(), years.size()), o_num_rows, stream, mr);
     auto const o_orderdate_month = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(months.data(), months.size()), o_num_rows, stream, mr);
+      cudf::host_span<char const* const>(months.data(), months.size()), o_num_rows, stream, mr);
     auto const o_orderdate_day = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(days.data(), days.size()), o_num_rows, stream, mr);
+      cudf::host_span<char const* const>(days.data(), days.size()), o_num_rows, stream, mr);
     auto const o_orderdate_str = cudf::strings::concatenate(
       cudf::table_view(
         {o_orderdate_year->view(), o_orderdate_month->view(), o_orderdate_day->view()}),
@@ -213,7 +213,7 @@ std::unique_ptr<cudf::table> generate_orders_independent(double scale_factor,
 
   // Generate the `o_orderpriority` column
   auto o_orderpriority = generate_random_string_column_from_set(
-    cudf::host_span<const char* const>(vocab_priorities.data(), vocab_priorities.size()),
+    cudf::host_span<char const* const>(vocab_priorities.data(), vocab_priorities.size()),
     o_num_rows,
     stream,
     mr);
@@ -267,7 +267,7 @@ std::unique_ptr<cudf::table> generate_orders_independent(double scale_factor,
  */
 std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& orders_independent,
                                                        double scale_factor,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -380,7 +380,8 @@ std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& o
     auto const pred =
       cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref, current_date_literal);
     auto mask = cudf::compute_column(cudf::table_view({l_shipdate_ts->view()}), pred, stream, mr);
-    auto mask_index_type      = cudf::cast(mask->view(), cudf::data_type{cudf::type_id::INT8});
+    auto mask_index_type =
+      cudf::cast(mask->view(), cudf::data_type{cudf::type_id::INT8}, stream, mr);
     auto const indices        = cudf::test::fixed_width_column_wrapper<int8_t>({0, 1}).release();
     auto const keys           = cudf::test::strings_column_wrapper({"O", "F"}).release();
     auto const gather_map     = cudf::table_view({indices->view(), keys->view()});
@@ -391,14 +392,14 @@ std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& o
 
   // Generate the `l_shipinstruct` column
   auto l_shipinstruct = generate_random_string_column_from_set(
-    cudf::host_span<const char* const>(vocab_instructions.data(), vocab_instructions.size()),
+    cudf::host_span<char const* const>(vocab_instructions.data(), vocab_instructions.size()),
     l_num_rows,
     stream,
     mr);
 
   // Generate the `l_shipmode` column
   auto l_shipmode = generate_random_string_column_from_set(
-    cudf::host_span<const char* const>(vocab_modes.data(), vocab_modes.size()),
+    cudf::host_span<char const* const>(vocab_modes.data(), vocab_modes.size()),
     l_num_rows,
     stream,
     mr);
@@ -437,7 +438,7 @@ std::unique_ptr<cudf::table> generate_lineitem_partial(cudf::table_view const& o
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& lineitem_partial,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -466,7 +467,7 @@ std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& l
     requests[1].values = l_linestatus_mask;
 
     // Perform the aggregations
-    auto agg_result = gb.aggregate(requests);
+    auto agg_result = gb.aggregate(requests, stream, mr);
 
     // Create a `table_view` out of the `l_orderkey`, `count`, and `sum` columns
     auto const count = std::move(agg_result.second[0].results[0]);
@@ -485,9 +486,9 @@ std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& l
     auto const count_ref = cudf::ast::column_reference(1);
     auto const sum_ref   = cudf::ast::column_reference(2);
     auto const expr_a    = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, sum_ref, count_ref);
-    auto const mask_a    = cudf::compute_column(table, expr_a);
-    auto const o_orderstatus_intermediate =
-      cudf::copy_if_else(cudf::string_scalar("O"), cudf::string_scalar("F"), mask_a->view());
+    auto const mask_a    = cudf::compute_column(table, expr_a, stream, mr);
+    auto const o_orderstatus_intermediate = cudf::copy_if_else(
+      cudf::string_scalar("O"), cudf::string_scalar("F"), mask_a->view(), stream, mr);
 
     // Then, we evaluate an expression `sum == 0` and generate a boolean mask
     auto zero_scalar        = cudf::numeric_scalar<cudf::size_type>(0);
@@ -498,9 +499,9 @@ std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& l
       cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, sum_ref, zero_literal);
     auto const expr_b =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, expr_b_left, expr_b_right);
-    auto const mask_b = cudf::compute_column(table, expr_b);
+    auto const mask_b = cudf::compute_column(table, expr_b, stream, mr);
     return cudf::copy_if_else(
-      cudf::string_scalar("P"), o_orderstatus_intermediate->view(), mask_b->view());
+      cudf::string_scalar("P"), o_orderstatus_intermediate->view(), mask_b->view(), stream, mr);
   }();
   orders_dependent_columns.push_back(std::move(o_orderstatus));
 
@@ -515,7 +516,7 @@ std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& l
     requests.push_back(cudf::groupby::aggregation_request());
     requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
     requests[0].values = l_charge->view();
-    auto agg_result    = gb.aggregate(requests);
+    auto agg_result    = gb.aggregate(requests, stream, mr);
     return std::move(agg_result.second[0].results[0]);
   }();
   orders_dependent_columns.push_back(std::move(o_totalprice));
@@ -530,7 +531,7 @@ std::unique_ptr<cudf::table> generate_orders_dependent(cudf::table_view const& l
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_partsupp(double scale_factor,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -578,7 +579,7 @@ std::unique_ptr<cudf::table> generate_partsupp(double scale_factor,
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_part(double scale_factor,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -591,27 +592,27 @@ std::unique_ptr<cudf::table> generate_part(double scale_factor,
   // Generate the `p_name` column
   auto p_name = [&]() {
     auto const p_name_a = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(vocab_p_name.data(), vocab_p_name.size()),
+      cudf::host_span<char const* const>(vocab_p_name.data(), vocab_p_name.size()),
       num_rows,
       stream,
       mr);
     auto const p_name_b = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(vocab_p_name.data(), vocab_p_name.size()),
+      cudf::host_span<char const* const>(vocab_p_name.data(), vocab_p_name.size()),
       num_rows,
       stream,
       mr);
     auto const p_name_c = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(vocab_p_name.data(), vocab_p_name.size()),
+      cudf::host_span<char const* const>(vocab_p_name.data(), vocab_p_name.size()),
       num_rows,
       stream,
       mr);
     auto const p_name_d = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(vocab_p_name.data(), vocab_p_name.size()),
+      cudf::host_span<char const* const>(vocab_p_name.data(), vocab_p_name.size()),
       num_rows,
       stream,
       mr);
     auto const p_name_e = generate_random_string_column_from_set(
-      cudf::host_span<const char* const>(vocab_p_name.data(), vocab_p_name.size()),
+      cudf::host_span<char const* const>(vocab_p_name.data(), vocab_p_name.size()),
       num_rows,
       stream,
       mr);
@@ -659,7 +660,7 @@ std::unique_ptr<cudf::table> generate_part(double scale_factor,
 
   // Generate the `p_type` column
   auto p_type = generate_random_string_column_from_set(
-    cudf::host_span<const char* const>(vocab_types.data(), vocab_types.size()),
+    cudf::host_span<char const* const>(vocab_types.data(), vocab_types.size()),
     num_rows,
     stream,
     mr);
@@ -669,7 +670,7 @@ std::unique_ptr<cudf::table> generate_part(double scale_factor,
 
   // Generate the `p_container` column
   auto p_container = generate_random_string_column_from_set(
-    cudf::host_span<const char* const>(vocab_containers.data(), vocab_containers.size()),
+    cudf::host_span<char const* const>(vocab_containers.data(), vocab_containers.size()),
     num_rows,
     stream,
     mr);
@@ -704,7 +705,7 @@ std::unique_ptr<cudf::table> generate_part(double scale_factor,
  */
 std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>>
 generate_orders_lineitem_part(double scale_factor,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -727,7 +728,7 @@ generate_orders_lineitem_part(double scale_factor,
     auto joined_table_columns = joined_table->release();
     auto const l_quantity     = std::move(joined_table_columns[1]);
     auto const l_quantity_fp =
-      cudf::cast(l_quantity->view(), cudf::data_type{cudf::type_id::FLOAT64});
+      cudf::cast(l_quantity->view(), cudf::data_type{cudf::type_id::FLOAT64}, stream, mr);
     auto const p_retailprice = std::move(joined_table_columns[3]);
     return cudf::binary_operation(l_quantity_fp->view(),
                                   p_retailprice->view(),
@@ -771,7 +772,7 @@ generate_orders_lineitem_part(double scale_factor,
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_supplier(double scale_factor,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -832,7 +833,7 @@ std::unique_ptr<cudf::table> generate_supplier(double scale_factor,
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<cudf::table> generate_customer(double scale_factor,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -871,7 +872,7 @@ std::unique_ptr<cudf::table> generate_customer(double scale_factor,
 
   // Generate the `c_mktsegment` column
   auto c_mktsegment = generate_random_string_column_from_set(
-    cudf::host_span<const char* const>(vocab_segments.data(), vocab_segments.size()),
+    cudf::host_span<char const* const>(vocab_segments.data(), vocab_segments.size()),
     num_rows,
     stream,
     mr);
@@ -899,7 +900,7 @@ std::unique_ptr<cudf::table> generate_customer(double scale_factor,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
-std::unique_ptr<cudf::table> generate_nation(rmm::cuda_stream_view stream,
+std::unique_ptr<cudf::table> generate_nation(cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -939,7 +940,7 @@ std::unique_ptr<cudf::table> generate_nation(rmm::cuda_stream_view stream,
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
-std::unique_ptr<cudf::table> generate_region(rmm::cuda_stream_view stream,
+std::unique_ptr<cudf::table> generate_region(cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();

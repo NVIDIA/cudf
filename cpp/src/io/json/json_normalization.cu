@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,24 +7,25 @@
 
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/json.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_copy.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
+#include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/gather.h>
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/iterator/discard_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
 
@@ -295,7 +296,7 @@ namespace detail {
 
 void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& indata,
                              char delimiter,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -313,7 +314,7 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
   parser.Transduce(reinterpret_cast<SymbolT const*>(indata.data()),
                    static_cast<SymbolOffsetT>(indata.size()),
                    static_cast<SymbolT*>(outbuf.data()),
-                   thrust::make_discard_iterator(),
+                   cuda::make_discard_iterator(),
                    outbuf_size.data(),
                    normalize_quotes::start_state,
                    stream);
@@ -328,7 +329,7 @@ std::
   normalize_whitespace(device_span<char const> d_input,
                        device_span<size_type const> col_offsets,
                        device_span<size_type const> col_lengths,
-                       rmm::cuda_stream_view stream,
+                       cuda::stream_ref stream,
                        rmm::device_async_resource_ref mr)
 {
   /*
@@ -343,46 +344,47 @@ std::
    */
   auto inbuf_lengths = cudf::detail::make_device_uvector_async(
     col_lengths, stream, cudf::get_current_device_resource_ref());
-  size_t inbuf_lengths_size = inbuf_lengths.size();
+  std::size_t inbuf_lengths_size = inbuf_lengths.size();
   size_type inbuf_size =
-    thrust::reduce(rmm::exec_policy_nosync(stream), inbuf_lengths.begin(), inbuf_lengths.end());
+    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                   inbuf_lengths.begin(),
+                   inbuf_lengths.end());
   rmm::device_uvector<char> inbuf(inbuf_size, stream);
   rmm::device_uvector<size_type> inbuf_offsets(inbuf_lengths_size, stream);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          inbuf_lengths.begin(),
                          inbuf_lengths.end(),
                          inbuf_offsets.begin(),
                          0);
 
-  auto input_it = thrust::make_transform_iterator(
-    thrust::make_counting_iterator(0),
+  auto input_it = cuda::transform_iterator(
+    col_offsets.begin(),
     cuda::proclaim_return_type<char const*>(
-      [d_input = d_input.begin(), col_offsets = col_offsets.begin()] __device__(
-        size_t i) -> char const* { return &d_input[col_offsets[i]]; }));
-  auto output_it = thrust::make_transform_iterator(
-    thrust::make_counting_iterator(0),
+      [d_input = d_input.begin()] __device__(auto offset) { return &d_input[offset]; }));
+  auto output_it = cuda::transform_iterator(
+    inbuf_offsets.cbegin(),
     cuda::proclaim_return_type<char*>(
-      [inbuf = inbuf.begin(), inbuf_offsets = inbuf_offsets.cbegin()] __device__(
-        size_t i) -> char* { return &inbuf[inbuf_offsets[i]]; }));
+      [inbuf = inbuf.begin()] __device__(auto offset) { return &inbuf[offset]; }));
 
   {
     // cub device batched copy
-    size_t temp_storage_bytes = 0;
+    std::size_t temp_storage_bytes = 0;
     cub::DeviceCopy::Batched(nullptr,
                              temp_storage_bytes,
                              input_it,
                              output_it,
                              inbuf_lengths.begin(),
                              inbuf_lengths_size,
-                             stream.value());
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+                             stream.get());
+    cuda::device_buffer<std::byte> temp_storage(
+      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
     cub::DeviceCopy::Batched(temp_storage.data(),
                              temp_storage_bytes,
                              input_it,
                              output_it,
                              inbuf_lengths.begin(),
                              inbuf_lengths_size,
-                             stream.value());
+                             stream.get());
   }
 
   // whitespace normalization : get the indices of the unquoted whitespace characters
@@ -393,23 +395,24 @@ std::
                             normalize_whitespace::TransduceToNormalizedWS{}),
                           stream);
 
-  rmm::device_uvector<size_type> outbuf_indices(inbuf.size(), stream, mr);
+  cuda::device_buffer<size_type> outbuf_indices_storage(stream, mr, inbuf.size(), cuda::no_init);
+  auto outbuf_indices = device_span<size_type>{outbuf_indices_storage};
   cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr);
   parser.Transduce(inbuf.data(),
                    static_cast<SymbolOffsetT>(inbuf.size()),
-                   thrust::make_discard_iterator(),
+                   cuda::make_discard_iterator(),
                    outbuf_indices.data(),
                    outbuf_indices_size.data(),
                    normalize_whitespace::start_state,
                    stream);
 
   auto const num_deletions = outbuf_indices_size.value(stream);
-  outbuf_indices.resize(num_deletions, stream);
+  outbuf_indices           = outbuf_indices.subspan(0, num_deletions);
 
   // now these indices need to be removed
   // TODO: is there a better way to do this?
   thrust::for_each(
-    rmm::exec_policy_nosync(stream),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     outbuf_indices.begin(),
     outbuf_indices.end(),
     [inbuf_offsets_begin = inbuf_offsets.begin(),
@@ -421,27 +424,27 @@ std::
       ref.fetch_add(-1, cuda::std::memory_order_relaxed);
     });
 
-  auto stencil = cudf::detail::make_zeroed_device_uvector_async<bool>(
+  auto stencil = cudf::detail::make_zeroed_device_buffer_async<bool>(
     static_cast<std::size_t>(inbuf_size), stream, cudf::get_current_device_resource_ref());
-  thrust::scatter(rmm::exec_policy_nosync(stream),
-                  thrust::make_constant_iterator(true),
-                  thrust::make_constant_iterator(true) + num_deletions,
+  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                  cuda::make_constant_iterator(true),
+                  cuda::make_constant_iterator(true) + num_deletions,
                   outbuf_indices.begin(),
                   stencil.begin());
-  thrust::remove_if(rmm::exec_policy_nosync(stream),
+  thrust::remove_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     inbuf.begin(),
                     inbuf.end(),
                     stencil.begin(),
                     cuda::std::identity{});
   inbuf.resize(inbuf_size - num_deletions, stream);
 
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          inbuf_lengths.begin(),
                          inbuf_lengths.end(),
                          inbuf_offsets.begin(),
                          0);
 
-  stream.synchronize();
+  stream.sync();
   return std::tuple{std::move(inbuf), std::move(inbuf_offsets), std::move(inbuf_lengths)};
 }
 

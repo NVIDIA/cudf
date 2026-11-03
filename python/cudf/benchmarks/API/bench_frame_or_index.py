@@ -37,12 +37,6 @@ def bench_where(benchmark, frame_or_index):
 
 
 @benchmark_with_object(cls="frame_or_index", dtype="int", nulls=False)
-@pytest.mark.pandas_incompatible
-def bench_values_host(benchmark, frame_or_index):
-    benchmark(lambda: frame_or_index.to_numpy())
-
-
-@benchmark_with_object(cls="frame_or_index", dtype="int", nulls=False)
 def bench_values(benchmark, frame_or_index):
     benchmark(lambda: frame_or_index.values)
 

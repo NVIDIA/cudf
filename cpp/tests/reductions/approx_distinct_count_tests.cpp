@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,11 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/reduction/approx_distinct_count.hpp>
-#include <cudf/stream_compaction.hpp>
+#include <cudf/reduction/distinct_count.hpp>
 #include <cudf/table/table_view.hpp>
+
+#include <rmm/device_buffer.hpp>
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <thrust/host_vector.h>
 
@@ -28,8 +31,8 @@ bool is_reasonable_approximation(std::size_t approx_count,
   if (exact_count == 0) { return approx_count == 0; }
   if (exact_count == 1) { return approx_count <= 2; }
 
-  double const relative_standard_deviation = 1.04 / std::sqrt(1ull << precision);
-  double const tolerance                   = tolerance_factor * relative_standard_deviation;
+  double const relative_standard_error = 1.04 / std::sqrt(1ull << precision);
+  double const tolerance               = tolerance_factor * relative_standard_error;
   double const relative_error =
     std::abs((static_cast<double>(approx_count) / static_cast<double>(exact_count)) - 1.0);
 
@@ -692,8 +695,12 @@ TEST_F(ApproxDistinctCount, ListColumn)
 
   cudf::test::fixed_width_column_wrapper<int32_t> values_col(values.begin(), values.end());
   cudf::test::fixed_width_column_wrapper<int32_t> offsets_col(offsets.begin(), offsets.end());
-  auto input_col = cudf::make_lists_column(
-    num_rows, offsets_col.release(), values_col.release(), 0, rmm::device_buffer{});
+  auto input_col =
+    cudf::make_lists_column(num_rows,
+                            offsets_col.release(),
+                            values_col.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::table_view input_table({*input_col});
 
   auto adc          = cudf::approx_distinct_count(input_table);
@@ -780,4 +787,106 @@ TEST_F(ApproxDistinctCount, SpanConstructorWrongSizeFails)
   auto sketch10 = adc10.sketch();
 
   EXPECT_THROW(cudf::approx_distinct_count(sketch10, 12), std::invalid_argument);
+}
+
+TEST_F(ApproxDistinctCount, StandardErrorConstructor)
+{
+  auto data = generate_data<int32_t>(10000, 500);
+  cudf::test::fixed_width_column_wrapper<int32_t> col(data.begin(), data.end());
+  cudf::table_view table({col});
+
+  // ~1% standard error should give precision 14 (1.04/sqrt(2^14) ≈ 0.0081)
+  auto adc_stderr =
+    cudf::approx_distinct_count(table, cudf::approx_distinct_count::desired_standard_error{0.01});
+  EXPECT_EQ(14, adc_stderr.precision());
+  EXPECT_TRUE(is_reasonable_approximation(adc_stderr.estimate(), 500, 14));
+
+  // 3.25% standard error (exact boundary) gives precision 10 (1.04/sqrt(2^10) = 0.0325)
+  auto adc_stderr2 =
+    cudf::approx_distinct_count(table, cudf::approx_distinct_count::desired_standard_error{0.0325});
+  EXPECT_EQ(10, adc_stderr2.precision());
+
+  // Slightly smaller than boundary gets higher precision
+  auto adc_stderr3 =
+    cudf::approx_distinct_count(table, cudf::approx_distinct_count::desired_standard_error{0.032});
+  EXPECT_EQ(11, adc_stderr3.precision());
+}
+
+TEST_F(ApproxDistinctCount, StandardErrorGetter)
+{
+  cudf::table_view empty_table{std::vector<cudf::column_view>{}};
+
+  auto adc10 = cudf::approx_distinct_count(empty_table, 10);
+  auto adc12 = cudf::approx_distinct_count(empty_table, 12);
+  auto adc14 = cudf::approx_distinct_count(empty_table, 14);
+
+  EXPECT_GT(adc10.standard_error(), adc12.standard_error());
+  EXPECT_GT(adc12.standard_error(), adc14.standard_error());
+
+  auto adc_rt = cudf::approx_distinct_count(
+    empty_table, cudf::approx_distinct_count::desired_standard_error{adc12.standard_error()});
+  EXPECT_EQ(adc12.precision(), adc_rt.precision());
+}
+
+TEST_F(ApproxDistinctCount, InvalidPrecisionThrows)
+{
+  auto data = generate_data<int32_t>(100, 10);
+  cudf::test::fixed_width_column_wrapper<int32_t> col(data.begin(), data.end());
+  cudf::table_view table({col});
+
+  EXPECT_THROW(cudf::approx_distinct_count(table, 3), std::invalid_argument);
+  EXPECT_THROW(cudf::approx_distinct_count(table, 19), std::invalid_argument);
+  EXPECT_THROW(cudf::approx_distinct_count(table, -1), std::invalid_argument);
+
+  EXPECT_NO_THROW(cudf::approx_distinct_count(table, 4));
+  EXPECT_NO_THROW(cudf::approx_distinct_count(table, 18));
+}
+
+TEST_F(ApproxDistinctCount, InvalidStandardErrorThrows)
+{
+  auto data = generate_data<int32_t>(100, 10);
+  cudf::test::fixed_width_column_wrapper<int32_t> col(data.begin(), data.end());
+  cudf::table_view table({col});
+
+  EXPECT_THROW(
+    cudf::approx_distinct_count(table, cudf::approx_distinct_count::desired_standard_error{0.0}),
+    std::invalid_argument);
+  EXPECT_THROW(
+    cudf::approx_distinct_count(table, cudf::approx_distinct_count::desired_standard_error{-0.01}),
+    std::invalid_argument);
+}
+
+TEST_F(ApproxDistinctCount, SketchBytesAndAlignment)
+{
+  EXPECT_EQ(cudf::approx_distinct_count::sketch_bytes(10), (1 << 10) * sizeof(std::int32_t));
+  EXPECT_EQ(cudf::approx_distinct_count::sketch_bytes(12), (1 << 12) * sizeof(std::int32_t));
+  EXPECT_GT(cudf::approx_distinct_count::sketch_bytes(14),
+            cudf::approx_distinct_count::sketch_bytes(12));
+  EXPECT_GE(cudf::approx_distinct_count::sketch_alignment(), alignof(std::int32_t));
+}
+
+TEST_F(ApproxDistinctCount, MemoryResource)
+{
+  auto data = generate_data<int32_t>(2000, 100);
+  cudf::test::fixed_width_column_wrapper<int32_t> input_col(data.begin(), data.end());
+  cudf::table_view input_table({input_col});
+
+  auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+
+  constexpr std::int32_t precision = 12;
+  auto adc                         = cudf::approx_distinct_count(input_table,
+                                         precision,
+                                         null_policy::EXCLUDE,
+                                         nan_policy::NAN_IS_NULL,
+                                         cudf::get_default_stream(),
+                                         mr);
+
+  EXPECT_GE(mr.get_bytes_counter().peak, cudf::approx_distinct_count::sketch_bytes(precision));
+
+  auto approx_count = adc.estimate();
+  auto const exact_count =
+    cudf::distinct_count(input_col, null_policy::EXCLUDE, nan_policy::NAN_IS_VALID);
+
+  EXPECT_TRUE(is_reasonable_approximation(approx_count, exact_count))
+    << "Exact: " << exact_count << ", Approx: " << approx_count;
 }

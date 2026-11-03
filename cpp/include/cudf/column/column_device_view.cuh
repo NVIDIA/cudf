@@ -1,24 +1,25 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/utilities/alignment.hpp>
 #include <cudf/lists/list_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/struct_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <rmm/resource_ref.hpp>
 
+#include <cuda/iterator>
+#include <cuda/memory>
 #include <cuda/std/utility>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 
 #include <functional>
 
@@ -89,9 +90,10 @@ class alignas(16) column_device_view : public column_device_view_core {
     return column_device_view{this->type(),
                               size,
                               this->head(),
+                              this->null_count(),
                               this->null_mask(),
                               this->offset() + offset,
-                              static_cast<column_device_view*>(d_children),
+                              static_cast<column_device_view*>(_children),
                               this->num_child_columns()};
   }
 
@@ -216,16 +218,16 @@ class alignas(16) column_device_view : public column_device_view_core {
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
   {
-    return has_element_accessor_impl<column_device_view, T>::value;
+    return has_element_accessor_impl<column_device_view, T>;
   }
 
   /// Counting iterator
-  using count_it = thrust::counting_iterator<size_type>;
+  using count_it = cuda::counting_iterator<size_type>;
   /**
    * @brief Iterator for navigating this column
    */
   template <typename T>
-  using const_iterator = thrust::transform_iterator<detail::value_accessor<T>, count_it>;
+  using const_iterator = cuda::transform_iterator<detail::value_accessor<T>, count_it>;
 
   /**
    * @brief Return an iterator to the first element of the column.
@@ -273,14 +275,14 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, typename Nullate>
   using const_optional_iterator =
-    thrust::transform_iterator<detail::optional_accessor<T, Nullate>, count_it>;
+    cuda::transform_iterator<detail::optional_accessor<T, Nullate>, count_it>;
 
   /**
    * @brief Pair iterator for navigating this column
    */
   template <typename T, bool has_nulls>
   using const_pair_iterator =
-    thrust::transform_iterator<detail::pair_accessor<T, has_nulls>, count_it>;
+    cuda::transform_iterator<detail::pair_accessor<T, has_nulls>, count_it>;
 
   /**
    * @brief Pair rep iterator for navigating this column
@@ -289,7 +291,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   template <typename T, bool has_nulls>
   using const_pair_rep_iterator =
-    thrust::transform_iterator<detail::pair_rep_accessor<T, has_nulls>, count_it>;
+    cuda::transform_iterator<detail::pair_rep_accessor<T, has_nulls>, count_it>;
 
   /**
    * @brief Return an optional iterator to the first element of the column.
@@ -497,11 +499,14 @@ class alignas(16) column_device_view : public column_device_view_core {
    *
    * @param source_view The `column_view` to make usable in device code
    * @param stream CUDA stream used for device memory operations for children columns.
+   * @param mr Device memory resource used to allocate the returned child-view storage
    * @return A `unique_ptr` to a `column_device_view` that makes the data from
    *`source_view` available in device memory.
    */
   static std::unique_ptr<column_device_view, std::function<void(column_device_view*)>> create(
-    column_view source_view, rmm::cuda_stream_view stream = cudf::get_default_stream());
+    column_view source_view,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destroy the `column_device_view` object.
@@ -528,7 +533,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   [[nodiscard]] __device__ column_device_view child(size_type child_index) const noexcept
   {
-    return static_cast<column_device_view*>(d_children)[child_index];
+    return static_cast<column_device_view*>(_children)[child_index];
   }
 
   /**
@@ -538,7 +543,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   [[nodiscard]] __device__ device_span<column_device_view const> children() const noexcept
   {
-    return {static_cast<column_device_view*>(d_children), static_cast<std::size_t>(_num_children)};
+    return {static_cast<column_device_view*>(_children), static_cast<std::size_t>(_num_children)};
   }
 
   /**
@@ -559,6 +564,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param type The type of the column
    * @param size The number of elements in the column
    * @param data Pointer to the device memory containing the data
+   * @param null_count The number of nulls in the column
    * @param null_mask Pointer to the device memory containing the null bitmask
    * @param offset The index of the first element in the column
    * @param children Pointer to the device memory containing child data
@@ -567,11 +573,13 @@ class alignas(16) column_device_view : public column_device_view_core {
   CUDF_HOST_DEVICE column_device_view(data_type type,
                                       size_type size,
                                       void const* data,
+                                      size_type null_count,
                                       bitmask_type const* null_mask,
                                       size_type offset,
                                       column_device_view* children,
                                       size_type num_children)
-    : column_device_view_core{type, size, data, null_mask, offset, children, num_children}
+    : column_device_view_core{
+        type, size, data, null_count, null_mask, offset, children, num_children}
   {
   }
 
@@ -641,13 +649,15 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    *
    * @param source_view The `column_view` to make usable in device code
    * @param stream CUDA stream used for device memory operations for children columns.
+   * @param mr Device memory resource used to allocate the returned child-view storage
    * @return A `unique_ptr` to a `mutable_column_device_view` that makes the
    * data from `source_view` available in device memory.
    */
   static std::unique_ptr<mutable_column_device_view,
                          std::function<void(mutable_column_device_view*)>>
   create(mutable_column_view source_view,
-         rmm::cuda_stream_view stream = cudf::get_default_stream());
+         cuda::stream_ref stream           = cudf::get_default_stream(),
+         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns reference to element at the specified index.
@@ -681,16 +691,16 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
   {
-    return has_element_accessor_impl<mutable_column_device_view, T>::value;
+    return has_element_accessor_impl<mutable_column_device_view, T>;
   }
 
   /// Counting iterator
-  using count_it = thrust::counting_iterator<size_type>;
+  using count_it = cuda::counting_iterator<size_type>;
   /**
    * @brief Iterator for navigating this column
    */
   template <typename T>
-  using iterator = thrust::transform_iterator<detail::mutable_value_accessor<T>, count_it>;
+  using iterator = cuda::transform_iterator<detail::mutable_value_accessor<T>, count_it>;
 
   /**
    * @brief Return first element (accounting for offset) after underlying data
@@ -732,7 +742,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    */
   [[nodiscard]] __device__ mutable_column_device_view child(size_type child_index) const noexcept
   {
-    return static_cast<mutable_column_device_view*>(d_children)[child_index];
+    return static_cast<mutable_column_device_view*>(_children)[child_index];
   }
 
   /**
@@ -744,6 +754,31 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    * device view of the specified column and its children
    */
   static std::size_t extent(mutable_column_view source_view);
+
+  /**
+   * @brief Factory to construct a mutable column view that is usable in device memory from
+   * pre-existing device memory pointers to data, nullmask, and offset.
+   *
+   * @param type The type of the column
+   * @param size The number of elements in the column
+   * @param data Pointer to the device memory containing the data
+   * @param null_mask Pointer to the device memory containing the null bitmask
+   * @param offset The index of the first element in the column
+   * @param children Pointer to the device memory containing child data
+   * @param num_children The number of child columns
+   * @return A `mutable_column_device_view` instance representing the specified column data
+   * in device memory
+   */
+  [[nodiscard]] static auto create(data_type type,
+                                   size_type size,
+                                   void const* data,
+                                   bitmask_type const* null_mask,
+                                   size_type offset,
+                                   mutable_column_device_view* children,
+                                   size_type num_children)
+  {
+    return mutable_column_device_view{type, size, data, null_mask, offset, children, num_children};
+  }
 
   /**
    * @brief Destroy the `mutable_column_device_view` object.
@@ -763,14 +798,30 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    *`mutable_column_device_view::create()` function should be used.
    */
   mutable_column_device_view(mutable_column_view source);
+
+  /**
+   * @brief Creates an instance of this class using pre-existing device memory pointers to data,
+   * nullmask, and offset.
+   *
+   * @param type The type of the column
+   * @param size The number of elements in the column
+   * @param data Pointer to the device memory containing the data
+   * @param null_mask Pointer to the device memory containing the null bitmask
+   * @param offset The index of the first element in the column
+   * @param children Pointer to the device memory containing child data
+   * @param num_children The number of child columns
+   */
+  CUDF_HOST_DEVICE mutable_column_device_view(data_type type,
+                                              size_type size,
+                                              void const* data,
+                                              bitmask_type const* null_mask,
+                                              size_type offset,
+                                              mutable_column_device_view* children,
+                                              size_type num_children)
+    : mutable_column_device_view_core{type, size, data, null_mask, offset, children, num_children}
+  {
+  }
 };
-
-static_assert(sizeof(column_device_view) == sizeof(column_device_view_core),
-              "column_device_view and raw_column_device_view must be bitwise-compatible");
-
-static_assert(
-  sizeof(mutable_column_device_view) == sizeof(mutable_column_device_view_core),
-  "mutable_column_device_view and raw_mutable_column_device_view must be bitwise-compatible");
 
 namespace detail {
 
@@ -1046,12 +1097,14 @@ ColumnDeviceView* child_columns_to_device_array(ColumnViewIterator child_begin,
                                                 void* h_ptr,
                                                 void* d_ptr)
 {
-  ColumnDeviceView* d_children = detail::align_ptr_for_type<ColumnDeviceView>(d_ptr);
-  auto num_children            = std::distance(child_begin, child_end);
+  auto d_children =
+    static_cast<ColumnDeviceView*>(cuda::align_up(d_ptr, alignof(ColumnDeviceView)));
+  auto num_children = std::distance(child_begin, child_end);
   if (num_children > 0) {
     // The beginning of the memory must be the fixed-sized ColumnDeviceView
     // struct objects in order for d_children to be used as an array.
-    auto h_column = detail::align_ptr_for_type<ColumnDeviceView>(h_ptr);
+    auto h_column =
+      static_cast<ColumnDeviceView*>(cuda::align_up(h_ptr, alignof(ColumnDeviceView)));
     auto d_column = d_children;
 
     // Any child data is assigned past the end of this array: h_end and d_end.

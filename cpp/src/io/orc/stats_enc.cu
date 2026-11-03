@@ -1,24 +1,29 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "orc_gpu.hpp"
 
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/fixed_point/temporary.hpp>
 #include <cudf/io/orc_types.hpp>
 #include <cudf/strings/detail/convert/fixed_point_to_string.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/std/limits>
 #include <cuda/std/utility>
+#include <cuda/stream>
 
 namespace cudf::io::orc::detail {
 
 using strings::detail::fixed_point_string_size;
 
+// Largest decimal magnitude ORC supports (38 digits); ORC Java drops statistics sums that don't fit
+constexpr auto max_orc_decimal =
+  numeric::detail::exp10<__int128_t>(cuda::std::numeric_limits<__int128_t>::digits10) - 1;
+
 // Nanosecond statistics should not be enabled until the spec version is set correctly in the output
-// files. See https://github.com/rapidsai/cudf/issues/14325 for more details
+// files. See https://github.com/NVIDIA/cudf/issues/14325 for more details
 constexpr bool enable_nanosecond_statistics = true;
 
 constexpr unsigned int init_threads_per_group = 32;
@@ -140,7 +145,7 @@ struct stats_state_s {
 
 /*
  * Protobuf encoding - see
- * https://developers.google.com/protocol-buffers/docs/encoding
+ * https://protobuf.dev/programming-guides/encoding/
  */
 // Protobuf varint encoding for unsigned int
 __device__ inline uint8_t* pb_encode_uint(uint8_t* p, uint64_t v)
@@ -364,8 +369,14 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             sz += (pb_put_uint(cur, 1, min_size) - cur) + min_size +
                   (pb_put_uint(cur, 1, max_size) - cur) + max_size;
           }
-          auto const sum_size = fixed_point_string_size(s->chunk.sum.d128_val, scale);
-          sz += (pb_put_uint(cur, 1, sum_size) - cur) + sum_size;
+          auto const sum = s->chunk.sum.d128_val;
+          auto const has_sum =
+            s->chunk.has_sum and -max_orc_decimal <= sum and sum <= max_orc_decimal;
+          int32_t sum_size = 0;
+          if (has_sum) {
+            sum_size = fixed_point_string_size(sum, scale);
+            sz += (pb_put_uint(cur, 1, sum_size) - cur) + sum_size;
+          }
 
           cur[0] = 6 * 8 + ProtofType::FIXEDLEN;
           cur    = pb_encode_uint(cur + 1, sz);
@@ -374,7 +385,7 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             cur = pb_put_decimal(cur, 1, s->chunk.min_value.d128_val, scale, min_size);  //  minimum
             cur = pb_put_decimal(cur, 2, s->chunk.max_value.d128_val, scale, max_size);  // maximum
           }
-          cur = pb_put_decimal(cur, 3, s->chunk.sum.d128_val, scale, sum_size);  // sum
+          if (has_sum) { cur = pb_put_decimal(cur, 3, sum, scale, sum_size); }  // sum
         }
         break;
       case dtype_date32:
@@ -413,7 +424,10 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             auto const [max_ms, max_ns_remainder] =
               split_nanosecond_timestamp(s->chunk.max_value.i_val);
 
-            // minimum/maximum are the same as minimumUtc/maximumUtc as we always write files in UTC
+            // Statistics stay on the input instants regardless of the writer timezone; only the
+            // data stream is re-based. Apache writes only the UTC pair, and its reader prefers
+            // that pair when both are present, so the legacy pair is for pre-ORC-135 readers,
+            // which resolve it against their own timezone.
             cur = pb_put_int(cur, 1, min_ms);  // minimum
             cur = pb_put_int(cur, 2, max_ms);  // maximum
             cur = pb_put_int(cur, 3, min_ms);  // minimumUtc
@@ -442,15 +456,16 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
 void orc_init_statistics_groups(statistics_group* groups,
                                 stats_column_desc const* cols,
                                 device_2dspan<rowgroup_rows const> rowgroup_bounds,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
-  auto const num_blocks =
-    cudf::util::div_rounding_up_safe<size_t>(rowgroup_bounds.size().first, init_groups_per_block) *
-    rowgroup_bounds.size().second;
+  auto const num_blocks = cudf::detail::div_rounding_up_safe<size_t>(rowgroup_bounds.size().first,
+                                                                     init_groups_per_block) *
+                          rowgroup_bounds.size().second;
 
   dim3 dim_block(init_threads_per_group, init_groups_per_block);
-  gpu_init_statistics_groups<<<num_blocks, dim_block, 0, stream.value()>>>(
+  gpu_init_statistics_groups<<<num_blocks, dim_block, 0, stream.get()>>>(
     groups, cols, rowgroup_bounds);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -464,10 +479,11 @@ void orc_init_statistics_groups(statistics_group* groups,
 void orc_init_statistics_buffersize(statistics_merge_group* groups,
                                     statistics_chunk const* chunks,
                                     uint32_t statistics_count,
-                                    rmm::cuda_stream_view stream)
+                                    cuda::stream_ref stream)
 {
   gpu_init_statistics_buffersize<block_size>
-    <<<1, block_size, 0, stream.value()>>>(groups, chunks, statistics_count);
+    <<<1, block_size, 0, stream.get()>>>(groups, chunks, statistics_count);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -477,18 +493,20 @@ void orc_init_statistics_buffersize(statistics_merge_group* groups,
  * @param[in,out] groups Statistics merge groups
  * @param[in,out] chunks Statistics data
  * @param[in] statistics_count Number of statistics buffers
+ * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void orc_encode_statistics(uint8_t* blob_bfr,
                            statistics_merge_group* groups,
                            statistics_chunk const* chunks,
                            uint32_t statistics_count,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   auto const num_blocks =
-    cudf::util::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
+    cudf::detail::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
   dim3 dim_block(encode_threads_per_chunk, encode_chunks_per_block);
-  gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.value()>>>(
+  gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.get()>>>(
     blob_bfr, groups, chunks, statistics_count);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace cudf::io::orc::detail

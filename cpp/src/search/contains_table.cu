@@ -1,22 +1,23 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "contains_table_impl.cuh"
 
 #include <cudf/detail/row_operator/equality.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/search.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuco/static_set.cuh>
+#include <cuda/stream>
 
 #include <algorithm>
 
@@ -26,7 +27,7 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
                                    table_view const& needles,
                                    null_equality compare_nulls,
                                    nan_equality compare_nans,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(haystack, needles), "Column types mismatch");
@@ -35,10 +36,11 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
   auto const needles_has_nulls  = has_nested_nulls(needles);
   auto const has_any_nulls      = haystack_has_nulls || needles_has_nulls;
 
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_needles =
-    cudf::detail::row::equality::preprocessed_table::create(needles, stream);
+    cudf::detail::row::equality::preprocessed_table::create(needles, stream, temp_mr);
   auto const preprocessed_haystack =
-    cudf::detail::row::equality::preprocessed_table::create(haystack, stream);
+    cudf::detail::row::equality::preprocessed_table::create(haystack, stream, temp_mr);
 
   // The output vector.
   auto contained = rmm::device_uvector<bool>(needles.num_rows(), stream, mr);

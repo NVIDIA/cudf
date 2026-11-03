@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -7,73 +7,190 @@ set -euo pipefail
 source rapids-init-pip
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
+RUN_PYLIBCUDF_TESTS="${RUN_PYLIBCUDF_TESTS:-true}"
+RUN_CUDF_TESTS="${RUN_CUDF_TESTS:-true}"
+RUN_CUDF_STREAMING_TESTS="${RUN_CUDF_STREAMING_TESTS:-true}"
 
-# Download the cudf, libcudf, and pylibcudf built in the previous step
-CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-LIBCUDF_WHEELHOUSE=$(RAPIDS_PY_WHEEL_NAME="libcudf_${RAPIDS_PY_CUDA_SUFFIX}" rapids-download-wheels-from-github cpp)
-PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-package-name "wheel_python" pylibcudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-
-rapids-logger "Install pylibcudf and its basic dependencies in a virtual environment"
-
-# generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf ./constraints.txt
-
-RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
-RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
-mkdir -p "${RAPIDS_TESTS_DIR}"
-
-# To test pylibcudf without its optional dependencies, we create a virtual environment
-python -m venv env
-. env/bin/activate
-rapids-pip-retry install \
-    -v \
-    --constraint ./constraints.txt \
+# When CUPY_NIGHTLY=true, test against the nightly cupy wheel published at
+# https://pypi.anaconda.org/scientific-python-nightly-wheels/simple/ instead of
+# PyPI. The HTTP response from pypi.anaconda.org doesn't currently let pip
+# reuse the wheel when installing this cupy into multiple virtual enviroments,
+# so we download the wheel once and install from the local filesystem.
+CUPY_NIGHTLY="${CUPY_NIGHTLY:-false}"
+CUPY_NIGHTLY_PIP_ARGS=()
+CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
+if [[ "${CUPY_NIGHTLY}" == "true" ]]; then
+  # The pre-release specifier here only lets pip consider pre-releases of cupy,
+  # which are merged with the constraints from depednecies.yaml to find the latest cupy;
+  cupy_nightly_spec="cupy-cuda${CUDA_MAJOR}x>=0.0.0a0"
+  rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}"
+  CUPY_NIGHTLY_WHEELHOUSE="$(mktemp -d)"
+  rapids-logger "Downloading nightly cupy wheel"
+  rapids-pip-retry download \
+    --no-deps \
     --constraint "${PIP_CONSTRAINT}" \
-    "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
-    "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]"
+    --dest "${CUPY_NIGHTLY_WHEELHOUSE}" \
+    --extra-index-url "https://pypi.anaconda.org/scientific-python-nightly-wheels/simple/" \
+    "${cupy_nightly_spec}"
+  CUPY_NIGHTLY_PIP_ARGS=(--find-links "${CUPY_NIGHTLY_WHEELHOUSE}" "${cupy_nightly_spec}")
+fi
 
-rapids-logger "pytest pylibcudf without optional dependencies"
-pushd python/pylibcudf/tests
-timeout 30m python -m pytest \
-  --cache-clear \
-  --numprocesses=8 \
-  --dist=worksteal \
-  .
-popd
+pylibcudf_timeout=30m
+cudf_timeout=30m
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+  pylibcudf_timeout=10m
+  cudf_timeout=20m
+fi
 
-deactivate
+# Download the wheel artifacts built in the previous steps.
+LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
+PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
-rapids-logger "Install cudf, pylibcudf, and test requirements"
+if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; then
+  # Generate constraints (possibly pinning to oldest support versions of dependencies).
+  rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}"
 
-# notes:
-#
-#   * echo to expand wildcard before adding `[test]` requires for pip
-#   * need to provide --constraint="${PIP_CONSTRAINT}" because that environment variable is
-#     ignored if any other --constraint are passed via the CLI
-#
-rapids-pip-retry install \
+  if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" ]]; then
+    rapids-logger "Install libcudf and verify its runtime dependencies in a virtual environment"
+
+    python -m venv libcudf-env
+    . libcudf-env/bin/activate
+
+    rapids-pip-retry install \
+      -v \
+      --prefer-binary \
+      --constraint "${PIP_CONSTRAINT}" \
+      "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+    python -c "import libcudf; assert libcudf.load_library() is not None"
+    deactivate
+
+    # To test pylibcudf without its optional dependencies, we create a virtual environment.
+    python -m venv pylibcudf-env
+    . pylibcudf-env/bin/activate
+
+    rapids-logger "Install pylibcudf and its basic dependencies"
+
+    # Notes:
+    #
+    #   * echo to expand wildcard before adding `[test]` requires for pip
+    #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
+    #     that environment variable is ignored if any other --constraint are passed via the CLI
+    #
+    rapids-pip-retry install \
+      -v \
+      --prefer-binary \
+      --constraint "${PIP_CONSTRAINT}" \
+      "${CUPY_NIGHTLY_PIP_ARGS[@]}" \
+      "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
+      "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]"
+
+    rapids-logger "pytest pylibcudf without optional dependencies"
+    pushd python/pylibcudf/tests
+    timeout "${pylibcudf_timeout}" python -m pytest \
+      --cache-clear \
+      --numprocesses=8 \
+      --dist=worksteal \
+      .
+    popd
+
+    deactivate
+  fi
+
+  if [[ "${RUN_CUDF_TESTS}" == "true" ]]; then
+    CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+
+    RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
+    RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
+    mkdir -p "${RAPIDS_TESTS_DIR}"
+
+    rapids-logger "Install cudf, pylibcudf, and test requirements"
+
+    rapids-pip-retry install \
+      -v \
+      --prefer-binary \
+      --constraint "${PIP_CONSTRAINT}" \
+      "${CUPY_NIGHTLY_PIP_ARGS[@]}" \
+      "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
+      "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
+      "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test, pyarrow, numpy]"
+
+    if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" ]]; then
+      rapids-logger "pytest pylibcudf"
+      pushd python/pylibcudf/tests
+      timeout "${pylibcudf_timeout}" python -m pytest \
+        --cache-clear \
+        --numprocesses=8 \
+        --dist=worksteal \
+        .
+      popd
+    fi
+
+    rapids-logger "pytest cudf"
+    pushd python/cudf/cudf/tests
+    timeout "${cudf_timeout}" python -m pytest \
+      --cache-clear \
+      --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf.xml" \
+      --numprocesses=8 \
+      --dist=worksteal \
+      .
+    popd
+  fi
+fi
+
+if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
+  CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+  LIBCUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "$RAPIDS_CUDA_VERSION")")
+
+  # Generate constraints (possibly pinning to oldest support versions of dependencies).
+  rapids-generate-pip-constraints py_test_cudf_streaming "${PIP_CONSTRAINT}"
+
+  rapids-logger "Install libcudf_streaming and verify its runtime dependencies in a virtual environment"
+
+  python -m venv libcudf-streaming-env
+  . libcudf-streaming-env/bin/activate
+
+  rapids-pip-retry install \
     -v \
-    --constraint ./constraints.txt \
+    --prefer-binary \
     --constraint "${PIP_CONSTRAINT}" \
-    "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
+    "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
+    "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+  python -c "import libcudf_streaming; assert libcudf_streaming.load_library() is not None"
+  deactivate
+
+  rapids-logger "Install cudf_streaming and its dependencies"
+
+  python -m venv cudf-streaming-env
+  . cudf-streaming-env/bin/activate
+
+  rapids-pip-retry install \
+    -v \
+    --prefer-binary \
+    --constraint "${PIP_CONSTRAINT}" \
+    "${CUPY_NIGHTLY_PIP_ARGS[@]}" \
+    "$(echo "${CUDF_STREAMING_WHEELHOUSE}"/cudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
+    "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
-    "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test, pyarrow, numpy]"
+    "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
 
-rapids-logger "pytest pylibcudf"
-pushd python/pylibcudf/tests
-timeout 30m python -m pytest \
-  --cache-clear \
-  --numprocesses=8 \
-  --dist=worksteal \
-  .
-popd
+  rapids-logger "pytest cudf_streaming"
+  pushd python/cudf_streaming/cudf_streaming/tests
+  EXITCODE=0
+  timeout 30m python -m pytest \
+    --cache-clear \
+    --numprocesses=8 \
+    --dist=worksteal \
+    . || EXITCODE=$?
 
-rapids-logger "pytest cudf"
-pushd python/cudf/cudf/tests
-timeout 30m python -m pytest \
-  --cache-clear \
-  --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf.xml" \
-  --numprocesses=8 \
-  --dist=worksteal \
-  .
-popd
+  # Exit code 5 means no tests were collected (all skipped); acceptable when
+  # communicator support (MPI/UCXX) is unavailable in the wheel test environment.
+  if [ ${EXITCODE} -ne 0 ] && [ ${EXITCODE} -ne 5 ]; then
+    exit ${EXITCODE}
+  fi
+  if [ ${EXITCODE} -eq 5 ]; then
+    rapids-logger "No cudf_streaming tests were collected; accepting exit code 5"
+  fi
+  popd
+
+  deactivate
+fi

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -15,6 +15,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_stemmer
  * @{
  * @file
+ * @brief APIs for stemming words using the Porter stemming algorithm measure.
  */
 
 /**
@@ -63,15 +64,15 @@ enum class letter_type {
  * @param ltype Specify letter type to check
  * @param character_index The character position to check in each string
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New BOOL column
  */
 std::unique_ptr<cudf::column> is_letter(
   cudf::strings_column_view const& input,
   letter_type ltype,
   cudf::size_type character_index,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns boolean column indicating if character at `indices[i]` of `input[i]`
@@ -116,15 +117,15 @@ std::unique_ptr<cudf::column> is_letter(
  * @param ltype Specify letter type to check
  * @param indices The character positions to check in each string
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New BOOL column
  */
 std::unique_ptr<cudf::column> is_letter(
   cudf::strings_column_view const& input,
   letter_type ltype,
   cudf::column_view const& indices,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the Porter Stemmer measurements of a strings column.
@@ -151,14 +152,14 @@ std::unique_ptr<cudf::column> is_letter(
  * for row `i` in the output column.
  *
  * @param input Strings column of words to measure
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return New INT32 column of measure values
  */
 std::unique_ptr<cudf::column> porter_stemmer_measure(
   cudf::strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

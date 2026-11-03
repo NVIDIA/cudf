@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,9 +16,9 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -46,7 +46,7 @@ namespace {
  */
 std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns,
                                       size_type total_list_count,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   // outgoing offsets
@@ -63,14 +63,14 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
       // handle sliced columns
       int const local_shift =
         shift -
-        (c.offset() > 0 ? cudf::detail::get_value<size_type>(c.offsets(), c.offset(), stream) : 0);
+        (c.offset() > 0 ? cudf::detail::get_value<int32_t>(c.offsets(), c.offset(), stream) : 0);
       column_device_view offsets(c.offsets(), nullptr, nullptr);
       thrust::transform(
-        rmm::exec_policy_nosync(stream),
-        offsets.begin<size_type>() + c.offset(),
-        offsets.begin<size_type>() + c.offset() + c.size() + 1,
-        d_merged_offsets.begin<size_type>() + count,
-        [local_shift] __device__(size_type offset) { return offset + local_shift; });
+        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        offsets.begin<int32_t>() + c.offset(),
+        offsets.begin<int32_t>() + c.offset() + c.size() + 1,
+        d_merged_offsets.begin<int32_t>() + count,
+        [local_shift] __device__(int32_t offset) -> int32_t { return offset + local_shift; });
 
       shift += c.get_sliced_child(stream).size();
       count += c.size();
@@ -86,7 +86,7 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
  * @copydoc cudf::lists::detail::concatenate
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   std::vector<lists_column_view> lists_columns;
@@ -115,20 +115,15 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // if any of the input columns have nulls, construct the output mask
   bool const has_nulls =
     std::any_of(columns.begin(), columns.end(), [](auto const& col) { return col.has_nulls(); });
-  rmm::device_buffer null_mask = cudf::detail::create_null_mask(
+  cuda::device_buffer<cudf::bitmask_type> null_mask = cudf::detail::create_null_mask(
     total_list_count, has_nulls ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED, stream, mr);
-  auto null_mask_data = static_cast<bitmask_type*>(null_mask.data());
+  auto null_mask_data = null_mask.data();
   auto const null_count =
     has_nulls ? cudf::detail::concatenate_masks(columns, null_mask_data, stream) : size_type{0};
 
   // assemble into outgoing list column
-  return make_lists_column(total_list_count,
-                           std::move(offsets),
-                           std::move(data),
-                           null_count,
-                           std::move(null_mask),
-                           stream,
-                           mr);
+  return make_lists_column(
+    total_list_count, std::move(offsets), std::move(data), null_count, std::move(null_mask));
 }
 
 }  // namespace detail

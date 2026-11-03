@@ -1,13 +1,24 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/stream_ref>
+
+#include <cstdint>
+#include <memory>
+
+/**
+ * @file
+ * @brief APIs for computing hash values of columns and tables using various hash algorithms.
+ */
 
 namespace CUDF_EXPORT cudf {
 
@@ -29,15 +40,13 @@ namespace hashing {
 /**
  * @addtogroup column_hash
  * @{
- * @file
  */
 
 /**
  * @brief Computes the MurmurHash3 32-bit hash value of each row in the given table
  *
- * This function computes the hash of each column using the `seed` for the first column
- * and the resulting hash as a seed for the next column and so on.
- * The result is a uint32 value for each row.
+ * This function hashes each column using the same initial `seed`, then combines the column
+ * hashes into a single uint32 value for each row.
  *
  * @param input The table of columns to hash
  * @param seed Optional seed value to use for the hash function
@@ -49,7 +58,45 @@ namespace hashing {
 std::unique_ptr<column> murmurhash3_x86_32(
   table_view const& input,
   uint32_t seed                     = DEFAULT_HASH_SEED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Computes the Apache Spark-compatible MurmurHash3 32-bit hash of each row
+ *
+ * This function follows Apache Spark value hashing and row traversal semantics. Each non-null value
+ * is hashed using the preceding value hash as its seed. Null values leave the current hash
+ * unchanged. Spark-specific handling is applied to strings, narrow integral types, fixed-point
+ * values, lists, and structs. Floating-point values follow Spark's rule that `-0.0` hashes as
+ * `+0.0` and every NaN is canonicalized to a single bit pattern, so callers do not need to
+ * normalize their input beforehand. MurmurHash3 packs the bytes left over after the last full
+ * four-byte block into a single partial block. Spark instead sign-extends each leftover byte and
+ * mixes it as a complete block.
+ *
+ * Chrono columns are hashed by their stored count, without unit conversion, so the caller must
+ * supply Spark's units: `TIMESTAMP_MICROSECONDS` for `TimestampType`, `TIMESTAMP_DAYS` for
+ * `DateType`, `DURATION_MICROSECONDS` for a day-time interval. Non-empty tables with other
+ * resolutions are rejected.
+ *
+ * LIST columns whose child is a STRUCT are not supported yet, and a non-empty table containing
+ * one is rejected.
+ *
+ * @param input The table of columns to hash
+ * @param seed Optional initial seed value, interpreted as unsigned. Defaults to `DEFAULT_HASH_SEED`
+ *             (`0`), matching other libcudf hash functions and cudf-spark-jni. Pass `42` explicitly
+ *             to match Spark's SQL `hash()`. Negative Spark seeds are passed as unsigned.
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column device memory
+ *
+ * @throws cudf::logic_error If non-empty input contains an unsupported chrono resolution or a LIST
+ *                           column whose child is a STRUCT
+ *
+ * @returns A non-nullable INT32 column containing one Spark-compatible hash per input row
+ */
+std::unique_ptr<column> spark_murmurhash3_x86_32(
+  table_view const& input,
+  uint32_t seed                     = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -68,7 +115,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
 std::unique_ptr<table> murmurhash3_x64_128(
   table_view const& input,
   uint64_t seed                     = DEFAULT_HASH_SEED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -82,7 +129,7 @@ std::unique_ptr<table> murmurhash3_x64_128(
  */
 std::unique_ptr<column> md5(
   table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -96,7 +143,7 @@ std::unique_ptr<column> md5(
  */
 std::unique_ptr<column> sha1(
   table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -110,7 +157,7 @@ std::unique_ptr<column> sha1(
  */
 std::unique_ptr<column> sha224(
   table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -124,7 +171,7 @@ std::unique_ptr<column> sha224(
  */
 std::unique_ptr<column> sha256(
   table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -138,7 +185,7 @@ std::unique_ptr<column> sha256(
  */
 std::unique_ptr<column> sha384(
   table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -152,7 +199,7 @@ std::unique_ptr<column> sha384(
  */
 std::unique_ptr<column> sha512(
   table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -172,7 +219,7 @@ std::unique_ptr<column> sha512(
 std::unique_ptr<column> xxhash_32(
   table_view const& input,
   uint32_t seed                     = DEFAULT_HASH_SEED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -190,7 +237,7 @@ std::unique_ptr<column> xxhash_32(
 std::unique_ptr<column> xxhash_64(
   table_view const& input,
   uint64_t seed                     = DEFAULT_HASH_SEED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

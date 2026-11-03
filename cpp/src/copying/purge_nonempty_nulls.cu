@@ -1,16 +1,16 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/copying.hpp>
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/offsets_iterator_factory.cuh>
-#include <cudf/detail/utilities/algorithm.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 namespace cudf {
 namespace detail {
@@ -26,7 +26,7 @@ bool type_may_have_nonempty_nulls(cudf::type_id const& type)
 }
 
 /// Check if the (STRING/LIST) column has any null rows with non-zero length.
-bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref stream)
 {
   if (not input.has_nulls()) { return false; }  // No nulls => no dirty rows.
 
@@ -43,7 +43,7 @@ bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_vie
     return d_input.is_null_nocheck(row_idx) && (offsets[row_idx] != offsets[row_idx + 1]);
   };
 
-  auto const row_begin = thrust::counting_iterator<cudf::size_type>(0);
+  auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
   auto const row_end   = row_begin + input.size();
   return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream) > 0;
 }
@@ -53,7 +53,7 @@ bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_vie
 /**
  * @copydoc cudf::detail::has_nonempty_nulls
  */
-bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(cudf::column_view const& input, cuda::stream_ref stream)
 {
   auto const type = input.type().id();
 
@@ -77,7 +77,7 @@ bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view st
 }
 
 std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   // If not compound types (LIST/STRING/STRUCT/DICTIONARY) then just copy the input into output.
@@ -85,8 +85,8 @@ std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
 
   // Implement via identity gather.
   auto gathered_table = cudf::detail::gather(table_view{{input}},
-                                             thrust::make_counting_iterator(0),
-                                             thrust::make_counting_iterator(input.size()),
+                                             cuda::counting_iterator<cudf::size_type>{0},
+                                             cuda::counting_iterator{input.size()},
                                              out_of_bounds_policy::DONT_CHECK,
                                              stream,
                                              mr);
@@ -117,7 +117,7 @@ bool may_have_nonempty_nulls(column_view const& input)
 /**
  * @copydoc cudf::has_nonempty_nulls
  */
-bool has_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 {
   return detail::has_nonempty_nulls(input, stream);
 }
@@ -126,7 +126,7 @@ bool has_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream)
  * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
  */
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   return detail::purge_nonempty_nulls(input, stream, mr);

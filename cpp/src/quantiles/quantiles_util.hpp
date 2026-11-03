@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,7 +27,7 @@ CUDF_HOST_DEVICE inline Result linear(T lhs, T rhs, double frac)
   // Since the fraction part of double is 52 bits,
   // double cannot fully represent int64.
   // Underflow may occur when converting int64 to double
-  // detail: https://github.com/rapidsai/cudf/issues/1417
+  // detail: https://github.com/NVIDIA/cudf/issues/1417
 
   auto dlhs             = convert_to_floating<double>(lhs);
   auto drhs             = convert_to_floating<double>(rhs);
@@ -74,17 +74,19 @@ struct quantile_index {
   size_type lower;
   size_type higher;
   size_type nearest;
+  size_type nearest_half_up;
   double fraction;
 
   CUDF_HOST_DEVICE inline quantile_index(size_type count, double quantile)
   {
     quantile = cuda::std::min(cuda::std::max(quantile, 0.0), 1.0);
 
-    double val = quantile * (count - 1);
-    lower      = std::floor(val);
-    higher     = static_cast<size_type>(cuda::std::ceil(val));
-    nearest    = static_cast<size_type>(cuda::std::nearbyint(val));
-    fraction   = val - lower;
+    double val      = quantile * (count - 1);
+    lower           = cuda::std::floor(val);
+    higher          = static_cast<size_type>(cuda::std::ceil(val));
+    nearest         = static_cast<size_type>(cuda::std::nearbyint(val));
+    nearest_half_up = static_cast<size_type>(cuda::std::round(val));
+    fraction        = val - lower;
   }
 };
 
@@ -130,6 +132,8 @@ CUDF_HOST_DEVICE inline Result select_quantile(ValueAccessor get_value,
 
     case interpolation::NEAREST: return static_cast<Result>(get_value(idx.nearest));
 
+    case interpolation::NEAREST_HALF_UP: return static_cast<Result>(get_value(idx.nearest_half_up));
+
     default: {
 #ifndef __CUDA_ARCH__
       CUDF_FAIL("Invalid interpolation operation for quantiles.");
@@ -156,6 +160,8 @@ CUDF_HOST_DEVICE inline Result select_quantile_data(Iterator begin,
     case interpolation::HIGHER: return static_cast<Result>(*(begin + idx.higher));
 
     case interpolation::NEAREST: return static_cast<Result>(*(begin + idx.nearest));
+
+    case interpolation::NEAREST_HALF_UP: return static_cast<Result>(*(begin + idx.nearest_half_up));
 
     case interpolation::LINEAR:
       return interpolate::linear<Result>(*(begin + idx.lower), *(begin + idx.higher), idx.fraction);
@@ -186,6 +192,8 @@ CUDF_HOST_DEVICE inline bool select_quantile_validity(Iterator begin,
     case interpolation::LOWER: return *(begin + idx.lower);
 
     case interpolation::NEAREST: return *(begin + idx.nearest);
+
+    case interpolation::NEAREST_HALF_UP: return *(begin + idx.nearest_half_up);
 
     case interpolation::LINEAR:
     case interpolation::MIDPOINT: return *(begin + idx.lower) and *(begin + idx.higher);

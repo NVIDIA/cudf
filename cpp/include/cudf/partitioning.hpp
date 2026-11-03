@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,17 +10,20 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <vector>
+
+/**
+ * @file
+ * @brief Column partitioning APIs
+ */
 
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reorder_partition
  * @{
- * @file
- * @brief Column partitioning APIs
  */
 
 /**
@@ -69,7 +72,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
   table_view const& t,
   column_view const& partition_map,
   size_type num_partitions,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -81,6 +84,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
  * of `num_partitions + 1` offsets, where partition `i` contains rows in the range
  * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
  * number of rows in the output table.
+ *
+ * An empty `columns_to_hash` is treated as empty, producing an empty result even when `input` has a
+ * non-zero row count.
  *
  * @throw std::out_of_range if index is `columns_to_hash` is invalid
  *
@@ -100,47 +106,42 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   int num_partitions,
   hash_id hash_function             = hash_id::HASH_MURMUR3,
   uint32_t seed                     = DEFAULT_HASH_SEED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Computes partition row indices without materializing the partitioned table.
+ * @brief Partitions rows from the input table into multiple output tables.
  *
- * Returns a vector of columns where each column contains the row indices of
- * the input to generate a partition. This enables downstream operations to
- * gather the partitions in the most efficient format for their use case,
- * avoiding an intermediate copy.
+ * Partitions rows of `input` into `num_partitions` bins based on the hash
+ * value of the rows specified by the `keys` table. Rows partitioned into
+ * the same bin are grouped consecutively in the output table. Returns a vector
+ * of `num_partitions + 1` offsets, where partition `i` contains rows in the range
+ * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
+ * number of rows in the output table.
  *
- * @code{.pseudo}
- * // Example usage:
- * auto partition_indices = cudf::hash_partition_indices(input, cols_to_hash, num_partitions);
+ * A zero-column `keys` table is treated as empty, producing an empty result even when `input` has a
+ * non-zero row count.
  *
- * // Gather each partition separately (potentially on separate streams)
- * std::vector<std::unique_ptr<table>> partitions;
- * for (auto& indices : partition_indices) {
- *   partitions.push_back(cudf::gather(input, indices->view()));
- * }
- * @endcode
- *
- * @throw std::out_of_range if index in `columns_to_hash` is invalid
+ * @throw std::invalid_argument if `keys` is not empty and does not have the same number of rows as
+ * `input`.
  *
  * @param input The table to partition
- * @param columns_to_hash Indices of input columns to hash
- * @param num_partitions The number of partitions to create
+ * @param keys The table of keys to hash defining the partitioning
+ * @param num_partitions The number of partitions to use
  * @param hash_function Optional hash id that chooses the hash function to use
  * @param seed Optional seed value to the hash function
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned columns' device memory
+ * @param mr Device memory resource used to allocate the returned table's device memory
  *
- * @return Vector of columns, each containing row indices for one partition
+ * @returns An output table and a vector of `num_partitions + 1` row offsets to each partition
  */
-std::vector<std::unique_ptr<column>> hash_partition_indices(
+std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
-  std::vector<size_type> const& columns_to_hash,
+  table_view const& keys,
   int num_partitions,
   hash_id hash_function             = hash_id::HASH_MURMUR3,
   uint32_t seed                     = DEFAULT_HASH_SEED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -286,7 +287,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> round_robi
   table_view const& input,
   cudf::size_type num_partitions,
   cudf::size_type start_partition   = 0,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group

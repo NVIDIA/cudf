@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from contextlib import nullcontext as does_not_raise
@@ -189,7 +189,7 @@ def test_categorical_compare_unordered(data):
     with pytest.raises(
         (TypeError, ValueError),
         match=(
-            "The only binary operations supported by unordered categorical "
+            r"The only binary operations supported by unordered categorical "
             "columns are equality and inequality."
         ),
     ):
@@ -241,12 +241,13 @@ def data_str_1():
 
 @pytest.mark.parametrize("data", [data_str_1()])
 def test_string_slicing(data):
-    pdsr = pd.Series(data.copy())
-    sr = Series(pdsr)
-    dsr = dask_cudf.from_cudf(sr, npartitions=2)
-    base = pdsr.str.slice(0, 4)
-    test = dsr.str.slice(0, 4).compute()
-    assert_eq(base, test)
+    with dask.config.set({"dataframe.convert-string": False}):
+        pdsr = pd.Series(data.copy())
+        sr = Series(pdsr)
+        dsr = dask_cudf.from_cudf(sr, npartitions=2)
+        base = pdsr.str.slice(0, 4)
+        test = dsr.str.slice(0, 4).compute()
+        assert_eq(base, test)
 
 
 def test_categorical_categories():
@@ -373,7 +374,7 @@ def test_unique(data):
 def test_len(data):
     expect = Series(data).list.len()
     ds = dask_cudf.from_cudf(Series(data), 5)
-    assert_eq(expect, ds.list.len().compute())
+    dd.assert_eq(expect, ds.list.len())
 
 
 @pytest.mark.parametrize(
@@ -383,7 +384,7 @@ def test_len(data):
 def test_contains(data, search_key):
     expect = Series(data).list.contains(search_key)
     ds = dask_cudf.from_cudf(Series(data), 5)
-    assert_eq(expect, ds.list.contains(search_key).compute())
+    dd.assert_eq(expect, ds.list.contains(search_key))
 
 
 @pytest.mark.parametrize(
@@ -396,7 +397,14 @@ def test_contains(data, search_key):
 def test_get(data, index):
     expect = Series(data).list.get(index)
     ds = dask_cudf.from_cudf(Series(data), 5)
-    assert_eq(expect, ds.list.get(index).compute())
+    dd.assert_eq(expect, ds.list.get(index))
+
+
+def test_get_list_index():
+    # A list of per-row indices works when there is a single partition.
+    s = Series([[1, 2], [3, 4], [5, 6]])
+    ds = dask_cudf.from_cudf(s, 1)
+    dd.assert_eq(s.list.get([0, 1, 0]), ds.list.get([0, 1, 0]))
 
 
 @pytest.mark.parametrize(
@@ -406,6 +414,7 @@ def test_get(data, index):
 def test_leaves(data):
     expect = Series(data).list.leaves
     ds = dask_cudf.from_cudf(Series(data), 5)
+    assert ds.list.leaves.dtype == expect.dtype
     got = ds.list.leaves.compute().reset_index(drop=True)
     assert_eq(expect, got)
 
@@ -529,9 +538,12 @@ def test_dask_struct_field_Int_Error(data):
 )
 def test_struct_explode(data):
     expect = Series(data).struct.explode()
-    got = dask_cudf.from_cudf(Series(data), 2).struct.explode()
+    got = dask_cudf.from_cudf(Series(data), 2).struct.explode().compute()
     # Output index will not agree for >1 partitions
-    assert_eq(expect, got.compute().reset_index(drop=True))
+    if len(data[0]) == 0:
+        # expect.columns is an empty RangeIndex, got is an empty Index[object]
+        got.columns = expect.columns
+    assert_eq(expect, got)
 
 
 def test_tz_localize():

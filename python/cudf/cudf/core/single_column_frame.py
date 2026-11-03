@@ -1,13 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Base class for Frame types that only have a single column."""
 
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, Self
 
 import cupy as cp
+import numpy as np
 
 import cudf
 from cudf.api.extensions import no_default
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Hashable, Mapping
     from types import NotImplementedType
 
-    import numpy as np
     import pyarrow as pa
 
     from cudf._typing import (
@@ -52,11 +51,11 @@ class SingleColumnFrame(Frame, NotIterable):
     def _reduce(
         self,
         op: str,
-        axis=no_default,
+        axis: Axis | None = 0,
         numeric_only: bool = False,
         **kwargs,
     ) -> ScalarLike:
-        if axis not in (None, 0, no_default):
+        if axis not in (None, 0):
             raise NotImplementedError("axis parameter is not implemented yet")
 
         if numeric_only and not is_dtype_obj_numeric(self.dtype):
@@ -122,6 +121,18 @@ class SingleColumnFrame(Frame, NotIterable):
         col = self._column
         if col.dtype.kind in {"i", "u", "f", "b"} and not col.has_nulls():
             return cp.asarray(col)
+        if not isinstance(col.dtype, np.dtype) and col.has_nulls():
+            # A pandas nullable/masked extension dtype with nulls cannot be
+            # represented as a plain numpy array without losing the NA. pandas
+            # keeps it as an ExtensionArray, so raise here and let cudf.pandas
+            # fall back to pandas ``.values`` instead of silently down-casting
+            # to a float array with NaN.
+            raise ValueError(
+                f"cannot convert to "
+                f"'{getattr(col.dtype, 'numpy_dtype', col.dtype)}'-dtype "
+                "NumPy array with missing values. Specify an appropriate "
+                "'na_value' for this dtype."
+            )
         return col.values
 
     @property
@@ -166,24 +177,6 @@ class SingleColumnFrame(Frame, NotIterable):
             .reshape(len(self), order="F")
         )
 
-    @property  # type: ignore[explicit-override]
-    @_performance_tracking
-    def values_host(self) -> np.ndarray:
-        """
-        Return a numpy representation of the data.
-
-        .. deprecated:: 26.04
-            `values_host` is deprecated and will be removed in a future version.
-            Use `to_numpy()` instead.
-        """
-        warnings.warn(
-            "values_host is deprecated and will be removed in a future version. "
-            "Use to_numpy() instead.",
-            FutureWarning,
-            stacklevel=2,
-        )
-        return self._column.to_numpy()
-
     @classmethod
     @_performance_tracking
     def _from_column(
@@ -211,16 +204,16 @@ class SingleColumnFrame(Frame, NotIterable):
         --------
         >>> import cudf
         >>> sr = cudf.Series(["a", "b", None])
-        >>> sr.to_arrow()
-        <pyarrow.lib.StringArray object at 0x7f796b0e7600>
+        >>> sr.to_arrow() # doctest: +ELLIPSIS
+        <pyarrow.lib.LargeStringArray object at ...>
         [
           "a",
           "b",
           null
         ]
         >>> ind = cudf.Index(["a", "b", None])
-        >>> ind.to_arrow()
-        <pyarrow.lib.StringArray object at 0x7f796b0e7750>
+        >>> ind.to_arrow() # doctest: +ELLIPSIS
+        <pyarrow.lib.LargeStringArray object at ...>
         [
           "a",
           "b",
@@ -254,11 +247,22 @@ class SingleColumnFrame(Frame, NotIterable):
     def _to_frame(self, name: Hashable, index: Index | None) -> DataFrame:
         """Helper function for Series.to_frame, Index.to_frame"""
 
+        unnamed_default = False
+        col_name: Hashable
         if name is no_default:
-            col_name = 0 if self.name is None else self.name
+            if self.name is None:
+                col_name = 0
+                unnamed_default = True
+            else:
+                col_name = self.name
         else:
             col_name = name
-        ca = ColumnAccessor({col_name: self._column}, verify=False)
+        ca = ColumnAccessor(
+            {col_name: self._column},
+            multiindex=isinstance(col_name, tuple),
+            rangeindex=unnamed_default,
+            verify=False,
+        )
         # TODO: Avoid accessing DataFrame from the top level namespace
         return cudf.DataFrame._from_data(ca, index=index)
 
@@ -339,16 +343,23 @@ class SingleColumnFrame(Frame, NotIterable):
         >>> s = cudf.Series(['a', 'a', 'c'])
         >>> codes, uniques = s.factorize()
         >>> codes
-        array([0, 0, 1], dtype=int8)
+        array([0, 0, 1])
         >>> uniques
-        Index(['a', 'c'], dtype='object')
+        Index(['a', 'c'], dtype='str')
         """
-        # TODO: Avoid accessing factorize from the top level namespace
-        return cudf.factorize(
-            self,
-            sort=sort,
-            use_na_sentinel=use_na_sentinel,
+        return self._factorize(sort=sort, use_na_sentinel=use_na_sentinel)
+
+    def _factorize(
+        self, sort: bool, use_na_sentinel: bool
+    ) -> tuple[cp.ndarray, Index]:
+        """Default factorize implementation for SingleColumnFrame subclasses.
+
+        Subclasses (e.g. ``RangeIndex``) may override to specialize.
+        """
+        labels, cats = self._column.factorize(
+            sort=sort, use_na_sentinel=use_na_sentinel
         )
+        return labels, cudf.Index._from_column(cats)
 
     @_performance_tracking
     def _make_operands_for_binop(
@@ -454,7 +465,7 @@ class SingleColumnFrame(Frame, NotIterable):
                     raise IndexError(
                         f"Boolean mask has wrong length: {bn} not {n}"
                     )
-                return self._column.apply_boolean_mask(arg)
+                return self._column.apply_retention_mask(arg)
             raise NotImplementedError(f"Unknown indexer {type(arg)}")
 
     @_performance_tracking

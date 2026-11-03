@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,18 +14,18 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 
 namespace cudf::lists {
 namespace detail {
 
 std::unique_ptr<column> reverse(lists_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return cudf::empty_like(input.parent()); }
@@ -40,13 +40,14 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
   auto out_offsets = get_normalized_offsets(input, stream, mr);
 
   // Build a gather map to copy the output list elements from the input list elements.
-  auto gather_map = rmm::device_uvector<size_type>(child.size(), stream);
+  cuda::device_buffer<size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), child.size(), cuda::no_init);
 
   // Build a segmented reversed order for the child column.
-  thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::counting_iterator<size_type>(0),
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<size_type>{0},
                      child.size(),
-                     [list_offsets = out_offsets->view().begin<size_type>(),
+                     [list_offsets = out_offsets->view().begin<int32_t>(),
                       list_indices = labels->view().begin<size_type>(),
                       gather_map   = gather_map.begin()] __device__(auto const idx) {
                        auto const list_idx     = list_indices[idx];
@@ -61,7 +62,7 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
     cudf::detail::gather(table_view{{child}},
                          device_span<size_type const>{gather_map.data(), gather_map.size()},
                          out_of_bounds_policy::DONT_CHECK,
-                         cudf::detail::negative_index_policy::NOT_ALLOWED,
+                         cudf::negative_index_policy::NOT_ALLOWED,
                          stream,
                          mr);
 
@@ -69,15 +70,13 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
                                  std::move(out_offsets),
                                  std::move(child_segmented_reversed->release().front()),
                                  input.null_count(),
-                                 cudf::detail::copy_bitmask(input.parent(), stream, mr),
-                                 stream,
-                                 mr);
+                                 cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
 
 }  // namespace detail
 
 std::unique_ptr<column> reverse(lists_column_view const& input,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

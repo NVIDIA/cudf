@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,12 +9,16 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief API for counting the number of elements in each row of a list column
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace lists {
 /**
  * @addtogroup lists_elements
  * @{
- * @file
  */
 
 /**
@@ -40,7 +44,7 @@ namespace lists {
  */
 std::unique_ptr<column> count_elements(
   lists_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of lists_elements group

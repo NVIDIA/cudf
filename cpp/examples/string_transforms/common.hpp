@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -13,19 +13,21 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <rmm/cuda_device.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/device_memory_resource.hpp>
-#include <rmm/mr/owning_wrapper.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cuda/memory_resource>
+
 #include <chrono>
 #include <iostream>
-#include <memory>
 #include <numeric>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -37,37 +39,6 @@
  */
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table);
-
-/**
- * @brief Create CUDA memory resource
- */
-auto make_cuda_mr() { return std::make_shared<rmm::mr::cuda_memory_resource>(); }
-
-/**
- * @brief Create a pool device memory resource
- */
-auto make_pool_mr()
-{
-  return rmm::mr::make_owning_wrapper<rmm::mr::pool_memory_resource>(
-    make_cuda_mr(), rmm::percent_of_free_device_memory(50));
-}
-
-auto make_async_mr() { return std::make_shared<rmm::mr::cuda_async_memory_resource>(); }
-
-/**
- * @brief Create memory resource for libcudf functions
- */
-std::shared_ptr<rmm::mr::device_memory_resource> create_memory_resource(std::string const& name)
-{
-  if (name == "pool" || name == "pool-stats") {
-    return make_pool_mr();
-  } else if (name == "async" || name == "async-stats") {
-    return make_async_mr();
-  } else if (name == "cuda" || name == "cuda-stats") {
-    return make_cuda_mr();
-  }
-  CUDF_FAIL("Unrecognized memory resource name: " + name, std::invalid_argument);
-}
 
 void write_csv(cudf::table_view const& tbl_view,
                std::string const& file_path,
@@ -86,7 +57,8 @@ void write_csv(cudf::table_view const& tbl_view,
  * 1. CSV file name/path
  * 2. Out file name/path
  * 3. Number of rows from the CSV to transform
- * 4. Memory resource (optional): 'pool' or 'cuda'
+ * 4. Memory resource (optional): 'async' (default), 'pool', or 'cuda';
+ *    append '-stats' to report allocation statistics
  *
  * The stdout includes the number of rows in the input and the output size in bytes.
  */
@@ -102,20 +74,28 @@ int main(int argc, char const** argv)
   auto const out_csv  = std::string{argv[2]};
   auto const num_rows = argc > 3 ? std::optional{std::stoi(std::string(argv[3]))} : std::nullopt;
   auto const memory_resource_name =
-    std::string{argc > 4 ? std::string(argv[4]) : std::string("cuda")};
+    std::string{argc > 4 ? std::string(argv[4]) : std::string("async")};
   auto const enable_stats = memory_resource_name.ends_with("-stats");
 
-  auto resource = create_memory_resource(memory_resource_name);
-  auto stream   = cudf::get_default_stream();
+  auto stream = cudf::get_default_stream();
 
-  rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource> stats_adaptor{
-    resource.get()};
+  auto const base_name = enable_stats
+                           ? memory_resource_name.substr(0, memory_resource_name.size() - 6)
+                           : memory_resource_name;
+  auto resource        = [&]() -> cuda::mr::any_resource<cuda::mr::device_accessible> {
+    if (base_name == "pool") {
+      return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
+                                           rmm::percent_of_free_device_memory(50)};
+    }
+    if (base_name == "cuda") { return rmm::mr::cuda_memory_resource{}; }
+    if (base_name == "async") { return rmm::mr::cuda_async_memory_resource{}; }
+    CUDF_FAIL("Unrecognized memory resource name: " + memory_resource_name, std::invalid_argument);
+  }();
+  cudf::set_current_device_resource(resource);
 
-  if (enable_stats) {
-    cudf::set_current_device_resource(&stats_adaptor);
-  } else {
-    cudf::set_current_device_resource(resource.get());
-  }
+  rmm::mr::statistics_resource_adaptor stats_adaptor{cudf::get_current_device_resource_ref()};
+
+  if (enable_stats) { cudf::set_current_device_resource(stats_adaptor); }
 
   cudf::io::csv_reader_options in_opts =
     cudf::io::csv_reader_options::builder(cudf::io::source_info{in_csv}).header(0);
@@ -132,23 +112,23 @@ int main(int argc, char const** argv)
   std::chrono::duration<double> elapsed_cold{};
   {
     // warmup pass
-    stream.synchronize();
+    stream.sync();
     auto start_cold = std::chrono::steady_clock::now();
     nvtxRangePush("transform cold");
     auto [result_cold, input_indices_cold] = transform(table_view);
-    stream.synchronize();
+    stream.sync();
     nvtxRangePop();
     elapsed_cold = std::chrono::steady_clock::now() - start_cold;
   }
 
-  stream.synchronize();
+  stream.sync();
 
   auto start = std::chrono::steady_clock::now();
   nvtxRangePush("transform warm");
   auto [result, input_indices] = transform(table_view);
 
   // ensure transform operation completes and the wall-time is only for the transform computation
-  stream.synchronize();
+  stream.sync();
   nvtxRangePop();
 
   std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;

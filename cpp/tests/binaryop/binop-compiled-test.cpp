@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,7 @@
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <limits>
 #include <type_traits>
@@ -543,8 +543,8 @@ auto NullOp_Result(cudf::column_view lhs, cudf::column_view rhs)
   auto [rhs_data, rhs_mask] = cudf::test::to_host<TypeRhs>(rhs);
   std::vector<TypeOut> result(lhs.size());
   std::vector<bool> result_mask;
-  std::transform(thrust::make_counting_iterator(0),
-                 thrust::make_counting_iterator(lhs.size()),
+  std::transform(cuda::counting_iterator<cudf::size_type>{0},
+                 cuda::counting_iterator{lhs.size()},
                  result.begin(),
                  [&lhs_data    = lhs_data,
                   &lhs_mask    = lhs_mask,

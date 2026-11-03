@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class CategoricalAccessor(BaseAccessor):
     1    <NA>
     2    <NA>
     dtype: category
-    Categories (5, object): ['a', 'b', 'c', 'd', 'e']
+    Categories (5, str): ['a', 'b', 'c', 'd', 'e']
     >>> s.cat.as_ordered()
     0    1
     1    2
@@ -94,7 +94,10 @@ class CategoricalAccessor(BaseAccessor):
         index = (
             self._parent.index if isinstance(self._parent, Series) else None
         )
-        return Series._from_column(self._column.codes, index=index)
+        codes = self._column.codes.astype(
+            self._column.dtype._pandas_codes_dtype
+        )
+        return Series._from_column(codes, index=index)
 
     @property
     def ordered(self) -> bool | None:
@@ -419,8 +422,9 @@ class CategoricalAccessor(BaseAccessor):
         dtype: category
         Categories (3, int64): [10, 1, 2]
         >>> s.cat.reorder_categories([10, 1])
-        ValueError: items in new_categories are not the same as in
-        old categories
+        Traceback (most recent call last):
+        ...
+        ValueError: items in new_categories are not the same as in old categories
         """
         return self._return_or_inplace(
             self._column.reorder_categories(new_categories, ordered=ordered),

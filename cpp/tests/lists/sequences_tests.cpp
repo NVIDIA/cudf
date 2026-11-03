@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,18 +40,16 @@ TYPED_TEST(NumericSequencesTypedTest, SimpleTestNoNull)
 
   // Sequences with step == 1.
   {
-    auto const expected =
-      ListsCol<T>{ListsCol<T>{1, 2, 3, 4, 5}, ListsCol<T>{2, 3, 4}, ListsCol<T>{3, 4, 5, 6}};
-    auto const result = cudf::lists::sequences(starts, sizes);
+    auto const expected = ListsCol<T>{{1, 2, 3, 4, 5}, {2, 3, 4}, {3, 4, 5, 6}};
+    auto const result   = cudf::lists::sequences(starts, sizes);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
 
   // Sequences with various steps.
   {
-    auto const steps = FWDCol<T>{1, 3, 2};
-    auto const expected =
-      ListsCol<T>{ListsCol<T>{1, 2, 3, 4, 5}, ListsCol<T>{2, 5, 8}, ListsCol<T>{3, 5, 7, 9}};
-    auto const result = cudf::lists::sequences(starts, steps, sizes);
+    auto const steps    = FWDCol<T>{1, 3, 2};
+    auto const expected = ListsCol<T>{{1, 2, 3, 4, 5}, {2, 5, 8}, {3, 5, 7, 9}};
+    auto const result   = cudf::lists::sequences(starts, steps, sizes);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
 }
@@ -65,7 +63,7 @@ TYPED_TEST(NumericSequencesTypedTest, ZeroSizesTest)
 
   // Sequences with step == 1.
   {
-    auto const expected = ListsCol<T>{ListsCol<T>{}, ListsCol<T>{2, 3, 4}, ListsCol<T>{}};
+    auto const expected = ListsCol<T>{{}, {2, 3, 4}, {}};
     auto const result   = cudf::lists::sequences(starts, sizes);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
@@ -73,7 +71,7 @@ TYPED_TEST(NumericSequencesTypedTest, ZeroSizesTest)
   // Sequences with various steps.
   {
     auto const steps    = FWDCol<T>{1, 3, 2};
-    auto const expected = ListsCol<T>{ListsCol<T>{}, ListsCol<T>{2, 5, 8}, ListsCol<T>{}};
+    auto const expected = ListsCol<T>{{}, {2, 5, 8}, {}};
     auto const result   = cudf::lists::sequences(starts, steps, sizes);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
@@ -93,11 +91,7 @@ TYPED_TEST(NumericSequencesTypedTest, SlicedInputTestNoNulls)
 
   // Sequences with step == 1.
   {
-    auto const expected = ListsCol<T>{ListsCol<T>{1, 2, 3, 4, 5},
-                                      ListsCol<T>{2, 3, 4},
-                                      ListsCol<T>{3, 4, 5, 6},
-                                      ListsCol<T>{4},
-                                      ListsCol<T>{5, 6}
+    auto const expected = ListsCol<T>{{1, 2, 3, 4, 5}, {2, 3, 4}, {3, 4, 5, 6}, {4}, {5, 6}
 
     };
     auto const result   = cudf::lists::sequences(starts, sizes);
@@ -109,11 +103,7 @@ TYPED_TEST(NumericSequencesTypedTest, SlicedInputTestNoNulls)
     auto const steps_original = FWDCol<T>{dont_care, dont_care, 1, 3, 2, 2, 3, dont_care};
     auto const steps          = cudf::slice(steps_original, {2, 7})[0];
 
-    auto const expected = ListsCol<T>{ListsCol<T>{1, 2, 3, 4, 5},
-                                      ListsCol<T>{2, 5, 8},
-                                      ListsCol<T>{3, 5, 7, 9},
-                                      ListsCol<T>{4},
-                                      ListsCol<T>{5, 8}
+    auto const expected = ListsCol<T>{{1, 2, 3, 4, 5}, {2, 5, 8}, {3, 5, 7, 9}, {4}, {5, 8}
 
     };
     auto const result   = cudf::lists::sequences(starts, steps, sizes);
@@ -140,21 +130,20 @@ TYPED_TEST(DurationSequencesTypedTest, SequencesNoNull)
   // Sequences with step == 1.
   {
     auto const expected_h = std::vector<int64_t>{start_time, start_time + 1L, start_time + 2L};
-    auto const expected =
-      ListsCol<T, int64_t>{ListsCol<T, int64_t>{expected_h.begin(), expected_h.begin() + 1},
-                           ListsCol<T, int64_t>{expected_h.begin(), expected_h.begin() + 2},
-                           ListsCol<T, int64_t>{expected_h.begin(), expected_h.begin() + 3}};
-    auto const result = cudf::lists::sequences(starts, sizes);
+    auto const expected   = ListsCol<T, int64_t>{{expected_h.begin(), expected_h.begin() + 1},
+                                                 {expected_h.begin(), expected_h.begin() + 2},
+                                                 {expected_h.begin(), expected_h.begin() + 3}};
+    auto const result     = cudf::lists::sequences(starts, sizes);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }
 
   // Sequences with various steps, including negative.
   {
-    auto const steps    = FWDCol<T, int64_t>{10L, -155L, -13L};
-    auto const expected = ListsCol<T, int64_t>{
-      ListsCol<T, int64_t>{start_time},
-      ListsCol<T, int64_t>{start_time, start_time - 155L},
-      ListsCol<T, int64_t>{start_time, start_time - 13L, start_time - 13L * 2L}};
+    auto const steps = FWDCol<T, int64_t>{10L, -155L, -13L};
+    auto const expected =
+      ListsCol<T, int64_t>{{start_time},
+                           {start_time, start_time - 155L},
+                           {start_time, start_time - 13L, start_time - 13L * 2L}};
     auto const result = cudf::lists::sequences(starts, steps, sizes);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   }

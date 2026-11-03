@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -136,17 +136,17 @@ static void bench_multibyte_split(nvbench::state& state,
       cudf::get_default_stream());
   }
 
+  std::string file_name;
   auto source = [&] {
     switch (source_type) {
       case data_chunk_source_type::file:
       case data_chunk_source_type::file_datasource: {
-        auto const temp_file_name = random_file_in_dir(temp_dir.path());
-        std::ofstream(temp_file_name, std::ofstream::out)
-          .write(host_input.data(), host_input.size());
+        file_name = random_file_in_dir(temp_dir.path());
+        std::ofstream(file_name, std::ofstream::out).write(host_input.data(), host_input.size());
         if (source_type == data_chunk_source_type::file) {
-          return cudf::io::text::make_source_from_file(temp_file_name);
+          return cudf::io::text::make_source_from_file(file_name);
         } else {
-          datasource = cudf::io::datasource::create(temp_file_name);
+          datasource = cudf::io::datasource::create(file_name);
           return cudf::io::text::make_source(*datasource);
         }
       }
@@ -164,7 +164,7 @@ static void bench_multibyte_split(nvbench::state& state,
         }
         return cudf::io::text::make_source_from_bgzip_file(temp_file_name);
       }
-      default: CUDF_FAIL();
+      default: CUDF_FAIL("Unexpected case");
     }
   }();
 
@@ -175,15 +175,15 @@ static void bench_multibyte_split(nvbench::state& state,
   cudf::io::text::parse_options options{range, strip_delimiters};
   std::unique_ptr<cudf::column> output;
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    try_drop_l3_cache();
+    drop_page_cache_if_enabled({file_name});
     output = cudf::io::text::multibyte_split(*source, delim, options);
   });
 
-  state.add_buffer_size(mem_stats_logger.peak_memory_usage(), "pmu", "Peak Memory Usage");
-  // TODO adapt to consistent naming scheme once established
-  state.add_buffer_size(range_size, "efs", "Encoded file size");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  state.add_buffer_size(range_size, "encoded_file_size", "encoded_file_size");
 }
 
 using source_type_list = nvbench::enum_type_list<data_chunk_source_type::device,

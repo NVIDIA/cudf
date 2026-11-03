@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
 Test related to Cut
 """
 
+import cupy
 import numpy as np
 import pandas as pd
 import pytest
@@ -230,6 +231,29 @@ def test_cut_drop_duplicates_raises(
         )
 
 
+def test_cut_unique_bins_larger_than_integer_cache():
+    x = [1, 2]
+    bins = list(range(257))
+
+    expected = pd.cut(x=x, bins=bins, labels=False)
+    actual = cut(x=x, bins=bins, labels=False)
+
+    assert_eq(expected, actual)
+
+
+def test_cut_duplicate_bins_with_distinct_large_integers():
+    x = [1, 2]
+    # Construct equal bin edges independently so they are distinct objects.
+    duplicate_edge = int("257")
+    bins = [0, duplicate_edge, int("257"), 258]
+
+    assert bins[1] == bins[2]
+    assert bins[1] is not bins[2]
+
+    with pytest.raises(ValueError, match="Bin edges must be unique"):
+        cut(x=x, bins=bins, labels=False)
+
+
 @pytest.mark.parametrize(
     "x",
     [
@@ -287,3 +311,17 @@ def test_cut_series(bins, right, include_lowest):
     )
 
     assert_eq(pcat, gcat)
+
+
+def test_cut_right_false_preserves_cupy_input():
+    x = cupy.asarray([0.0, 1.0, 2.0])
+    original = x.copy()
+    bins = [0.0, 1.0, 2.0]
+
+    expected = pd.CategoricalIndex(
+        pd.cut(cupy.asnumpy(x), bins=bins, right=False)
+    )
+    actual = cut(x=x, bins=bins, right=False)
+
+    assert_eq(expected, actual)
+    cupy.testing.assert_array_equal(x, original)

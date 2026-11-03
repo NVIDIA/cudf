@@ -1,9 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Datatype utilities."""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pylibcudf as plc
 from pylibcudf.traits import (
@@ -13,10 +15,115 @@ from pylibcudf.traits import (
     is_numeric_not_bool,
 )
 
+if TYPE_CHECKING:
+    from rmm.pylibrmm.stream import Stream
+
+    from cudf_polars.containers import DataType
+
 __all__ = [
     "can_cast",
     "is_order_preserving_cast",
+    "make_all_null_column",
+    "make_empty_column",
 ]
+
+
+def make_empty_column(dtype: DataType, stream: Stream) -> plc.Column:
+    """
+    Create an empty (0-row) column, including for nested types.
+
+    ``plc.column_factories.make_empty_column`` rejects LIST and STRUCT, and
+    returns DICTIONARY32 without children, so we build those by hand with the
+    correct child structure.
+
+    Parameters
+    ----------
+    dtype
+        The cudf-polars DataType (carries child-type metadata for nested types).
+    stream
+        CUDA stream for any device allocations.
+    """
+    if dtype.id() == plc.TypeId.LIST:
+        offsets = plc.Column.from_scalar(
+            plc.Scalar.from_py(0, plc.DataType(plc.TypeId.INT32), stream=stream),
+            1,
+            stream=stream,
+        )
+        child = make_empty_column(dtype.children[0], stream)
+        return plc.Column(dtype.plc_type, 0, None, None, 0, 0, [offsets, child])
+
+    if dtype.id() == plc.TypeId.STRUCT:
+        children = [
+            make_empty_column(child_dtype, stream) for child_dtype in dtype.children
+        ]
+        return plc.Column(dtype.plc_type, 0, None, None, 0, 0, children)
+
+    if dtype.id() == plc.TypeId.DICTIONARY32:
+        return plc.Column(
+            dtype.plc_type,
+            0,
+            None,
+            None,
+            0,
+            0,
+            [
+                plc.column_factories.make_empty_column(
+                    plc.DataType(plc.TypeId.INT32), stream=stream
+                ),
+                plc.column_factories.make_empty_column(
+                    plc.DataType(plc.TypeId.STRING), stream=stream
+                ),
+            ],
+        )
+
+    return plc.column_factories.make_empty_column(dtype.plc_type, stream=stream)
+
+
+def make_all_null_column(dtype: DataType, size: int, stream: Stream) -> plc.Column:
+    """
+    Create an all-null column, including for nested types and dictionaries.
+
+    Parameters
+    ----------
+    dtype
+        The cudf-polars DataType of the result.
+    size
+        Number of rows of the result.
+    stream
+        CUDA stream for any device allocations.
+
+    Returns
+    -------
+    An all-null column of ``size`` rows.
+    """
+    if dtype.id() == plc.TypeId.STRUCT:
+        children = [
+            make_all_null_column(child_dtype, size, stream)
+            for child_dtype in dtype.children
+        ]
+    elif dtype.id() == plc.TypeId.DICTIONARY32:
+        # Can be removed if https://github.com/NVIDIA/cudf/issues/24763 is addressed
+        children = [
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(0, plc.DataType(plc.TypeId.INT32), stream=stream),
+                size,
+                stream=stream,
+            ),
+            make_empty_column(dtype, stream).children()[1],
+        ]
+    else:
+        return plc.Column.all_null_like(
+            make_empty_column(dtype, stream), size, stream=stream
+        )
+    return plc.Column(
+        dtype.plc_type,
+        size,
+        None,
+        plc.null_mask.create_null_mask(size, plc.MaskState.ALL_NULL, stream=stream),
+        size,
+        0,
+        children,
+    )
 
 
 def can_cast(from_: plc.DataType, to: plc.DataType) -> bool:
@@ -61,7 +168,7 @@ def can_cast(from_: plc.DataType, to: plc.DataType) -> bool:
         or (
             to.id() == plc.TypeId.STRING
             and not from_is_empty
-            and is_numeric_not_bool(from_)
+            and (is_numeric_not_bool(from_) or plc.traits.is_boolean(from_))
         )
         or (
             plc.traits.is_integral_not_bool(from_)
@@ -73,6 +180,11 @@ def can_cast(from_: plc.DataType, to: plc.DataType) -> bool:
             plc.traits.is_integral_not_bool(to)
             and not to_is_empty
             and plc.traits.is_timestamp(from_)
+        )
+        or (
+            (plc.traits.is_timestamp(from_) or plc.traits.is_duration(from_))
+            and not to_is_empty
+            and plc.traits.is_floating_point(to)
         )
     )
 

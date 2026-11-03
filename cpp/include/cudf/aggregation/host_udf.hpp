@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,8 +11,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <functional>
 #include <optional>
@@ -96,7 +97,7 @@ class host_udf_base {
  *     column_view const& input,
  *     data_type output_dtype,
  *     std::optional<std::reference_wrapper<scalar const>> init,
- *     rmm::cuda_stream_view stream,
+ *     cuda::stream_ref stream,
  *     rmm::device_async_resource_ref mr) const override
  *   {
  *     // Perform reduction computation using the input data and return the reduction result.
@@ -132,7 +133,7 @@ struct reduce_host_udf : host_udf_base {
     column_view const& input,
     data_type output_dtype,
     std::optional<std::reference_wrapper<scalar const>> init,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const = 0;
 };
 
@@ -154,7 +155,7 @@ struct reduce_host_udf : host_udf_base {
  *     data_type output_dtype,
  *     null_policy null_handling,
  *     std::optional<std::reference_wrapper<scalar const>> init,
- *     rmm::cuda_stream_view stream,
+ *     cuda::stream_ref stream,
  *     rmm::device_async_resource_ref mr) const override
  *   {
  *     // Perform computation using the input data and return the result.
@@ -196,7 +197,7 @@ struct segmented_reduce_host_udf : host_udf_base {
     data_type output_dtype,
     null_policy null_handling,
     std::optional<std::reference_wrapper<scalar const>> init,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref mr) const = 0;
 };
 
@@ -226,14 +227,14 @@ struct aggregate_result_functor;
  *   my_udf_aggregation() = default;
  *
  *   [[nodiscard]] std::unique_ptr<column> get_empty_output(
- *     rmm::cuda_stream_view stream,
+ *     cuda::stream_ref stream,
  *     rmm::device_async_resource_ref mr) const override
  *   {
  *     // Return a column corresponding to the result when the input values column is empty.
  *   }
  *
  *   [[nodiscard]] std::unique_ptr<column> operator()(
- *     rmm::cuda_stream_view stream,
+ *     cuda::stream_ref stream,
  *     rmm::device_async_resource_ref mr) const override
  *   {
  *     // Perform UDF computation using the input data and return the result.
@@ -265,7 +266,7 @@ struct groupby_host_udf : host_udf_base {
    * @return The output result of the aggregation when the input values column is empty
    */
   [[nodiscard]] virtual std::unique_ptr<column> get_empty_output(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const = 0;
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const = 0;
 
   /**
    * @brief Perform the main groupby computation for the host-based UDF.
@@ -275,7 +276,7 @@ struct groupby_host_udf : host_udf_base {
    * @return The output result of the aggregation
    */
   [[nodiscard]] virtual std::unique_ptr<column> operator()(
-    rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const = 0;
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const = 0;
 
  private:
   // Allow the struct `aggregate_result_functor` to set its private callback variables.

@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (C) 2004-2017, 2020-2022 René Nyffenegger
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0 AND Zlib
  */
 
@@ -14,7 +14,7 @@
  *
  *  base64 encoding and decoding with C++.
  *  More information at
- *    https://renenyffenegger.ch/notes/development/Base64/Encoding-and-decoding-base-64-with-cpp
+ *    https://renenyffenegger.ch/notes/development/Base64/Encoding-and-decoding-base-64-with-cpp/
  *
  *  Version: 2.rc.09 (release candidate)
  *
@@ -52,14 +52,14 @@
 
 #include <cudf/logger.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 
 // altered: use cudf namespaces
 namespace cudf::io::detail {
 
-static const std::string base64_chars =
+static std::string const base64_chars =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   "abcdefghijklmnopqrstuvwxyz"
   "0123456789+/";
@@ -81,35 +81,34 @@ std::string base64_encode(std::string_view string_to_encode)
 
   // altered: modify base64 encoder loop using STL and Thrust.
   // TODO: Port this loop to thrust cooperative groups if needed for too-wide tables.
-  std::for_each(thrust::make_counting_iterator(0),
-                thrust::make_counting_iterator(num_iterations),
-                [&](auto&& iter) {
-                  auto idx = iter * 3;
+  std::for_each(
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator{num_iterations}, [&](auto&& iter) {
+      auto idx = iter * 3;
 
-                  encoded.push_back(base64_chars[(string_to_encode[idx] & 0xfc) >> 2]);
-                  // increment the index by 1
-                  idx += 1;
+      encoded.push_back(base64_chars[(string_to_encode[idx] & 0xfc) >> 2]);
+      // increment the index by 1
+      idx += 1;
 
-                  if (idx < input_length) {
-                    encoded.push_back(base64_chars[((string_to_encode[idx - 1] & 0x03) << 4) +
-                                                   ((string_to_encode[idx] & 0xf0) >> 4)]);
-                    // increment the index by 1
-                    idx += 1;
+      if (idx < input_length) {
+        encoded.push_back(base64_chars[((string_to_encode[idx - 1] & 0x03) << 4) +
+                                       ((string_to_encode[idx] & 0xf0) >> 4)]);
+        // increment the index by 1
+        idx += 1;
 
-                    if (idx < input_length) {
-                      encoded.push_back(base64_chars[((string_to_encode[idx - 1] & 0x0f) << 2) +
-                                                     ((string_to_encode[idx] & 0xc0) >> 6)]);
-                      encoded.push_back(base64_chars[string_to_encode[idx] & 0x3f]);
-                    } else {
-                      encoded.push_back(base64_chars[(string_to_encode[idx - 1] & 0x0f) << 2]);
-                      encoded.push_back(trailing_char);
-                    }
-                  } else {
-                    encoded.push_back(base64_chars[(string_to_encode[idx - 1] & 0x03) << 4]);
-                    encoded.push_back(trailing_char);
-                    encoded.push_back(trailing_char);
-                  }
-                });
+        if (idx < input_length) {
+          encoded.push_back(base64_chars[((string_to_encode[idx - 1] & 0x0f) << 2) +
+                                         ((string_to_encode[idx] & 0xc0) >> 6)]);
+          encoded.push_back(base64_chars[string_to_encode[idx] & 0x3f]);
+        } else {
+          encoded.push_back(base64_chars[(string_to_encode[idx - 1] & 0x0f) << 2]);
+          encoded.push_back(trailing_char);
+        }
+      } else {
+        encoded.push_back(base64_chars[(string_to_encode[idx - 1] & 0x03) << 4]);
+        encoded.push_back(trailing_char);
+        encoded.push_back(trailing_char);
+      }
+    });
 
   return encoded;
 }
@@ -155,8 +154,8 @@ std::string base64_decode(std::string_view encoded_string)
   // altered: modify base64 encoder loop to number of iterations using STL and Thrust.
   // TODO: Port this loop to thrust cooperative groups if needed for too-wide tables.
   if (not std::all_of(
-        thrust::make_counting_iterator(0),
-        thrust::make_counting_iterator(num_iterations),
+        cuda::counting_iterator<int32_t>{0},
+        cuda::counting_iterator{num_iterations},
         [&](auto&& iter) {
           int32_t idx                  = iter * 4;
           size_t current_char_position = 0;

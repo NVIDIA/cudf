@@ -1,221 +1,248 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "stats_filter_helpers.hpp"
 
-#include "io/parquet/parquet_common.hpp"
+#include "expression_transform_helpers.hpp"
 
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <optional>
+
 namespace cudf::io::parquet::detail {
 
+namespace {
+
+/**
+ * @brief Returns whether a comparison operator can prune row groups via statistics
+ *
+ * Some Parquet writers exclude `NaN`s from stats, so a floating-point chunk holding a NaN is
+ * indistinguishable from one that does not. `col != val` is the only comparison leaf a NaN
+ * satisfies, so it is the only one we cannot prune.
+ *
+ * @param op The comparison operator
+ * @param dtype The data type of the column being compared
+ * @return true if the comparison can be used to prune row groups
+ */
+[[nodiscard]] bool is_prunable_comparison(ast::ast_operator op, cudf::data_type dtype)
+{
+  using cudf::ast::ast_operator;
+  switch (op) {
+    case ast_operator::EQUAL: [[fallthrough]];
+    case ast_operator::LESS: [[fallthrough]];
+    case ast_operator::LESS_EQUAL: [[fallthrough]];
+    case ast_operator::GREATER: [[fallthrough]];
+    case ast_operator::GREATER_EQUAL: return true;
+    case ast_operator::NOT_EQUAL: return not cudf::is_floating_point(dtype);
+    default: return false;
+  }
+}
+
+/**
+ * @brief Returns the operator that `NOT(col op val)` is equivalent to, if any
+ *
+ * @param op The comparison operator
+ * @param dtype The data type of the column being compared
+ * @return The complemented operator, or std::nullopt if the comparison cannot be complemented
+ */
+[[nodiscard]] std::optional<ast::ast_operator> negate_comparison(ast::ast_operator op,
+                                                                 cudf::data_type dtype)
+{
+  // A comparison cannot be complemented when the column may hold a `NaN`: IEEE-754 makes every
+  // ordered comparison with a NaN false, so `NOT(col < val)` is true where `col >= val` is not.
+  if (cudf::is_floating_point(dtype)) { return std::nullopt; }
+  return transform_operator<operator_transform::NEGATE>(op);
+}
+
+}  // namespace
+
 stats_columns_collector::stats_columns_collector(ast::expression const& expr,
-                                                 cudf::size_type num_columns)
-  : _num_columns(num_columns)
+                                                 std::span<cudf::data_type const> output_dtypes)
+  : parquet_expression_simplifier{output_dtypes}
 {
-  _columns_mask.resize(num_columns, false);
-  expr.accept(*this);
+  // Return an empty mask if statistics cannot prune anything with this filter
+  auto const simplified_expr = simplify_expr(expr);
+  if (not simplified_expr.has_value()) { return; }
+
+  _columns_mask.resize(_output_dtypes.size(), false);
+
+  // Walk the simplified tree and collect columns references
+  collect_surviving_predicates(simplified_expr.value().get());
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::literal const& expr)
+void stats_columns_collector::collect_surviving_predicates(ast::expression const& simplified_expr)
 {
-  return expr;
+  if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&simplified_expr);
+      col_ref != nullptr) {
+    _columns_mask[col_ref->get_column_index()] = true;
+    return;
+  }
+  for (auto const& operand : dynamic_cast<ast::operation const&>(simplified_expr).get_operands()) {
+    collect_surviving_predicates(operand.get());
+  }
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::column_reference const& expr)
+simplified_expression_opt stats_columns_collector::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const&)
 {
-  CUDF_EXPECTS(expr.get_table_source() == ast::table_reference::LEFT,
-               "Statistics AST supports only left table");
-  CUDF_EXPECTS(expr.get_column_index() < _num_columns,
-               "Column index cannot be more than number of columns in the table");
-  return expr;
+  if (not is_prunable_comparison(op, _output_dtypes[col_ref.get_column_index()])) {
+    return std::nullopt;
+  }
+  return col_ref;
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::column_name_reference const& expr)
+simplified_expression_opt stats_columns_collector::simplify_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
 {
-  CUDF_FAIL("Column name reference is not supported in statistics AST");
+  if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
+  return col_ref;
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::operation const& expr)
+simplified_expression_opt stats_columns_collector::simplify_negated_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
+{
+  if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
+  return col_ref;
+}
+
+simplified_expression_opt stats_columns_collector::simplify_negated_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
+{
+  auto const negated_op = negate_comparison(op, _output_dtypes[col_ref.get_column_index()]);
+  if (not negated_op.has_value()) { return std::nullopt; }
+  return simplify_comparison(*negated_op, col_ref, literal);
+}
+
+thrust::host_vector<bool> stats_columns_collector::get_stats_columns_mask() &&
+{
+  return std::move(_columns_mask);
+}
+
+stats_expression_converter::stats_expression_converter(
+  ast::expression const& expr, std::span<cudf::data_type const> output_dtypes)
+  : parquet_expression_simplifier{output_dtypes}
+{
+  _stats_expr = simplify_expr(expr);
+}
+
+ast::expression const& stats_expression_converter::push_non_null_guard(
+  size_type col_index, ast::expression const& stats_expr)
 {
   using cudf::ast::ast_operator;
-  auto const operands = expr.get_operands();
-  auto const op       = expr.get_operator();
 
-  if (auto* v = dynamic_cast<ast::column_reference const*>(&operands[0].get())) {
-    // First operand should be column reference, second (if binary operation)should be literal.
-    auto const operator_arity = cudf::ast::detail::ast_operator_arity(op);
-    CUDF_EXPECTS(operator_arity == 1 or operator_arity == 2,
-                 "Only unary and binary operations are supported on column reference");
-    CUDF_EXPECTS(
-      operator_arity == 1 or dynamic_cast<ast::literal const*>(&operands[1].get()) != nullptr,
-      "Second operand of binary operation with column reference must be a literal");
-    v->accept(*this);
-
-    // Return early if this is a unary operation
-    if (operator_arity == 1 and op != ast_operator::IS_NULL) { return expr; }
-
-    // Else if this is a supported binary operation, mark the column as needed
-    if (op == ast_operator::EQUAL or op == ast_operator::NOT_EQUAL or op == ast_operator::LESS or
-        op == ast_operator::LESS_EQUAL or op == ast_operator::GREATER or
-        op == ast_operator::GREATER_EQUAL or op == ast_operator::IS_NULL) {
-      _columns_mask[v->get_column_index()] = true;
-      if (op == ast_operator::IS_NULL) { _has_is_null_operator = true; }
-    } else {
-      CUDF_FAIL("Unsupported binary operation in Statistics AST");
-    }
-  } else {
-    // Visit the operands and ignore any output as we only want to build the column mask
-    std::ignore = visit_operands(operands);
-  }
-
-  return expr;
+  auto const& all_null = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 2});
+  // Answering "not entirely null" takes all three of the column's states, so a plain NOT will not
+  // do: its null state says the chunk holds both nulls and values, or that the writer recorded no
+  // null count, and both of those answer this question true. NOT alone answers it null and hands an
+  // unknown to a comparison that is in fact decisive.
+  auto const& not_all_null =
+    _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR,
+                              _tree.push(ast::operation{ast_operator::IS_NULL, all_null}),
+                              _tree.push(ast::operation{ast_operator::NOT, all_null})});
+  // Null-aware so that the false this side pushes for an all-null chunk prunes it even though the
+  // min and max it lacks leave `stats_expr` unknown.
+  return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_AND, not_all_null, stats_expr});
 }
 
-std::pair<thrust::host_vector<bool>, bool> stats_columns_collector::get_stats_columns_mask() &&
-{
-  return {std::move(_columns_mask), _has_is_null_operator};
-}
-
-std::vector<std::reference_wrapper<ast::expression const>> stats_columns_collector::visit_operands(
-  cudf::host_span<std::reference_wrapper<ast::expression const> const> operands)
-{
-  std::vector<std::reference_wrapper<ast::expression const>> transformed_operands;
-  std::transform(operands.begin(),
-                 operands.end(),
-                 std::back_inserter(transformed_operands),
-                 [t = this](auto& operand) { return operand.get().accept(*t); });
-
-  return transformed_operands;
-}
-
-stats_expression_converter::stats_expression_converter(ast::expression const& expr,
-                                                       size_type num_columns,
-                                                       bool has_is_null_operator,
-                                                       rmm::cuda_stream_view stream)
-  : _always_true_scalar{std::make_unique<cudf::numeric_scalar<bool>>(true, true, stream)},
-    _always_true{std::make_unique<ast::literal>(*_always_true_scalar)}
-{
-  _stats_cols_per_column = has_is_null_operator ? 3 : 2;
-  _num_columns           = num_columns;
-  expr.accept(*this);
-}
-
-std::reference_wrapper<ast::expression const> stats_expression_converter::visit(
-  ast::operation const& expr)
+simplified_expression_opt stats_expression_converter::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal_ref)
 {
   using cudf::ast::ast_operator;
-  auto const operands       = expr.get_operands();
-  auto const op             = expr.get_operator();
-  auto const operator_arity = cudf::ast::detail::ast_operator_arity(op);
 
-  if (auto* v = dynamic_cast<ast::column_reference const*>(&operands[0].get())) {
-    // First operand should be column reference, second (if binary operation) should be literal.
-    CUDF_EXPECTS(operator_arity == 1 or operator_arity == 2,
-                 "Only unary and binary operations are supported on column reference");
-    CUDF_EXPECTS(
-      operator_arity == 1 or dynamic_cast<ast::literal const*>(&operands[1].get()) != nullptr,
-      "Second operand of binary operation with column reference must be a literal");
-    v->accept(*this);
+  auto const col_index = col_ref.get_column_index();
 
-    auto const col_index = v->get_column_index();
+  // Some Parquet writers exclude `NaN`s from stats, so we can't reliably prune row groups for
+  // columns that may contain them.
+  if (not is_prunable_comparison(op, _output_dtypes[col_index])) { return std::nullopt; }
 
-    if (operator_arity == 1) {
-      // Evaluate IS_NULL unary operator
-      if (op == ast_operator::IS_NULL) {
-        CUDF_EXPECTS(std::cmp_equal(_stats_cols_per_column, 3),
-                     "IS_NULL operator cannot be evaluated without nullability information column");
-        auto const& vnull =
-          _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column + 2});
-        _stats_expr.push(ast::operation{ast_operator::IDENTITY, vnull});
-        return _stats_expr.back();
-      }  // For all other unary operators, push and return the `_always_true` expression
-      else {
-        _stats_expr.push(ast::operation{ast_operator::IDENTITY, *_always_true});
-        // Propagate the `_always_true` as expression to its unary operator parent
-        return *_always_true;
-      }
+  auto const& literal = _tree.push(literal_ref);
+
+  switch (op) {
+    /* transform to stats conditions
+    col == val --> vmin <= val && vmax >= val
+    col != val --> vmin != vmax || vmax != val
+    col >  val --> vmax > val
+    col <  val --> vmin < val
+    col >= val --> vmax >= val
+    col <= val --> vmin <= val
+    */
+    case ast_operator::EQUAL: {
+      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+      // The two halves are separately optional in the statistics, so they are combined null-aware
+      // to keep whichever one is present decisive.
+      auto const& in_range = _tree.push(
+        ast::operation{ast_operator::NULL_LOGICAL_AND,
+                       _tree.push(ast::operation{ast_operator::GREATER_EQUAL, vmax, literal}),
+                       _tree.push(ast::operation{ast_operator::LESS_EQUAL, vmin, literal})});
+      // An all-null chunk has no min or max, so this range test is unknown there and would keep
+      // the chunk. The guard makes it prune instead.
+      return push_non_null_guard(col_index, in_range);
     }
-
-    // Push literal into the ast::tree
-    auto const& literal = _stats_expr.push(*dynamic_cast<ast::literal const*>(&operands[1].get()));
-    switch (op) {
-      /* transform to stats conditions. op(col, literal)
-      col1 == val --> vmin <= val && vmax >= val
-      col1 != val --> !(vmin == val && vmax == val)
-      col1 >  val --> vmax > val
-      col1 <  val --> vmin < val
-      col1 >= val --> vmax >= val
-      col1 <= val --> vmin <= val
-      */
-      case ast_operator::EQUAL: {
-        auto const& vmin =
-          _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column});
-        auto const& vmax =
-          _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column + 1});
-        _stats_expr.push(ast::operation{
-          ast::ast_operator::LOGICAL_AND,
-          _stats_expr.push(ast::operation{ast_operator::GREATER_EQUAL, vmax, literal}),
-          _stats_expr.push(ast::operation{ast_operator::LESS_EQUAL, vmin, literal})});
-        break;
-      }
-      case ast_operator::NOT_EQUAL: {
-        auto const& vmin =
-          _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column});
-        auto const& vmax =
-          _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column + 1});
-        _stats_expr.push(
-          ast::operation{ast_operator::LOGICAL_OR,
-                         _stats_expr.push(ast::operation{ast_operator::NOT_EQUAL, vmin, vmax}),
-                         _stats_expr.push(ast::operation{ast_operator::NOT_EQUAL, vmax, literal})});
-        break;
-      }
-      case ast_operator::LESS: [[fallthrough]];
-      case ast_operator::LESS_EQUAL: {
-        auto const& vmin =
-          _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column});
-        _stats_expr.push(ast::operation{op, vmin, literal});
-        break;
-      }
-      case ast_operator::GREATER: [[fallthrough]];
-      case ast_operator::GREATER_EQUAL: {
-        auto const& vmax =
-          _stats_expr.push(ast::column_reference{col_index * _stats_cols_per_column + 1});
-        _stats_expr.push(ast::operation{op, vmax, literal});
-        break;
-      }
-      default: CUDF_FAIL("Unsupported binary operation in Statistics AST");
-    };
-
-  } else {
-    auto new_operands = visit_operands(operands);
-    if (operator_arity == 2) {
-      _stats_expr.push(ast::operation{op, new_operands.front(), new_operands.back()});
-    } else if (operator_arity == 1) {
-      // If the new_operands is just a `_always_true` literal, propagate it here
-      if (&new_operands.front().get() == _always_true.get()) {
-        _stats_expr.push(ast::operation{ast_operator::IDENTITY, _stats_expr.back()});
-        return *_always_true;
-      } else {
-        _stats_expr.push(ast::operation{op, new_operands.front()});
-      }
+    case ast_operator::NOT_EQUAL: {
+      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+      // Null-aware for the same reason as the range test above: either half can be the one the
+      // statistics carry.
+      auto const& outside_range = _tree.push(
+        ast::operation{ast_operator::NULL_LOGICAL_OR,
+                       _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmin, vmax}),
+                       _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmax, literal})});
+      // A null does not satisfy `!=` either, and an all-null chunk has no min or max to make this
+      // test decisive, so the guard prunes it.
+      return push_non_null_guard(col_index, outside_range);
     }
+    case ast_operator::LESS: [[fallthrough]];
+    case ast_operator::LESS_EQUAL: {
+      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+      // An all-null chunk has no min, leaving this test unknown, so the guard prunes it.
+      return push_non_null_guard(col_index, _tree.push(ast::operation{op, vmin, literal}));
+    }
+    case ast_operator::GREATER: [[fallthrough]];
+    case ast_operator::GREATER_EQUAL: {
+      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+      // An all-null chunk has no max, leaving this test unknown, so the guard prunes it.
+      return push_non_null_guard(col_index, _tree.push(ast::operation{op, vmax, literal}));
+    }
+    default: CUDF_UNREACHABLE("Non-prunable operator should not reach stats conversion");
   }
-  return _stats_expr.back();
 }
 
-std::reference_wrapper<ast::expression const> stats_expression_converter::get_stats_expr() const
+simplified_expression_opt stats_expression_converter::simplify_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
 {
-  return _stats_expr.back();
+  using cudf::ast::ast_operator;
+
+  if (op != ast_operator::IS_NULL) { return std::nullopt; }
+  auto const& all_null =
+    _tree.push(ast::column_reference{col_ref.get_column_index() * stats_cols_per_column + 2});
+  return _tree.push(ast::operation{ast_operator::IDENTITY, all_null});
 }
+
+simplified_expression_opt stats_expression_converter::simplify_negated_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
+{
+  using cudf::ast::ast_operator;
+
+  if (op != ast_operator::IS_NULL) { return std::nullopt; }
+  auto const& all_null =
+    _tree.push(ast::column_reference{col_ref.get_column_index() * stats_cols_per_column + 2});
+  return _tree.push(ast::operation{ast_operator::NOT, all_null});
+}
+
+simplified_expression_opt stats_expression_converter::simplify_negated_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
+{
+  auto const negated_op = negate_comparison(op, _output_dtypes[col_ref.get_column_index()]);
+  if (not negated_op.has_value()) { return std::nullopt; }
+  return simplify_comparison(*negated_op, col_ref, literal);
+}
+
+simplified_expression_opt stats_expression_converter::get_stats_expr() const { return _stats_expr; }
 
 }  // namespace cudf::io::parquet::detail

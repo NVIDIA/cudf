@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,9 +10,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace dictionary::detail {
 
 /**
@@ -30,7 +30,7 @@ namespace dictionary::detail {
  */
 std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
                                       dictionary_column_view const& replacement,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 /**
@@ -47,8 +47,8 @@ std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
  */
 std::unique_ptr<column> replace_nulls(dictionary_column_view const& input,
                                       scalar const& replacement,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr);
 
 }  // namespace dictionary::detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

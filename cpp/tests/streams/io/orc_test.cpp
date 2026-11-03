@@ -1,16 +1,19 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/io/orc.hpp>
 #include <cudf/io/orc_metadata.hpp>
 #include <cudf/table/table.hpp>
+
+#include <cuda/iterator>
 
 #include <string>
 #include <vector>
@@ -32,8 +35,8 @@ cudf::table construct_table()
 {
   constexpr auto num_rows = 10;
 
-  auto const zeros_iterator = thrust::make_constant_iterator(0);
-  auto const ones_iterator  = thrust::make_constant_iterator(1);
+  auto const zeros_iterator = cuda::make_constant_iterator(0);
+  auto const ones_iterator  = cuda::make_constant_iterator(1);
 
   cudf::test::fixed_width_column_wrapper<bool> col0(zeros_iterator, zeros_iterator + num_rows);
   cudf::test::fixed_width_column_wrapper<int8_t> col1(zeros_iterator, zeros_iterator + num_rows);
@@ -47,16 +50,14 @@ cudf::table construct_table()
     ones_iterator, ones_iterator + num_rows, numeric::scale_type{-12});
 
   cudf::test::lists_column_wrapper<int64_t> col8 = [] {
-    auto col8_mask =
-      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 2); });
+    auto col8_mask = cudf::test::iterators::nulls_at_multiples_of(2);
     return cudf::test::lists_column_wrapper<int64_t>(
       {{1, 1}, {1, 1, 1}, {}, {1}, {1, 1, 1, 1}, {1, 1, 1, 1, 1}, {}, {1, -1}, {}, {-1, -1}},
       col8_mask);
   }();
 
   cudf::test::structs_column_wrapper col9 = [&ones_iterator] {
-    auto child_col_mask =
-      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 2); });
+    auto child_col_mask = cudf::test::iterators::nulls_at_multiples_of(2);
     cudf::test::fixed_width_column_wrapper<int32_t> child_col(
       ones_iterator, ones_iterator + num_rows, child_col_mask);
     return cudf::test::structs_column_wrapper{child_col};

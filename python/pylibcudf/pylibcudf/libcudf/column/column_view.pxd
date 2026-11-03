@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.vector cimport vector
@@ -57,3 +57,8 @@ cdef extern from "cudf/column/column_view.hpp" namespace "cudf" nogil:
         T* head[T]() except +libcudf_exception_handler
         bitmask_type* null_mask() except +libcudf_exception_handler
         mutable_column_view& child(size_type) except +libcudf_exception_handler
+
+    cdef column_view bit_cast(
+        const column_view& input,
+        data_type type
+    ) except +libcudf_exception_handler

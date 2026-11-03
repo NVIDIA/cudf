@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,12 +16,15 @@
 
 #include <memory>
 
+/**
+ * @file
+ * @brief Column APIs for interleave and tile
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup column_reshape
  * @{
- * @file
- * @brief Column APIs for interleave and tile
  */
 
 /**
@@ -44,7 +47,7 @@ namespace CUDF_EXPORT cudf {
  */
 std::unique_ptr<column> interleave_columns(
   table_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -62,15 +65,14 @@ std::unique_ptr<column> interleave_columns(
  * @param input Table containing rows to be repeated
  * @param count Number of times to tile "rows". Must be non-negative
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  *
  * @return The table containing the tiled "rows"
  */
-std::unique_ptr<table> tile(
-  table_view const& input,
-  size_type count,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> tile(table_view const& input,
+                            size_type count,
+                            cuda::stream_ref stream   = cudf::get_default_stream(),
+                            cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Configures whether byte casting flips endianness
@@ -96,7 +98,7 @@ enum class flip_endianness : bool { NO, YES };
 std::unique_ptr<column> byte_cast(
   column_view const& input_column,
   flip_endianness endian_configuration,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -119,7 +121,7 @@ std::unique_ptr<column> byte_cast(
  */
 void table_to_array(table_view const& input,
                     device_span<cuda::std::byte> output,
-                    rmm::cuda_stream_view stream = cudf::get_default_stream());
+                    cuda::stream_ref stream = cudf::get_default_stream());
 
 /** @} */  // end of group
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +15,7 @@ std::unique_ptr<column> scan(column_view const& input,
                              scan_aggregation const& agg,
                              scan_type inclusive,
                              null_policy null_handling,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   if (agg.kind == aggregation::RANK) {
@@ -46,7 +46,7 @@ std::unique_ptr<column> scan(column_view const& input,
                              scan_aggregation const& agg,
                              scan_type inclusive,
                              null_policy null_handling,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

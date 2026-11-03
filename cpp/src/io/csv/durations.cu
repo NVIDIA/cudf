@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_device_view.cuh>
@@ -11,13 +11,13 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/iterator>
+#include <cuda/std/cmath>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace io {
@@ -93,7 +93,7 @@ struct duration_to_string_fn : public duration_to_string_size_fn<T> {
   __device__ char* int_to_2digitstr(int8_t value, char* str)
   {
     assert(value >= -99 && value <= 99);
-    value  = std::abs(value);
+    value  = cuda::std::abs(value);
     str[0] = '0' + value / 10;
     str[1] = '0' + value % 10;
     return str + 2;
@@ -124,7 +124,7 @@ struct duration_to_string_fn : public duration_to_string_size_fn<T> {
     auto value = timeparts->nanosecond;
     *ptr       = '.';
     for (int idx = 9; idx > 0; idx--) {
-      *(ptr + idx) = '0' + std::abs(value % 10);
+      *(ptr + idx) = '0' + cuda::std::abs(value % 10);
       value /= 10;
     }
     return ptr + 10;
@@ -161,18 +161,18 @@ struct duration_to_string_fn : public duration_to_string_size_fn<T> {
  * The template function declaration ensures only duration types are used.
  */
 struct dispatch_from_durations_fn {
-  template <typename T>
+  template <cudf::concepts::duration T>
   std::unique_ptr<column> operator()(column_view const& durations,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(cudf::is_duration<T>())
   {
     size_type strings_count = durations.size();
     auto column             = column_device_view::create(durations, stream);
     auto d_column           = *column;
 
     // copy null mask
-    rmm::device_buffer null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
+    cuda::device_buffer<cudf::bitmask_type> null_mask =
+      cudf::detail::copy_bitmask(durations, stream, mr);
 
     // build offsets column
     auto offsets_transformer_itr =
@@ -186,8 +186,8 @@ struct dispatch_from_durations_fn {
     auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr);
     auto d_chars    = chars_data.data();
 
-    thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                       thrust::make_counting_iterator<size_type>(0),
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<size_type>{0},
                        strings_count,
                        duration_to_string_fn<T>{d_column, d_new_offsets, d_chars});
 
@@ -201,9 +201,8 @@ struct dispatch_from_durations_fn {
   // non-duration types throw an exception
   template <typename T>
   std::unique_ptr<column> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-    requires(not cudf::is_duration<T>())
   {
     CUDF_FAIL("Values for from_durations function must be a duration type.");
   }
@@ -212,7 +211,7 @@ struct dispatch_from_durations_fn {
 }  // namespace
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   size_type strings_count = durations.size();

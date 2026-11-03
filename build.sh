@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # cuDF build script
@@ -18,20 +18,23 @@ ARGS=$*
 # script, and that this script resides in the repo dir!
 REPODIR=$(cd "$(dirname "$0")"; pwd)
 
-VALIDARGS="clean libcudf pylibcudf cudf cudf_polars dask_cudf benchmarks tests libcudf_kafka cudf_kafka custreamz -v -g -n --pydevelop -l --allgpuarch --disable_nvtx --opensource_nvcomp  --show_depr_warn --ptds -h --build_metrics --incl_cache_stats --disable_large_strings"
-HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [dask_cudf] [benchmarks] [tests] [libcudf_kafka] [cudf_kafka] [custreamz] [-v] [-g] [-n] [-h] [--cmake-args=\\\"<args>\\\"]
+VALIDARGS="clean libcudf pylibcudf cudf cudf_polars cudf_polars_quent dask_cudf benchmarks tests libcudf_kafka cudf_kafka custreamz libcudf_streaming cudf_streaming -v -g -n --pydevelop -l --allgpuarch --disable_nvtx --opensource_nvcomp  --hide_depr_warn --ptds -h --build_metrics --incl_cache_stats --disable_large_strings"
+HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [cudf_polars_quent] [dask_cudf] [benchmarks] [tests] [libcudf_kafka] [cudf_kafka] [custreamz] [libcudf_streaming] [cudf_streaming] [-v] [-g] [-n] [-h] [--cmake-args=\\\"<args>\\\"]
    clean                         - remove all existing build artifacts and configuration (start
                                    over)
    libcudf                       - build the cudf C++ code only
    pylibcudf                     - build the pylibcudf Python package
    cudf                          - build the cudf Python package
    cudf_polars                   - build the cudf_polars Python package
+   cudf_polars_quent             - build the cudf-polars Quent bridge and update its stub
    dask_cudf                     - build the dask_cudf Python package
    benchmarks                    - build benchmarks
    tests                         - build tests
    libcudf_kafka                 - build the libcudf_kafka C++ code only
    cudf_kafka                    - build the cudf_kafka Python package
    custreamz                     - build the custreamz Python package
+   libcudf_streaming              - build the libcudf_streaming C++ code only
+   cudf_streaming                - build the cudf_streaming Python package
    -v                            - verbose build mode
    -g                            - build for debug
    -n                            - no install step (does not affect Python)
@@ -39,7 +42,7 @@ HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [dask_cudf] [benchma
    --allgpuarch                  - build for all supported GPU architectures
    --disable_nvtx                - disable inserting NVTX profiling ranges
    --opensource_nvcomp           - disable use of proprietary nvcomp extensions
-   --show_depr_warn              - show cmake deprecation warnings
+   --hide_depr_warn              - hide cmake deprecation warnings
    --ptds                        - enable per-thread default stream
    --disable_large_strings       - disable large strings support
    --build_metrics               - generate build metrics report for libcudf
@@ -47,18 +50,26 @@ HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [dask_cudf] [benchma
    --cmake-args=\\\"<args>\\\"   - pass arbitrary list of CMake configuration options (escape all quotes in argument)
    -h | --h[elp]                 - print this text
 
-   default action (no args) is to build and install 'libcudf', 'pylibcudf', 'cudf', 'cudf_polars', and 'dask_cudf' targets
+   default action (no args) is to build and install 'libcudf', 'pylibcudf', 'cudf', 'libcudf_streaming', 'cudf_streaming', 'cudf_polars', and 'dask_cudf' targets
 "
 LIB_BUILD_DIR=${LIB_BUILD_DIR:=${REPODIR}/cpp/build}
 KAFKA_LIB_BUILD_DIR=${KAFKA_LIB_BUILD_DIR:=${REPODIR}/cpp/libcudf_kafka/build}
+STREAMING_LIB_BUILD_DIR=${STREAMING_LIB_BUILD_DIR:=${REPODIR}/cpp/libcudf_streaming/build}
 CUDF_KAFKA_BUILD_DIR=${REPODIR}/python/cudf_kafka/build
 CUDF_BUILD_DIR=${REPODIR}/python/cudf/build
 DASK_CUDF_BUILD_DIR=${REPODIR}/python/dask_cudf/build
 PYLIBCUDF_BUILD_DIR=${REPODIR}/python/pylibcudf/build
 CUSTREAMZ_BUILD_DIR=${REPODIR}/python/custreamz/build
 CUDF_JAR_JAVA_BUILD_DIR="$REPODIR/java/target"
+CUDF_POLARS_QUENT_BUILD_DIR=${REPODIR}/python/cudf_polars/quent/bridge/target
 
-BUILD_DIRS="${LIB_BUILD_DIR} ${CUDF_BUILD_DIR} ${DASK_CUDF_BUILD_DIR} ${KAFKA_LIB_BUILD_DIR} ${CUDF_KAFKA_BUILD_DIR} ${CUSTREAMZ_BUILD_DIR} ${CUDF_JAR_JAVA_BUILD_DIR} ${PYLIBCUDF_BUILD_DIR}"
+BUILD_DIRS="${LIB_BUILD_DIR} ${CUDF_BUILD_DIR} ${DASK_CUDF_BUILD_DIR} ${KAFKA_LIB_BUILD_DIR} ${CUDF_KAFKA_BUILD_DIR} ${CUSTREAMZ_BUILD_DIR} ${CUDF_JAR_JAVA_BUILD_DIR} ${PYLIBCUDF_BUILD_DIR} ${STREAMING_LIB_BUILD_DIR} ${CUDF_POLARS_QUENT_BUILD_DIR}"
+
+CUDA_VERSION="${RAPIDS_CUDA_VERSION:-$(nvcc --version | sed -E -n 's/^.*release ([0-9]+\.[0-9]+).*$/\1/p')}"
+if [[ -z "$CUDA_VERSION" ]]; then
+    echo "Could not determine CUDA version. Please set RAPIDS_CUDA_VERSION or make sure your \$PATH contains a valid nvcc."
+    exit 1
+fi
 
 # Set defaults for vars modified by flags to this script
 VERBOSE_FLAG=""
@@ -68,7 +79,7 @@ BUILD_BENCHMARKS=OFF
 BUILD_ALL_GPU_ARCH=0
 BUILD_NVTX=ON
 BUILD_TESTS=OFF
-BUILD_DISABLE_DEPRECATION_WARNINGS=ON
+BUILD_DISABLE_DEPRECATION_WARNINGS=OFF
 BUILD_PER_THREAD_DEFAULT_STREAM=OFF
 BUILD_REPORT_METRICS=OFF
 BUILD_REPORT_INCL_CACHE_STATS=OFF
@@ -77,6 +88,7 @@ PYTHON_ARGS_FOR_INSTALL=(
     --no-build-isolation
     --no-deps
     --config-settings="rapidsai.disable-cuda=true"
+    --config-settings="rapidsai.matrix-entry=cuda=${CUDA_VERSION};cuda_suffixed=false;use_cuda_wheels=false"
 )
 
 # Set defaults for vars that may not have been defined externally
@@ -156,8 +168,8 @@ fi
 if hasArg --disable_nvtx; then
     BUILD_NVTX="OFF"
 fi
-if hasArg --show_depr_warn; then
-    BUILD_DISABLE_DEPRECATION_WARNINGS=OFF
+if hasArg --hide_depr_warn; then
+    BUILD_DISABLE_DEPRECATION_WARNINGS=ON
 fi
 if hasArg --ptds; then
     BUILD_PER_THREAD_DEFAULT_STREAM=ON
@@ -199,7 +211,7 @@ fi
 ################################################################################
 # Configure, build, and install libcudf
 
-if buildAll || hasArg libcudf || hasArg pylibcudf || hasArg cudf ; then
+if buildAll || hasArg libcudf || hasArg libcudf_streaming || hasArg pylibcudf || hasArg cudf ; then
     if (( BUILD_ALL_GPU_ARCH == 0 )); then
         CUDF_CMAKE_CUDA_ARCHITECTURES="${CUDF_CMAKE_CUDA_ARCHITECTURES:-NATIVE}"
         if [[ "$CUDF_CMAKE_CUDA_ARCHITECTURES" == "NATIVE" ]]; then
@@ -300,11 +312,65 @@ if buildAll || hasArg cudf; then
             .
 fi
 
+# Build libcudf_streaming library
+if buildAll || hasArg libcudf_streaming; then
+    cmake -S "$REPODIR/cpp/libcudf_streaming" -B "${STREAMING_LIB_BUILD_DIR}" \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
+          -DCMAKE_CUDA_ARCHITECTURES="${CUDF_CMAKE_CUDA_ARCHITECTURES}" \
+          -DBUILD_TESTS=${BUILD_TESTS} \
+          -DBUILD_BENCHMARKS=${BUILD_BENCHMARKS} \
+          -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+          "${EXTRA_CMAKE_ARGS[@]}"
+
+
+    cd "${STREAMING_LIB_BUILD_DIR}"
+    cmake --build . -j"${PARALLEL_LEVEL}" ${VERBOSE_FLAG}
+
+    if [[ ${INSTALL_TARGET} != "" ]]; then
+        cmake --build . -j"${PARALLEL_LEVEL}" --target install ${VERBOSE_FLAG}
+    fi
+fi
+
+# build cudf_streaming Python package
+if buildAll || hasArg cudf_streaming; then
+    cd "${REPODIR}/python/cudf_streaming"
+    SKBUILD_CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${INSTALL_PREFIX};-DCMAKE_LIBRARY_PATH=${STREAMING_LIB_BUILD_DIR};${EXTRA_CMAKE_ARGS[*]}" \
+        python -m pip install \
+            "${PYTHON_ARGS_FOR_INSTALL[@]}" \
+            "${PY_API_ARGS[@]}" \
+            .
+fi
+
 # Build and install the cudf_polars Python package
 if buildAll || hasArg cudf_polars; then
 
     cd "${REPODIR}/python/cudf_polars"
     python -m pip install "${PYTHON_ARGS_FOR_INSTALL[@]}" .
+fi
+
+# Build and install the cudf-polars Quent bridge and update its stub
+if hasArg cudf_polars_quent; then
+    cd "${REPODIR}/python/cudf_polars/quent/bridge"
+
+    cargo clean -p cudf-polars-quent
+    python -m maturin develop
+
+    shopt -s nullglob
+    generated_stubs=(target/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
+    shopt -u nullglob
+    if ((${#generated_stubs[@]} == 0)); then
+        echo "No generated Quent stub found" >&2
+        exit 1
+    fi
+
+    generated_stub="${generated_stubs[0]}"
+    for candidate in "${generated_stubs[@]:1}"; do
+        if [[ "${candidate}" -nt "${generated_stub}" ]]; then
+            generated_stub="${candidate}"
+        fi
+    done
+
+    cp "${generated_stub}" "${REPODIR}/python/cudf_polars/quent/bridge/cudf_polars_quent.pyi"
 fi
 
 # Build and install the dask_cudf Python package

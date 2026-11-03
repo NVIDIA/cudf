@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,9 @@
 #include "reader_impl_helpers.hpp"
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 namespace cudf::io::parquet::detail {
 
@@ -73,47 +76,67 @@ struct row_range {
  * @brief Passes are broken down into subpasses based on temporary memory constraints.
  */
 struct subpass_intermediate_data {
-  subpass_intermediate_data() = default;
-
+  subpass_intermediate_data()                                            = delete;
   subpass_intermediate_data(subpass_intermediate_data const&)            = delete;
   subpass_intermediate_data& operator=(subpass_intermediate_data const&) = delete;
   subpass_intermediate_data(subpass_intermediate_data&&)                 = default;
   subpass_intermediate_data& operator=(subpass_intermediate_data&&)      = default;
+  subpass_intermediate_data(cuda::stream_ref stream)
+    : decomp_page_data(stream, cudf::get_current_device_resource_ref()),
+      level_decode_data(stream, cudf::get_current_device_resource_ref()),
+      flat_nz_map_data(stream, cudf::get_current_device_resource_ref()),
+      nz_map_buf(0, stream, cudf::get_current_device_resource_ref()),
+      page_buf(0, stream, cudf::get_current_device_resource_ref()),
+      page_src_index(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      page_string_offset_indices(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      string_offset_buffer(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      delta_temp_buf(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      page_nesting_info(0, stream, cudf::get_current_device_resource_ref()),
+      page_nesting_decode_info(0, stream, cudf::get_current_device_resource_ref())
+  {
+  }
 
-  rmm::device_buffer decomp_page_data;
+  cuda::device_buffer<std::uint8_t> decomp_page_data;
 
-  rmm::device_buffer level_decode_data{};
+  cuda::device_buffer<std::byte> level_decode_data;
+  // Backing store for the flat nz maps. `allocate_level_decode_space`
+  // sub-allocates one slice of this per mapped page that has definition levels. Empty unless some
+  // page has an nz map.
+  cuda::device_buffer<std::byte> flat_nz_map_data;
+  // Out-of-line nz map scratch, one entry per page. Empty unless some page of this subpass has
+  // an nz map. See page_nz_map.
+  cudf::detail::hostdevice_vector<page_nz_map> nz_map_buf;
   cudf::detail::hostdevice_span<PageInfo> pages{};
 
-  cudf::detail::hostdevice_vector<PageInfo> page_buf{};
+  cudf::detail::hostdevice_vector<PageInfo> page_buf;
 
   // for each page in the subpass, the index of our source page in the pass
-  rmm::device_uvector<size_t> page_src_index{0, cudf::get_default_stream()};
+  cuda::device_buffer<size_t> page_src_index;
 
   // For each page, the index into the column's string offset buffer
   // Used for non-dictionary, non-FLBA string columns
-  rmm::device_uvector<size_t> page_string_offset_indices{0, cudf::get_default_stream()};
+  cuda::device_buffer<size_t> page_string_offset_indices;
 
   // String offset buffer for non-dictionary, non-FLBA string columns
   // Contains pre-computed offsets into the string data. Allocated once per subpass
   // in preprocess_subpass_pages() and reused across all output chunks in the subpass.
-  rmm::device_uvector<uint32_t> string_offset_buffer{0, cudf::get_default_stream()};
+  cuda::device_buffer<uint32_t> string_offset_buffer;
 
   // temporary space for DELTA_BYTE_ARRAY decoding. this only needs to live until
   // gpu::DecodeDeltaByteArray returns.
-  rmm::device_uvector<uint8_t> delta_temp_buf{0, cudf::get_default_stream()};
+  cuda::device_buffer<uint8_t> delta_temp_buf;
 
   // for each column in the file (indexed by _input_columns.size())
   // the number of associated pages for this subpass
-  std::vector<size_t> column_page_count;
-  cudf::detail::hostdevice_vector<PageNestingInfo> page_nesting_info{};
-  cudf::detail::hostdevice_vector<PageNestingDecodeInfo> page_nesting_decode_info{};
+  std::vector<size_t> column_page_count{};
+  cudf::detail::hostdevice_vector<PageNestingInfo> page_nesting_info;
+  cudf::detail::hostdevice_vector<PageNestingDecodeInfo> page_nesting_decode_info;
 
-  std::vector<row_range> output_chunk_read_info;
+  std::vector<row_range> output_chunk_read_info{};
 
   // skip_rows and num_rows values for this particular subpass. in absolute row indices.
-  size_t skip_rows;
-  size_t num_rows;
+  size_t skip_rows{0};
+  size_t num_rows{0};
   size_t current_output_chunk{0};
 
   uint32_t kernel_mask{0};
@@ -132,19 +155,31 @@ struct subpass_intermediate_data {
  * rowgroups may represent less than all of the rowgroups to be read for the file.
  */
 struct pass_intermediate_data {
-  pass_intermediate_data() = default;
-
+  pass_intermediate_data()                                         = delete;
   pass_intermediate_data(pass_intermediate_data const&)            = delete;
   pass_intermediate_data& operator=(pass_intermediate_data const&) = delete;
   pass_intermediate_data(pass_intermediate_data&&)                 = default;
   pass_intermediate_data& operator=(pass_intermediate_data&&)      = default;
+  pass_intermediate_data(cuda::stream_ref stream)
+    : raw_page_data{},
+      row_groups{},
+      chunks(0, stream, cudf::get_current_device_resource_ref()),
+      pages(0, stream, cudf::get_current_device_resource_ref()),
+      page_offsets(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      decomp_dict_data{stream, cudf::get_current_device_resource_ref()},
+      decomp_scratch_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      string_offset_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      level_decode_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      str_dict_index(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
+  {
+  }
 
-  std::vector<rmm::device_buffer> raw_page_data;
+  std::vector<rmm::device_buffer> raw_page_data{};
 
   // rowgroup, chunk and page information for the current pass.
   std::vector<row_group_info> row_groups{};
-  cudf::detail::hostdevice_vector<ColumnChunkDesc> chunks{};
-  cudf::detail::hostdevice_vector<PageInfo> pages{};
+  cudf::detail::hostdevice_vector<ColumnChunkDesc> chunks;
+  cudf::detail::hostdevice_vector<PageInfo> pages;
 
   // offsets to each group of input pages (by column/schema, indexed by _input_columns.size())
   // so if we had 2 columns/schemas, with page keys
@@ -152,13 +187,13 @@ struct pass_intermediate_data {
   // 1 1 1 1 1 2 2 2
   //
   // page_offsets would be 0, 5, 8
-  rmm::device_uvector<size_type> page_offsets{0, cudf::get_default_stream()};
+  cuda::device_buffer<size_type> page_offsets;
 
-  rmm::device_buffer decomp_dict_data{0, cudf::get_default_stream()};
-  rmm::device_uvector<size_t> decomp_scratch_sizes{0, cudf::get_default_stream()};
-  rmm::device_uvector<size_t> string_offset_sizes{0, cudf::get_default_stream()};
-  rmm::device_uvector<size_t> level_decode_sizes{0, cudf::get_default_stream()};
-  rmm::device_uvector<string_index_pair> str_dict_index{0, cudf::get_default_stream()};
+  cuda::device_buffer<std::uint8_t> decomp_dict_data;
+  cuda::device_buffer<size_t> decomp_scratch_sizes;
+  cuda::device_buffer<size_t> string_offset_sizes;
+  cuda::device_buffer<size_t> level_decode_sizes;
+  cuda::device_buffer<string_index_pair> str_dict_index;
 
   // currently active subpass
   std::unique_ptr<subpass_intermediate_data> subpass{};
@@ -169,8 +204,8 @@ struct pass_intermediate_data {
 
   // skip_rows / num_rows for this pass.
   // NOTE: skip_rows is the absolute row index in the file.
-  size_t skip_rows;
-  size_t num_rows;
+  size_t skip_rows{0};
+  size_t num_rows{0};
   // number of rows we have processed so far (out of num_rows). note that this
   // only includes the number of rows we have processed before starting the current
   // subpass. it does not get updated as a subpass iterates through output chunks.

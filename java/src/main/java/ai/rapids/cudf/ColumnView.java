@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -880,11 +880,20 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Create a deep copy of the column while replacing the null mask. The resultant null mask is the
-   * bitwise merge of null masks in the columns given as arguments.
-   * The result will be sanitized to not contain any non-empty nulls in case of nested types
+   * Replace the null mask of a column. The resultant null mask is the bitwise {@code mergeOp} of
+   * null masks in the columns given as arguments, AND-ed with this column's existing null mask.
    *
-   * @param mergeOp binary operator (BITWISE_AND and BITWISE_OR only)
+   * If applying the null mask would be a no-op and this is a {@link ColumnVector}, the original
+   * column is returned with incremented refcount. Otherwise, a deep copy of the column is made.
+   * For a non-owning ColumnView, a deep copy must be made in either case.
+   *
+   * For STRUCT columns the new mask is also pushed down into every descendant column, to
+   * stay consistent with the parent. For LIST/STRING columns the resultant offsets are
+   * sanitized to not contain any non-empty nulls.
+   *
+   * If {@code columns} is empty, the column is returned unchanged (no-op).
+   *
+   * @param mergeOp binary operator (either BITWISE_AND or BITWISE_OR)
    * @param columns array of columns whose null masks are merged, must have identical number of rows.
    * @return the new ColumnVector with merged null mask.
    */
@@ -893,13 +902,19 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
     long[] columnViews = new long[columns.length];
     long size = getRowCount();
 
-    for(int i = 0; i < columns.length; i++) {
+    for (int i = 0; i < columns.length; i++) {
       assert columns[i] != null : "Column vectors passed may not be null";
       assert columns[i].getRowCount() == size : "Row count mismatch, all columns must be the same size";
       columnViews[i] = columns[i].getNativeView();
     }
 
-    return new ColumnVector(bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId));
+    long mergeOutput = bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId);
+    if (mergeOutput == 0) {  // no-op, the current column is unchanged
+      // For a ColumnVector, copyToColumnVector() is simply an incRefCount(), making this
+      // zero-copy. Otherwise for a ColumnView, we must materialize an owning column.
+      return copyToColumnVector();
+    }
+    return new ColumnVector(mergeOutput);
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -1328,6 +1343,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Computes the sum of all values in the column, returning a scalar
    * of the same type as this column.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.sum();
+   * // result = 15,              DType = INT32
+   * }</pre>
    */
   public Scalar sum() {
     return sum(type);
@@ -1336,6 +1358,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Computes the sum of all values in the column, returning a scalar
    * of the specified type.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.sum(DType.INT64);
+   * // result = 15,              DType = INT64
+   * }</pre>
+   *
+   * @param outType the output DType
    */
   public Scalar sum(DType outType) {
     return reduce(ReductionAggregation.sum(), outType);
@@ -1347,6 +1378,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * If the input column is empty or all nulls, an empty scalar is returned.
    *
    * If the input is floating point type and contains NaNs, the result is undefined.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [5, 2, 8, 1, 9], DType = INT32
+   * Scalar result = col.argMin();
+   * // result = 3,               DType = INT32
+   * }</pre>
    */
   public Scalar argMin() {
     return reduce(ReductionAggregation.argMin(), DType.INT32);
@@ -1358,6 +1396,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * If the input column is empty or all nulls, an empty scalar is returned.
    *
    * If the input is floating point type and contains NaNs, the result is undefined.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [5, 2, 8, 1, 9], DType = INT32
+   * Scalar result = col.argMax();
+   * // result = 4,               DType = INT32
+   * }</pre>
    */
   public Scalar argMax() {
     return reduce(ReductionAggregation.argMax(), DType.INT32);
@@ -1366,6 +1411,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the minimum of all values in the column, returning a scalar
    * of the same type as this column.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [5, 2, 8, 1, 9], DType = INT32
+   * Scalar result = col.min();
+   * // result = 1,               DType = INT32
+   * }</pre>
    */
   public Scalar min() {
     return reduce(ReductionAggregation.min(), type);
@@ -1374,6 +1426,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the minimum of all values in the column, returning a scalar
    * of the specified type.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [5, 2, 8, 1, 9], DType = INT32
+   * Scalar result = col.min(DType.INT64);
+   * // result = 1,               DType = INT64
+   * }</pre>
+   *
+   * @param outType the output DType
    * @deprecated the min reduction no longer internally allows for setting the output type, as a
    * work around this API will cast the input type to the output type for you, but this may not
    * work in all cases.
@@ -1391,6 +1452,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the maximum of all values in the column, returning a scalar
    * of the same type as this column.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [5, 2, 8, 1, 9], DType = INT32
+   * Scalar result = col.max();
+   * // result = 9,               DType = INT32
+   * }</pre>
    */
   public Scalar max() {
     return reduce(ReductionAggregation.max(), type);
@@ -1399,6 +1467,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the maximum of all values in the column, returning a scalar
    * of the specified type.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [5, 2, 8, 1, 9], DType = INT32
+   * Scalar result = col.max(DType.INT64);
+   * // result = 9,               DType = INT64
+   * }</pre>
+   *
+   * @param outType the output DType
    * @deprecated the max reduction no longer internally allows for setting the output type, as a
    * work around this API will cast the input type to the output type for you, but this may not
    * work in all cases.
@@ -1416,6 +1493,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the product of all values in the column, returning a scalar
    * of the same type as this column.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [2, 3, 4],  DType = INT32
+   * Scalar result = col.product();
+   * // result = 24,         DType = INT32
+   * }</pre>
    */
   public Scalar product() {
     return product(type);
@@ -1424,6 +1508,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the product of all values in the column, returning a scalar
    * of the specified type.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [2, 3, 4],  DType = INT32
+   * Scalar result = col.product(DType.INT64);
+   * // result = 24,         DType = INT64
+   * }</pre>
+   *
+   * @param outType the output DType
    */
   public Scalar product(DType outType) {
     return reduce(ReductionAggregation.product(), outType);
@@ -1432,6 +1525,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the sum of squares of all values in the column, returning a
    * scalar of the same type as this column.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3],  DType = INT32
+   * Scalar result = col.sumOfSquares();
+   * // result = 14,         DType = INT32
+   * }</pre>
    */
   public Scalar sumOfSquares() {
     return sumOfSquares(type);
@@ -1440,6 +1540,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns the sum of squares of all values in the column, returning a
    * scalar of the specified type.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3],  DType = INT32
+   * Scalar result = col.sumOfSquares(DType.INT64);
+   * // result = 14,         DType = INT64
+   * }</pre>
+   *
+   * @param outType the output DType
    */
   public Scalar sumOfSquares(DType outType) {
     return reduce(ReductionAggregation.sumOfSquares(), outType);
@@ -1449,6 +1558,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Returns the arithmetic mean of all values in the column, returning a
    * FLOAT64 scalar unless the column type is FLOAT32 then a FLOAT32 scalar is returned.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.mean();
+   * // result = 3.0,             DType = FLOAT64
+   * }</pre>
    */
   public Scalar mean() {
     DType outType = DType.FLOAT64;
@@ -1462,6 +1578,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Returns the arithmetic mean of all values in the column, returning a
    * scalar of the specified type.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.mean(DType.FLOAT32);
+   * // result = 3.0,             DType = FLOAT32
+   * }</pre>
+   *
    * @param outType the output type to return.  Note that only floating point
    *                types are currently supported.
    */
@@ -1470,9 +1594,16 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Returns the variance of all values in the column, returning a
+   * Returns the sample variance of all values in the column, returning a
    * FLOAT64 scalar unless the column type is FLOAT32 then a FLOAT32 scalar is returned.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.variance();
+   * // result = 2.5,             DType = FLOAT64
+   * }</pre>
    */
   public Scalar variance() {
     DType outType = DType.FLOAT64;
@@ -1483,9 +1614,17 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Returns the variance of all values in the column, returning a
+   * Returns the sample variance of all values in the column, returning a
    * scalar of the specified type.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.variance(DType.FLOAT32);
+   * // result = 2.5,             DType = FLOAT32
+   * }</pre>
+   *
    * @param outType the output type to return.  Note that only floating point
    *                types are currently supported.
    */
@@ -1498,6 +1637,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * returning a FLOAT64 scalar unless the column type is FLOAT32 then
    * a FLOAT32 scalar is returned. Nulls are not counted as an element
    * of the column when calculating the standard deviation.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5],    DType = INT32
+   * Scalar result = col.standardDeviation();
+   * // result = 1.5811388300841898, DType = FLOAT64
+   * }</pre>
    */
   public Scalar standardDeviation() {
     DType outType = DType.FLOAT64;
@@ -1511,6 +1657,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Returns the sample standard deviation of all values in the column,
    * returning a scalar of the specified type. Null's are not counted as
    * an element of the column when calculating the standard deviation.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5],    DType = INT32
+   * Scalar result = col.standardDeviation(DType.FLOAT32);
+   * // result = 1.5811388,          DType = FLOAT32
+   * }</pre>
+   *
    * @param outType the output type to return.  Note that only floating point
    *                types are currently supported.
    */
@@ -1522,6 +1676,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Returns a boolean scalar that is true if any of the elements in
    * the column are true or non-zero otherwise false.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [0, 0, 1, 0], DType = INT32
+   * Scalar result = col.any();
+   * // result = true,         DType = BOOL8
+   * }</pre>
    */
   public Scalar any() {
     return any(DType.BOOL8);
@@ -1532,6 +1693,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * if any of the elements in the column are true or non-zero
    * otherwise false or 0.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [0, 0, 1, 0], DType = INT32
+   * Scalar result = col.any(DType.INT32);
+   * // result = 1,            DType = INT32
+   * }</pre>
+   *
+   * @param outType the output DType
    */
   public Scalar any(DType outType) {
     return reduce(ReductionAggregation.any(), outType);
@@ -1541,6 +1711,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Returns a boolean scalar that is true if all of the elements in
    * the column are true or non-zero otherwise false.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4], DType = INT32
+   * Scalar result = col.all();
+   * // result = true,         DType = BOOL8
+   * }</pre>
    */
   public Scalar all() {
     return all(DType.BOOL8);
@@ -1551,6 +1728,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * if all of the elements in the column are true or non-zero
    * otherwise false or 0.
    * Null values are skipped.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4], DType = INT32
+   * Scalar result = col.all(DType.BOOL8);
+   * // result = true,         DType = BOOL8
+   * }</pre>
+   *
+   * @param outType the output DType
    * @deprecated the only output type supported is BOOL8.
    */
   @Deprecated
@@ -1562,7 +1748,16 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Computes the reduction of the values in all rows of a column.
    * Overflows in reductions are not detected. Specifying a higher precision
    * output type may prevent overflow. Only the MIN and MAX ops are
+   * supported for reduction of non-arithmetic types (TIMESTAMP...)
    * The null values are skipped for the operation.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.reduce(ReductionAggregation.sum());
+   * // result = 15,              DType = INT32
+   * }</pre>
+   *
    * @param aggregation The reduction aggregation to perform
    * @return The scalar result of the reduction operation. If the column is
    * empty or the reduction operation fails then the
@@ -1578,6 +1773,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * output type may prevent overflow. Only the MIN and MAX ops are
    * supported for reduction of non-arithmetic types (TIMESTAMP...)
    * The null values are skipped for the operation.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 4, 5], DType = INT32
+   * Scalar result = col.reduce(ReductionAggregation.sum(), DType.INT64);
+   * // result = 15,              DType = INT64
+   * }</pre>
+   *
    * @param aggregation The reduction aggregation to perform
    * @param outType The type of scalar value to return. Not all output types are supported
    *                by all aggregation operations.
@@ -1597,6 +1800,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Do a segmented reduce where the offsets column indicates which groups in this to combine. The
    * output type is the same as the input type.
+   *
+   * Example:
+   * <pre>{@code
+   * // col     = [1, 2, 3, 4, 5], DType = INT32
+   * // offsets = [0, 2, 5],       DType = INT32
+   * ColumnVector result = col.segmentedReduce(offsets, SegmentedReductionAggregation.sum());
+   * // result  = [3, 12],         DType = INT32
+   * }</pre>
+   *
    * @param offsets an INT32 column with no nulls.
    * @param aggregation the aggregation to do
    * @return the result.
@@ -1607,6 +1819,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Do a segmented reduce where the offsets column indicates which groups in this to combine.
+   *
+   * Example:
+   * <pre>{@code
+   * // col     = [1, 2, 3, 4, 5], DType = INT32
+   * // offsets = [0, 2, 5],       DType = INT32
+   * ColumnVector result = col.segmentedReduce(offsets, SegmentedReductionAggregation.sum(), DType.INT64);
+   * // result  = [3, 12],         DType = INT64
+   * }</pre>
+   *
    * @param offsets an INT32 column with no nulls.
    * @param aggregation the aggregation to do
    * @param outType the output data type.
@@ -1619,6 +1840,16 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Do a segmented reduce where the offsets column indicates which groups in this to combine.
+   *
+   * Example:
+   * <pre>{@code
+   * // col     = [1, null, 3, 4, 5], DType = INT32
+   * // offsets = [0, 2, 5],          DType = INT32
+   * ColumnVector result = col.segmentedReduce(offsets, SegmentedReductionAggregation.sum(),
+   *     NullPolicy.INCLUDE, DType.INT64);
+   * // result  = [null, 12],         DType = INT64
+   * }</pre>
+   *
    * @param offsets an INT32 column with no nulls.
    * @param aggregation the aggregation to do
    * @param nullPolicy the null policy.
@@ -1640,6 +1871,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Segmented gather of the elements within a list element in each row of a list column.
    * For each list, assuming the size is N, valid indices of gather map ranges in [-N, N).
    * Out of bound indices refer to null.
+   *
+   * Example:
+   * <pre>{@code
+   * // col       = [[1, 2, 3], [4, 5], [6, 7, 8, 9]], DType = LIST of INT32
+   * // gatherMap = [[0, 2],    [1],    [3, 0]],       DType = LIST of INT32
+   * ColumnVector result = col.segmentedGather(gatherMap);
+   * // result    = [[1, 3],    [5],    [9, 6]],       DType = LIST of INT32
+   * }</pre>
+   *
    * @param gatherMap ListColumnView carrying lists of integral indices which maps the
    * element in list of each row in the source columns to rows of lists in the result columns.
    * @return the result.
@@ -1650,6 +1890,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Segmented gather of the elements within a list element in each row of a list column.
+   *
+   * Example:
+   * <pre>{@code
+   * // col       = [[1, 2, 3], [4, 5], [6, 7, 8, 9]], DType = LIST of INT32
+   * // gatherMap = [[0, 10],   [1],    [3, 0]],       DType = LIST of INT32
+   * ColumnVector result = col.segmentedGather(gatherMap, OutOfBoundsPolicy.NULLIFY);
+   * // result    = [[1, null], [5],    [9, 6]],       DType = LIST of INT32
+   * }</pre>
+   *
    * @param gatherMap ListColumnView carrying lists of integral indices which maps the
    * element in list of each row in the source columns to rows of lists in the result columns.
    * @param policy OutOfBoundsPolicy, `DONT_CHECK` leads to undefined behaviour; `NULLIFY`
@@ -1664,6 +1913,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Do a reduction on the values in a list. The output type will be the type of the data column
    * of this list.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [[1, 2, 3], [4, 5], [6]], DType = LIST of INT32
+   * ColumnVector result = col.listReduce(SegmentedReductionAggregation.sum());
+   * // result = [6, 9, 6],                DType = INT32
+   * }</pre>
+   *
    * @param aggregation the aggregation to perform
    */
   public ColumnVector listReduce(SegmentedReductionAggregation aggregation) {
@@ -1678,6 +1935,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Do a reduction on the values in a list.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [[1, 2, 3], [4, 5], [6]], DType = LIST of INT32
+   * ColumnVector result = col.listReduce(SegmentedReductionAggregation.sum(), DType.INT64);
+   * // result = [6, 9, 6],                DType = INT64
+   * }</pre>
+   *
    * @param aggregation the aggregation to perform
    * @param outType the type of the output. Typically, this should match with the child type
    *                of the list.
@@ -1688,6 +1953,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Do a reduction on the values in a list.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [[1, null, 3], [4, 5], [6]], DType = LIST of INT32
+   * ColumnVector result = col.listReduce(SegmentedReductionAggregation.sum(),
+   *     NullPolicy.INCLUDE, DType.INT64);
+   * // result = [null, 9, 6],                DType = INT64
+   * }</pre>
+   *
    * @param aggregation the aggregation to perform
    * @param nullPolicy should nulls be included or excluded from the aggregation.
    * @param outType the type of the output. Typically, this should match with the child type
@@ -1708,6 +1982,18 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Calculate various percentiles of this ColumnVector, which must contain centroids produced by
    * a t-digest aggregation.
    *
+   * Example:
+   * <pre>{@code
+   * // Create t-digest centroids via groupBy aggregation:
+   * // Table tdigestTable = inputTable.groupBy(0)
+   * //     .aggregate(GroupByAggregation.createTDigest(100).onColumn(1));
+   * // ColumnVector tdigestCol = tdigestTable.getColumn(1);
+   *
+   * // Compute approximate percentiles:
+   * ColumnVector result = tdigestCol.approxPercentile(new double[]{0.25, 0.5, 0.75});
+   * // result = LIST of FLOAT64, one list of percentile values per element in the `percentiles` array
+   * }</pre>
+   *
    * @param percentiles Required percentiles [0,1]
    * @return Column containing the approximate percentile values as a list of doubles, in
    *         the same order as the input percentiles
@@ -1722,6 +2008,18 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Calculate various percentiles of this ColumnVector, which must contain centroids produced by
    * a t-digest aggregation.
    *
+   * Example:
+   * <pre>{@code
+   * // Create t-digest centroids via groupBy aggregation:
+   * // Table tdigestTable = inputTable.groupBy(0)
+   * //     .aggregate(GroupByAggregation.createTDigest(100).onColumn(1));
+   * // ColumnVector tdigestCol = tdigestTable.getColumn(1);
+   *
+   * // percentiles = [0.25, 0.5, 0.75], DType = FLOAT64
+   * ColumnVector result = tdigestCol.approxPercentile(percentiles);
+   * // result = LIST of FLOAT64, one list of percentile values per element in the `percentiles` array
+   * }</pre>
+   *
    * @param percentiles Column containing percentiles [0,1]
    * @return Column containing the approximate percentile values as a list of doubles, in
    *         the same order as the input percentiles
@@ -1733,6 +2031,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Calculate various quantiles of this ColumnVector.  It is assumed that this is already sorted
    * in the desired order.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [-1, 0, 1, 1, 2, 3, 4, 6, 7, 9], DType = INT32
+   * ColumnVector result = col.quantile(QuantileMethod.LINEAR, new double[]{0.0, 0.25, 0.33, 0.5, 1.0});
+   * // result = [-1.0, 1.0, 1.0, 2.5, 9.0],      DType = FLOAT64
+   * }</pre>
+   *
    * @param method   the method used to calculate the quantiles
    * @param quantiles the quantile values [0,1]
    * @return Column containing the approximate percentile values as a list of doubles, in
@@ -1746,6 +2052,17 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * This function aggregates values in a window around each element i of the input
    * column. Please refer to WindowsOptions for various options that can be passed.
    * Note: Only rows-based windows are supported.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [5, 4, 7, 6, 8],     DType = INT32
+   * Scalar one = Scalar.fromInt(1);
+   * Scalar two = Scalar.fromInt(2);
+   * WindowOptions options = WindowOptions.builder().minPeriods(2).window(two, one).build();
+   * ColumnVector result = col.rollingWindow(RollingAggregation.sum(), options);
+   * // result = [9, 16, 17, 21, 14], DType = INT64
+   * }</pre>
+   *
    * @param op the operation to perform.
    * @param options various window function arguments.
    * @return Column containing aggregate function result.
@@ -1779,6 +2096,13 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Compute the prefix sum (aka cumulative sum) of the values in this column.
    * This is just a convenience method for an inclusive scan with a SUM aggregation.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, 3, 5, 8, 10],   DType = INT64
+   * ColumnVector result = col.prefixSum();
+   * // result = [1, 3, 6, 11, 19, 29], DType = INT64
+   * }</pre>
    */
   public final ColumnVector prefixSum() {
     return scan(ScanAggregation.sum());
@@ -1786,6 +2110,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Computes a scan for a column. This is very similar to a running window on the column.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, null, 3, 5, 8, 10],   DType = INT32
+   * ColumnVector result = col.scan(ScanAggregation.sum(), ScanType.INCLUSIVE, NullPolicy.EXCLUDE);
+   * // result = [1, 3, null, 6, 11, 19, 29], DType = INT32
+   * }</pre>
+   *
    * @param aggregation the aggregation to perform
    * @param scanType should the scan be inclusive, include the current row, or exclusive.
    * @param nullPolicy how should nulls be treated. Note that some aggregations also include a
@@ -1804,6 +2136,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Computes a scan for a column that excludes nulls.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, null, 3, 5, 8, 10],  DType = INT32
+   * ColumnVector result = col.scan(ScanAggregation.sum(), ScanType.EXCLUSIVE);
+   * // result = [0, 1, null, 3, 6, 11, 19], DType = INT32
+   * }</pre>
+   *
    * @param aggregation the aggregation to perform
    * @param scanType should the scan be inclusive, include the current row, or exclusive.
    */
@@ -1813,6 +2153,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Computes an inclusive scan for a column that excludes nulls.
+   *
+   * Example:
+   * <pre>{@code
+   * // col    = [1, 2, null, 3, 5, 8, 10],   DType = INT32
+   * ColumnVector result = col.scan(ScanAggregation.sum());
+   * // result = [1, 3, null, 6, 11, 19, 29], DType = INT32
+   * }</pre>
+   *
    * @param aggregation the aggregation to perform
    */
   public final ColumnVector scan(ScanAggregation aggregation) {
@@ -2356,8 +2704,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param timestampType timestamp DType that includes the time unit to parse the timestamp into.
    * @param format strptime format specifier string of the timestamp. Used to parse and convert
    *               the timestamp with. Supports %Y,%y,%m,%d,%H,%I,%p,%M,%S,%f,%z format specifiers.
-   *               See https://github.com/rapidsai/custrings/blob/branch-0.10/docs/source/datetime.md
-   *               for full parsing format specification and documentation.
+   *               See https://docs.python.org/3/library/datetime.html#strftime-and-strptime-behavior
+   *               for parsing format specification and documentation.
    * @return A new ColumnVector containing the long representations of the timestamps in the
    *         original column vector.
    */
@@ -2373,8 +2721,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Cast to Strings.
-   * Negative timestamp values are not currently supported and will yield undesired results. See
-   * github issue https://github.com/rapidsai/cudf/issues/3116 for details
    * In case of timestamps it follows the following formats
    *    {@link DType#TIMESTAMP_DAYS} - "%Y-%m-%d"
    *    {@link DType#TIMESTAMP_SECONDS} - "%Y-%m-%d %H:%M:%S"
@@ -2405,27 +2751,21 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * positive or negative direction.
 
    * No checking is done for invalid formats or invalid timestamp units.
-   * Negative timestamp values are not currently supported and will yield undesired results. See
-   * github issue https://github.com/rapidsai/cudf/issues/3116 for details
    *
    * @param format - strftime format specifier string of the timestamp. Its used to parse and convert
-   *               the timestamp with. Supports %m,%j,%d,%H,%M,%S,%y,%Y,%f format specifiers.
+   *               the timestamp with. Supports the following format specifiers:
    *               %d 	Day of the month: 01-31
    *               %m 	Month of the year: 01-12
-   *               %y 	Year without century: 00-99c
+   *               %y 	Year without century: 00-99
    *               %Y 	Year with century: 0001-9999
    *               %H 	24-hour of the day: 00-23
+   *               %I 	12-hour of the day: 01-12
    *               %M 	Minute of the hour: 00-59
    *               %S 	Second of the minute: 00-59
    *               %f 	6-digit microsecond: 000000-999999
-   *               See https://github.com/rapidsai/custrings/blob/branch-0.10/docs/source/datetime.md
-   *
-   * Reported bugs
-   * https://github.com/rapidsai/cudf/issues/4160 after the bug is fixed this method should
-   * also support
-   *               %I 	12-hour of the day: 01-12
-   *               %p 	Only 'AM', 'PM'
-   *               %j   day of the year
+   *               %p 	One of: 'AM', 'PM', 'am', 'pm'
+   *               %j 	Day of the year: 001-366
+   *               See https://docs.python.org/3/library/datetime.html#strftime-and-strptime-behavior
    *
    * @return A new vector allocated on the GPU
    */
@@ -3005,7 +3345,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Applies a JSONPath string to an incoming strings column where each row in the column
    * is a valid json string.  The output is returned by row as a strings column.
    *
-   * For reference, https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+   * For reference, https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
    * Note: Only implements the operators: $ . [] *
    *
    * @param path The JSONPath string to be applied to each row
@@ -3023,7 +3363,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Applies a JSONPath string to an incoming strings column where each row in the column
    * is a valid json string.  The output is returned by row as a strings column.
    *
-   * For reference, https://tools.ietf.org/id/draft-goessner-dispatch-jsonpath-00.html
+   * For reference, https://datatracker.ietf.org/doc/id/draft-goessner-dispatch-jsonpath-00.html
    * Note: Only implements the operators: $ . [] *
    *
    * @param path The JSONPath string to be applied to each row
@@ -3094,6 +3434,36 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
+   * Returns a new strings column where, for each row {@code i}, all occurrences of
+   * {@code targets[i]} within {@code input[i]} are replaced with {@code repls[i]}.
+   *
+   * Unlike {@link #stringReplace(ColumnView, ColumnView)}, which searches every row for a
+   * shared list of target strings, this method pairs each input row with its own
+   * target/replacement pair.
+   *
+   * The {@code targets} and {@code repls} columns must have the same number of rows as this
+   * column. Output row {@code i} is null if any of {@code input[i]}, {@code targets[i]},
+   * or {@code repls[i]} is null. If {@code targets[i]} is an empty string, {@code input[i]}
+   * is copied unchanged.
+   *
+   * @param targets Per-row strings to search for within each input string.
+   * @param repls Per-row replacement strings used when the corresponding target is found.
+   * @return A new column vector containing the replaced strings.
+   */
+  public final ColumnVector stringReplacePerRow(ColumnView targets, ColumnView repls) {
+    assert type.equals(DType.STRING) : "column type must be a String";
+    assert targets != null : "targets column may not be null";
+    assert targets.getType().equals(DType.STRING) : "targets column must be a string column";
+    assert repls != null : "repls column may not be null";
+    assert repls.getType().equals(DType.STRING) : "repls column must be a string column";
+    assert targets.getRowCount() == getRowCount() : "targets must have the same number of rows as this column";
+    assert repls.getRowCount() == getRowCount() : "repls must have the same number of rows as this column";
+
+    return new ColumnVector(stringReplacePerRow(getNativeView(), targets.getNativeView(),
+        repls.getNativeView()));
+  }
+
+  /**
    * For each string, replaces any character sequence matching the given pattern using the
    * replacement string scalar.
    *
@@ -3148,19 +3518,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
     assert regexProg != null : "regex program may not be null";
     return new ColumnVector(replaceRegex(getNativeView(), regexProg.pattern(), regexProg.combinedFlags(),
                                          regexProg.capture().nativeId, repl.getScalarHandle(), maxRepl));
-  }
-
-  /**
-   * For each string, replaces any character sequence matching any of the regular expression
-   * patterns with the corresponding replacement strings.
-   *
-   * @param patterns The regular expression patterns to search within each string.
-   * @param repls The string scalars to replace for each corresponding pattern match.
-   * @return A new column vector containing the string results.
-   */
-  public final ColumnVector replaceMultiRegex(String[] patterns, ColumnView repls) {
-    return new ColumnVector(replaceMultiRegex(getNativeView(), patterns,
-        repls.getNativeView()));
   }
 
   /**
@@ -3403,6 +3760,36 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
+   * For each row {@code i}, returns whether {@code input[i]} contains the literal substring
+   * {@code targets[i]} (UTF-8 byte sequence, not regex).
+   *
+   * <p>This column and {@code targets} must have the same row count. Null {@code targets[i]} yields
+   * {@code false} for that row; null {@code input[i]} yields null in the output.
+   *
+   * <p>Contrast with {@link #stringContains(Scalar)} (one needle for all rows) and
+   * {@link #stringContains(ColumnView)} ({@code contains_multiple}: each needle checked against
+   * every row, returning multiple boolean columns).
+   *
+   * <p>Example:
+   * <pre>{@code
+   * // input   = ["apple", "banana", null, "date"], DType = STRING
+   * // targets = ["pl",    "xyz",    "a",  null],   DType = STRING
+   * ColumnVector result = input.stringContainsPerRow(targets);
+   * // result  = [true,    false,    null, false],   DType = BOOL8
+   * }</pre>
+   *
+   * @param targets string column aligned row-for-row with this column
+   * @return a new BOOL8 column
+   */
+  public final ColumnVector stringContainsPerRow(ColumnView targets) {
+    assert type.equals(DType.STRING) : "column type must be a String";
+    assert targets.getType().equals(DType.STRING) : "targets type must be a string";
+    assert getRowCount() == targets.getRowCount()
+        : "column and targets must have the same number of rows";
+    return new ColumnVector(stringContainsPerRow(getNativeView(), targets.getNativeView()));
+  }
+
+  /**
    * Replaces values less than `lo` in `input` with `lo`,
    * and values greater than `hi` with `hi`.
    *
@@ -3489,7 +3876,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param pattern Regex pattern to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3511,7 +3898,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param regexProg Regex program to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3535,7 +3922,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param pattern Regex pattern to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3557,7 +3944,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * ```
    * Any null string entries return corresponding null output column entries.
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    *
    * @param regexProg Regex program to match to each string.
    * @return New ColumnVector of boolean results for each string.
@@ -3576,7 +3963,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * does not match. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param pattern the pattern to use
    * @return the table of extracted matches
    * @throws CudfException if any error happens including if the RE does
@@ -3593,7 +3980,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * does not match. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param regexProg the regex program to use
    * @return the table of extracted matches
    * @throws CudfException if any error happens including if the regex
@@ -3611,7 +3998,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * regular expression group index. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param pattern The regex pattern
    * @param idx The regex group index
    * @return A new column vector of extracted matches
@@ -3629,7 +4016,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * regular expression group index. Any null inputs also result in null output entries.
    *
    * For supported regex patterns refer to:
-   * @link https://docs.rapids.ai/api/libcudf/nightly/md_regex.html
+   * @link https://docs.nvidia.com/cudf/latest/libcudf/md_regex/
    * @param regexProg The regex program
    * @param idx The regex group index
    * @return A new column vector of extracted matches
@@ -3937,7 +4324,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Segmented sort of the elements within a list in each row of a list column.
-   * NOTICE: list columns with nested child are NOT supported yet.
+   * The list child may be of any type whose leaf elements are relationally comparable, including
+   * arbitrarily nested LIST and STRUCT children.
    *
    * @param isDescending   whether sorting each row with descending order (or ascending order)
    * @param isNullSmallest whether to regard the null value as the min value (or the max value)
@@ -4054,34 +4442,42 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Filters elements in each row of this LIST column using `booleanMaskView`
+   * Filters elements in each row of this LIST column using `retentionMaskView`
    * LIST of booleans as a mask.
    * <p>
    * Given a list-of-bools column, the function produces
    * a new `LIST` column of the same type as this column, where each element is copied
-   * from the row *only* if the corresponding `boolean_mask` is non-null and `true`.
+   * from the row *only* if the corresponding `retention_mask` is non-null and `true`.
    * <p>
    * E.g.
-   * column       = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
-   * boolean_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
-   * results      = { {1,2},   {3},   {5,6,7}, {} };
+   * column         = { {0,1,2}, {3,4}, {5,6,7}, {8,9} };
+   * retention_mask = { {0,1,1}, {1,0}, {1,1,1}, {0,0} };
+   * results        = { {1,2},   {3},   {5,6,7}, {} };
    * <p>
-   * This column and `boolean_mask` must have the same number of rows.
+   * This column and `retention_mask` must have the same number of rows.
    * The output column has the same number of rows as this column.
    * An element is copied to an output row *only*
-   * if the corresponding boolean_mask element is `true`.
+   * if the corresponding retention_mask element is `true`.
    * An output row is invalid only if the row is invalid.
    *
-   * @param booleanMaskView A nullable list of bools column used to filter elements in this column
+   * @param retentionMaskView A nullable list of bools column used to filter elements in this column
    * @return List column of the same type as this column, containing filtered list rows
-   * @throws CudfException if `boolean_mask` is not a "lists of bools" column
-   * @throws CudfException if this column and `boolean_mask` have different number of rows
+   * @throws CudfException if `retention_mask` is not a "lists of bools" column
+   * @throws CudfException if this column and `retention_mask` have different number of rows
    */
-  public final ColumnVector applyBooleanMask(ColumnView booleanMaskView) {
+  public final ColumnVector applyRetentionMask(ColumnView retentionMaskView) {
     assert (getType().equals(DType.LIST));
-    assert (booleanMaskView.getType().equals(DType.LIST));
-    assert (getRowCount() == booleanMaskView.getRowCount());
-    return new ColumnVector(applyBooleanMask(getNativeView(), booleanMaskView.getNativeView()));
+    assert (retentionMaskView.getType().equals(DType.LIST));
+    assert (getRowCount() == retentionMaskView.getRowCount());
+    return new ColumnVector(applyRetentionMask(getNativeView(), retentionMaskView.getNativeView()));
+  }
+
+  /**
+   * @deprecated Use {@link #applyRetentionMask(ColumnView)} instead.
+   */
+  @Deprecated
+  public final ColumnVector applyBooleanMask(ColumnView booleanMaskView) {
+    return applyRetentionMask(booleanMaskView);
   }
 
   /**
@@ -4152,14 +4548,12 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Strings that fail to parse will default to 0. Supported time units are second, millisecond,
    * microsecond, and nanosecond. Larger time units for column vectors are not supported yet in cudf.
    * No checking is done for invalid formats or invalid timestamp units.
-   * Negative timestamp values are not currently supported and will yield undesired results. See
-   * github issue https://github.com/rapidsai/cudf/issues/3116 for details
    *
    * @param unit integer native ID of the time unit to parse the timestamp into.
    * @param format strptime format specifier string of the timestamp. Used to parse and convert
    *               the timestamp with. Supports %Y,%y,%m,%d,%H,%I,%p,%M,%S,%f,%z format specifiers.
-   *               See https://github.com/rapidsai/custrings/blob/branch-0.10/docs/source/datetime.md
-   *               for full parsing format specification and documentation.
+   *               See https://docs.python.org/3/library/datetime.html#strftime-and-strptime-behavior
+   *               for parsing format specification and documentation.
    * @return native handle of the resulting cudf column, used to construct the Java column vector
    *         by the timestampToLong method.
    */
@@ -4270,27 +4664,21 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * timestamp is a long value representing how many units since 1970-01-01 00:00:00:000 in either
    * positive or negative direction. This mirrors the functionality spark sql's from_unixtime.
    * No checking is done for invalid formats or invalid timestamp units.
-   * Negative timestamp values are not currently supported and will yield undesired results. See
-   * github issue https://github.com/rapidsai/cudf/issues/3116 for details
    *
    * @param format - strftime format specifier string of the timestamp. Its used to parse and convert
-   *               the timestamp with. Supports %Y,%y,%m,%d,%H,%M,%S,%f format specifiers.
+   *               the timestamp with. Supports the following format specifiers:
    *               %d 	Day of the month: 01-31
    *               %m 	Month of the year: 01-12
-   *               %y 	Year without century: 00-99c
+   *               %y 	Year without century: 00-99
    *               %Y 	Year with century: 0001-9999
    *               %H 	24-hour of the day: 00-23
+   *               %I 	12-hour of the day: 01-12
    *               %M 	Minute of the hour: 00-59
    *               %S 	Second of the minute: 00-59
    *               %f 	6-digit microsecond: 000000-999999
-   *               See http://man7.org/linux/man-pages/man3/strftime.3.html for details
-   *
-   * Reported bugs
-   * https://github.com/rapidsai/cudf/issues/4160 after the bug is fixed this method should
-   * also support
-   *               %I 	12-hour of the day: 01-12
-   *               %p 	Only 'AM', 'PM'
-   *               %j   day of the year
+   *               %p 	One of: 'AM', 'PM', 'am', 'pm'
+   *               %j 	Day of the year: 001-366
+   *               See https://docs.python.org/3/library/datetime.html#strftime-and-strptime-behavior
    *
    * @return - native handle of the resulting cudf column used to construct the Java column vector
    */
@@ -4408,6 +4796,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long stringReplaceMulti(long inputCV, long targetsCV, long replsCV) throws CudfException;
 
   /**
+   * Native method for per-row string replacement.
+   * @param inputCV native handle of the cudf::column_view being operated on.
+   * @param targetsCV handle of column containing the per-row target strings.
+   * @param replsCV handle of column containing the per-row replacement strings.
+   */
+  private static native long stringReplacePerRow(long inputCV, long targetsCV, long replsCV) throws CudfException;
+
+  /**
    * Native method for replacing each regular expression pattern match with the specified
    * replacement string.
    * @param columnView native handle of the cudf::column_view being operated on.
@@ -4420,16 +4816,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    */
   private static native long replaceRegex(long columnView, String pattern, int flags, int capture,
                                           long repl, long maxRepl) throws CudfException;
-
-  /**
-   * Native method for multiple instance regular expression replacement.
-   * @param columnView native handle of the cudf::column_view being operated on.
-   * @param patterns native handle of the cudf::column_view containing the regex patterns.
-   * @param repls The replacement template for creating the output string.
-   * @return native handle of the resulting cudf column containing the string results.
-   */
-  private static native long replaceMultiRegex(long columnView, String[] patterns,
-                                               long repls) throws CudfException;
 
   /**
    * Native method for replacing any character sequence matching the given regex program
@@ -4506,6 +4892,12 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @return native handle of the resulting cudf column containing the boolean results.
    */
   private static native long stringContains(long cudfViewHandle, long compString) throws CudfException;
+
+  /**
+   * Row-aligned substring contains: row {@code i} searches for {@code targets[i]} in {@code input[i]}.
+   */
+  private static native long stringContainsPerRow(long cudfViewHandle, long targetsViewHandle)
+      throws CudfException;
 
   /**
    * Native method for searching for the given target strings within each string in the provided column.
@@ -4812,15 +5204,17 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long normalizeNANsAndZeros(long viewHandle) throws CudfException;
 
   /**
-   * Native method to deep copy a column while replacing the null mask. The null mask is the
+   * Native method to replace a column's null mask. The null mask is the
    * bitwise merge of the null masks in the columns given as arguments.
    *
-   * @param baseHandle column view of the column that is deep copied.
+   * @param baseHandle column view of the column whose null mask is being replaced.
    * @param viewHandles array of views whose null masks are merged, must have identical row counts.
-   * @return native handle of the copied cudf column with replaced null mask.
+   * @param mergeOp native id of the binary op (BITWISE_AND or BITWISE_OR) used to merge the null masks.
+   * @return native handle of the resulting column, or 0 when the original is unchanged
+   *         (a no-op) and no copied column was produced.
    */
   private static native long bitwiseMergeAndSetValidity(long baseHandle, long[] viewHandles,
-                                                        int nullConfig) throws CudfException;
+                                                        int mergeOp) throws CudfException;
 
   ////////
   // Native cudf::column_view life cycle and metadata access methods. Life cycle methods
@@ -4863,7 +5257,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   static native long generateListOffsets(long handle) throws CudfException;
 
-  static native long applyBooleanMask(long arrayColumnView, long booleanMaskHandle) throws CudfException;
+  static native long applyRetentionMask(long arrayColumnView, long retentionMaskHandle)
+      throws CudfException;
 
   static native boolean hasNonEmptyNulls(long handle) throws CudfException;
 
@@ -5070,6 +5465,41 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   // DATA MOVEMENT
   /////////////////////////////////////////////////////////////////////////////
 
+  /**
+   * Drain {@code stream} and clean up host-side resources after a failure in
+   * {@link #copyToHostAsync} or {@link #copyToHostAsyncNestedHelper}. Sync
+   * failures and close failures are recorded as suppressed on {@code primary}
+   * so the original cause is preserved.
+   *
+   * <p>If the recovery sync itself fails, the CUDA stream is in an error state
+   * and pending DMA writes into the host buffers may not have completed.
+   * Closing them then would risk a use-after-free (the DMA engine writing into
+   * freed memory), so the host buffers are intentionally leaked — the process
+   * is already in a broken state (sticky CUDA error usually requires a
+   * restart), and a leak beats silent corruption.
+   */
+  private static void syncAndCleanup(Cuda.Stream stream, Throwable primary,
+      List<HostColumnVectorCore> children,
+      HostMemoryBuffer hostData, HostMemoryBuffer hostOffsets, HostMemoryBuffer hostValid) {
+    try {
+      stream.sync();
+    } catch (Throwable syncFailure) {
+      // Stream is in an error state; pending DMA writes may not have landed.
+      // Intentionally leak the host buffers rather than risk closing them while
+      // the DMA engine could still write into freed memory.
+      primary.addSuppressed(syncFailure);
+      return;
+    }
+    if (children != null) {
+      for (HostColumnVectorCore child : children) {
+        CleanupHelpers.closeAndSuppress(child, primary);
+      }
+    }
+    CleanupHelpers.closeAndSuppress(hostData, primary);
+    CleanupHelpers.closeAndSuppress(hostOffsets, primary);
+    CleanupHelpers.closeAndSuppress(hostValid, primary);
+  }
+
   private static HostColumnVectorCore copyToHostAsyncNestedHelper(
       Cuda.Stream stream, ColumnView deviceCvPointer, HostMemoryAllocator hostMemoryAllocator) {
     if (deviceCvPointer == null) {
@@ -5083,7 +5513,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
     BaseDeviceMemoryBuffer currOffsets = null;
     BaseDeviceMemoryBuffer currValidity = null;
     long currNullCount = 0l;
-    boolean needsCleanup = true;
     try {
       long currRows = deviceCvPointer.getRowCount();
       DType currType = deviceCvPointer.getType();
@@ -5110,12 +5539,16 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
       }
       currNullCount = deviceCvPointer.getNullCount();
       Optional<Long> nullCount = Optional.of(currNullCount);
-      HostColumnVectorCore ret =
-          new HostColumnVectorCore(currType, currRows, nullCount, hostData,
-              hostValid, hostOffsets, children);
-      needsCleanup = false;
-      return ret;
+      return new HostColumnVectorCore(currType, currRows, nullCount, hostData,
+          hostValid, hostOffsets, children);
+    } catch (Throwable t) {
+      syncAndCleanup(stream, t, children, hostData, hostOffsets, hostValid);
+      throw t;
     } finally {
+      // These are refcount handles to the parent ColumnView's device memory;
+      // closing them only decrements a refcount and does not deallocate, so
+      // they're safe to close regardless of stream state and do not need the
+      // sync-then-suppress treatment applied to host buffers above.
       if (currData != null) {
         currData.close();
       }
@@ -5124,17 +5557,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
       }
       if (currValidity != null) {
         currValidity.close();
-      }
-      if (needsCleanup) {
-        if (hostData != null) {
-          hostData.close();
-        }
-        if (hostOffsets != null) {
-          hostOffsets.close();
-        }
-        if (hostValid != null) {
-          hostValid.close();
-        }
       }
     }
   }
@@ -5156,6 +5578,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
       HostMemoryBuffer hostDataBuffer = null;
       HostMemoryBuffer hostValidityBuffer = null;
       HostMemoryBuffer hostOffsetsBuffer = null;
+      List<HostColumnVectorCore> children = null;
       BaseDeviceMemoryBuffer valid = getValid();
       BaseDeviceMemoryBuffer offsets = getOffsets();
       BaseDeviceMemoryBuffer data = null;
@@ -5164,7 +5587,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
       if (!type.isNestedType()) {
         data = getData();
       }
-      boolean needsCleanup = true;
       try {
         // We don't have a good way to tell if it is cached on the device or recalculate it on
         // the host for now, so take the hit here.
@@ -5183,10 +5605,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
             hostDataBuffer = hostMemoryAllocator.allocate(data.length);
             hostDataBuffer.copyFromDeviceBufferAsync(data, stream);
           }
-          HostColumnVector ret = new HostColumnVector(type, rows, Optional.of(nullCount),
+          return new HostColumnVector(type, rows, Optional.of(nullCount),
               hostDataBuffer, hostValidityBuffer, hostOffsetsBuffer);
-          needsCleanup = false;
-          return ret;
         } else {
           if (data != null) {
             hostDataBuffer = hostMemoryAllocator.allocate(data.length);
@@ -5201,18 +5621,23 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
             hostOffsetsBuffer = hostMemoryAllocator.allocate(offsets.getLength());
             hostOffsetsBuffer.copyFromDeviceBufferAsync(offsets, stream);
           }
-          List<HostColumnVectorCore> children = new ArrayList<>();
+          children = new ArrayList<>();
           for (int i = 0; i < getNumChildren(); i++) {
             try (ColumnView childDevPtr = getChildColumnView(i)) {
               children.add(copyToHostAsyncNestedHelper(stream, childDevPtr, hostMemoryAllocator));
             }
           }
-          HostColumnVector ret = new HostColumnVector(type, rows, Optional.of(nullCount),
+          return new HostColumnVector(type, rows, Optional.of(nullCount),
               hostDataBuffer, hostValidityBuffer, hostOffsetsBuffer, children);
-          needsCleanup = false;
-          return ret;
         }
+      } catch (Throwable t) {
+        syncAndCleanup(stream, t, children, hostDataBuffer, hostOffsetsBuffer, hostValidityBuffer);
+        throw t;
       } finally {
+        // These are refcount handles to this ColumnView's device memory;
+        // closing them only decrements a refcount and does not deallocate, so
+        // they're safe to close regardless of stream state and do not need the
+        // sync-then-suppress treatment applied to host buffers above.
         if (data != null) {
           data.close();
         }
@@ -5221,17 +5646,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
         }
         if (valid != null) {
           valid.close();
-        }
-        if (needsCleanup) {
-          if (hostOffsetsBuffer != null) {
-            hostOffsetsBuffer.close();
-          }
-          if (hostDataBuffer != null) {
-            hostDataBuffer.close();
-          }
-          if (hostValidityBuffer != null) {
-            hostValidityBuffer.close();
-          }
         }
       }
     }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <memory>
@@ -28,7 +28,7 @@ namespace detail {
  * @copydoc cudf::structs::detail::concatenate
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   // get ordered children
@@ -53,9 +53,12 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // if any of the input columns have nulls, construct the output mask
   bool const has_nulls =
     std::any_of(columns.begin(), columns.end(), [](auto const& col) { return col.has_nulls(); });
-  rmm::device_buffer null_mask = create_null_mask(
-    total_length, has_nulls ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED, stream);
-  auto null_mask_data = static_cast<bitmask_type*>(null_mask.data());
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
+    create_null_mask(total_length,
+                     has_nulls ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED,
+                     stream,
+                     cudf::get_current_device_resource_ref());
+  auto null_mask_data = null_mask.data();
   auto const null_count =
     has_nulls ? cudf::detail::concatenate_masks(columns, null_mask_data, stream) : size_type{0};
 

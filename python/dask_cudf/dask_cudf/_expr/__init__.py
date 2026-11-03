@@ -1,9 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
-
-import importlib.metadata
-
-from packaging.version import Version
 
 import dask
 import dask.dataframe.dask_expr._shuffle as _shuffle_module
@@ -50,18 +46,7 @@ from dask.dataframe.dask_expr.io.parquet import (
     ReadParquetFSSpec,
     ReadParquetPyarrowFS,
 )
-
-_dask_version = importlib.metadata.version("dask")
-
-# TODO: change ">2025.2.0" to ">={next-version}" when released.
-DASK_2025_3_0 = Version(_dask_version) > Version("2025.2.0")
-
-
-if DASK_2025_3_0:
-    from dask.dataframe.utils import is_scalar
-else:
-    from dask.dataframe.dask_expr._util import is_scalar
-
+from dask.dataframe.utils import is_scalar
 
 __all__ = [
     "CumulativeBlockwise",

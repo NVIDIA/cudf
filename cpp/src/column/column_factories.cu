@@ -1,7 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#include "cudf/utilities/default_stream.hpp"
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/fill.hpp>
@@ -12,7 +14,8 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <thrust/iterator/constant_iterator.h>
+#include <cuda/buffer>
+#include <cuda/iterator>
 #include <thrust/uninitialized_fill.h>
 
 namespace cudf {
@@ -23,7 +26,7 @@ struct column_from_scalar_dispatch {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(scalar const& value,
                                            size_type size,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
   {
     if (size == 0) return make_empty_column(value.type());
@@ -32,7 +35,9 @@ struct column_from_scalar_dispatch {
     auto output_column =
       make_fixed_width_column(value.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto view = output_column->mutable_view();
-    detail::fill_in_place(view, 0, size, value, stream);
+    // TODO: route through the caller's memory resources once make_column_from_scalar is migrated
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+    detail::fill_in_place(view, 0, size, value, stream, cudf::memory_resources{temp_mr, temp_mr});
     return output_column;
   }
 };
@@ -41,7 +46,7 @@ template <>
 std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::string_view>(
   scalar const& value,
   size_type size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   if (size == 0) return make_empty_column(value.type());
@@ -49,7 +54,11 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
   if (!value.is_valid(stream)) {
     return make_strings_column(
       size,
-      make_column_from_scalar(numeric_scalar<int32_t>(0, true, stream), size + 1, stream, mr),
+      make_column_from_scalar(
+        numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
+        size + 1,
+        stream,
+        mr),
       rmm::device_buffer{},
       size,
       cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr));
@@ -59,18 +68,22 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
   auto const d_str = ss.value(stream);  // no actual data is copied
 
   // fill the column with the scalar
-  rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(size, stream);
+  cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
   auto const row_value =
     d_str.empty() ? cudf::strings::detail::string_index_pair{"", 0}
                   : cudf::strings::detail::string_index_pair{d_str.data(), d_str.size_bytes()};
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream), indices.begin(), indices.end(), row_value);
-  return cudf::strings::detail::make_strings_column(indices.begin(), indices.end(), stream, mr);
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    indices.begin(),
+    indices.end(),
+    row_value);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 template <>
 std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::dictionary32>(
-  scalar const&, size_type, rmm::cuda_stream_view, rmm::device_async_resource_ref) const
+  scalar const&, size_type, cuda::stream_ref, rmm::device_async_resource_ref) const
 {
   CUDF_FAIL("dictionary not supported when creating from scalar");
 }
@@ -79,7 +92,7 @@ template <>
 std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::list_view>(
   scalar const& value,
   size_type size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
   auto lv = static_cast<list_scalar const*>(&value);
@@ -90,12 +103,11 @@ template <>
 std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::struct_view>(
   scalar const& value,
   size_type size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
-  if (size == 0) CUDF_FAIL("0-length struct column is unsupported.");
   auto& ss  = static_cast<scalar_type_t<cudf::struct_view> const&>(value);
-  auto iter = thrust::make_constant_iterator(0);
+  auto iter = cuda::make_constant_iterator(0);
 
   auto children =
     detail::gather(ss.view(), iter, iter + size, out_of_bounds_policy::NULLIFY, stream, mr);
@@ -104,7 +116,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
                              std::move(children->release()),
                              is_valid ? 0 : size,
                              is_valid
-                               ? rmm::device_buffer{}
+                               ? cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)
                                : detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr),
                              stream,
                              mr);
@@ -114,7 +126,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
 
 std::unique_ptr<column> make_column_from_scalar(scalar const& s,
                                                 size_type size,
-                                                rmm::cuda_stream_view stream,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   return type_dispatcher(s.type(), column_from_scalar_dispatch{}, s, size, stream, mr);

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -28,33 +28,116 @@ def pq_file(tmp_path_factory, df):
     return pl.scan_parquet(tmp_path / "tmp.pq")
 
 
+FILTER_EXPRESSIONS = [
+    pl.col("a").is_in([0, 1]),
+    pl.col("c").is_in(["a", "b"]),
+    pl.col("a").is_between(0, 2),
+    (pl.col("a") < 2).not_(),
+    pl.lit(2) > pl.col("a"),
+    pl.lit(2) >= pl.col("a"),
+    pl.lit(2) < pl.col("a"),
+    pl.lit(2) <= pl.col("a"),
+    pl.lit(0) == pl.col("a"),
+    pl.lit(1) != pl.col("a"),
+    pl.col("a") == pl.col("d"),
+    (pl.col("b") < pl.lit(2, dtype=pl.Float64).sqrt()),
+    (pl.col("a") >= pl.lit(2)) & (pl.col("b") > 0),
+    pl.col("b").is_finite(),
+    pl.col("a").is_null(),
+    pl.col("a").is_not_null(),
+    pl.col("a").abs().is_between(0, 2),
+    pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
+    (pl.col("a") >= 2) & pl.col("c").str.contains("b"),
+    pl.col("a").is_null() & pl.col("c").str.starts_with("d"),
+]
+
+
+def assert_scan_result(expr, selection, pq_file, *, chunked):
+    q = pq_file.filter(expr).select(*selection)
+    assert_gpu_result_equal(
+        q,
+        engine=pl.GPUEngine(
+            executor="in-memory",
+            raise_on_fail=True,
+            parquet_options={"chunked": chunked},
+        ),
+    )
+
+
+@pytest.mark.parametrize("expr", FILTER_EXPRESSIONS)
+def test_scan_by_hand(expr, pq_file):
+    assert_scan_result(expr, ["c", "b"], pq_file, chunked=False)
+
+
+@pytest.mark.parametrize("selection", [["c", "b"], ["a"], ["a", "c"], ["b"], "c"])
+@pytest.mark.parametrize("expr", [FILTER_EXPRESSIONS[2], FILTER_EXPRESSIONS[18]])
+def test_scan_filter_projection(expr, selection, pq_file):
+    assert_scan_result(expr, selection, pq_file, chunked=False)
+
+
 @pytest.mark.parametrize(
     "expr",
     [
-        pl.col("a").is_in([0, 1]),
-        pl.col("c").is_in(["a", "b"]),
-        pl.col("a").is_between(0, 2),
-        (pl.col("a") < 2).not_(),
-        pl.lit(2) > pl.col("a"),
-        pl.lit(2) >= pl.col("a"),
-        pl.lit(2) < pl.col("a"),
-        pl.lit(2) <= pl.col("a"),
-        pl.lit(0) == pl.col("a"),
-        pl.lit(1) != pl.col("a"),
-        pl.col("a") == pl.col("d"),
-        (pl.col("b") < pl.lit(2, dtype=pl.Float64).sqrt()),
-        (pl.col("a") >= pl.lit(2)) & (pl.col("b") > 0),
-        pl.col("b").is_finite(),
-        pl.col("a").is_null(),
-        pl.col("a").is_not_null(),
-        pl.col("a").abs().is_between(0, 2),
-        pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
+        FILTER_EXPRESSIONS[0],
+        FILTER_EXPRESSIONS[1],
+        FILTER_EXPRESSIONS[12],
+        FILTER_EXPRESSIONS[18],
     ],
 )
-@pytest.mark.parametrize("selection", [["c", "b"], ["a"], ["a", "c"], ["b"], "c"])
-@pytest.mark.parametrize("chunked", [False, True], ids=["unchunked", "chunked"])
-def test_scan_by_hand(expr, selection, pq_file, chunked):
-    q = pq_file.filter(expr).select(*selection)
+def test_scan_filter_chunked(expr, pq_file):
+    assert_scan_result(expr, ["c", "b"], pq_file, chunked=True)
+
+
+def test_parquet_filter_ne_missing(tmp_path):
+    df = pl.DataFrame({"a": [1, 2, None, 3, None]})
+    df.write_parquet(tmp_path / "df.parquet", row_group_size=3)
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        pl.col("a").ne_missing(pl.lit(2, dtype=pl.Int64))
+    )
     assert_gpu_result_equal(
-        q, engine=pl.GPUEngine(raise_on_fail=True, parquet_options={"chunked": chunked})
+        q, engine=pl.GPUEngine(executor="in-memory", raise_on_fail=True)
+    )
+
+
+@pytest.mark.parametrize("use_sql", [False, True])
+def test_parquet_filter_is_in_list_literal(engine: pl.GPUEngine, tmp_path, use_sql):
+    df = pl.DataFrame({"l_shipmode": ["MAIL", "SHIP", "AIR"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    q = pl.scan_parquet(tmp_path / "df.parquet")
+    if use_sql:
+        q = q.sql("SELECT * FROM self WHERE l_shipmode IN ('MAIL', 'SHIP')")
+    else:
+        q = q.filter(pl.col("l_shipmode").is_in(pl.Series(["MAIL", "SHIP"]).implode()))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("negate", [False, True])
+def test_parquet_filter_is_in_empty_list_literal(
+    engine: pl.GPUEngine, tmp_path, negate
+):
+    df = pl.DataFrame({"l_shipmode": ["MAIL", "SHIP", "AIR"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    predicate = pl.col("l_shipmode").is_in(pl.Series([], dtype=pl.String).implode())
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        ~predicate if negate else predicate
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_parquet_filter_boolean_column(engine: pl.GPUEngine, tmp_path):
+    df = pl.DataFrame({"x": [1, 2, 3], "y": [True, False, True]})
+    df.write_parquet(tmp_path / "df.parquet")
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(pl.col("y"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_jit_filter(pq_file):
+    q = pq_file.filter((pl.col("a") >= 2) & (pl.col("a") <= 4)).select("a", "c")
+    assert_gpu_result_equal(
+        q,
+        engine=pl.GPUEngine(
+            executor="in-memory",
+            raise_on_fail=True,
+            parquet_options={"use_jit_filter": True},
+        ),
     )

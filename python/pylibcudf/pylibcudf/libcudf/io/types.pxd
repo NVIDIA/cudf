@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 cimport pylibcudf.libcudf.io.data_sink as cudf_io_data_sink
 cimport pylibcudf.libcudf.io.datasource as cudf_io_datasource
@@ -125,12 +125,24 @@ cdef extern from "cudf/io/types.hpp" \
             size_type start_row, size_type num_rows
         ) except +libcudf_exception_handler
 
+    cdef cppclass filepath_source:
+        string path
+        optional[size_t] size
+
+        filepath_source() except +libcudf_exception_handler
+        filepath_source(string path) except +libcudf_exception_handler
+
     cdef cppclass source_info:
         const vector[string]& filepaths() except +libcudf_exception_handler
+        const vector[filepath_source]& filepath_sources() \
+            except +libcudf_exception_handler
 
         source_info() except +libcudf_exception_handler
         source_info(
             const vector[string] &filepaths
+        ) except +libcudf_exception_handler
+        source_info(
+            vector[filepath_source] sources
         ) except +libcudf_exception_handler
         source_info(
             cudf_io_datasource.datasource *source

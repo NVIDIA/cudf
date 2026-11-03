@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import copy
@@ -7,13 +7,13 @@ import os
 from io import BytesIO, StringIO
 from pathlib import Path
 
+import fsspec
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.testing import assert_eq
 from cudf.testing._utils import (
     DATETIME_TYPES,
@@ -33,8 +33,9 @@ def lines(request):
     return request.param
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf(request):
+    # JSON tests share this immutable source dataframe.
     rng = np.random.default_rng(seed=0)
     types = NUMERIC_TYPES + DATETIME_TYPES + ["bool"]
     nrows = request.param
@@ -50,12 +51,12 @@ def pdf(request):
     return test_pdf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf(pdf):
     return cudf.DataFrame(pdf)
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def gdf_writer_types(request):
     # datetime64[us], datetime64[ns] are unsupported due to a bug in parser
     types = [
@@ -83,7 +84,6 @@ def gdf_writer_types(request):
     return test_pdf
 
 
-@pytest.mark.filterwarnings("ignore:Strings are not yet supported")
 @pytest.mark.filterwarnings("ignore:Using CPU")
 @pytest.mark.parametrize("index", [True, False])
 # tests limited to compressions formats supported by pandas and cudf: bz2, gzip, zip, zstd
@@ -115,7 +115,6 @@ def test_json_reader(index, compression, orient, pdf, tmp_path):
     got_df = cudf.read_json(path_df, orient=orient, compression=compression)
     if len(expect_df) == 0:
         expect_df = expect_df.reset_index(drop=True)
-        expect_df.columns = expect_df.columns.astype("object")
     if len(got_df) == 0:
         got_df = got_df.reset_index(drop=True)
 
@@ -177,6 +176,7 @@ def test_json_writer(tmp_path, pdf, gdf):
 
 def test_cudf_json_writer(pdf, lines):
     # removing datetime column because pandas doesn't support it
+    pdf = pdf.copy()
     for col_name in pdf.columns:
         if "datetime" in col_name:
             pdf.drop(col_name, axis=1, inplace=True)
@@ -188,6 +188,24 @@ def test_cudf_json_writer(pdf, lines):
 
     gdf_string = gdf.to_json(
         orient="records", lines=lines, engine="cudf", rows_per_chunk=8
+    )
+
+    assert_eq(pdf_string, gdf_string)
+
+
+@pytest.mark.parametrize("force_ascii", [True, False])
+def test_cudf_json_writer_force_ascii(force_ascii):
+    pdf = pd.DataFrame({"a": [1, 2, 3], "b": ["4", "5", "\U0001f331"]})
+    gdf = cudf.DataFrame(pdf)
+
+    pdf_string = pdf.to_json(
+        orient="records", lines=True, force_ascii=force_ascii
+    )
+    gdf_string = gdf.to_json(
+        orient="records",
+        lines=True,
+        engine="cudf",
+        force_ascii=force_ascii,
     )
 
     assert_eq(pdf_string, gdf_string)
@@ -313,9 +331,32 @@ def test_cudf_json_writer_sinks(sink, tmp_path):
             assert f.read() == '[{"a":1,"b":4},{"a":2,"b":5},{"a":3,"b":6}]'
 
 
-@pytest.fixture(
-    params=["string", "filepath", "pathobj", "bytes_io", "string_io", "url"]
-)
+@pytest.mark.parametrize("pass_filesystem", [False, True])
+def test_cudf_json_writer_fsspec(tmp_path, pass_filesystem):
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    expected = '[{"a":1,"b":4},{"a":2,"b":5},{"a":3,"b":6}]'
+
+    if pass_filesystem:
+        # No protocol in the path: the filesystem object alone must resolve it.
+        path = f"/{tmp_path.name}/test_df_fs.json"
+        kwargs = {"filesystem": fsspec.filesystem("memory")}
+    else:
+        path = f"memory://{tmp_path.name}/test_df.json"
+        kwargs = {}
+
+    df.to_json(path, engine="cudf", **kwargs)
+
+    with fsspec.open(f"memory://{path.split('://')[-1]}", mode="rt") as f:
+        assert f.read() == expected
+
+    # Round-trip through the reader with the same filesystem object
+    got = cudf.read_json(
+        path, engine="cudf", orient="records", lines=False, **kwargs
+    )
+    assert_eq(df, got)
+
+
+@pytest.fixture(params=["filepath", "pathobj", "bytes_io", "string_io", "url"])
 def json_input(request, tmp_path):
     input_type = request.param
     buffer = "[1, 2, 3]\n[4, 5, 6]\n[7, 8, 9]\n"
@@ -326,8 +367,6 @@ def json_input(request, tmp_path):
         with open(str(fname), "w") as fp:
             fp.write(buffer)
 
-    if input_type == "string":
-        return buffer
     if input_type == "filepath":
         return str(fname)
     if input_type == "pathobj":
@@ -340,10 +379,6 @@ def json_input(request, tmp_path):
         return Path(fname).as_uri()
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.filterwarnings("ignore:Using CPU")
 def test_json_lines_basic(json_input, engine):
     can_warn = isinstance(json_input, str) and not json_input.endswith(".json")
@@ -368,10 +403,6 @@ def test_nonexistent_json_correct_error(engine):
         cudf.read_json(json_input, engine=engine)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.filterwarnings("ignore:Using CPU")
 def test_json_lines_multiple(tmp_path, json_input, engine):
     if engine == "pandas":
@@ -395,10 +426,6 @@ def test_json_lines_multiple(tmp_path, json_input, engine):
         np.testing.assert_array_equal(pd_df[pd_col], cu_df[cu_col].to_numpy())
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 def test_json_read_directory(tmp_path, json_input, engine):
     if engine == "pandas":
         pytest.skip("pandas engine does not support directories")
@@ -840,8 +867,19 @@ def test_json_empty_types():
     {"c": {"d": []}}
     {"e": [{}]}
     """
-    df = cudf.read_json(StringIO(json_str), orient="records", lines=True)
-    pdf = pd.read_json(StringIO(json_str), orient="records", lines=True)
+    df = cudf.read_json(
+        StringIO(json_str), orient="records", lines=True
+    ).to_pandas(arrow_type=True)
+    pdf = pd.read_json(
+        StringIO(json_str),
+        orient="records",
+        lines=True,
+        dtype_backend="pyarrow",
+    )
+
+    # TODO: Remove this workaround after
+    # https://github.com/pandas-dev/pandas/issues/65034 is fixed.
+    pdf = pdf.astype(df.dtypes)
     assert_eq(df, pdf)
 
 
@@ -1160,10 +1198,6 @@ class TestNestedJsonReaderCommon:
         df = cudf.concat(chunks, ignore_index=True)
         assert expected.to_arrow().equals(df.to_arrow())
 
-    @pytest.mark.skipif(
-        PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-        reason="https://github.com/pandas-dev/pandas/pull/57439",
-    )
     def test_order_nested_json_reader(self, tag, data):
         expected = pd.read_json(StringIO(data), lines=True)
         target = cudf.read_json(StringIO(data), lines=True)
@@ -1336,16 +1370,28 @@ def test_json_nested_mixed_types_in_list(jsonl_string):
         for col in df.columns:
             if df[col].dtype == "object":
                 df[col] = df[col].apply(
-                    lambda x: _replace_in_list(x, replace_items)
-                    if isinstance(x, list)
-                    else x
+                    lambda x: (
+                        _replace_in_list(x, replace_items)
+                        if isinstance(x, list)
+                        else x
+                    )
                 )
         return df
 
     # both json lines and json string tested.
     json_string = "[" + jsonl_string.replace("\n", ",") + "]"
-    pdf = pd.read_json(StringIO(jsonl_string), orient="records", lines=True)
-    pdf2 = pd.read_json(StringIO(json_string), orient="records", lines=False)
+    pdf = pd.read_json(
+        StringIO(jsonl_string),
+        orient="records",
+        lines=True,
+        dtype_backend="pyarrow",
+    )
+    pdf2 = pd.read_json(
+        StringIO(json_string),
+        orient="records",
+        lines=False,
+        dtype_backend="pyarrow",
+    )
     assert_eq(pdf, pdf2)
     # replace list elements with None if it has dict and non-dict
     # in above test cases, these items are mixed with dict/list items
@@ -1364,8 +1410,14 @@ def test_json_nested_mixed_types_in_list(jsonl_string):
     )
     if """[{"0": 123}, {}]""" not in jsonl_string:
         # {} in pandas is represented as {"0": None} in cudf
-        assert_eq(gdf, pdf)
-        assert_eq(gdf2, pdf)
+        actual_gdf = gdf.to_pandas(arrow_type=True)
+        # TODO: Remove this workaround after
+        # https://github.com/pandas-dev/pandas/issues/65034 is fixed.
+        pdf = pdf.astype(actual_gdf.dtypes)
+        assert_eq(actual_gdf, pdf)
+
+        actual_gdf2 = gdf2.to_pandas(arrow_type=True)
+        assert_eq(actual_gdf2, pdf)
     pa_table_pdf = pa.Table.from_pandas(
         pdf, schema=gdf.to_arrow().schema, safe=False
     )

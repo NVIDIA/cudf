@@ -1,18 +1,18 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "utilities.hpp"
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/copy_if.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/search.hpp>
 #include <cudf/detail/stream_compaction.hpp>
-#include <cudf/detail/utilities/algorithm.cuh>
 #include <cudf/lists/detail/combine.hpp>
 #include <cudf/lists/detail/set_operations.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
@@ -20,13 +20,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
-#include <thrust/functional.h>
+#include <cuda/stream>
 #include <thrust/scatter.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -53,7 +52,7 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
                                      lists_column_view const& rhs,
                                      null_equality nulls_equal,
                                      nan_equality nans_equal,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   check_compatibility(lhs, rhs);
@@ -81,10 +80,12 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
   auto const num_rows = lhs.size();
 
   // This stores the unique label values, used as scatter map.
-  auto list_indices = rmm::device_uvector<size_type>(num_rows, stream);
+  auto list_indices = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   // Stores the result of checking overlap for non-empty lists.
-  auto overlap_results = rmm::device_uvector<bool>(num_rows, stream);
+  auto overlap_results = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   auto const labels_begin = rhs_labels->view().begin<size_type>();
   auto const end          = cudf::detail::reduce_by_key(labels_begin,  // keys
@@ -106,8 +107,11 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
   // `overlap_results` only stores the results of non-empty lists.
   // We need to initialize `false` for the entire output array then scatter these results over.
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream), result_begin, result_begin + num_rows, false);
-  thrust::scatter(rmm::exec_policy_nosync(stream),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    result_begin,
+    result_begin + num_rows,
+    false);
+  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                   overlap_results.begin(),
                   overlap_results.begin() + num_non_empty_segments,
                   list_indices.begin(),
@@ -123,7 +127,7 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
                                            lists_column_view const& rhs,
                                            null_equality nulls_equal,
                                            nan_equality nans_equal,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   check_compatibility(lhs, rhs);
@@ -149,7 +153,7 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
 
   auto const intersect_table = cudf::detail::copy_if(
     rhs_table,
-    [contained = contained.begin()] __device__(auto const idx) { return contained[idx]; },
+    [contained = contained.begin()] __device__(auto const idx) -> bool { return contained[idx]; },
     stream,
     cudf::get_current_device_resource_ref());
 
@@ -170,9 +174,7 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
                                   std::move(out_offsets),
                                   std::move(out_table->release().back()),
                                   null_count,
-                                  std::move(null_mask),
-                                  stream,
-                                  mr);
+                                  std::move(null_mask));
 
   if (auto const output_cv = output->view(); cudf::detail::has_nonempty_nulls(output_cv, stream)) {
     return cudf::detail::purge_nonempty_nulls(output_cv, stream, mr);
@@ -184,7 +186,7 @@ std::unique_ptr<column> union_distinct(lists_column_view const& lhs,
                                        lists_column_view const& rhs,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   check_compatibility(lhs, rhs);
@@ -209,7 +211,7 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
                                             lists_column_view const& rhs,
                                             null_equality nulls_equal,
                                             nan_equality nans_equal,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   check_compatibility(lhs, rhs);
@@ -236,7 +238,7 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
 
   auto const difference_table = cudf::detail::copy_if(
     lhs_table,
-    [contained = contained.begin()] __device__(auto const idx) { return !contained[idx]; },
+    [contained = contained.begin()] __device__(auto const idx) -> bool { return !contained[idx]; },
     stream,
     cudf::get_current_device_resource_ref());
 
@@ -258,9 +260,7 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
                                   std::move(out_offsets),
                                   std::move(out_table->release().back()),
                                   null_count,
-                                  std::move(null_mask),
-                                  stream,
-                                  mr);
+                                  std::move(null_mask));
 
   if (auto const output_cv = output->view(); cudf::detail::has_nonempty_nulls(output_cv, stream)) {
     return cudf::detail::purge_nonempty_nulls(output_cv, stream, mr);
@@ -274,7 +274,7 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
                                      lists_column_view const& rhs,
                                      null_equality nulls_equal,
                                      nan_equality nans_equal,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -285,7 +285,7 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
                                            lists_column_view const& rhs,
                                            null_equality nulls_equal,
                                            nan_equality nans_equal,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -296,7 +296,7 @@ std::unique_ptr<column> union_distinct(lists_column_view const& lhs,
                                        lists_column_view const& rhs,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -307,7 +307,7 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
                                             lists_column_view const& rhs,
                                             null_equality nulls_equal,
                                             nan_equality nans_equal,
-                                            rmm::cuda_stream_view stream,
+                                            cuda::stream_ref stream,
                                             rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

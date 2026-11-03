@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,13 +17,17 @@ public enum BinaryOperator {
   MUL(2),                 // operator *
   DIV(3),                 // operator / using common type of lhs and rhs
   TRUE_DIV(4),            // operator / after promoting type to floating point
-  FLOOR_DIV(5),           // operator / after promoting to 64 bit floating point and then flooring the result
+  FLOOR_DIV(5),           // ooperator / after promoting to the common type of lhs and rhs (integral or
+                          // floating point), and then flooring the result
   MOD(6),                 // operator %
   PYMOD(7),               // operator % using Python's sign rules for negatives
   POW(8),                 // lhs ^ rhs
-  EQUAL(9),               // operator ==
-  NULL_EQUAL(10),         // operator == using Spark rules for null inputs
-  NOT_EQUAL(11),          // operator !=
+  EQUAL(9),               // operator ==: returns NULL when either operand is NULL, otherwise returns
+                          // whether they are equal
+  NULL_EQUAL(10),         // null-safe equality (result is never null): returns true if both operands
+                          // are null, false if one is null, otherwise returns whether they are equal
+  NOT_EQUAL(11),          // operator !=: returns NULL when either operand is NULL, otherwise returns
+                          // whether they are unequal
   LESS(12),               // operator <
   GREATER(13),            // operator >
   LESS_EQUAL(14),         // operator <=
@@ -31,16 +35,19 @@ public enum BinaryOperator {
   BITWISE_AND(16),        // operator &
   BITWISE_OR(17),         // operator |
   BITWISE_XOR(18),        // operator ^
-  LOGICAL_AND(19),        // operator &&
-  NULL_LOGICAL_AND(20),   // operator && using Spark rules for null inputs
-  LOGICAL_OR(21),         // operator ||
-  NULL_LOGICAL_OR(22);    // operator || using Spark rules for null inputs
+  LOGICAL_AND(19),        // operator &&: returns NULL when either operand is NULL, otherwise returns
+                          // true only if both operands are true
+  NULL_LOGICAL_AND(20),   // three-valued (Kleene) &&: if any operand is false, returns false; if both
+                          // operands are true, returns true; otherwise returns null
+  LOGICAL_OR(21),         // operator ||: returns NULL when either operand is NULL, otherwise returns
+                          // true only if either or both operands are true
+  NULL_LOGICAL_OR(22);    // three-valued (Kleene) ||: if any operand is true, returns true; if both
+                          // operands are false, returns false; otherwise returns null
 
   private final byte nativeId;
 
   BinaryOperator(int nativeId) {
-    this.nativeId = (byte) nativeId;
-    assert this.nativeId == nativeId;
+    this.nativeId = AstUtils.checkByte(nativeId);
   }
 
   /** Get the size in bytes to serialize this operator */

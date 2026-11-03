@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -16,7 +16,7 @@ ARG TARGETPLATFORM=linux/amd64
 # check available official arm-based docker images at https://hub.docker.com/r/nvidia/cuda/tags (OS/ARCH)
 FROM --platform=$TARGETPLATFORM nvidia/cuda:$CUDA_VERSION-devel-rockylinux$OS_RELEASE
 ARG TOOLSET_VERSION=14
-ARG CMAKE_VERSION=3.30.7
+ARG CMAKE_VERSION=4.0.7
 ARG CCACHE_VERSION=4.11.2
 ### Install basic requirements
 RUN dnf --enablerepo=powertools install -y  scl-utils gcc-toolset-11 gcc-toolset-${TOOLSET_VERSION} git zlib-devel maven tar wget patch ninja-build

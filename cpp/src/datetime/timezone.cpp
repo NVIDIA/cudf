@@ -1,15 +1,26 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "datetime/timezone_utils.hpp"
+
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/timezone.hpp>
+#include <cudf/detail/timezone_lookup.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace cudf {
 
@@ -17,6 +28,67 @@ namespace {
 
 constexpr uint32_t tzif_magic           = ('T' << 0) | ('Z' << 8) | ('i' << 16) | ('f' << 24);
 std::string const tzif_system_directory = "/usr/share/zoneinfo/";
+
+/**
+ * @brief Resolves a timezone alias via `Link` entries in `<tzif_dir>/tzdata.zi`.
+ *
+ * Returns the canonical name if it resolves to a TZif file on disk, else `std::nullopt`.
+ */
+std::optional<std::string> resolve_tz_alias(std::filesystem::path const& tzif_dir,
+                                            std::string_view timezone_name)
+{
+  std::ifstream fin{tzif_dir / "tzdata.zi"};
+  if (!fin) { return std::nullopt; }
+
+  std::unordered_map<std::string, std::string> links;
+  for (std::string line; std::getline(fin, line);) {
+    // Handle CRLF line endings: `std::getline` keeps a trailing `\r`.
+    if (!line.empty() && line.back() == '\r') { line.pop_back(); }
+
+    std::string_view v{line};
+    auto const take_token = [&v]() -> std::string_view {
+      auto const ws_start = v.find_first_not_of(" \t");
+      if (ws_start == std::string_view::npos) {
+        v = {};
+        return {};
+      }
+      v.remove_prefix(ws_start);
+      auto const tok_end = v.find_first_of(" \t");
+      auto const tok     = v.substr(0, tok_end);
+      v.remove_prefix(tok_end == std::string_view::npos ? v.size() : tok_end);
+      return tok;
+    };
+
+    auto const directive = take_token();
+    if (directive.empty() || directive.front() == '#') { continue; }
+    if (directive != "Link" && directive != "L") { continue; }
+
+    auto const target = take_token();
+    auto const alias  = take_token();
+    if (target.empty() || alias.empty()) { continue; }
+    links.emplace(std::string{alias}, std::string{target});
+  }
+
+  // Walk the alias chain, detecting cycles via the set of names already visited.
+  std::string name{timezone_name};
+  std::unordered_set<std::string> visited{name};
+  while (true) {
+    auto const it = links.find(name);
+    if (it == links.end()) { break; }
+    if (!visited.insert(it->second).second) {
+      // Cycle in tzdata.zi; bail out instead of looping.
+      return std::nullopt;
+    }
+    name = it->second;
+  }
+
+  // No link followed
+  if (std::string_view{name} == timezone_name) { return std::nullopt; }
+
+  std::error_code ec;
+  if (!std::filesystem::exists(tzif_dir / name, ec)) { return std::nullopt; }
+  return name;
+}
 
 #pragma pack(push, 1)
 /**
@@ -62,7 +134,7 @@ struct timezone_file {
   [[nodiscard]] auto timecnt() const { return header.timecnt; }
   [[nodiscard]] auto typecnt() const { return header.typecnt; }
 
-  // Based on https://tools.ietf.org/id/draft-murchison-tzdist-tzif-00.html
+  // Based on https://datatracker.ietf.org/doc/html/draft-murchison-tzdist-tzif-16
   static constexpr auto leap_second_rec_size(bool is_64bit) noexcept
   {
     return (is_64bit ? sizeof(uint64_t) : sizeof(uint32_t)) + sizeof(uint32_t);
@@ -120,12 +192,30 @@ struct timezone_file {
   {
     using std::ios_base;
 
-    // Open the input file
-    auto const tz_filename =
-      std::filesystem::path{tzif_dir.value_or(tzif_system_directory)} / timezone_name;
+    auto const tz_dir      = std::filesystem::path{tzif_dir.value_or(tzif_system_directory)};
+    auto const tz_filename = tz_dir / timezone_name;
+    auto const open_flags  = ios_base::in | ios_base::binary | ios_base::ate;
     std::ifstream fin;
-    fin.open(tz_filename, ios_base::in | ios_base::binary | ios_base::ate);
-    CUDF_EXPECTS(fin, "Failed to open the timezone file '" + tz_filename.string() + "'");
+    fin.open(tz_filename, open_flags);
+
+    // Fall back to resolving the alias through the tzdata.zi index file
+    if (!fin) {
+      if (auto const resolved = resolve_tz_alias(tz_dir, timezone_name)) {
+        fin.clear();
+        fin.open(tz_dir / *resolved, open_flags);
+      }
+    }
+    if (!fin) {
+      auto err = std::string{"Failed to open the timezone file '"} + tz_filename.string() + "'";
+      std::error_code ec;
+      if (!std::filesystem::exists(tz_dir / "tzdata.zi", ec)) {
+        err += " (no tzdata.zi present in '" + tz_dir.string() + "' to resolve aliases)";
+      } else {
+        err += " (no matching Link entry in '" + (tz_dir / "tzdata.zi").string() +
+               "', or its target is also missing)";
+      }
+      CUDF_FAIL(err);
+    }
     auto const file_size = fin.tellg();
     fin.seekg(0);
 
@@ -142,10 +232,8 @@ struct timezone_file {
     } else {
       std::vector<int32_t> tt32(timecnt());
       fin.read(reinterpret_cast<char*>(tt32.data()), tt32.size() * sizeof(int32_t));
-      std::transform(
-        tt32.cbegin(), tt32.cend(), std::back_inserter(transition_times), [](auto& tt) {
-          return __builtin_bswap32(tt);
-        });
+      std::ranges::transform(
+        tt32, std::back_inserter(transition_times), [](auto& tt) { return __builtin_bswap32(tt); });
     }
     ttime_idx.resize(timecnt());
     fin.read(reinterpret_cast<char*>(ttime_idx.data()), timecnt() * sizeof(uint8_t));
@@ -326,7 +414,7 @@ static int days_in_month(int month, bool is_leap_year)
  *
  * @return transition time in seconds from the beginning of the year
  */
-static int64_t get_transition_time(dst_transition_s const& trans, int year)
+static duration_s get_transition_time(dst_transition_s const& trans, int year)
 {
   auto day = trans.day;
 
@@ -360,36 +448,45 @@ static int64_t get_transition_time(dst_transition_s const& trans, int year)
     day += (day > 31 + 29 && is_leap);
   }
 
-  return trans.time + cuda::std::chrono::duration_cast<duration_s>(duration_D{day}).count();
+  return duration_s{trans.time} + cuda::std::chrono::duration_cast<duration_s>(duration_D{day});
 }
 
-}  // namespace
+/**
+ * @brief Host-side timezone transition table.
+ *
+ * Mirrors the layout of the table returned by `make_timezone_transition_table`: entries from the
+ * TZif file, followed by `solar_cycle_entry_count` future entries.
+ */
+struct host_transition_table {
+  std::vector<timestamp_s> times;
+  std::vector<duration_s> offsets;
 
-std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
-                                                      std::string_view timezone_name,
-                                                      rmm::cuda_stream_view stream,
-                                                      rmm::device_async_resource_ref mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::make_timezone_transition_table(tzif_dir, timezone_name, stream, mr);
-}
+  [[nodiscard]] bool empty() const { return times.empty(); }
 
-namespace detail {
+  /**
+   * @brief Returns the UT offset for a timestamp, through the lookup the device-side
+   * `cudf::detail::get_ut_offset` also uses.
+   */
+  [[nodiscard]] duration_s ut_offset(timestamp_s ts) const
+  {
+    if (empty()) { return duration_s{0}; }
+    CUDF_EXPECTS(times.size() > solar_cycle_entry_count,
+                 "Timezone transition table is missing its file entries");
 
-std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
-                                                      std::string_view timezone_name,
-                                                      rmm::cuda_stream_view stream,
-                                                      rmm::device_async_resource_ref mr)
-{
-  if (timezone_name == "UTC" || timezone_name.empty()) {
-    // Return an empty table for UTC
-    return std::make_unique<cudf::table>();
+    return cudf::detail::get_ut_offset(
+      times.data(), offsets.data(), static_cast<size_type>(times.size()), ts);
   }
+};
+
+[[nodiscard]] host_transition_table build_transition_table(std::optional<std::string_view> tzif_dir,
+                                                           std::string_view timezone_name)
+{
+  if (timezone_name == "UTC" || timezone_name.empty()) { return {}; }
 
   timezone_file const tzf(tzif_dir, timezone_name);
 
-  std::vector<timestamp_s::rep> transition_times(1);
-  std::vector<duration_s::rep> offsets(1);
+  std::vector<timestamp_s> transition_times(1);
+  std::vector<duration_s> offsets(1);
   // One ancient rule entry, one per TZ file entry, 2 entries per year in the future cycle
   transition_times.reserve(1 + tzf.timecnt() + solar_cycle_entry_count);
   offsets.reserve(1 + tzf.timecnt() + solar_cycle_entry_count);
@@ -398,9 +495,8 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
     auto const ttime = tzf.transition_times[t];
     auto const idx   = tzf.ttime_idx[t];
     CUDF_EXPECTS(idx < tzf.typecnt(), "Out-of-range type index");
-    auto const utcoff = tzf.ttype[idx].utcoff;
-    transition_times.push_back(ttime);
-    offsets.push_back(utcoff);
+    transition_times.emplace_back(duration_s{ttime});
+    offsets.emplace_back(tzf.ttype[idx].utcoff);
     if (!earliest_std_idx && !tzf.ttype[idx].isdst) {
       earliest_std_idx = transition_times.size() - 1;
     }
@@ -414,11 +510,11 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
     if (tzf.typecnt() == 0 || tzf.ttype[0].utcoff == 0) {
       // No transitions, offset is zero; Table would be a no-op.
       // Return an empty table to speed up parsing.
-      return std::make_unique<cudf::table>();
+      return {};
     }
     // No transitions to use for the time/offset - use the first offset and apply to all timestamps
-    transition_times[0] = std::numeric_limits<int64_t>::max();
-    offsets[0]          = tzf.ttype[0].utcoff;
+    transition_times[0] = timestamp_s::max();
+    offsets[0]          = duration_s{tzf.ttype[0].utcoff};
   }
 
   // Generate entries for times after the last transition
@@ -429,14 +525,14 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
   if (!tzf.posix_tz_string.empty()) {
     posix_parser<decltype(tzf.posix_tz_string)> parser(tzf.posix_tz_string);
     parser.skip_name();
-    future_std_offset = -parser.parse_offset();
+    future_std_offset = duration_s{-parser.parse_offset()};
     if (parser.remaining_char_cnt() > 1) {
       // Parse Daylight Saving Time information
       parser.skip_name();
       if (parser.remaining_char_cnt() > 0 && parser.next_character() != ',') {
-        future_dst_offset = -parser.parse_offset();
+        future_dst_offset = duration_s{-parser.parse_offset()};
       } else {
-        future_dst_offset = future_std_offset + 60 * 60;
+        future_dst_offset = future_std_offset + duration_h{1};
       }
       dst_start = parser.parse_transition();
       dst_end   = parser.parse_transition();
@@ -446,54 +542,72 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
   }
 
   // Add entries to fill the transition cycle
-  int64_t year_timestamp = 0;
   for (int32_t year = 1970; year < 1970 + solar_cycle_years; ++year) {
-    auto const dst_start_time = get_transition_time(dst_start, year);
-    auto const dst_end_time   = get_transition_time(dst_end, year);
+    auto const year_start = year_start_since_epoch(year);
+    // The transitions are wall clock times, so the offset in effect makes them UT
+    auto const dst_start_ut = get_transition_time(dst_start, year) - future_std_offset;
+    auto const dst_end_ut   = get_transition_time(dst_end, year) - future_dst_offset;
 
     // Two entries per year, since there are two transitions
-    transition_times.push_back(year_timestamp + dst_start_time - future_std_offset);
-    offsets.push_back(future_dst_offset);
-    transition_times.push_back(year_timestamp + dst_end_time - future_dst_offset);
-    offsets.push_back(future_std_offset);
+    transition_times.emplace_back(year_start + dst_start_ut);
+    offsets.emplace_back(future_dst_offset);
+    transition_times.emplace_back(year_start + dst_end_ut);
+    offsets.emplace_back(future_std_offset);
 
     // Swap the newly added transitions if in descending order
     if (transition_times.rbegin()[1] > transition_times.rbegin()[0]) {
       std::swap(transition_times.rbegin()[0], transition_times.rbegin()[1]);
       std::swap(offsets.rbegin()[0], offsets.rbegin()[1]);
     }
-
-    year_timestamp += cuda::std::chrono::duration_cast<duration_s>(
-                        duration_D{365 + cuda::std::chrono::year{year}.is_leap()})
-                        .count();
   }
 
   CUDF_EXPECTS(transition_times.size() == offsets.size(),
                "Error reading TZif file for timezone " + std::string{timezone_name});
 
-  auto ttimes_typed = make_empty_host_vector<timestamp_s>(transition_times.size(), stream);
-  std::transform(transition_times.cbegin(),
-                 transition_times.cend(),
-                 std::back_inserter(ttimes_typed),
-                 [](auto ts) { return timestamp_s{duration_s{ts}}; });
-  auto offsets_typed = make_empty_host_vector<duration_s>(offsets.size(), stream);
-  std::transform(offsets.cbegin(), offsets.cend(), std::back_inserter(offsets_typed), [](auto ts) {
-    return duration_s{ts};
-  });
+  return {std::move(transition_times), std::move(offsets)};
+}
 
-  auto d_ttimes  = cudf::detail::make_device_uvector_async(ttimes_typed, stream, mr);
-  auto d_offsets = cudf::detail::make_device_uvector_async(offsets_typed, stream, mr);
+}  // namespace
+
+std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
+                                                      std::string_view timezone_name,
+                                                      cuda::stream_ref stream,
+                                                      rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::make_timezone_transition_table(tzif_dir, timezone_name, stream, mr);
+}
+
+namespace detail {
+
+std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
+                                                      std::string_view timezone_name,
+                                                      cuda::stream_ref stream,
+                                                      rmm::device_async_resource_ref mr)
+{
+  auto const tz_table = build_transition_table(tzif_dir, timezone_name);
+  if (tz_table.empty()) { return std::make_unique<cudf::table>(); }
+
+  auto d_ttimes  = cudf::detail::make_device_uvector_async(tz_table.times, stream, mr);
+  auto d_offsets = cudf::detail::make_device_uvector_async(tz_table.offsets, stream, mr);
 
   std::vector<std::unique_ptr<column>> tz_table_columns;
-  tz_table_columns.emplace_back(
-    std::make_unique<cudf::column>(std::move(d_ttimes), rmm::device_buffer{}, 0));
-  tz_table_columns.emplace_back(
-    std::make_unique<cudf::column>(std::move(d_offsets), rmm::device_buffer{}, 0));
+  tz_table_columns.emplace_back(std::make_unique<cudf::column>(
+    std::move(d_ttimes), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0));
+  tz_table_columns.emplace_back(std::make_unique<cudf::column>(
+    std::move(d_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0));
 
-  // Need to finish copies before transition_times and offsets go out of scope
-  stream.synchronize();
+  // Need to finish copies before the host vectors go out of scope
+  cudf::detail::sync_stream(stream);
 
   return std::make_unique<cudf::table>(std::move(tz_table_columns));
+}
+
+duration_s get_ut_offset(std::optional<std::string_view> tzif_dir,
+                         std::string_view timezone_name,
+                         timestamp_s ts)
+{
+  return build_transition_table(tzif_dir, timezone_name).ut_offset(ts);
 }
 
 }  // namespace detail

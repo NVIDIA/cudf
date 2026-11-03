@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,28 +12,31 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/bit>
+#include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/discard_iterator.h>
-#include <thrust/iterator/iterator_categories.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
@@ -96,11 +99,12 @@ struct src_buf_info {
 
   cudf::type_id type;
   detail::input_offsetalator offsets{};
-  bool is_offsets{false};    // offsets if I am an offset buffer
-  int offset_stack_pos;      // position in the offset stack buffer
-  int parent_offsets_index;  // immediate parent that has offsets, or -1 if none
-  bool is_validity;          // if I am a validity buffer
-  size_type column_offset;   // offset in the case of a sliced column
+  bool is_offsets{false};             // offsets if I am an offset buffer
+  int offset_stack_pos;               // position in the offset stack buffer
+  int parent_offsets_index;           // immediate parent that has offsets, or -1 if none
+  bool is_validity;                   // if I am a validity buffer
+  size_type column_offset;            // offset in the case of a sliced column
+  size_type full_copy_row_count{-1};  // rows I copy in full, or -1 if I follow the splits
 };
 
 /**
@@ -149,14 +153,8 @@ struct dst_buf_info {
  * @param dst Destination buffer
  * @param src Source buffer
  * @param t Thread index
- * @param num_elements Number of elements to copy
- * @param element_size Size of each element in bytes
- * @param src_element_index Element index to start copying at
+ * @param dst_info Destination buffer info containing element count, sizes, shifts, and validity
  * @param stride Size of the kernel block
- * @param value_shift Shift incoming 4-byte offset values down by this amount
- * @param bit_shift Shift incoming data right by this many bits
- * @param num_rows Number of rows being copied
- * @param valid_count Optional pointer to a value to store count of set bits
  */
 template <int block_size, bool is_offsets, typename offset_type = int32_t>
 __device__ void copy_buffer(uint8_t* __restrict__ dst,
@@ -281,7 +279,8 @@ __device__ void copy_buffer(uint8_t* __restrict__ dst,
         // considered during the copy step.
         std::size_t const max_row    = (num_bytes * 8);
         std::size_t const slack_bits = max_row > num_rows ? max_row - num_rows : 0;
-        auto const slack_mask        = set_most_significant_bits(slack_bits);
+        auto const slack_mask        = cuda::bitmask<bitmask_type>(
+          detail::size_in_bits<bitmask_type>() - slack_bits, slack_bits);
         if (slack_mask > 0) {
           uint32_t const last_word = reinterpret_cast<uint32_t*>(dst + (num_bytes - 4))[0];
           block_valid_count -= __popc(last_word & slack_mask);
@@ -444,7 +443,7 @@ OutputIter setup_src_buf_data(InputIter begin, InputIter end, OutputIter out_buf
 template <typename InputIter>
 size_type count_src_bufs(InputIter begin, InputIter end)
 {
-  auto buf_iter = thrust::make_transform_iterator(begin, [](column_view const& col) {
+  auto buf_iter = cuda::transform_iterator(begin, [](column_view const& col) {
     auto const children_counts = count_src_bufs(col.child_begin(), col.child_end());
     return 1 + (col.nullable() ? 1 : 0) + children_counts;
   });
@@ -464,6 +463,7 @@ size_type count_src_bufs(InputIter begin, InputIter end)
  * @param end End of input columns
  * @param head Beginning of source buffer info array
  * @param current Current source buffer info to be written to
+ * @param stream CUDA stream used for device memory operations and kernel launches
  * @param offset_stack_pos Integer representing our current offset nesting depth
  * (how many list or string levels deep we are)
  * @param parent_offset_index Index into src_buf_info output array indicating our nearest
@@ -478,7 +478,7 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
                                                           InputIter end,
                                                           src_buf_info* head,
                                                           src_buf_info* current,
-                                                          rmm::cuda_stream_view stream,
+                                                          cuda::stream_ref stream,
                                                           int offset_stack_pos    = 0,
                                                           int parent_offset_index = -1,
                                                           int offset_depth        = 0);
@@ -498,7 +498,8 @@ struct buf_info_functor {
                                                  int offset_stack_pos,
                                                  int parent_offset_index,
                                                  int offset_depth,
-                                                 rmm::cuda_stream_view)
+                                                 cuda::stream_ref)
+    requires(cudf::is_fixed_width<T>())
   {
     if (col.nullable()) {
       std::tie(current, offset_stack_pos) =
@@ -512,9 +513,11 @@ struct buf_info_functor {
     return {current + 1, offset_stack_pos + offset_depth};
   }
 
-  template <typename T, typename... Args>
-  std::pair<src_buf_info*, size_type> operator()(Args&&...)
-    requires(std::is_same_v<T, cudf::dictionary32>)
+  // loud fail on unsupported types
+  template <typename T>
+  std::pair<src_buf_info*, size_type> operator()(
+    column_view const&, src_buf_info*, int, int, int, cuda::stream_ref)
+    requires(not cudf::is_fixed_width<T>())
   {
     CUDF_FAIL("Unsupported type");
   }
@@ -541,7 +544,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::string_vi
   int offset_stack_pos,
   int parent_offset_index,
   int offset_depth,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   if (col.nullable()) {
     std::tie(current, offset_stack_pos) =
@@ -600,7 +603,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::list_view
   int offset_stack_pos,
   int parent_offset_index,
   int offset_depth,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   lists_column_view lcv(col);
 
@@ -652,7 +655,7 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
   int offset_stack_pos,
   int parent_offset_index,
   int offset_depth,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   if (col.nullable()) {
     std::tie(current, offset_stack_pos) =
@@ -671,8 +674,8 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
   std::vector<column_view> sliced_children;
   sliced_children.reserve(scv.num_children());
   std::transform(
-    thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator(scv.num_children()),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{scv.num_children()},
     std::back_inserter(sliced_children),
     [&scv, &stream](size_type child_index) { return scv.get_sliced_child(child_index, stream); });
   return setup_source_buf_info(sliced_children.begin(),
@@ -685,12 +688,69 @@ std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::struct_vi
                                offset_depth);
 }
 
+template <>
+std::pair<src_buf_info*, size_type> buf_info_functor::operator()<cudf::dictionary32>(
+  column_view const& col,
+  src_buf_info* current,
+  int offset_stack_pos,
+  int parent_offset_index,
+  int offset_depth,
+  cuda::stream_ref stream)
+{
+  if (col.nullable()) {
+    std::tie(current, offset_stack_pos) =
+      add_null_buffer(col, current, offset_stack_pos, parent_offset_index, offset_depth);
+  }
+
+  // like structs, dictionary columns hold no data of their own
+  *current =
+    src_buf_info(type_id::DICTIONARY32, offset_stack_pos, parent_offset_index, false, col.offset());
+  current++;
+  offset_stack_pos += offset_depth;
+
+  // an empty dictionary column may have no children at all
+  if (col.is_empty() && col.num_children() == 0) { return {current, offset_stack_pos}; }
+  CUDF_EXPECTS(col.num_children() == 2, "Encountered malformed dictionary column");
+
+  // the indices child carries the parent's row range, but not its validity
+  dictionary_column_view const dcv(col);
+  std::vector<column_view> const indices{column_view{dcv.indices().type(),
+                                                     col.size(),
+                                                     dcv.indices().head(),
+                                                     dcv.indices().null_mask(),
+                                                     dcv.indices().null_count(),
+                                                     col.offset()}};
+  std::tie(current, offset_stack_pos) = setup_source_buf_info(indices.begin(),
+                                                              indices.end(),
+                                                              head,
+                                                              current,
+                                                              stream,
+                                                              offset_stack_pos,
+                                                              parent_offset_index,
+                                                              offset_depth);
+
+  // the keys child is not indexed by the split's row range: every partition gets all of the keys,
+  // so it becomes the root of its own row range
+  std::vector<column_view> const keys{dcv.keys()};
+  auto const keys_begin               = current;
+  std::tie(current, offset_stack_pos) = setup_source_buf_info(
+    keys.begin(), keys.end(), head, current, stream, offset_stack_pos, -1, offset_depth);
+
+  // mark the whole keys subtree, including any offsets or chars buffers under it
+  std::for_each(keys_begin, current, [row_count = keys.front().size()](src_buf_info& info) {
+    // only unmarked buffers belong to this level; a nested dictionary marked its own keys
+    if (info.full_copy_row_count < 0) { info.full_copy_row_count = row_count; }
+  });
+
+  return {current, offset_stack_pos};
+}
+
 template <typename InputIter>
 std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
                                                           InputIter end,
                                                           src_buf_info* head,
                                                           src_buf_info* current,
-                                                          rmm::cuda_stream_view stream,
+                                                          cuda::stream_ref stream,
                                                           int offset_stack_pos,
                                                           int parent_offset_index,
                                                           int offset_depth)
@@ -726,7 +786,7 @@ std::pair<src_buf_info*, size_type> setup_source_buf_info(InputIter begin,
  *          column size, data offset, bitmask offset, and null count
  */
 template <typename BufInfo>
-std::tuple<size_t, int64_t, int64_t, size_type> build_output_column_metadata(
+std::tuple<std::size_t, int64_t, int64_t, size_type> build_output_column_metadata(
   column_view const& src,
   BufInfo& current_info,
   detail::metadata_builder& mb,
@@ -756,7 +816,7 @@ std::tuple<size_t, int64_t, int64_t, size_type> build_output_column_metadata(
   }();
 
   // size/data pointer for the column
-  auto const col_size = [&]() -> size_t {
+  auto const col_size = [&]() -> std::size_t {
     // if I am a string column, I need to use the number of rows from my child offset column. the
     // number of rows in my dst_buf_info struct will be equal to the number of chars, which is
     // incorrect. this is a quirk of how cudf stores strings.
@@ -770,7 +830,7 @@ std::tuple<size_t, int64_t, int64_t, size_type> build_output_column_metadata(
     }
 
     // otherwise the number of rows is the number of elements
-    return static_cast<size_t>(current_info->num_elements);
+    return static_cast<std::size_t>(current_info->num_elements);
   }();
   int64_t const data_offset =
     col_size == 0 || src.head() == nullptr ? -1 : static_cast<int64_t>(current_info->dst_offset);
@@ -799,6 +859,7 @@ std::tuple<size_t, int64_t, int64_t, size_type> build_output_column_metadata(
  * copied buffer
  * @param out_begin Output iterator of column views
  * @param base_ptr Pointer to the base address of copied data for the working partition
+ * @param mb Memory block for the output columns
  *
  * @returns new dst_buf_info iterator after processing this range of input columns
  */
@@ -899,58 +960,27 @@ struct split_key_functor {
   int operator() __device__(int buf_index) const { return buf_index / num_src_bufs; }
 };
 
+#if CUDART_VERSION < 13000
+struct wide_split_key_functor {
+  int const num_src_bufs;
+  int operator() __device__(std::ptrdiff_t buf_index) const { return buf_index / num_src_bufs; }
+};
+#endif  // CUDART_VERSION < 13000
+
 /**
- * @brief Output iterator for writing values to the dst_offset field of the
- * dst_buf_info struct
+ * @brief Writes values to the dst_offset field of the dst_buf_info struct
  */
-struct dst_offset_output_iterator {
+struct set_dst_offset_fn {
   dst_buf_info* c;
-  using value_type        = std::size_t;
-  using difference_type   = std::size_t;
-  using pointer           = std::size_t*;
-  using reference         = std::size_t&;
-  using iterator_category = thrust::output_device_iterator_tag;
-
-  dst_offset_output_iterator operator+ __host__ __device__(int i) { return {c + i}; }
-
-  dst_offset_output_iterator& operator++ __host__ __device__()
-  {
-    c++;
-    return *this;
-  }
-
-  reference operator[] __device__(int i) { return dereference(c + i); }
-  reference operator* __device__() { return dereference(c); }
-
- private:
-  reference __device__ dereference(dst_buf_info* c) { return c->dst_offset; }
+  __device__ void operator()(size_type i, std::size_t value) const { c[i].dst_offset = value; }
 };
 
 /**
- * @brief Output iterator for writing values to the valid_count field of the
- * dst_buf_info struct
+ * @brief Writes values to the valid_count field of the dst_buf_info struct
  */
-struct dst_valid_count_output_iterator {
+struct set_valid_count_fn {
   dst_buf_info* c;
-  using value_type        = size_type;
-  using difference_type   = size_type;
-  using pointer           = size_type*;
-  using reference         = size_type&;
-  using iterator_category = thrust::output_device_iterator_tag;
-
-  dst_valid_count_output_iterator operator+ __host__ __device__(int i) { return {c + i}; }
-
-  dst_valid_count_output_iterator& operator++ __host__ __device__()
-  {
-    c++;
-    return *this;
-  }
-
-  reference operator[] __device__(int i) { return dereference(c + i); }
-  reference operator* __device__() { return dereference(c); }
-
- private:
-  reference __device__ dereference(dst_buf_info* c) { return c->valid_count; }
+  __device__ void operator()(size_type i, size_type value) const { c[i].valid_count = value; }
 };
 
 /**
@@ -990,7 +1020,7 @@ struct size_of_helper {
  * structs) return 0.
  */
 struct num_batches_func {
-  cuda::std::pair<std::size_t, std::size_t> const* const batches;
+  cuda::device_buffer<cuda::std::pair<std::size_t, std::size_t>>::const_iterator const batches;
   __device__ std::size_t operator()(size_type i) const { return cuda::std::get<0>(batches[i]); }
 };
 
@@ -999,14 +1029,14 @@ struct num_batches_func {
  */
 struct batch_byte_size_function {
   size_type const num_batches;
-  dst_buf_info const* const infos;
+  cuda::device_buffer<dst_buf_info>::const_iterator const infos;
   __device__ std::size_t operator()(size_type i) const
   {
     if (i == num_batches) { return 0; }
     auto const& buf = *(infos + i);
     std::size_t const bytes =
       static_cast<std::size_t>(buf.num_elements) * static_cast<std::size_t>(buf.element_size);
-    return util::round_up_unsafe(bytes, split_align);
+    return cuda::round_up(bytes, split_align);
   }
 };
 
@@ -1014,7 +1044,7 @@ struct batch_byte_size_function {
  * @brief Get the input buffer index given the output buffer index.
  */
 struct out_to_in_index_function {
-  size_type const* const batch_offsets;
+  cuda::device_buffer<size_type>::const_iterator batch_offsets;
   int const num_bufs;
   __device__ int operator()(size_type i) const
   {
@@ -1031,14 +1061,16 @@ struct packed_split_indices_and_src_buf_info {
                                         std::vector<size_type> const& splits,
                                         std::size_t num_partitions,
                                         cudf::size_type num_src_bufs,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref temp_mr)
-    : indices_size(cudf::util::round_up_safe((num_partitions + 1) * sizeof(int64_t), split_align)),
+    : indices_size(
+        cudf::detail::round_up_safe((num_partitions + 1) * sizeof(int64_t), split_align)),
       src_buf_info_size(
-        cudf::util::round_up_safe(num_src_bufs * sizeof(src_buf_info), split_align)),
+        cudf::detail::round_up_safe(num_src_bufs * sizeof(src_buf_info), split_align)),
       // host-side
       h_indices_and_source_info{
         detail::make_host_vector<uint8_t>(indices_size + src_buf_info_size, stream)},
+      d_indices_and_source_info{stream, temp_mr},
       h_indices{reinterpret_cast<int64_t*>(h_indices_and_source_info.data())},
       h_src_buf_info{
         reinterpret_cast<src_buf_info*>(h_indices_and_source_info.data() + indices_size)}
@@ -1056,8 +1088,8 @@ struct packed_split_indices_and_src_buf_info {
     offset_stack_size           = offset_stack_partition_size * num_partitions * sizeof(size_type);
     // device-side
     // gpu-only : stack space needed for nested list offset calculation
-    d_indices_and_source_info =
-      rmm::device_buffer(indices_size + src_buf_info_size + offset_stack_size, stream, temp_mr);
+    d_indices_and_source_info = cuda::device_buffer<std::byte>{
+      stream, temp_mr, indices_size + src_buf_info_size + offset_stack_size, cuda::no_init};
     d_indices      = reinterpret_cast<int64_t*>(d_indices_and_source_info.data());
     d_src_buf_info = reinterpret_cast<src_buf_info*>(
       reinterpret_cast<uint8_t*>(d_indices_and_source_info.data()) + indices_size);
@@ -1066,7 +1098,7 @@ struct packed_split_indices_and_src_buf_info {
                                    indices_size + src_buf_info_size);
 
     detail::cuda_memcpy_async<uint8_t>(
-      device_span<uint8_t>{static_cast<uint8_t*>(d_indices_and_source_info.data()),
+      device_span<uint8_t>{reinterpret_cast<uint8_t*>(d_indices_and_source_info.data()),
                            h_indices_and_source_info.size()},
       h_indices_and_source_info,
       stream);
@@ -1077,7 +1109,7 @@ struct packed_split_indices_and_src_buf_info {
   std::size_t offset_stack_size;
 
   detail::host_vector<uint8_t> h_indices_and_source_info;
-  rmm::device_buffer d_indices_and_source_info;
+  cuda::device_buffer<std::byte> d_indices_and_source_info;
 
   int64_t* const h_indices;
   src_buf_info* const h_src_buf_info;
@@ -1092,11 +1124,12 @@ struct packed_split_indices_and_src_buf_info {
 struct packed_partition_buf_size_and_dst_buf_info {
   packed_partition_buf_size_and_dst_buf_info(std::size_t num_partitions,
                                              std::size_t num_bufs,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref temp_mr)
     : stream(stream),
-      buf_sizes_size{cudf::util::round_up_safe(num_partitions * sizeof(std::size_t), split_align)},
-      dst_buf_info_size{cudf::util::round_up_safe(num_bufs * sizeof(dst_buf_info), split_align)},
+      buf_sizes_size{
+        cudf::detail::round_up_safe(num_partitions * sizeof(std::size_t), split_align)},
+      dst_buf_info_size{cudf::detail::round_up_safe(num_bufs * sizeof(dst_buf_info), split_align)},
       // host-side
       h_buf_sizes_and_dst_info{
         detail::make_host_vector<uint8_t>(buf_sizes_size + dst_buf_info_size, stream)},
@@ -1106,7 +1139,7 @@ struct packed_partition_buf_size_and_dst_buf_info {
         num_bufs,
         h_buf_sizes_and_dst_info.get_allocator().is_device_accessible()},
       // device-side
-      d_buf_sizes_and_dst_info(h_buf_sizes_and_dst_info.size(), stream, temp_mr),
+      d_buf_sizes_and_dst_info(stream, temp_mr, h_buf_sizes_and_dst_info.size(), cuda::no_init),
       d_buf_sizes{reinterpret_cast<std::size_t*>(d_buf_sizes_and_dst_info.data())},
       // destination buffer info
       d_dst_buf_info{
@@ -1120,7 +1153,7 @@ struct packed_partition_buf_size_and_dst_buf_info {
     detail::cuda_memcpy_async<uint8_t>(h_buf_sizes_and_dst_info, d_buf_sizes_and_dst_info, stream);
   }
 
-  rmm::cuda_stream_view const stream;
+  cuda::stream_ref const stream;
 
   // buffer sizes and destination info (used in batched copies)
   std::size_t const buf_sizes_size;
@@ -1130,7 +1163,7 @@ struct packed_partition_buf_size_and_dst_buf_info {
   std::size_t* const h_buf_sizes;
   host_span<dst_buf_info> const h_dst_buf_info;
 
-  rmm::device_uvector<uint8_t> d_buf_sizes_and_dst_info;
+  cuda::device_buffer<uint8_t> d_buf_sizes_and_dst_info;
   std::size_t* const d_buf_sizes;
   device_span<dst_buf_info> const d_dst_buf_info;
 };
@@ -1142,18 +1175,18 @@ struct packed_src_and_dst_pointers {
   packed_src_and_dst_pointers(cudf::table_view const& input,
                               std::size_t num_partitions,
                               cudf::size_type num_src_bufs,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref temp_mr)
     : stream(stream),
-      src_bufs_size{cudf::util::round_up_safe(num_src_bufs * sizeof(uint8_t*), split_align)},
-      dst_bufs_size{cudf::util::round_up_safe(num_partitions * sizeof(uint8_t*), split_align)},
+      src_bufs_size{cudf::detail::round_up_safe(num_src_bufs * sizeof(uint8_t*), split_align)},
+      dst_bufs_size{cudf::detail::round_up_safe(num_partitions * sizeof(uint8_t*), split_align)},
       // host-side
       h_src_and_dst_buffers{
         detail::make_host_vector<uint8_t>(src_bufs_size + dst_bufs_size, stream)},
       h_src_bufs{reinterpret_cast<uint8_t const**>(h_src_and_dst_buffers.data())},
       h_dst_bufs{reinterpret_cast<uint8_t**>(h_src_and_dst_buffers.data() + src_bufs_size)},
       // device-side
-      d_src_and_dst_buffers{h_src_and_dst_buffers.size(), stream, temp_mr},
+      d_src_and_dst_buffers{stream, temp_mr, h_src_and_dst_buffers.size(), cuda::no_init},
       d_src_bufs{reinterpret_cast<uint8_t const**>(d_src_and_dst_buffers.data())},
       d_dst_bufs{reinterpret_cast<uint8_t**>(
         reinterpret_cast<uint8_t*>(d_src_and_dst_buffers.data()) + src_bufs_size)}
@@ -1165,13 +1198,13 @@ struct packed_src_and_dst_pointers {
   void copy_to_device()
   {
     detail::cuda_memcpy_async<uint8_t>(
-      device_span<uint8_t>{static_cast<uint8_t*>(d_src_and_dst_buffers.data()),
+      device_span<uint8_t>{reinterpret_cast<uint8_t*>(d_src_and_dst_buffers.data()),
                            d_src_and_dst_buffers.size()},
       h_src_and_dst_buffers,
       stream);
   }
 
-  rmm::cuda_stream_view const stream;
+  cuda::stream_ref const stream;
   std::size_t const src_bufs_size;
   std::size_t const dst_bufs_size;
 
@@ -1179,7 +1212,7 @@ struct packed_src_and_dst_pointers {
   uint8_t const** const h_src_bufs;
   uint8_t** const h_dst_bufs;
 
-  rmm::device_buffer d_src_and_dst_buffers;
+  cuda::device_buffer<std::byte> d_src_and_dst_buffers;
   uint8_t const** const d_src_bufs;
   uint8_t** const d_dst_bufs;
 };
@@ -1204,7 +1237,7 @@ std::unique_ptr<packed_src_and_dst_pointers> setup_src_and_dst_pointers(
   std::size_t num_partitions,
   cudf::size_type num_src_bufs,
   std::vector<rmm::device_buffer>& out_buffers,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref temp_mr)
 {
   auto src_and_dst_pointers = std::make_unique<packed_src_and_dst_pointers>(
@@ -1241,14 +1274,14 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
   std::size_t num_partitions,
   cudf::size_type num_src_bufs,
   std::size_t num_bufs,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref temp_mr)
 {
   auto partition_buf_size_and_dst_buf_info =
     std::make_unique<packed_partition_buf_size_and_dst_buf_info>(
       num_partitions, num_bufs, stream, temp_mr);
 
-  auto const d_dst_buf_info = partition_buf_size_and_dst_buf_info->d_dst_buf_info.begin();
+  auto const d_dst_buf_info = partition_buf_size_and_dst_buf_info->d_dst_buf_info.data();
   auto const d_buf_sizes    = partition_buf_size_and_dst_buf_info->d_buf_sizes;
 
   auto const split_indices_and_src_buf_info = packed_split_indices_and_src_buf_info(
@@ -1263,8 +1296,8 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
   // compute sizes of each column in each partition, including alignment.
   thrust::transform(
     rmm::exec_policy_nosync(stream, temp_mr),
-    thrust::make_counting_iterator<std::size_t>(0),
-    thrust::make_counting_iterator<std::size_t>(num_bufs),
+    cuda::counting_iterator<std::size_t>{0},
+    cuda::counting_iterator<std::size_t>{num_bufs},
     d_dst_buf_info,
     cuda::proclaim_return_type<dst_buf_info>([d_src_buf_info,
                                               offset_stack_partition_size,
@@ -1293,8 +1326,11 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
         parent_offsets_index       = d_src_buf_info[parent_offsets_index].parent_offsets_index;
       }
       // make sure to include the -column- offset on the root column in our calculation.
-      int64_t row_start = d_indices[split_index] + root_column_offset;
-      int64_t row_end   = d_indices[split_index + 1] + root_column_offset;
+      // buffers under a dictionary's keys child are copied in full for every partition.
+      auto const full_copy = src_info.full_copy_row_count >= 0;
+      int64_t row_start    = (full_copy ? 0 : d_indices[split_index]) + root_column_offset;
+      int64_t row_end = (full_copy ? src_info.full_copy_row_count : d_indices[split_index + 1]) +
+                        root_column_offset;
       while (stack_size > 0) {
         stack_size--;
         auto& d_info = d_src_buf_info[offset_stack[stack_size]];
@@ -1325,7 +1361,7 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
       int const element_size  = cudf::type_dispatcher(data_type{src_info.type}, size_of_helper{});
       std::size_t const bytes = num_elements * static_cast<std::size_t>(element_size);
 
-      return dst_buf_info{util::round_up_unsafe(bytes, split_align),
+      return dst_buf_info{cuda::round_up(bytes, split_align),
                           num_elements,
                           element_size,
                           num_rows,
@@ -1351,28 +1387,38 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
                           keys,
                           keys + num_bufs,
                           values,
-                          thrust::make_discard_iterator(),
+                          cuda::make_discard_iterator(),
                           d_buf_sizes);
   }
 
   // compute start offset for each output buffer for each split
   {
+#if CUDART_VERSION < 13000
+    // Work around a CUDA 12.9 ptxas scan-by-key miscompilation on SM120. Both the counting iterator
+    // and the functor argument must use ptrdiff_t.
+    // https://github.com/NVIDIA/cccl/issues/11167
+    auto const keys =
+      cuda::transform_iterator(cuda::counting_iterator<std::ptrdiff_t>{0},
+                               wide_split_key_functor{static_cast<int>(num_src_bufs)});
+#else
     auto const keys = cudf::detail::make_counting_transform_iterator(
       0, split_key_functor{static_cast<int>(num_src_bufs)});
+#endif  // CUDART_VERSION < 13000
     auto values =
       cudf::detail::make_counting_transform_iterator(0, buf_size_functor{d_dst_buf_info});
 
-    thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, temp_mr),
-                                  keys,
-                                  keys + num_bufs,
-                                  values,
-                                  dst_offset_output_iterator{d_dst_buf_info},
-                                  std::size_t{0});
+    thrust::exclusive_scan_by_key(
+      rmm::exec_policy_nosync(stream, temp_mr),
+      keys,
+      keys + num_bufs,
+      values,
+      cuda::make_tabulate_output_iterator(set_dst_offset_fn{d_dst_buf_info}),
+      std::size_t{0});
   }
 
   partition_buf_size_and_dst_buf_info->copy_to_host();
 
-  stream.synchronize();
+  cudf::detail::sync_stream(stream);
 
   return partition_buf_size_and_dst_buf_info;
 }
@@ -1389,7 +1435,7 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
 std::tuple<size_type, std::size_t, std::unique_ptr<packed_partition_buf_size_and_dst_buf_info>>
 compute_num_bufs_and_splits(cudf::table_view const& input,
                             std::vector<size_type> const& splits,
-                            rmm::cuda_stream_view stream,
+                            cuda::stream_ref stream,
                             rmm::device_async_resource_ref temp_mr)
 {
   std::size_t const num_partitions = splits.size() + 1;
@@ -1417,8 +1463,8 @@ compute_num_bufs_and_splits(cudf::table_view const& input,
  * and what are the sizes (in bytes) of each iteration.
  */
 struct chunk_iteration_state {
-  chunk_iteration_state(rmm::device_uvector<dst_buf_info> _d_batched_dst_buf_info,
-                        rmm::device_uvector<size_type> _d_batch_offsets,
+  chunk_iteration_state(cuda::device_buffer<dst_buf_info> _d_batched_dst_buf_info,
+                        cuda::device_buffer<size_type> _d_batch_offsets,
                         std::vector<std::size_t>&& _h_num_buffs_per_iteration,
                         std::vector<std::size_t>&& _h_size_of_buffs_per_iteration,
                         std::size_t total_size)
@@ -1434,13 +1480,13 @@ struct chunk_iteration_state {
   }
 
   static std::unique_ptr<chunk_iteration_state> create(
-    rmm::device_uvector<cuda::std::pair<std::size_t, std::size_t>> const& batches,
+    cuda::device_buffer<cuda::std::pair<std::size_t, std::size_t>> const& batches,
     int num_bufs,
     dst_buf_info* d_orig_dst_buf_info,
     std::size_t const* const h_buf_sizes,
     std::size_t num_partitions,
     std::size_t user_buffer_size,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     rmm::device_async_resource_ref temp_mr);
 
   /**
@@ -1480,8 +1526,8 @@ struct chunk_iteration_state {
    */
   bool has_more_copies() const { return current_iteration < num_iterations; }
 
-  rmm::device_uvector<dst_buf_info> d_batched_dst_buf_info;  ///< dst_buf_info per 1MB batch
-  rmm::device_uvector<size_type> const d_batch_offsets;  ///< Offset within a batch per dst_buf_info
+  cuda::device_buffer<dst_buf_info> d_batched_dst_buf_info;  ///< dst_buf_info per 1MB batch
+  cuda::device_buffer<size_type> const d_batch_offsets;  ///< Offset within a batch per dst_buf_info
   std::size_t const total_size;                          ///< The aggregate size of all iterations
   int const num_iterations;                              ///< The total number of iterations
   int current_iteration;  ///< Marks the current iteration being worked on
@@ -1494,16 +1540,16 @@ struct chunk_iteration_state {
 };
 
 std::unique_ptr<chunk_iteration_state> chunk_iteration_state::create(
-  rmm::device_uvector<cuda::std::pair<std::size_t, std::size_t>> const& batches,
+  cuda::device_buffer<cuda::std::pair<std::size_t, std::size_t>> const& batches,
   int num_bufs,
   dst_buf_info* d_orig_dst_buf_info,
   std::size_t const* const h_buf_sizes,
   std::size_t num_partitions,
   std::size_t user_buffer_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref temp_mr)
 {
-  rmm::device_uvector<size_type> d_batch_offsets(num_bufs + 1, stream, temp_mr);
+  cuda::device_buffer<size_type> d_batch_offsets(stream, temp_mr, num_bufs + 1, cuda::no_init);
 
   auto const buf_count_iter = cudf::detail::make_counting_transform_iterator(
     0,
@@ -1525,18 +1571,19 @@ std::unique_ptr<chunk_iteration_state> chunk_iteration_state::create(
 
   auto out_to_in_index = out_to_in_index_function{d_batch_offsets.begin(), num_bufs};
 
-  auto const iter = thrust::make_counting_iterator(0);
+  auto const iter = cuda::counting_iterator<cudf::size_type>{0};
 
   // load up the batches as d_dst_buf_info
-  rmm::device_uvector<dst_buf_info> d_batched_dst_buf_info(num_batches, stream, temp_mr);
+  cuda::device_buffer<dst_buf_info> d_batched_dst_buf_info(
+    stream, temp_mr, num_batches, cuda::no_init);
 
   thrust::for_each(
     rmm::exec_policy_nosync(stream, temp_mr),
     iter,
     iter + num_batches,
     [d_orig_dst_buf_info,
-     d_batched_dst_buf_info = d_batched_dst_buf_info.begin(),
-     batches                = batches.begin(),
+     d_batched_dst_buf_info = d_batched_dst_buf_info.data(),
+     batches                = batches.data(),
      d_batch_offsets        = d_batch_offsets.begin(),
      out_to_in_index] __device__(size_type i) {
       size_type const in_buf_index = out_to_in_index(i);
@@ -1583,7 +1630,7 @@ std::unique_ptr<chunk_iteration_state> chunk_iteration_state::create(
   if (user_buffer_size != 0) {
     // copy the batch offsets back to host
     auto const h_offsets = [&] {
-      rmm::device_uvector<std::size_t> offsets(num_batches + 1, stream, temp_mr);
+      cuda::device_buffer<std::size_t> offsets(stream, temp_mr, num_batches + 1, cuda::no_init);
       auto const batch_byte_size_iter = cudf::detail::make_counting_transform_iterator(
         0, batch_byte_size_function{num_batches, d_batched_dst_buf_info.begin()});
 
@@ -1640,20 +1687,20 @@ std::unique_ptr<chunk_iteration_state> chunk_iteration_state::create(
     // apply changed offset
     {
       auto d_accum_size_per_iteration =
-        cudf::detail::make_device_uvector_async(accum_size_per_iteration, stream, temp_mr);
+        cudf::detail::make_device_buffer_async(accum_size_per_iteration, stream, temp_mr);
 
       // we want to update the offset of batches for every iteration, except the first one (because
       // offsets in the first iteration are all 0 based)
       auto num_batches_in_first_iteration = num_batches_per_iteration[0];
-      auto const iter     = thrust::make_counting_iterator(num_batches_in_first_iteration);
-      auto num_iterations = accum_size_per_iteration.size();
+      auto const iter                     = cuda::counting_iterator{num_batches_in_first_iteration};
+      auto num_iterations                 = accum_size_per_iteration.size();
       thrust::for_each(
         rmm::exec_policy_nosync(stream, temp_mr),
         iter,
         iter + num_batches - num_batches_in_first_iteration,
         [num_iterations,
-         d_batched_dst_buf_info     = d_batched_dst_buf_info.begin(),
-         d_accum_size_per_iteration = d_accum_size_per_iteration.begin()] __device__(size_type i) {
+         d_batched_dst_buf_info     = d_batched_dst_buf_info.data(),
+         d_accum_size_per_iteration = d_accum_size_per_iteration.data()] __device__(size_type i) {
           auto prior_iteration_size =
             thrust::upper_bound(thrust::seq,
                                 d_accum_size_per_iteration,
@@ -1663,6 +1710,7 @@ std::unique_ptr<chunk_iteration_state> chunk_iteration_state::create(
           d_batched_dst_buf_info[i].dst_offset -= *prior_iteration_size;
         });
     }
+    cudf::detail::sync_stream(stream);
     return std::make_unique<chunk_iteration_state>(std::move(d_batched_dst_buf_info),
                                                    std::move(d_batch_offsets),
                                                    std::move(num_batches_per_iteration),
@@ -1707,7 +1755,7 @@ std::unique_ptr<chunk_iteration_state> compute_batches(int num_bufs,
                                                        std::size_t const* const h_buf_sizes,
                                                        std::size_t num_partitions,
                                                        std::size_t user_buffer_size,
-                                                       rmm::cuda_stream_view stream,
+                                                       cuda::stream_ref stream,
                                                        rmm::device_async_resource_ref temp_mr)
 {
   // Since we parallelize at one block per copy, performance is vulnerable to situations where we
@@ -1715,7 +1763,8 @@ std::unique_ptr<chunk_iteration_state> compute_batches(int num_bufs,
   // so we will take the actual set of outgoing source/destination buffers and further partition
   // them into much smaller batches in order to drive up the number of blocks and overall
   // occupancy.
-  rmm::device_uvector<cuda::std::pair<std::size_t, std::size_t>> batches(num_bufs, stream, temp_mr);
+  cuda::device_buffer<cuda::std::pair<std::size_t, std::size_t>> batches(
+    stream, temp_mr, num_bufs, cuda::no_init);
   thrust::transform(
     rmm::exec_policy_nosync(stream, temp_mr),
     d_dst_buf_info,
@@ -1733,7 +1782,7 @@ std::unique_ptr<chunk_iteration_state> compute_batches(int num_bufs,
 
         // The number of batches we want to subdivide this buffer into
         std::size_t const num_batches = cuda::std::max(
-          std::size_t{1}, util::round_up_unsafe(bytes, desired_batch_size) / desired_batch_size);
+          std::size_t{1}, cuda::round_up(bytes, desired_batch_size) / desired_batch_size);
 
         // NOTE: leaving batch size as a separate parameter for future tuning
         // possibilities, even though in the current implementation it will be a
@@ -1757,13 +1806,14 @@ void copy_data(int num_batches_to_copy,
                uint8_t** d_dst_bufs,
                device_span<dst_buf_info> d_dst_buf_info,
                uint8_t* user_buffer,
-               rmm::cuda_stream_view stream)
+               cuda::stream_ref stream)
 {
   constexpr size_type block_size = 256;
   if (user_buffer != nullptr) {
     auto index_to_buffer = [user_buffer] __device__(unsigned int) { return user_buffer; };
-    copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.value()>>>(
+    copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.get()>>>(
       index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch);
+    CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     auto index_to_buffer = [d_dst_bufs,
                             dst_buf_info = d_dst_buf_info.data(),
@@ -1771,8 +1821,9 @@ void copy_data(int num_batches_to_copy,
       auto const dst_buf_index = dst_buf_info[buf_index].dst_buf_index;
       return d_dst_bufs[dst_buf_index];
     };
-    copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.value()>>>(
+    copy_partitions<block_size><<<num_batches_to_copy, block_size, 0, stream.get()>>>(
       index_to_buffer, d_src_bufs, d_dst_buf_info.data() + starting_batch);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 }
 
@@ -1788,21 +1839,21 @@ void copy_data(int num_batches_to_copy,
  */
 bool check_inputs(cudf::table_view const& input, std::vector<size_type> const& splits)
 {
-  if (input.num_columns() == 0) { return true; }
+  auto const num_rows = input.num_rows();
+  if (input.num_columns() == 0 && num_rows == 0) { return true; }
   if (splits.size() > 0) {
-    CUDF_EXPECTS(splits.back() <= input.column(0).size(),
-                 "splits can't exceed size of input columns",
-                 std::out_of_range);
+    CUDF_EXPECTS(
+      splits.back() <= num_rows, "splits can't exceed size of input columns", std::out_of_range);
   }
   size_type begin = 0;
   for (auto end : splits) {
     CUDF_EXPECTS(begin >= 0, "Starting index cannot be negative.", std::out_of_range);
     CUDF_EXPECTS(
       end >= begin, "End index cannot be smaller than the starting index.", std::invalid_argument);
-    CUDF_EXPECTS(end <= input.column(0).size(), "Slice range out of bounds.", std::out_of_range);
+    CUDF_EXPECTS(end <= num_rows, "Slice range out of bounds.", std::out_of_range);
     begin = end;
   }
-  return input.column(0).size() == 0;
+  return num_rows == 0 || input.num_columns() == 0;
 }
 
 };  // anonymous namespace
@@ -1829,7 +1880,7 @@ namespace detail {
 struct contiguous_split_state {
   contiguous_split_state(cudf::table_view const& input,
                          std::size_t user_buffer_size,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          std::optional<rmm::device_async_resource_ref> mr,
                          rmm::device_async_resource_ref temp_mr)
     : contiguous_split_state(input, {}, user_buffer_size, stream, mr, temp_mr)
@@ -1838,7 +1889,7 @@ struct contiguous_split_state {
 
   contiguous_split_state(cudf::table_view const& input,
                          std::vector<size_type> const& splits,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          std::optional<rmm::device_async_resource_ref> mr,
                          rmm::device_async_resource_ref temp_mr)
     : contiguous_split_state(input, splits, 0, stream, mr, temp_mr)
@@ -1879,17 +1930,18 @@ struct contiguous_split_state {
     auto const keys = cudf::detail::make_counting_transform_iterator(
       0, out_to_in_index_function{chunk_iter_state->d_batch_offsets.begin(), (int)num_bufs});
 
-    auto values = thrust::make_transform_iterator(
+    auto values = cuda::transform_iterator(
       chunk_iter_state->d_batched_dst_buf_info.begin(),
       cuda::proclaim_return_type<size_type>(
         [] __device__(dst_buf_info const& info) { return info.valid_count; }));
 
-    thrust::reduce_by_key(rmm::exec_policy_nosync(stream, temp_mr),
-                          keys,
-                          keys + num_batches_total,
-                          values,
-                          thrust::make_discard_iterator(),
-                          dst_valid_count_output_iterator{d_orig_dst_buf_info.begin()});
+    thrust::reduce_by_key(
+      rmm::exec_policy_nosync(stream, temp_mr),
+      keys,
+      keys + num_batches_total,
+      values,
+      cuda::make_discard_iterator(),
+      cuda::make_tabulate_output_iterator(set_valid_count_fn{d_orig_dst_buf_info.data()}));
 
     detail::cuda_memcpy<dst_buf_info>(h_orig_dst_buf_info, d_orig_dst_buf_info, stream);
 
@@ -1900,7 +1952,7 @@ struct contiguous_split_state {
     return make_packed_tables();
   }
 
-  cudf::size_type contiguous_split_chunk(cudf::device_span<uint8_t> const& user_buffer)
+  std::size_t contiguous_split_chunk(cudf::device_span<uint8_t> const& user_buffer)
   {
     CUDF_FUNC_RANGE();
     CUDF_EXPECTS(
@@ -1929,7 +1981,12 @@ struct contiguous_split_state {
   {
     CUDF_EXPECTS(num_partitions == 1, "build_packed_column_metadata supported only without splits");
 
-    if (input.num_columns() == 0) { return std::unique_ptr<std::vector<uint8_t>>(); }
+    if (input.num_columns() == 0) {
+      // A truly empty (0, 0) table has no metadata.
+      if (input.num_rows() == 0) { return std::unique_ptr<std::vector<uint8_t>>(); }
+      // A zero-column, N-row has metadata-only output recording its row count.
+      return std::make_unique<std::vector<uint8_t>>(cudf::pack_metadata(input, nullptr, 0));
+    }
 
     if (is_empty) {
       // this is a bit ugly, but it was done to re-use make_empty_packed_table between the
@@ -1940,7 +1997,7 @@ struct contiguous_split_state {
 
     auto& h_dst_buf_info  = partition_buf_size_and_dst_buf_info->h_dst_buf_info;
     auto cur_dst_buf_info = h_dst_buf_info.data();
-    detail::metadata_builder mb{input.num_columns()};
+    detail::metadata_builder mb{input.num_columns(), std::nullopt};
 
     populate_metadata(input.begin(), input.end(), cur_dst_buf_info, mb);
 
@@ -1951,7 +2008,7 @@ struct contiguous_split_state {
   contiguous_split_state(cudf::table_view const& input,
                          std::vector<size_type> const& splits,
                          std::size_t user_buffer_size,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          std::optional<rmm::device_async_resource_ref> mr,
                          rmm::device_async_resource_ref temp_mr)
     : input(input),
@@ -1962,6 +2019,16 @@ struct contiguous_split_state {
       is_empty{check_inputs(input, splits)},
       num_partitions{splits.size() + 1}
   {
+    // Per-partition row counts from the split boundaries (0, splits..., num_rows).
+    // check_inputs has already validated that the splits are monotonic and in range.
+    partition_row_counts.reserve(num_partitions);
+    size_type begin = 0;
+    for (auto const end : splits) {
+      partition_row_counts.push_back(end - begin);
+      begin = end;
+    }
+    partition_row_counts.push_back(input.num_rows() - begin);
+
     // if the table we are about to contig split is empty, we have special
     // handling where metadata is produced and a 0-byte contiguous buffer
     // is the result.
@@ -1996,7 +2063,28 @@ struct contiguous_split_state {
 
   std::vector<packed_table> make_packed_tables()
   {
-    if (input.num_columns() == 0) { return std::vector<packed_table>(); }
+    if (input.num_columns() == 0) {
+      // A truly empty (0, 0) table produces no output.
+      if (input.num_rows() == 0) { return std::vector<packed_table>(); }
+
+      // A zero-column, N-row table contains no device data, so each partition is
+      // represented as a metadata-only packed table that records its row count.
+      std::vector<packed_table> result;
+      result.reserve(num_partitions);
+      std::transform(
+        partition_row_counts.begin(),
+        partition_row_counts.end(),
+        std::back_inserter(result),
+        [stream = stream,
+         mr     = mr.value_or(cudf::get_current_device_resource_ref())](size_type partition_rows) {
+          auto partition = cudf::table_view{std::vector<column_view>{}, partition_rows};
+          return packed_table{partition,
+                              packed_columns{std::make_unique<std::vector<uint8_t>>(
+                                               cudf::pack_metadata(partition, nullptr, 0)),
+                                             std::make_unique<rmm::device_buffer>(0, stream, mr)}};
+        });
+      return result;
+    }
     if (is_empty) { return make_empty_packed_table(); }
     std::vector<packed_table> result;
     result.reserve(num_partitions);
@@ -2007,7 +2095,7 @@ struct contiguous_split_state {
     auto& h_dst_bufs     = src_and_dst_pointers->h_dst_bufs;
 
     auto cur_dst_buf_info = h_dst_buf_info.data();
-    detail::metadata_builder mb(input.num_columns());
+    detail::metadata_builder mb(input.num_columns(), std::nullopt);
 
     for (std::size_t idx = 0; idx < num_partitions; idx++) {
       // traverse the buffers and build the columns.
@@ -2046,23 +2134,25 @@ struct contiguous_split_state {
     // build the empty results
     std::vector<packed_table> result;
     result.reserve(num_partitions);
-    auto const iter = thrust::make_counting_iterator(0);
-    std::transform(iter,
-                   iter + num_partitions,
-                   std::back_inserter(result),
-                   [&empty_inputs](int partition_index) {
-                     return packed_table{empty_inputs,
-                                         packed_columns{std::make_unique<std::vector<uint8_t>>(
-                                                          pack_metadata(empty_inputs, nullptr, 0)),
-                                                        std::make_unique<rmm::device_buffer>()}};
-                   });
+    auto const iter = cuda::counting_iterator<std::size_t>{0};
+    std::transform(
+      iter,
+      iter + num_partitions,
+      std::back_inserter(result),
+      [&empty_inputs, stream = stream, mr = mr.value_or(cudf::get_current_device_resource_ref())](
+        int partition_index) {
+        return packed_table{empty_inputs,
+                            packed_columns{std::make_unique<std::vector<uint8_t>>(
+                                             pack_metadata(empty_inputs, nullptr, 0)),
+                                           std::make_unique<rmm::device_buffer>(0, stream, mr)}};
+      });
 
     return result;
   }
 
   cudf::table_view const input;        ///< The input table_view to operate on
   std::size_t const user_buffer_size;  ///< The size of the user buffer for the chunked_pack case
-  rmm::cuda_stream_view const stream;
+  cuda::stream_ref const stream;
   std::optional<rmm::device_async_resource_ref> mr;  ///< The resource for any data returned
 
   // this resource defaults to `mr` for the contiguous_split case, but it can be useful for the
@@ -2074,6 +2164,9 @@ struct contiguous_split_state {
 
   // This can be 1 if `contiguous_split` is just packing and not splitting
   std::size_t const num_partitions;  ///< The number of partitions to produce
+
+  // Per-partition row counts derived from `splits` and `input.num_rows()`.
+  std::vector<size_type> partition_row_counts;
 
   size_type num_src_bufs{};  ///< Number of source buffers including children
 
@@ -2110,7 +2203,7 @@ struct contiguous_split_state {
 
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            std::vector<size_type> const& splits,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   // `temp_mr` is the same as `mr` for contiguous_split as it allocates all
@@ -2124,7 +2217,7 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            std::vector<size_type> const& splits,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -2133,7 +2226,7 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 
 chunked_pack::chunked_pack(cudf::table_view const& input,
                            std::size_t user_buffer_size,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rmm::device_async_resource_ref temp_mr)
 {
   CUDF_EXPECTS(user_buffer_size >= desired_batch_size,
@@ -2166,14 +2259,14 @@ std::unique_ptr<std::vector<uint8_t>> chunked_pack::build_metadata() const
 
 std::unique_ptr<chunked_pack> chunked_pack::create(cudf::table_view const& input,
                                                    std::size_t user_buffer_size,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref temp_mr)
 {
   return std::make_unique<chunked_pack>(input, user_buffer_size, stream, temp_mr);
 }
 
 std::size_t packed_size(cudf::table_view const& input,
-                        rmm::cuda_stream_view stream,
+                        cuda::stream_ref stream,
                         rmm::device_async_resource_ref temp_mr)
 {
   // Handle empty table cases

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_132
 
 
 @pytest.fixture(
@@ -32,9 +31,9 @@ def null_data(request):
     ).lazy()
 
 
-def test_drop_null(null_data):
+def test_drop_null(engine: pl.GPUEngine, null_data):
     q = null_data.select(pl.col("a").drop_nulls())
-    assert_gpu_result_equal(q)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -42,46 +41,42 @@ def test_drop_null(null_data):
     [0, pl.col("a").mean(), pl.col("b")],
     ids=["scalar", "aggregation", "column_expression"],
 )
-def test_fill_null(null_data, value):
+def test_fill_null(engine: pl.GPUEngine, null_data, value):
     q = null_data.select(pl.col("a").fill_null(value))
-    assert_gpu_result_equal(q)
+    assert_gpu_result_equal(q, engine=engine)
 
 
-def test_fill_null_with_string():
+def test_fill_null_with_string(engine: pl.GPUEngine):
     q = pl.LazyFrame({"a": [None, "a"]}).select(pl.col("a").fill_null("b"))
-    assert_gpu_result_equal(q)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(
     "strategy", ["forward", "backward", "min", "max", "mean", "zero", "one"]
 )
-def test_fill_null_with_strategy(null_data, strategy):
+def test_fill_null_with_strategy(engine: pl.GPUEngine, null_data, strategy):
     q = null_data.select(pl.col("a").fill_null(strategy=strategy))
-    if POLARS_VERSION_LT_132:
-        assert_ir_translation_raises(q, NotImplementedError)
-    else:
-        assert_gpu_result_equal(q)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("strategy", ["zero", "one"])
-def test_fill_null_with_strategy_bool(strategy):
+def test_fill_null_with_strategy_bool(engine: pl.GPUEngine, strategy):
     q = pl.LazyFrame({"a": [True, None, False]}).select(
         pl.col("a").fill_null(strategy=strategy)
     )
-    if POLARS_VERSION_LT_132:
-        assert_ir_translation_raises(q, NotImplementedError)
-    else:
-        assert_gpu_result_equal(q)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("strategy", ["forward", "backward"])
-@pytest.mark.parametrize("limit", [0, 1, 2])
-def test_fill_null_with_limit(null_data, strategy, limit):
-    q = null_data.select(pl.col("a").fill_null(strategy=strategy, limit=limit))
-    if limit != 0:
-        assert_ir_translation_raises(q, NotImplementedError)
-    else:
-        if POLARS_VERSION_LT_132:
-            assert_ir_translation_raises(q, NotImplementedError)
-        else:
-            assert_gpu_result_equal(q)
+def test_fill_null_with_zero_limit(engine: pl.GPUEngine, null_data, strategy):
+    q = null_data.select(pl.col("a").fill_null(strategy=strategy, limit=0))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("strategy", ["forward", "backward"])
+@pytest.mark.parametrize("limit", [1, 2])
+def test_fill_null_with_nonzero_limit_unsupported(in_memory_engine, strategy, limit):
+    q = pl.LazyFrame({"a": [None, 1]}).select(
+        pl.col("a").fill_null(strategy=strategy, limit=limit)
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)

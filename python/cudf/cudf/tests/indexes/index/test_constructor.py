@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -131,16 +131,13 @@ def test_range_index_from_range(data):
 @pytest.mark.parametrize("data", [[1, 2, 3, 4], []])
 @pytest.mark.parametrize("name", [1, "a", None])
 def test_index_basic(data, all_supported_types_as_str, name, request):
-    request.applymarker(
-        pytest.mark.xfail(
-            len(data) > 0
-            and all_supported_types_as_str
-            in {"timedelta64[us]", "timedelta64[ms]", "timedelta64[s]"},
-            reason=f"wrong result for {all_supported_types_as_str}",
-        )
-    )
     pdi = pd.Index(data, dtype=all_supported_types_as_str, name=name)
     gdi = cudf.Index(data, dtype=all_supported_types_as_str, name=name)
+    if all_supported_types_as_str == "category" and len(data) == 0:
+        # As of pandas 3.0, empty default type of object isn't
+        # necessarily equivalent to cuDF's empty default type of
+        # pandas.StringDtype
+        pdi = pdi.set_categories(pd.Index([], dtype=gdi.categories.dtype))
 
     assert_eq(pdi, gdi)
 
@@ -160,7 +157,10 @@ def test_index_nan_as_null(data, nan_idx, NA_idx, nan_as_null):
             assert np.isnan(idx[nan_idx])
 
     if NA_idx is not None:
-        assert idx[NA_idx] is cudf.NA
+        if idx.dtype.kind == "f":
+            assert np.isnan(idx[NA_idx])
+        else:
+            assert idx[NA_idx] is cudf.NA
 
 
 def test_index_constructor_integer(default_integer_bitwidth):
@@ -226,28 +226,22 @@ def test_index_date_duration_freq_error(cls):
 def test_index_empty_from_pandas(all_supported_types_as_str):
     pidx = pd.Index([], dtype=all_supported_types_as_str)
     gidx = cudf.from_pandas(pidx)
-
+    if all_supported_types_as_str == "category":
+        # As of pandas 3.0, empty default type of object isn't
+        # necessarily equivalent to cuDF's empty default type of
+        # pandas.StringDtype
+        pidx = pidx.set_categories(pd.Index([], dtype=gidx.categories.dtype))
     assert_eq(pidx, gidx)
 
 
 def test_empty_index_init():
     pidx = pd.Index([])
     gidx = cudf.Index([])
-
     assert_eq(pidx, gidx)
 
 
 @pytest.mark.parametrize("data", [[1, 2, 3], range(0, 10)])
 def test_index_with_index_dtype(request, data, all_supported_types_as_str):
-    request.applymarker(
-        pytest.mark.xfail(
-            isinstance(data, list)
-            and all_supported_types_as_str
-            in {"timedelta64[us]", "timedelta64[ms]", "timedelta64[s]"},
-            reason=f"wrong result for {all_supported_types_as_str}",
-        )
-    )
-
     pidx = pd.Index(data)
     gidx = cudf.Index(data)
 

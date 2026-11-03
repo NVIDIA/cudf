@@ -1,11 +1,15 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cuda/std/cassert>
+
+#ifndef __CUDACC_RTC__
 #include <cuda_runtime.h>
+#endif
 
 /**
  * @brief `assert`-like macro for device code

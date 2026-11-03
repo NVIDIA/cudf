@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,8 +9,9 @@
 #include "io/orc/orc.hpp"
 #include "io/utilities/column_buffer.hpp"
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -95,9 +96,8 @@ inline type_id to_cudf_decimal_type(host_span<std::string const> decimal128_colu
 {
   if (metadata.get_col_type(column_index).kind != DECIMAL) { return type_id::EMPTY; }
 
-  if (std::find(decimal128_columns.begin(),
-                decimal128_columns.end(),
-                metadata.column_path(0, column_index)) != decimal128_columns.end()) {
+  if (std::ranges::find(decimal128_columns, metadata.column_path(0, column_index)) !=
+      decimal128_columns.end()) {
     return type_id::DECIMAL128;
   }
 
@@ -122,7 +122,7 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
                                             bool use_np_dtypes,
                                             data_type timestamp_type,
                                             column_name_info& schema_info,
-                                            rmm::cuda_stream_view stream);
+                                            cuda::stream_ref stream);
 
 /**
  * @brief Assemble the buffer with child columns.
@@ -133,7 +133,7 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               aggregate_orc_metadata const& metadata,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::io::orc::detail

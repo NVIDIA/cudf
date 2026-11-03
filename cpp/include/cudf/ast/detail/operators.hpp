@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -17,6 +17,16 @@ CUDF_HOST_DEVICE constexpr bool is_complex_type(cudf::type_id type)
   return type == cudf::type_id::DECIMAL32 || type == cudf::type_id::DECIMAL64 ||
          type == cudf::type_id::DECIMAL128 || type == cudf::type_id::STRING;
 }
+
+/**
+ * @brief Returns true if @p op is a comparison operator.
+ *
+ * Example comparison operators are: EQUAL, LESS, GREATER, etc
+ *
+ * @param op The AST operator to test.
+ * @return true if @p op is a comparison operator, false otherwise.
+ */
+[[nodiscard]] bool is_comparison_operator(ast_operator op);
 
 /**
  * @brief Gets the return type of an AST operator.

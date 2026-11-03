@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -113,8 +113,7 @@ std::tuple<table_view,
            std::vector<std::unique_ptr<aggregation>>,
            std::vector<int8_t>,
            bool>
-extract_single_pass_aggs(host_span<aggregation_request const> requests,
-                         rmm::cuda_stream_view stream)
+extract_single_pass_aggs(std::span<aggregation_request const> requests, cuda::stream_ref stream)
 {
   auto agg_kinds = cudf::detail::make_empty_host_vector<aggregation::Kind>(requests.size(), stream);
   std::vector<column_view> columns;
@@ -183,8 +182,8 @@ std::vector<aggregation::Kind> get_simple_aggregations(groupby_aggregation const
   auto aggs = cudf::detail::aggregation_dispatcher(
     agg.kind, simple_aggregation_collector{}, values_type, agg);
   std::vector<aggregation::Kind> agg_kinds;
-  std::transform(
-    aggs.begin(), aggs.end(), std::back_inserter(agg_kinds), [](auto const& a) { return a->kind; });
+  std::ranges::transform(
+    aggs, std::back_inserter(agg_kinds), [](auto const& a) { return a->kind; });
   return agg_kinds;
 }
 

@@ -1,25 +1,29 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from rmm.mr import DeviceMemoryResource
-from rmm.pylibrmm.stream import Stream
 
 from pylibcudf.gpumemoryview import gpumemoryview
 from pylibcudf.span import Span
 from pylibcudf.table import Table
+from pylibcudf.utils import CudaStreamLike
 
 class PackedColumns:
     def __init__(self): ...
-    def release(
-        self, stream: Stream | None = None
-    ) -> tuple[memoryview[bytes], gpumemoryview]: ...
+    def release(self) -> tuple[memoryview[bytes], gpumemoryview]: ...
 
-def pack(input: Table, stream: Stream | None = None) -> PackedColumns: ...
-def unpack(input: PackedColumns, stream: Stream | None = None) -> Table: ...
+def pack(
+    input: Table,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> PackedColumns: ...
+def unpack(
+    input: PackedColumns, stream: CudaStreamLike | None = None
+) -> Table: ...
 def unpack_from_memoryviews(
     metadata: memoryview[bytes],
     gpu_data: Span,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
 ) -> Table: ...
 
 class ChunkedPack:
@@ -28,7 +32,7 @@ class ChunkedPack:
     def create(
         input: Table,
         user_buffer_size: int,
-        stream: Stream | None = None,
+        stream: CudaStreamLike | None = None,
         temp_mr: DeviceMemoryResource | None = None,
     ) -> ChunkedPack: ...
     def has_next(self) -> bool: ...

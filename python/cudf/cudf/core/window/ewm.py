@@ -219,7 +219,7 @@ class ExponentialMovingWindow(_RollingBase):
         # TODO: Use libcudf to match pandas' semantics instead of
         # removing the leading nulls, computing ewm, and stitching
         # the columns back together
-        plc_col = to_libcudf_column.to_pylibcudf()
+        plc_col = to_libcudf_column.plc_column
         leading_nulls = _leading_nulls_count(plc_col, size)
 
         if leading_nulls == 0:

@@ -1,6 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from libc.stdint cimport int64_t, uint8_t
+from libc.stdint cimport int32_t, int64_t, uint8_t
 from libcpp cimport bool
 from libcpp.functional cimport reference_wrapper
 from libcpp.map cimport map
@@ -10,6 +10,8 @@ from libcpp.string cimport string
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.expressions cimport expression
+from pylibcudf.libcudf.io.datasource cimport datasource
+from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData
 from pylibcudf.libcudf.io.types cimport (
     compression_type,
     dictionary_policy,
@@ -21,24 +23,28 @@ from pylibcudf.libcudf.io.types cimport (
     table_with_metadata,
 )
 from pylibcudf.libcudf.table.table_view cimport table_view
-from pylibcudf.libcudf.types cimport data_type, size_type
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
-from rmm.librmm.memory_resource cimport device_memory_resource
+from pylibcudf.libcudf.types cimport data_type, size_type, type_id
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
 cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
     cdef cppclass parquet_reader_options:
         parquet_reader_options() except +libcudf_exception_handler
-        source_info get_source_info() except +libcudf_exception_handler
+        source_info get_source() except +libcudf_exception_handler
         vector[vector[size_type]] get_row_groups() except +libcudf_exception_handler
         const optional[reference_wrapper[expression]]& get_filter()\
             except +libcudf_exception_handler
         data_type get_timestamp_type() except +libcudf_exception_handler
+        type_id get_decimal_width() noexcept
         bool is_enabled_use_pandas_metadata() except +libcudf_exception_handler
         bool is_enabled_arrow_schema() except +libcudf_exception_handler
         bool is_enabled_allow_mismatched_pq_schemas() except +libcudf_exception_handler
         bool is_enabled_ignore_missing_columns() except +libcudf_exception_handler
         bool is_enabled_use_jit_filter() noexcept
+        bool is_enabled_case_sensitive_names() noexcept
+        bool is_enabled_prepend_source_index_column() noexcept
+        bool is_enabled_output_dict_columns() noexcept
         # setter
 
         void set_source(source_info src) except +libcudf_exception_handler
@@ -48,6 +54,9 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
                 vector[string] col_names) except +libcudf_exception_handler
         void set_column_indices(
             vector[size_type] col_indices
+        ) except +libcudf_exception_handler
+        void set_column_field_ids(
+            vector[int32_t] column_field_ids
         ) except +libcudf_exception_handler
         void set_num_rows(int64_t val) except +libcudf_exception_handler
         void set_row_groups(
@@ -63,6 +72,10 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         ) except +libcudf_exception_handler
         void enable_use_pandas_metadata(bool val) except +libcudf_exception_handler
         void set_timestamp_type(data_type type) except +libcudf_exception_handler
+        void set_decimal_width(type_id width) noexcept
+        void enable_case_sensitive_names(bool val) noexcept
+        void enable_prepend_source_index_column(bool val) noexcept
+        void enable_output_dict_columns(bool val) noexcept
 
         @staticmethod
         parquet_reader_options_builder builder(
@@ -82,6 +95,9 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& column_indices(
             vector[size_type] col_indices
+        ) except +libcudf_exception_handler
+        parquet_reader_options_builder& column_field_ids(
+            vector[int32_t] column_field_ids
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& row_groups(
             vector[vector[size_type]] row_grp
@@ -104,18 +120,37 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         parquet_reader_options_builder& timestamp_type(
             data_type type
         ) except +libcudf_exception_handler
+        parquet_reader_options_builder& decimal_width(
+            type_id width
+        ) noexcept
         parquet_reader_options_builder& filter(
             const expression & f
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& use_jit_filter(
             bool use_jit_filter
         ) noexcept
+        parquet_reader_options_builder& case_sensitive_names(
+            bool val
+        ) noexcept
+        parquet_reader_options_builder& prepend_source_index_column(
+            bool val
+        ) noexcept
+        parquet_reader_options_builder& output_dict_columns(
+            bool val
+        ) noexcept
         parquet_reader_options build() except +libcudf_exception_handler
 
     cdef table_with_metadata read_parquet(
         parquet_reader_options args,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+    cdef table_with_metadata read_parquet(
+        vector[unique_ptr[datasource]] sources,
+        vector[FileMetaData] parquet_metadatas,
+        const parquet_reader_options& args,
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef cppclass parquet_writer_options_base:
@@ -246,7 +281,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
 
     cdef unique_ptr[vector[uint8_t]] write_parquet(
         parquet_writer_options options,
-        cuda_stream_view stream,
+        cudaStream_t stream,
     ) except +libcudf_exception_handler
 
     cdef bool is_supported_read_parquet(
@@ -278,7 +313,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         chunked_parquet_writer() except +libcudf_exception_handler
         chunked_parquet_writer(
             const chunked_parquet_writer_options& args,
-            cuda_stream_view stream
+            cudaStream_t stream
         ) except +libcudf_exception_handler
         chunked_parquet_writer& write(
             const table_view& table_,
@@ -293,15 +328,32 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         chunked_parquet_reader(
             size_t chunk_read_limit,
             const parquet_reader_options& options,
-            cuda_stream_view stream,
-            device_memory_resource* mr
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+        chunked_parquet_reader(
+            size_t chunk_read_limit,
+            vector[unique_ptr[datasource]] sources,
+            vector[FileMetaData] parquet_metadatas,
+            const parquet_reader_options& options,
+            cudaStream_t stream,
+            device_async_resource_ref mr
         ) except +libcudf_exception_handler
         chunked_parquet_reader(
             size_t chunk_read_limit,
             size_t pass_read_limit,
             const parquet_reader_options& options,
-            cuda_stream_view stream,
-            device_memory_resource* mr
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+        chunked_parquet_reader(
+            size_t chunk_read_limit,
+            size_t pass_read_limit,
+            vector[unique_ptr[datasource]] sources,
+            vector[FileMetaData] parquet_metadatas,
+            const parquet_reader_options& options,
+            cudaStream_t stream,
+            device_async_resource_ref mr
         ) except +libcudf_exception_handler
         bool has_next() except +libcudf_exception_handler
         table_with_metadata read_chunk() except +libcudf_exception_handler

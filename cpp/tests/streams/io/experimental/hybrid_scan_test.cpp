@@ -1,9 +1,7 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-
-#include "tests/io/experimental/hybrid_scan_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -11,6 +9,7 @@
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/io/experimental/hybrid_scan.hpp>
+#include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/table/table.hpp>
 
@@ -20,7 +19,7 @@
 namespace {
 
 template <typename... UniqPtrs>
-std::vector<std::unique_ptr<cudf::column>> make_uniqueptrs_vector(UniqPtrs&&... uniqptrs)
+std::vector<std::unique_ptr<cudf::column>> make_unique_ptrs_vector(UniqPtrs&&... uniqptrs)
 {
   std::vector<std::unique_ptr<cudf::column>> ptrsvec;
   (ptrsvec.push_back(std::forward<UniqPtrs>(uniqptrs)), ...);
@@ -58,17 +57,17 @@ cudf::table construct_table()
     return cudf::test::strings_column_wrapper(col10_data.begin(), col10_data.end());
   }();
 
-  auto colsptr = make_uniqueptrs_vector(col0.release(),
-                                        col1.release(),
-                                        col2.release(),
-                                        col3.release(),
-                                        col4.release(),
-                                        col5.release(),
-                                        col6.release(),
-                                        col7.release(),
-                                        col8.release(),
-                                        col9.release(),
-                                        col10.release());
+  auto colsptr = make_unique_ptrs_vector(col0.release(),
+                                         col1.release(),
+                                         col2.release(),
+                                         col3.release(),
+                                         col4.release(),
+                                         col5.release(),
+                                         col6.release(),
+                                         col7.release(),
+                                         col8.release(),
+                                         col9.release(),
+                                         col10.release());
   return cudf::table(std::move(colsptr));
 }
 }  // namespace
@@ -77,13 +76,13 @@ class HybridScanTest : public cudf::test::BaseFixture {};
 
 TEST_F(HybridScanTest, DictionaryPageFiltering)
 {
-  auto tab    = construct_table();
+  auto table  = construct_table();
   auto buffer = std::vector<char>();
-  cudf::io::table_input_metadata out_metadata(tab);
+  cudf::io::table_input_metadata out_metadata(table);
   out_metadata.column_metadata[0].set_name("col0");
   out_metadata.column_metadata[3].set_name("col3");
   cudf::io::parquet_writer_options out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, tab)
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
       .metadata(out_metadata)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
@@ -92,7 +91,7 @@ TEST_F(HybridScanTest, DictionaryPageFiltering)
   auto col3_ref      = cudf::ast::column_name_reference("col3");
   auto literal_value = cudf::numeric_scalar<int32_t>(0, true, cudf::test::get_default_stream());
   auto literal       = cudf::ast::literal(literal_value);
-  auto expr1         = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col3_ref, literal);
+  auto expr1         = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, literal, col3_ref);
 
   auto col0_ref = cudf::ast::column_name_reference("col0");
   auto expr2    = cudf::ast::operation(cudf::ast::ast_operator::IDENTITY, col0_ref);
@@ -102,29 +101,33 @@ TEST_F(HybridScanTest, DictionaryPageFiltering)
   cudf::io::parquet_reader_options in_opts =
     cudf::io::parquet_reader_options::builder(cudf::io::source_info{}).filter(filter_expr);
 
-  auto const file_buffer_span =
-    cudf::host_span<uint8_t const>(reinterpret_cast<uint8_t const*>(buffer.data()), buffer.size());
-  auto const footer_buffer = fetch_footer_bytes(file_buffer_span);
+  auto const datasource    = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()));
+  auto datasource_ref      = std::ref(*datasource);
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(datasource_ref);
 
   auto const reader =
-    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(footer_buffer, in_opts);
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, in_opts);
 
   auto const page_index_byte_range = reader->page_index_byte_range();
-  auto const page_index_buffer = fetch_page_index_bytes(file_buffer_span, page_index_byte_range);
-  reader->setup_page_index(page_index_buffer);
+  auto const page_index_buffer =
+    cudf::io::parquet::fetch_page_index_to_host(datasource_ref, page_index_byte_range);
+  reader->setup_page_index(*page_index_buffer);
 
   auto input_row_group_indices = reader->all_row_groups(in_opts);
 
   auto const dict_byte_ranges =
-    std::get<1>(reader->secondary_filters_byte_ranges(input_row_group_indices, in_opts));
-  auto dictionary_page_buffers = fetch_byte_ranges(file_buffer_span,
-                                                   dict_byte_ranges,
-                                                   cudf::test::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
-  auto dictionary_page_data    = make_device_spans<uint8_t>(dictionary_page_buffers);
+    reader->dictionary_pages_byte_ranges(input_row_group_indices, in_opts);
+  auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      datasource_ref,
+      dict_byte_ranges,
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      cudf::test::get_default_stream());
+  dict_page_tasks.get();
 
   auto result = reader->filter_row_groups_with_dictionary_pages(
-    dictionary_page_data, input_row_group_indices, in_opts, cudf::test::get_default_stream());
+    dict_page_data, input_row_group_indices, in_opts, cudf::test::get_default_stream());
 }
 
 CUDF_TEST_PROGRAM_MAIN()

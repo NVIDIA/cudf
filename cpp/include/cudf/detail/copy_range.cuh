@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -18,14 +18,13 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
-#include <cub/cub.cuh>
+#include <cuda/cmath>
+#include <cuda/stream>
 #include <cuda_runtime.h>
 
 #include <memory>
 
-namespace {
+namespace cudf::detail {
 template <cudf::size_type block_size,
           typename SourceValueIterator,
           typename SourceValidityIterator,
@@ -96,10 +95,6 @@ CUDF_KERNEL void copy_range_kernel(SourceValueIterator source_value_begin,
   }
 }
 
-}  // namespace
-
-namespace cudf {
-namespace detail {
 /**
  * @brief Internal API to copy a range of values from source iterators to a
  * target column.
@@ -119,6 +114,7 @@ namespace detail {
  * @param target_end The index of the last element in the target range
  * (exclusive)
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for allocations
  */
 template <typename SourceValueIterator, typename SourceValidityIterator>
 void copy_range(SourceValueIterator source_value_begin,
@@ -126,7 +122,8 @@ void copy_range(SourceValueIterator source_value_begin,
                 mutable_column_view& target,
                 size_type target_begin,
                 size_type target_end,
-                rmm::cuda_stream_view stream)
+                cuda::stream_ref stream,
+                cudf::memory_resources mr)
 {
   CUDF_EXPECTS((target_begin <= target_end) && (target_begin >= 0) &&
                  (target_begin < target.size()) && (target_end <= target.size()),
@@ -136,23 +133,25 @@ void copy_range(SourceValueIterator source_value_begin,
   // this code assumes that source and target have the same type.
   CUDF_EXPECTS(type_id_matches_device_storage_type<T>(target.type().id()), "data type mismatch");
 
-  auto warp_aligned_begin_lower_bound = cudf::util::round_down_safe(target_begin, warp_size);
-  auto warp_aligned_end_upper_bound   = cudf::util::round_up_safe<int64_t>(target_end, warp_size);
+  auto warp_aligned_begin_lower_bound = cuda::round_down(target_begin, warp_size);
+  auto warp_aligned_end_upper_bound   = cudf::detail::round_up_safe<int64_t>(target_end, warp_size);
   auto num_items = warp_aligned_end_upper_bound - warp_aligned_begin_lower_bound;
 
   constexpr size_type block_size{256};
 
   auto grid = cudf::detail::grid_1d{num_items, block_size, 1};
 
+  auto const temp_mr = mr.get_temporary_mr();
+
   if (target.nullable()) {
-    cudf::detail::device_scalar<size_type> null_count(target.null_count(), stream);
+    cudf::detail::device_scalar<size_type> null_count(target.null_count(), stream, temp_mr);
 
     auto kernel =
       copy_range_kernel<block_size, SourceValueIterator, SourceValidityIterator, T, true>;
-    kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(
+    kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
       source_value_begin,
       source_validity_begin,
-      *mutable_column_device_view::create(target, stream),
+      *mutable_column_device_view::create(target, stream, temp_mr),
       target_begin,
       target_end,
       null_count.data());
@@ -161,28 +160,28 @@ void copy_range(SourceValueIterator source_value_begin,
   } else {
     auto kernel =
       copy_range_kernel<block_size, SourceValueIterator, SourceValidityIterator, T, false>;
-    kernel<<<grid.num_blocks, block_size, 0, stream.value()>>>(
+    kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
       source_value_begin,
       source_validity_begin,
-      *mutable_column_device_view::create(target, stream),
+      *mutable_column_device_view::create(target, stream, temp_mr),
       target_begin,
       target_end,
       nullptr);
   }
 
-  CUDF_CHECK_CUDA(stream.value());
+  CUDF_CHECK_CUDA(stream.get());
 }
 
 /**
  * @copydoc cudf::copy_range_in_place
- * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 void copy_range_in_place(column_view const& source,
                          mutable_column_view& target,
                          size_type source_begin,
                          size_type source_end,
                          size_type target_begin,
-                         rmm::cuda_stream_view stream);
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::copy_range
@@ -194,8 +193,7 @@ std::unique_ptr<column> copy_range(column_view const& source,
                                    size_type source_begin,
                                    size_type source_end,
                                    size_type target_begin,
-                                   rmm::cuda_stream_view stream,
+                                   cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr);
 
-}  // namespace detail
-}  // namespace cudf
+}  // namespace cudf::detail

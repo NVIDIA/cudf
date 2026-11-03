@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import glob
@@ -164,7 +164,7 @@ def test_strings(tmpdir):
 
 def test_dask_timeseries_from_pandas(tmpdir):
     fn = str(tmpdir.join("test.parquet"))
-    ddf2 = dask.datasets.timeseries(freq="D")
+    ddf2 = dask.datasets.timeseries(freq="D", seed=1)
     pdf = ddf2.compute()
     pdf.to_parquet(fn, engine="pyarrow")
     read_df = dask_cudf.read_parquet(fn)
@@ -175,7 +175,7 @@ def test_dask_timeseries_from_pandas(tmpdir):
 @pytest.mark.parametrize("divisions", [False, True])
 def test_dask_timeseries_from_dask(tmpdir, index, divisions):
     fn = str(tmpdir)
-    ddf2 = dask.datasets.timeseries(freq="D")
+    ddf2 = dask.datasets.timeseries(freq="D", seed=1)
     ddf2.to_parquet(fn, engine="pyarrow", write_index=index)
     read_df = dask_cudf.read_parquet(
         fn, index=index, calculate_divisions=divisions
@@ -592,11 +592,13 @@ def test_null_partition(tmpdir):
         ddf[["x", "id"]],
         ddf_read[["x", "id"]],
         check_divisions=False,
+        # Int64 is cast to float64 in dask
+        check_dtype=False,
     )
 
 
 def test_nullable_schema_mismatch(tmpdir):
-    # See: https://github.com/rapidsai/cudf/issues/12702
+    # See: https://github.com/NVIDIA/cudf/issues/12702
     path0 = str(tmpdir.join("test.0.parquet"))
     path1 = str(tmpdir.join("test.1.parquet"))
     cudf.DataFrame.from_dict({"a": [1, 2, 3]}).to_parquet(path0)

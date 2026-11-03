@@ -1,8 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import os
 import warnings
+
+from cuda.bindings import runtime
 
 import pylibcudf
 import rmm.mr
@@ -43,9 +45,16 @@ def install():
 
     try:
         # The default mode is "managed_pool" if UVM is supported, otherwise "pool"
-        managed_memory_is_supported = (
-            pylibcudf.utils._is_concurrent_managed_access_supported()
+        # Ensure CUDA is initialized before checking cudaDevAttrConcurrentManagedAccess
+        runtime.cudaFree(0)
+        err, supports_managed_access = runtime.cudaDeviceGetAttribute(
+            runtime.cudaDeviceAttr.cudaDevAttrConcurrentManagedAccess, 0
         )
+        if err != runtime.cudaError_t.cudaSuccess:
+            raise RuntimeError(
+                f"Failed to check cudaDevAttrConcurrentManagedAccess with error {err}"
+            )
+        managed_memory_is_supported = supports_managed_access != 0
     except RuntimeError as e:
         warnings.warn(str(e))
         return

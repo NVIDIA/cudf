@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 namespace {
 template <typename T, typename T2 = void>
@@ -98,8 +98,8 @@ void do_bit_cast(cudf::column_view const& column_view, Iterator begin, Iterator 
 
 TYPED_TEST(ColumnViewAllTypesTests, BitCast)
 {
-  auto begin = thrust::make_counting_iterator(1);
-  auto end   = thrust::make_counting_iterator(16);
+  auto begin = cuda::counting_iterator<cudf::size_type>{1};
+  auto end   = cuda::counting_iterator<cudf::size_type>{16};
 
   cudf::test::fixed_width_column_wrapper<TypeParam, cudf::size_type> input(begin, end);
 

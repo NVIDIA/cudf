@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -14,16 +14,16 @@ from cudf.testing import assert_eq
     [
         (np.dtype("int8"), np.dtype("int8")),
         (np.int8, np.dtype("int8")),
-        (pd.Int8Dtype(), np.dtype("int8")),
-        (pd.StringDtype(), np.dtype("object")),
+        (pd.Int8Dtype(), pd.Int8Dtype()),
+        (pd.StringDtype(), pd.StringDtype()),
         ("int8", np.dtype("int8")),
-        ("boolean", np.dtype("bool")),
+        ("boolean", pd.BooleanDtype()),
         ("bool_", np.dtype("bool")),
         (np.bool_, np.dtype("bool")),
         (int, np.dtype("int64")),
         (float, np.dtype("float64")),
         (cudf.ListDtype("int64"), cudf.ListDtype("int64")),
-        (np.dtype("U"), np.dtype("object")),
+        (np.dtype("U"), np.dtype("U")),
         ("timedelta64[ns]", np.dtype("<m8[ns]")),
         ("timedelta64[ms]", np.dtype("<m8[ms]")),
         ("<m8[s]", np.dtype("<m8[s]")),
@@ -49,6 +49,7 @@ from cudf.testing import assert_eq
         (cudf.IntervalDtype("int"), cudf.IntervalDtype("int64")),
         (pd.IntervalDtype("int64"), cudf.IntervalDtype("int64")),
     ],
+    ids=repr,
 )
 def test_dtype(in_dtype, expect):
     assert_eq(cudf.dtype(in_dtype), expect)

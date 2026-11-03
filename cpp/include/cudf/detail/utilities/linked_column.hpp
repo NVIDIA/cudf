@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <memory>
 #include <vector>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace detail {
 
 struct linked_column_view;
@@ -60,4 +60,4 @@ struct linked_column_view : public column_view_base {
 LinkedColVector table_to_linked_columns(table_view const& table);
 
 }  // namespace detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import json
 import operator
 import os
 import urllib
-import warnings
 from io import BufferedWriter, BytesIO, IOBase, TextIOWrapper
 from threading import Thread
 from typing import TYPE_CHECKING, Any
@@ -20,13 +19,11 @@ import pyarrow as pa
 
 import cudf
 from cudf.api.types import is_list_like
-from cudf.core._compat import PANDAS_LT_300
-from cudf.core.dtypes import recursively_update_struct_names
 from cudf.utils.docutils import docfmt_partial
 from cudf.utils.dtypes import cudf_dtype_to_pa_type, np_dtypes_to_pandas_dtypes
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Hashable, Mapping
+    from collections.abc import Callable, Hashable
 
     from cudf.core.dataframe import DataFrame
 
@@ -67,6 +64,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 
 Returns
 -------
@@ -78,18 +78,16 @@ Notes
 
 Examples
 --------
->>> import pandavro
->>> import pandas as pd
+>>> import fastavro
 >>> import cudf
->>> pandas_df = pd.DataFrame()
->>> pandas_df['numbers'] = [10, 20, 30]
->>> pandas_df['text'] = ["hello", "rapids", "ai"]
->>> pandas_df
-   numbers    text
-0       10   hello
-1       20  rapids
-2       30      ai
->>> pandavro.to_avro("data.avro", pandas_df)
+>>> schema = {{"type": "record", "name": "test",
+...     "fields": [{{"name": "numbers", "type": "long"}},
+...                {{"name": "text", "type": "string"}}]}}
+>>> records = [{{"numbers": 10, "text": "hello"}},
+...            {{"numbers": 20, "text": "rapids"}},
+...            {{"numbers": 30, "text": "ai"}}]
+>>> with open("data.avro", "wb") as f:
+...     fastavro.writer(f, schema, records)
 >>> cudf.read_avro("data.avro")
    numbers    text
 0       10   hello
@@ -158,8 +156,8 @@ storage_options : dict, optional, default None
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
 filesystem : fsspec.AbstractFileSystem, default None
-    Filesystem object to use when reading the parquet data. This argument
-    should not be used at the same time as `storage_options`.
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 filters : list of tuple, list of lists of tuples, default None
     If not None, specifies a filter predicate used to filter out row groups
     using statistics stored for each row group as Parquet metadata. Row groups
@@ -178,7 +176,13 @@ filters : list of tuple, list of lists of tuples, default None
 row_groups : int, or list, or a list of lists default None
     If not None, specifies, for each input file, which row groups to read.
     If reading multiple inputs, a list of lists should be passed, one list
-    for each input.
+    for each input. Rows are returned in input order, and in the given
+    row-group order within each input; row groups are not sorted or
+    deduplicated, so repeated indices are read multiple times.
+
+    .. note::
+       When ``filters`` are also provided, the given order and any repeated
+       indices may not be preserved.
 categorical_partitions : boolean, default True
     Whether directory-partitioned columns should be interpreted as categorical
     or raw dtypes.
@@ -206,6 +210,11 @@ allow_mismatched_pq_schemas : boolean, default False
     options from the input files with otherwise mismatched schemas.
 ignore_missing_columns : boolean, default True
     If True, ignores non-existent projected columns while reading.
+case_sensitive_names : boolean, default True
+    If True (default), column names in `columns` and `filter` are
+    matched case-sensitively against the column names in Parquet schema.
+    Otherwise, if there are multiple case-insensitive matches, the first
+    matched column from the Parquet schema is selected.
 prefetch_options : dict, default None
     WARNING: This is an experimental feature and may be removed at any
     time without warning or deprecation period.
@@ -222,18 +231,19 @@ Notes
 
 - Setting the cudf option `io.parquet.low_memory=True` will result in the chunked
   low memory parquet reader being used. This can make it easier to read large
-  parquet datasets on systems with limited GPU memory. See all `available options
-  <https://docs.rapids.ai/api/cudf/nightly/user_guide/api_docs/options/#api-options>`_.
+  parquet datasets on systems with limited GPU memory. See all :ref:`available options
+  <api.options>`.
 
 Examples
 --------
 >>> import cudf
->>> df = cudf.read_parquet(filename)
->>> df
-  num1                datetime text
-0  123 2018-11-13T12:00:00.000 5451
-1  456 2018-11-14T12:35:01.000 5784
-2  789 2018-11-15T18:02:59.000 6117
+>>> df = cudf.DataFrame({{'a': [1, 2, 3], 'b': ['x', 'y', 'z']}})
+>>> df.to_parquet('test.parquet')
+>>> cudf.read_parquet('test.parquet')
+   a  b
+0  1  x
+1  2  y
+2  3  z
 
 See Also
 --------
@@ -255,7 +265,7 @@ path : str or list of str
     File path or Root Directory path. Will be used as Root Directory path
     while writing a partitioned dataset. Use list of str with partition_offsets
     to write parts of the dataframe to different files.
-compression : {{'snappy', 'ZSTD', 'LZ4', None}}, default 'snappy'
+compression : {{'snappy', 'ZSTD', 'LZ4', 'GZIP', None}}, default 'snappy'
     Name of the compression to use; case insensitive.
     Use ``None`` for no compression.
 index : bool, default None
@@ -314,6 +324,11 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
+    With ``engine='pyarrow'``, a ``pyarrow.fs.FileSystem`` is also
+    accepted and the object is passed through to pyarrow.
 return_metadata : bool, default False
     Return parquet metadata for written data. Returned metadata will
     include the file path metadata (relative to `root_path`).
@@ -495,6 +510,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 bytes_per_thread : int, default None
     Determines the number of bytes to be allocated per thread to read the
     files in parallel. When there is a file of large size, we get slightly
@@ -513,12 +531,13 @@ Notes
 Examples
 --------
 >>> import cudf
->>> df = cudf.read_orc(filename)
->>> df
-  num1                datetime text
-0  123 2018-11-13T12:00:00.000 5451
-1  456 2018-11-14T12:35:01.000 5784
-2  789 2018-11-15T18:02:59.000 6117
+>>> df = cudf.DataFrame({{'a': [1, 2, 3], 'b': ['x', 'y', 'z']}})
+>>> df.to_orc('test.orc')
+>>> cudf.read_orc('test.orc')
+   a  b
+0  1  x
+1  2  y
+2  3  z
 
 See Also
 --------
@@ -562,6 +581,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
 index : bool, default None
     If ``True``, include the dataframe's index(es) in the file output.
     If ``False``, they will not be written to the file.
@@ -570,6 +592,12 @@ index : bool, default None
     ``RangeIndex`` will be stored as a range in the metadata so it
     doesn't require much space and is faster. Other indexes will
     be included as columns in the file output.
+
+Notes
+-----
+Timestamps in the last 999 milliseconds before the UNIX epoch are not
+representable in ORC; they are read back one second later, as with the Apache
+ORC writer (ORC-763, ORC-771).
 
 See Also
 --------
@@ -716,8 +744,9 @@ chunksize : integer, default None
 compression : {'bz2', 'gzip', 'infer', 'snappy', 'zip', 'zstd'}, default 'infer'
     For on-the-fly decompression of on-disk data. If 'infer', then use
     bz2, gzip, snappy, zip, or zstd if path_or_buf is a string ending in
-    '.bz2', '.gz', '.sz', '.zip', or '.zstd', respectively. If using 'zip', the ZIP file must contain only one data
-    file to be read in. Set to None for no decompression.
+    '.bz2', '.gz', '.sz', '.zip', or '.zst'/'.zstd', respectively. If using
+    'zip', the ZIP file must contain only one data file to be read in. Set to
+    None for no decompression.
 byte_range : list or tuple, default None
 
     .. admonition:: GPU-accelerated
@@ -745,6 +774,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 mixed_types_as_string : bool, default False
 
     .. admonition:: GPU-accelerated feature
@@ -794,8 +826,8 @@ Notes
 
 - Setting the cudf option `io.json.low_memory=True` will result in the chunked
   low memory json reader being used. This can make it easier to read large
-  json datasets on systems with limited GPU memory. See all `available options
-  <https://docs.rapids.ai/api/cudf/nightly/user_guide/api_docs/options/#api-options>`_.
+  json datasets on systems with limited GPU memory. See all :ref:`available options
+  <api.options>`.
 
 See Also
 --------
@@ -804,39 +836,35 @@ cudf.DataFrame.to_json
 Examples
 --------
 >>> import cudf
+>>> import warnings
 >>> df = cudf.DataFrame({'a': ["hello", "rapids"], 'b': ["hello", "worlds"]})
 >>> df
         a       b
 0   hello   hello
 1  rapids  worlds
->>> json_str = df.to_json(orient='records', lines=True)
+>>> with warnings.catch_warnings():
+...     warnings.simplefilter("ignore", UserWarning)
+...     json_str = df.to_json(orient='records', lines=True)
 >>> json_str
 '{"a":"hello","b":"hello"}\n{"a":"rapids","b":"worlds"}\n'
->>> cudf.read_json(json_str,  engine="cudf", lines=True)
+>>> from io import StringIO
+>>> cudf.read_json(StringIO(json_str),  engine="cudf", lines=True)
         a       b
 0   hello   hello
 1  rapids  worlds
 
 To read the strings with additional set of quotes:
 
->>> cudf.read_json(json_str,  engine="cudf", lines=True,
+>>> cudf.read_json(StringIO(json_str),  engine="cudf", lines=True,
 ...                keep_quotes=True)
           a         b
 0   "hello"   "hello"
 1  "rapids"  "worlds"
 
-Reading a JSON string containing ordered lists and name/value pairs:
-
->>> json_str = '[{"list": [0,1,2], "struct": {"k":"v1"}}, {"list": [3,4,5], "struct": {"k":"v2"}}]'
->>> cudf.read_json(json_str, engine='cudf')
-        list       struct
-0  [0, 1, 2]  {'k': 'v1'}
-1  [3, 4, 5]  {'k': 'v2'}
-
 Reading JSON Lines data containing ordered lists and name/value pairs:
 
 >>> json_str = '{"a": [{"k1": "v1"}]}\n{"a": [{"k1":"v2"}]}'
->>> cudf.read_json(json_str, engine='cudf', lines=True)
+>>> cudf.read_json(StringIO(json_str), engine='cudf', lines=True)
                 a
 0  [{'k1': 'v1'}]
 1  [{'k1': 'v2'}]
@@ -844,7 +872,7 @@ Reading JSON Lines data containing ordered lists and name/value pairs:
 Using the `dtype` argument to specify type casting:
 
 >>> json_str = '{"k1": 1, "k2":[1.5]}'
->>> cudf.read_json(json_str, engine='cudf', lines=True, dtype={'k1':float, 'k2':cudf.ListDtype(int)})
+>>> cudf.read_json(StringIO(json_str), engine='cudf', lines=True, dtype={'k1':float, 'k2':cudf.ListDtype(int)})
     k1   k2
 0  1.0  [1]
 """
@@ -894,7 +922,9 @@ double_precision : int, default 10
     The number of decimal places to use when encoding
     floating point values.
 force_ascii : bool, default True
-    Force encoded string to be ASCII.
+    Force encoded string to be ASCII. If False, non-ASCII characters
+    are written as-is instead of being escaped to ``\\uXXXX`` sequences.
+    Supported with both the ``pandas`` and ``cudf`` engines.
 date_unit : string, default 'ms' (milliseconds)
     The time unit to encode to, governs timestamp and ISO8601
     precision.  One of 's', 'ms', 'us', 'ns' for second, millisecond,
@@ -915,6 +945,17 @@ index : bool, default True
     Whether to include the index values in the JSON string. Not
     including the index (``index=False``) is only supported when
     orient is 'split' or 'table'.
+storage_options : dict, optional, default None
+    Extra options that make sense for a particular storage connection,
+    e.g. host, port, username, password, etc. For HTTP(S) URLs the key-value
+    pairs are forwarded to ``urllib.request.Request`` as header options.
+    For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
+    pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
+    ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
+    Only supported with ``engine='cudf'``.
 
 See Also
 --------
@@ -932,7 +973,7 @@ Parameters
 ----------
 path_or_buf : string, buffer or path object
     Path to the file to open, or an open `HDFStore
-    <https://pandas.pydata.org/pandas-docs/version/2.3.3/user_guide/io.html#hdf5-pytables>`_.
+    <https://pandas.pydata.org/pandas-docs/stable/user_guide/io.html#hdf5-pytables>`_.
     object.
     Supports any object implementing the ``__fspath__`` protocol.
     This includes :class:`pathlib.Path` and py._path.local.LocalPath
@@ -943,7 +984,7 @@ key : object, optional
 mode : {'r', 'r+', 'a'}, optional
     Mode to use when opening the file. Ignored if path_or_buf is a
     `Pandas HDFS
-    <https://pandas.pydata.org/pandas-docs/version/2.3.3/user_guide/io.html#hdf5-pytables>`_.
+    <https://pandas.pydata.org/pandas-docs/stable/user_guide/io.html#hdf5-pytables>`_.
     Default is 'r'.
 where : list, optional
     A list of Term (or convertible) objects.
@@ -987,7 +1028,7 @@ In order to add another DataFrame or Series to an existing HDF file
 please use append mode and a different a key.
 
 For more information see the `user guide
-<https://pandas.pydata.org/pandas-docs/version/2.3.3/user_guide/io.html#hdf5-pytables>`_.
+<https://pandas.pydata.org/pandas-docs/stable/user_guide/io.html#hdf5-pytables>`_.
 
 Parameters
 ----------
@@ -1017,7 +1058,7 @@ data_columns :  list of columns or True, optional
     List of columns to create as indexed data columns for on-disk
     queries, or True to use all columns. By default only the axes
     of the object are indexed. See `Query via Data Columns
-    <https://pandas.pydata.org/pandas-docs/version/2.3.3/user_guide/io.html#io-hdf5-query-data-columns>`_.
+    <https://pandas.pydata.org/pandas-docs/stable/user_guide/io.html#io-hdf5-query-data-columns>`_.
     Applicable only to format='table'.
 complevel : {0-9}, optional
     Specifies a compression level for data.
@@ -1064,12 +1105,19 @@ DataFrame
 Examples
 --------
 >>> import cudf
->>> df = cudf.read_feather(filename)
->>> df
-  num1                datetime text
-0  123 2018-11-13T12:00:00.000 5451
-1  456 2018-11-14T12:35:01.000 5784
-2  789 2018-11-15T18:02:59.000 6117
+>>> import warnings
+>>> df = cudf.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', 'z']})
+>>> with warnings.catch_warnings():
+...     warnings.simplefilter("ignore", UserWarning)
+...     df.to_feather('test.feather')
+>>> with warnings.catch_warnings():
+...     warnings.simplefilter("ignore", UserWarning)
+...     result = cudf.read_feather('test.feather')
+>>> result
+   a  b
+0  1  x
+1  2  y
+2  3  z
 
 See Also
 --------
@@ -1170,12 +1218,12 @@ parse_dates : list of int or names, default None
     speed, explicitly specify `dtype='date'` for the desired columns.
 dayfirst : bool, default False
     DD/MM format dates, international and European format.
-compression : {{'infer', 'gzip', 'zip', None}}, default 'infer'
+compression : {{'infer', 'gzip', 'bz2', 'zip', 'zstd', None}}, default 'infer'
     For on-the-fly decompression of on-disk data. If 'infer', then detect
-    compression from the following extensions: '.gz','.zip' (otherwise no
-    decompression). If using 'zip', the ZIP file must contain only one
-    data file to be read in, otherwise the first non-zero-sized file will
-    be used. Set to None for no decompression.
+    compression from the following extensions: '.gz', '.bz2', '.zip', '.zst'
+    (otherwise no decompression). If using 'zip', the ZIP file must contain
+    only one data file to be read in, otherwise the first non-zero-sized file
+    will be used. Set to None for no decompression.
 thousands : char, default None
     Character used as a thousands delimiter.
 decimal : char, default '.'
@@ -1195,8 +1243,6 @@ doublequote : bool, default True
 comment : char, default None
     Character used as a comments indicator. If found at the beginning of a
     line, the line will be ignored altogether.
-delim_whitespace : bool, default False
-    Determines whether to use whitespace as delimiter.
 byte_range : list or tuple, default None
     Byte range within the input file to be read. The first number is the
     offset in bytes, the second number is the range size in bytes. Set the
@@ -1210,6 +1256,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 bytes_per_thread : int, default None
     Determines the number of bytes to be allocated per thread to read the
     files in parallel. When there is a file of large size, we get slightly
@@ -1238,15 +1287,15 @@ Create a test csv file
 ...   "789,2018-11-15T18:02:59,ghi"
 ... ]
 >>> with open(filename, 'w') as fp:
-...     fp.write('\\n'.join(lines)+'\\n')
+...     _ = fp.write('\\n'.join(lines)+'\\n')
 
 Read the file with ``cudf.read_csv``
 
 >>> cudf.read_csv(filename)
-  num1                datetime text
-0  123 2018-11-13T12:00:00.000 5451
-1  456 2018-11-14T12:35:01.000 5784
-2  789 2018-11-15T18:02:59.000 6117
+   num1             datetime text
+0   123  2018-11-13T12:00:00  abc
+1   456  2018-11-14T12:35:01  def
+2   789  2018-11-15T18:02:59  ghi
 
 See Also
 --------
@@ -1293,9 +1342,13 @@ index : bool, default True
 encoding : str, default 'utf-8'
     A string representing the encoding to use in the output file
     Only 'utf-8' is currently supported
-compression : str, None
-    A string representing the compression scheme to use in the output file
-    Compression while writing csv is not supported currently
+compression : {{'zstd', None}}, default None
+    A string representing the compression scheme to use in the output file.
+    Not inferred from the file name; ``'infer'`` is not supported.
+quoting : int, optional
+    Control field quoting behavior per ``csv.QUOTE_*`` constants.
+    Use one of ``csv.QUOTE_MINIMAL`` (0) or ``csv.QUOTE_NONE`` (3).
+    Default is ``csv.QUOTE_MINIMAL``.
 lineterminator : str, optional
     The newline character or character sequence to use in the output file.
     Defaults to :data:`os.linesep`.
@@ -1308,6 +1361,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when writing the data. This argument
+    should not be used at the same time as ``storage_options``.
 
 Returns
 -------
@@ -1317,7 +1373,8 @@ None or str
 
 Notes
 -----
-- Follows the standard of Pandas csv.QUOTE_NONNUMERIC for all output.
+- Supports ``csv.QUOTE_MINIMAL`` and ``csv.QUOTE_NONE`` quoting styles,
+  consistent with pandas. Other quoting styles raise ``NotImplementedError``.
 - The default behaviour is to write all rows of the dataframe at once.
   This can lead to memory or overflow errors for large tables. If this
   happens, consider setting the ``chunksize`` argument to some
@@ -1415,6 +1472,9 @@ storage_options : dict, optional, default None
     For other URLs (e.g. starting with "s3://", and "gcs://") the key-value
     pairs are forwarded to ``fsspec.open``. Please see ``fsspec`` and
     ``urllib`` for more details.
+filesystem : fsspec.AbstractFileSystem, default None
+    Filesystem object to use when reading the data. This argument
+    should not be used at the same time as ``storage_options``.
 
 Returns
 -------
@@ -1440,11 +1500,6 @@ mode : str
     Mode in which file is opened
 iotypes : (), default (BytesIO)
     Object type to exclude from file-like check
-allow_raw_text_input : boolean, default False
-    If True, this indicates the input `path_or_data` could be a raw text
-    input and will not check for its existence in the filesystem. If False,
-    the input must be a path and an error will be raised if it does not
-    exist.
 storage_options : dict, optional
     Extra options that make sense for a particular storage connection, e.g.
     host, port, username, password, etc. For HTTP(S) URLs the key-value
@@ -1665,6 +1720,26 @@ def _is_local_filesystem(fs):
     return isinstance(fs, LocalFileSystem)
 
 
+def _validate_filesystem(filesystem, storage_options=None):
+    """Validate a user-provided ``filesystem`` object.
+
+    ``filesystem`` must be an ``fsspec.AbstractFileSystem``, and cannot be
+    combined with a non-empty ``storage_options``.
+    """
+    import fsspec
+
+    if not isinstance(filesystem, fsspec.AbstractFileSystem):
+        raise ValueError(
+            f"Expected fsspec.AbstractFileSystem. Got {filesystem}"
+        )
+
+    if storage_options:
+        raise ValueError(
+            f"Cannot specify storage_options when an explicit "
+            f"filesystem object is specified. Got: {storage_options}"
+        )
+
+
 def _select_single_source(sources: list, caller: str):
     """Select the first element from a list of sources.
     Raise an error if sources contains multiple elements
@@ -1676,22 +1751,26 @@ def _select_single_source(sources: list, caller: str):
     return sources[0]
 
 
-def is_directory(path_or_data, storage_options=None):
+def is_directory(path_or_data, storage_options=None, filesystem=None):
     """Returns True if the provided filepath is a directory"""
     path_or_data = stringify_pathlike(path_or_data)
     if isinstance(path_or_data, str):
         import fsspec
 
         path_or_data = os.path.expanduser(path_or_data)
-        try:
-            fs = fsspec.core.get_fs_token_paths(
-                path_or_data, mode="rb", storage_options=storage_options
-            )[0]
-        except ValueError as e:
-            if str(e).startswith("Protocol not known"):
-                return False
-            else:
-                raise e
+        if filesystem is not None:
+            _validate_filesystem(filesystem, storage_options)
+            fs = filesystem
+        else:
+            try:
+                fs = fsspec.core.get_fs_token_paths(
+                    path_or_data, mode="rb", storage_options=storage_options
+                )[0]
+            except ValueError as e:
+                if str(e).startswith("Protocol not known"):
+                    return False
+                else:
+                    raise e
 
         return fs.isdir(path_or_data)
 
@@ -1740,16 +1819,7 @@ def _get_filesystem_and_paths(
                 else:
                     raise e
         else:
-            if not isinstance(filesystem, fsspec.AbstractFileSystem):
-                raise ValueError(
-                    f"Expected fsspec.AbstractFileSystem. Got {filesystem}"
-                )
-
-            if storage_options:
-                raise ValueError(
-                    f"Cannot specify storage_options when an explicit "
-                    f"filesystem object is specified. Got: {storage_options}"
-                )
+            _validate_filesystem(filesystem, storage_options)
 
             fs = filesystem
             return_paths = [
@@ -1795,16 +1865,19 @@ def get_reader_filepath_or_buffer(
     *,
     mode="rb",
     fs=None,
+    filesystem=None,
     iotypes=(BytesIO,),
-    allow_raw_text_input=False,
     storage_options=None,
     bytes_per_thread=_BYTES_PER_THREAD_DEFAULT,
-    warn_on_raw_text_input=None,
     warn_meta=None,
     expand_dir_pattern=None,
     prefetch_options=None,
 ):
     """{docstring}"""
+
+    # Validate up front so file-like inputs are checked too, not just paths.
+    if filesystem is not None:
+        _validate_filesystem(filesystem, storage_options)
 
     # Convert path_or_data to a list of input data sources
     input_sources = [
@@ -1819,8 +1892,7 @@ def get_reader_filepath_or_buffer(
     filepaths_or_buffers = []
     string_paths = [isinstance(source, str) for source in input_sources]
     if any(string_paths):
-        # Sources are all strings. The strings are typically
-        # file paths, but they may also be raw text strings.
+        # Sources are all strings and should be file paths.
 
         # Don't allow a mix of source types
         if not all(string_paths):
@@ -1830,43 +1902,17 @@ def get_reader_filepath_or_buffer(
         paths = input_sources
         raw_text_input = False
         if fs is None:
-            fs, paths = _get_filesystem_and_paths(paths, storage_options)
+            fs, paths = _get_filesystem_and_paths(
+                paths, storage_options, filesystem=filesystem
+            )
 
         # Expand directories (if necessary)
         paths = _maybe_expand_directories(paths, expand_dir_pattern, fs)
 
         if _is_local_filesystem(fs):
-            # Doing this as `read_json` accepts a json string
-            # path_or_data need not be a filepath like string
-
-            # helper for checking if raw text looks like a json filename
-            compression_extensions = [
-                ".tar",
-                ".tar.gz",
-                ".tar.bz2",
-                ".tar.xz",
-                ".gz",
-                ".bz2",
-                ".zip",
-                ".xz",
-                ".zst",
-                "",
-            ]
-
             if len(paths):
                 if fs.exists(paths[0]):
                     filepaths_or_buffers = paths
-
-                # raise FileNotFound if path looks like json
-                # following pandas
-                # see
-                # https://github.com/pandas-dev/pandas/pull/46718/files#diff-472ce5fe087e67387942e1e1c409a5bc58dde9eb8a2db6877f1a45ae4974f694R724-R729
-                elif not allow_raw_text_input or paths[0].lower().endswith(
-                    tuple(f".json{c}" for c in compression_extensions)
-                ):
-                    raise FileNotFoundError(
-                        f"{input_sources} could not be resolved to any files"
-                    )
                 else:
                     raw_text_input = True
             else:
@@ -1892,23 +1938,9 @@ def get_reader_filepath_or_buffer(
             raw_text_input = True
 
         if raw_text_input:
-            # Assuming _all_ strings are raw data and not a mix of file paths too
-            filepaths_or_buffers = [
-                source.encode() for source in input_sources
-            ]
-            if warn_on_raw_text_input:
-                # Do not remove until pandas 3.0 support is added.
-                assert PANDAS_LT_300, (
-                    "Need to drop after pandas-3.0 support is added."
-                )
-                warnings.warn(
-                    f"Passing literal {warn_meta[0]} to {warn_meta[1]} is "
-                    "deprecated and will be removed in a future version. "
-                    "To read from a literal string, wrap it in a "
-                    "'StringIO' object.",
-                    FutureWarning,
-                )
-
+            raise FileNotFoundError(
+                f"{input_sources} could not be resolved to any files"
+            )
     else:
         # Sources are already buffers or file-like objects
         for source in input_sources:
@@ -1930,7 +1962,9 @@ def get_reader_filepath_or_buffer(
     return filepaths_or_buffers
 
 
-def get_writer_filepath_or_buffer(path_or_data, mode, storage_options=None):
+def get_writer_filepath_or_buffer(
+    path_or_data, mode, storage_options=None, filesystem=None
+):
     """
     Return either a filepath string to data,
     or a open file object to the output filesystem
@@ -1948,28 +1982,39 @@ def get_writer_filepath_or_buffer(path_or_data, mode, storage_options=None):
         header options. For other URLs (e.g. starting with "s3://", and
         "gcs://") the key-value pairs are forwarded to ``fsspec.open``.
         Please see ``fsspec`` and ``urllib`` for more details.
+    filesystem : fsspec.AbstractFileSystem, optional, default None
+        Filesystem object to write the data with. This argument should not
+        be used at the same time as ``storage_options``.
 
     Returns
     -------
     filepath_or_buffer : str,
         Filepath string or buffer of data
     """
+    if filesystem is not None:
+        _validate_filesystem(filesystem, storage_options)
+
     if storage_options is None:
         storage_options = {}
 
+    path_or_data = stringify_pathlike(path_or_data)
     if isinstance(path_or_data, str):
         import fsspec
 
         path_or_data = os.path.expanduser(path_or_data)
-        fs = fsspec.core.get_fs_token_paths(
-            path_or_data, mode=mode or "w", storage_options=storage_options
-        )[0]
+        if filesystem is None:
+            fs = fsspec.core.get_fs_token_paths(
+                path_or_data, mode=mode or "w", storage_options=storage_options
+            )[0]
+        else:
+            fs = filesystem
 
         if not _is_local_filesystem(fs):
-            filepath_or_buffer = fsspec.open(
-                path_or_data, mode=mode or "w", **(storage_options)
+            # Not `get_fs_token_paths`' paths: in write mode it expands
+            # them into numbered `.part` names. Strip the original instead.
+            return fsspec.core.OpenFile(
+                fs, fs._strip_protocol(path_or_data), mode=mode or "w"
             )
-            return filepath_or_buffer
 
     return path_or_data
 
@@ -2164,6 +2209,9 @@ def _ensure_filesystem(passed_filesystem, path, storage_options):
             path[0] if isinstance(path, list) else path,
             storage_options={} if storage_options is None else storage_options,
         )[0]
+    # No `storage_options` conflict check: internal callers (dask-cudf's
+    # `write_partition`) pass both. That check lives at the public boundary.
+    _validate_filesystem(passed_filesystem)
     return passed_filesystem
 
 
@@ -2222,27 +2270,6 @@ def _fsspec_data_transfer(
     )
 
     return buf.tobytes()
-
-
-def _merge_ranges(byte_ranges, max_block=256_000_000, max_gap=64_000):
-    # Simple utility to merge small/adjacent byte ranges
-    new_ranges = []
-    if not byte_ranges:
-        # Early return
-        return new_ranges
-
-    offset, size = byte_ranges[0]
-    for new_offset, new_size in byte_ranges[1:]:
-        gap = new_offset - (offset + size)
-        if gap > max_gap or (size + new_size + gap) > max_block:
-            # Gap is too large or total read is too large
-            new_ranges.append((offset, size))
-            offset = new_offset
-            size = new_size
-            continue
-        size += new_size + gap
-    new_ranges.append((offset, size))
-    return new_ranges
 
 
 def _assign_block(fs, path_or_fob, local_buffer, offset, nbytes):
@@ -2391,13 +2418,3 @@ def _prefetch_remote_buffers(
 
     else:
         return paths
-
-
-def _add_df_col_struct_names(
-    df: DataFrame, child_names_dict: Mapping[Any, Any]
-) -> None:
-    for name, child_names in child_names_dict.items():
-        col = df._data[name]
-        df._data[name] = col._with_type_metadata(
-            recursively_update_struct_names(col.dtype, child_names)
-        )

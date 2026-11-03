@@ -1,8 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import collections
-import contextlib
 import copy
 import cProfile
 import datetime
@@ -27,16 +26,11 @@ import pyarrow as pa
 import pytest
 from nbconvert.preprocessors import ExecutePreprocessor
 from numba import (
-    NumbaDeprecationWarning,
-    __version__ as numba_version,
     vectorize,
 )
-from packaging import version
-from pytz import utc
 
 from rmm import RMMError
 
-from cudf.core._compat import PANDAS_GE_210, PANDAS_GE_220, PANDAS_VERSION
 from cudf.pandas import LOADED, Profiler
 from cudf.pandas.fast_slow_proxy import (
     AttributeFallbackError,
@@ -44,6 +38,7 @@ from cudf.pandas.fast_slow_proxy import (
     NotImplementedFallbackError,
     OOMFallbackError,
     TypeFallbackError,
+    _State,
     _Unusable,
     as_proxy_object,
     is_proxy_object,
@@ -115,7 +110,7 @@ def array(series):
 
 @pytest.fixture(
     params=[
-        lambda group: group["a"].sum(),
+        lambda group: group["b"].sum(),
         lambda group: group.sum().apply(lambda val: [val]),
     ]
 )
@@ -161,6 +156,50 @@ def test_groupby(dataframe):
     gb = df.groupby("a", sort=True)
     got = gb.max()
     tm.assert_frame_equal(expected, got)
+
+
+def test_groupby_reflects_parent_frame_mutation():
+    # A groupby keyed by a string-column-derived array (df["a"].values) falls
+    # back to the slow path, so the proxy groupby is created in the "slow"
+    # state. A column added to the parent frame *after* the groupby is created
+    # must still be visible through it, matching pandas' live-reference
+    # semantics (the groupby holds a reference to the frame, not a snapshot).
+    data = {"a": ["x", "y", "x", "y"], "b": [1, 2, 3, 4]}
+
+    pdf = pd.DataFrame(data)
+    pgb = pdf.groupby(pdf["a"].values)
+    pdf["c"] = pdf["b"] * 10
+    expected = pgb["c"].sum()
+
+    df = xpd.DataFrame(data)
+    gb = df.groupby(df["a"].values)
+    df["c"] = df["b"] * 10
+    got = gb["c"].sum()
+
+    tm.assert_series_equal(expected, got)
+
+
+def test_intermediate_proxy_rederivation_refreshes_cache():
+    # When a parent proxy changes, an intermediate re-derives its wrapped object
+    # on the next conversion. The re-derivation must refresh the cache
+    # (``_fsproxy_wrapped``), not only the parent-id snapshot: otherwise the
+    # snapshot matches the live parents again while the cache still points at the
+    # stale object, so a later conversion returns stale data.
+    data = {"a": ["x", "y", "x", "y"], "b": [1, 2, 3, 4]}
+
+    df = xpd.DataFrame(data)
+    # Grouping by a string-column-derived array falls back to the slow path, so
+    # the groupby proxy is created (and stays) in the "slow" state.
+    gb = df.groupby(df["a"].values)
+    assert gb._fsproxy_state is _State.SLOW
+    df["c"] = df["b"] * 10  # mutate the parent frame after the groupby exists
+
+    # First conversion re-derives from the live parent and must see column "c".
+    assert "c" in gb._fsproxy_fast_to_slow().sum().columns
+    # The cache is now refreshed, so the parent-id snapshot matches again and a
+    # subsequent conversion returns the cached object -- which must also see "c".
+    assert "c" in gb._fsproxy_wrapped.sum().columns
+    assert "c" in gb._fsproxy_fast_to_slow().sum().columns
 
 
 def test_repr(dataframe):
@@ -305,14 +344,13 @@ def test_df_from_series(series):
     tm.assert_frame_equal(pd.DataFrame(psr), xpd.DataFrame(sr))
 
 
-@pytest.mark.filterwarnings(
-    "ignore:Setting an item of incompatible dtype is deprecated"
-)
 def test_iloc_change_type(series):
+    # In pandas 3.0+, setting an item of incompatible dtype raises TypeError.
     psr, sr = series
-    psr.iloc[0] = "a"
-    sr.iloc[0] = "a"
-    tm.assert_series_equal(psr, sr)
+    with pytest.raises(TypeError):
+        psr.iloc[0] = "a"
+    with pytest.raises(TypeError):
+        sr.iloc[0] = "a"
 
 
 def test_rename_categories():
@@ -351,7 +389,7 @@ def test_copy_deepcopy_recursion(dataframe):
     # https://nedbatchelder.com/blog/201010/surprising_getattr_recursion.html
     import copy
 
-    pdf, df = dataframe
+    _pdf, df = dataframe
     copy.copy(df)
     copy.deepcopy(df)
 
@@ -503,7 +541,7 @@ def test_groupby_grouper_fallback(dataframe, groupby_udf):
 
 
 def test_options_mode():
-    assert xpd.options.mode.copy_on_write == pd.options.mode.copy_on_write
+    assert xpd.options.mode.string_storage == pd.options.mode.string_storage
 
 
 # Codecov and Profiler interfere with each-other,
@@ -573,23 +611,21 @@ def test_array_ufunc(series):
 @pytest.mark.xfail(strict=False, reason="Fails in CI, passes locally.")
 def test_groupby_apply_func_returns_series(dataframe):
     pdf, df = dataframe
-    if PANDAS_GE_220:
-        kwargs = {"include_groups": False}
-    else:
-        kwargs = {}
-
     expect = pdf.groupby("a").apply(
-        lambda group: pd.Series({"x": 1}), **kwargs
+        lambda group: pd.Series({"x": 1}), include_groups=False
     )
-    got = df.groupby("a").apply(lambda group: xpd.Series({"x": 1}), **kwargs)
+    got = df.groupby("a").apply(
+        lambda group: xpd.Series({"x": 1}), include_groups=False
+    )
     tm.assert_equal(expect, got)
 
 
 @pytest.mark.parametrize("data", [[1, 2, 3], ["a", None, "b"]])
 def test_pyarrow_array_construction(data):
     cudf_pandas_series = xpd.Series(data)
+    pandas_series = pd.Series(data)
     actual_pa_array = pa.array(cudf_pandas_series)
-    expected_pa_array = pa.array(data)
+    expected_pa_array = pa.array(pandas_series)
     assert actual_pa_array.equals(expected_pa_array)
 
 
@@ -719,11 +755,6 @@ def test_rolling_win_type():
     tm.assert_equal(result, expected)
 
 
-@pytest.mark.xfail(
-    version.parse(numba_version) >= version.parse("0.59")
-    and PANDAS_VERSION < version.parse("2.1"),
-    reason="numba.generated_jit removed in 0.59, requires pandas >= 2.1",
-)
 def test_rolling_apply_numba_engine():
     def weighted_mean(x):
         arr = np.ones((1, x.shape[1]))
@@ -733,15 +764,9 @@ def test_rolling_apply_numba_engine():
     pdf = pd.DataFrame([[1, 2, 0.6], [2, 3, 0.4], [3, 4, 0.2], [4, 5, 0.7]])
     df = xpd.DataFrame([[1, 2, 0.6], [2, 3, 0.4], [3, 4, 0.2], [4, 5, 0.7]])
 
-    ctx = (
-        contextlib.nullcontext()
-        if PANDAS_GE_210
-        else pytest.warns(NumbaDeprecationWarning)
+    expect = pdf.rolling(2, method="table", min_periods=0).apply(
+        weighted_mean, raw=True, engine="numba"
     )
-    with ctx:
-        expect = pdf.rolling(2, method="table", min_periods=0).apply(
-            weighted_mean, raw=True, engine="numba"
-        )
     got = df.rolling(2, method="table", min_periods=0).apply(
         weighted_mean, raw=True, engine="numba"
     )
@@ -1057,6 +1082,38 @@ def test_string_array():
     tm.assert_extension_array_equal(xobj, pobj)
 
 
+def test_string_array_is_numpy_extension_subclass():
+    assert issubclass(xpd.arrays.StringArray, xpd.arrays.NumpyExtensionArray)
+
+
+@pytest.mark.parametrize(
+    "comparison_op",
+    [
+        operator.eq,
+        operator.ne,
+        operator.lt,
+        operator.le,
+        operator.gt,
+        operator.ge,
+    ],
+)
+def test_string_array_object_array_comparison(comparison_op):
+    xa = xpd.array(["a", None, "c"], dtype=object)
+    xb = xpd.array([None, None, "c"], dtype="string[python]")
+    pa_ = pd.array(["a", None, "c"], dtype=object)
+    pb_ = pd.array([None, None, "c"], dtype="string[python]")
+
+    tm.assert_extension_array_equal(
+        comparison_op(xa, xb), comparison_op(pa_, pb_)
+    )
+    tm.assert_extension_array_equal(
+        comparison_op(xb, xa), comparison_op(pb_, pa_)
+    )
+    tm.assert_extension_array_equal(
+        comparison_op(xa, xb), comparison_op(xb, xa)
+    )
+
+
 def test_subclass_series():
     class foo(pd.Series):
         def __init__(self, myinput):
@@ -1315,10 +1372,6 @@ def test_super_attribute_lookup():
     assert s.max_times_two() == 6
 
 
-@pytest.mark.xfail(
-    PANDAS_VERSION < version.parse("2.1"),
-    reason="DatetimeArray.__floordiv__ missing in pandas-2.0.0",
-)
 def test_floordiv_array_vs_df():
     xarray = xpd.Series([1, 2, 3], dtype="datetime64[ns]").array
     parray = pd.Series([1, 2, 3], dtype="datetime64[ns]").array
@@ -1472,10 +1525,10 @@ def test_holidays_within_dates(holiday, start, expected):
     # Verify that timezone info is preserved.
     assert list(
         holiday.dates(
-            utc.localize(xpd.Timestamp(start)),
-            utc.localize(xpd.Timestamp(start)),
+            xpd.Timestamp(start, tz="UTC"),
+            xpd.Timestamp(start, tz="UTC"),
         )
-    ) == [utc.localize(dt) for dt in expected]
+    ) == [dt.tz_localize("UTC") for dt in expected]
 
 
 @pytest.mark.serial
@@ -1595,10 +1648,6 @@ def test_numpy_cupy_flatiter(series):
     assert type(arr.flat._fsproxy_slow) is np.flatiter
 
 
-@pytest.mark.xfail(
-    PANDAS_VERSION < version.parse("2.1"),
-    reason="pyarrow_numpy storage type was not supported in pandas-2.0.0",
-)
 def test_arrow_string_arrays():
     cu_s = xpd.Series(["a", "b", "c"])
     pd_s = pd.Series(["a", "b", "c"])
@@ -1612,17 +1661,10 @@ def test_arrow_string_arrays():
 
     tm.assert_equal(cu_arr, pd_arr)
 
-    xpd_pa_np_storage_type = (
-        xpd.StringDtype("pyarrow_numpy")
-        if PANDAS_VERSION < version.parse("2.3.1")
-        else pd.StringDtype(storage="pyarrow", na_value=np.nan)
-    )
+    # TODO: Should this use xpd.StringDtype?
+    xpd_pa_np_storage_type = pd.StringDtype(storage="pyarrow", na_value=np.nan)
 
-    pd_pa_np_storage_type = (
-        pd.StringDtype("pyarrow_numpy")
-        if PANDAS_VERSION < version.parse("2.3.1")
-        else pd.StringDtype(storage="pyarrow", na_value=np.nan)
-    )
+    pd_pa_np_storage_type = pd.StringDtype(storage="pyarrow", na_value=np.nan)
 
     cu_arr = xpd.core.arrays.string_arrow.ArrowStringArray._from_sequence(
         cu_s, dtype=xpd_pa_np_storage_type
@@ -1766,6 +1808,9 @@ def test_numpy_ndarray_numba_ufunc(array):
 @pytest.mark.filterwarnings(
     "ignore:Grid size:numba.core.errors.NumbaPerformanceWarning"
 )
+@pytest.mark.filterwarnings(
+    "ignore:Grid size:numba.cuda.core.errors.NumbaPerformanceWarning"
+)
 def test_numpy_ndarray_numba_cuda_ufunc(array):
     arr1, arr2 = array
 
@@ -1853,16 +1898,12 @@ def test_fallback_raises_specific_error(
         "_exceptions",
         "version",
         "_print_versions",
-        "capitalize_first_letter",
         "_validators",
         "_decorators",
     ],
 )
 def test_cudf_pandas_util_version(attrs):
-    if not PANDAS_GE_220 and attrs == "capitalize_first_letter":
-        assert not hasattr(pd.util, attrs)
-    else:
-        assert hasattr(pd.util, attrs)
+    assert hasattr(pd.util, attrs)
 
 
 def test_iteration_over_dataframe_dtypes_produces_proxy_objects(dataframe):
@@ -2143,3 +2184,69 @@ def test_module_proxy_write_through_config(monkeypatch):
     cf.register_option("foo", 1)
     monkeypatch.setattr(cf, "_registered_options", {})
     cf.register_option("foo", 1)
+
+
+def test_class_monkeypatch_roundtrip_restores_real_pandas(monkeypatch):
+    # Class-level patches on proxy types are mirrored onto the real pandas
+    # type (so they stay visible to fallback code running under
+    # ``disable_module_accelerator``); undoing them must restore the real
+    # type's own attributes — including for attributes that cudf.pandas
+    # replaces on the proxy, like ``columns``/``eval``/``str``.
+    real_df = xpd.DataFrame._fsproxy_slow
+    real_series = xpd.Series._fsproxy_slow
+    orig_columns = real_df.__dict__["columns"]
+    orig_eval = real_df.__dict__["eval"]
+    orig_str = real_series.__dict__["str"]
+
+    def fake_eval(self, *args, **kwargs):
+        return "patched"
+
+    monkeypatch.setattr(xpd.DataFrame, "eval", fake_eval)
+    assert real_df.__dict__["eval"] is fake_eval
+    monkeypatch.setattr(
+        xpd.DataFrame, "columns", property(lambda self: "patched")
+    )
+    monkeypatch.setattr(xpd.Series, "str", property(lambda self: "patched"))
+    monkeypatch.undo()
+
+    assert real_df.__dict__["columns"] is orig_columns
+    assert real_df.__dict__["eval"] is orig_eval
+    assert real_series.__dict__["str"] is orig_str
+    # The real type must remain fully functional on the fallback path.
+    df = real_df({"a": [1, 2]})
+    assert list(df.columns) == ["a"]
+    assert list(df.eval("b = a + 1").columns) == ["a", "b"]
+
+
+@pytest.mark.parametrize("box", ["Series", "array"])
+@pytest.mark.parametrize("na_value", [pd.NA, np.nan], ids=["NA", "NaN"])
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+def test_numpy_random_permutation_string(storage, na_value, box):
+    # https://github.com/pandas-dev/pandas/issues/63935
+    # Under copy-on-write, ``np.asarray`` on a python-storage string
+    # Series returns a read-only view; ``Generator.permutation`` relies
+    # on ``np.may_share_memory(np.asarray(x), x)`` to decide whether to
+    # copy before shuffling in place, which requires ``_transform_arg``
+    # to preserve the identity of object-dtype ndarrays that need no
+    # transformation (otherwise this raises "ValueError: array is
+    # read-only").
+    data = ["a", "bb", "ccc"]
+    obj = getattr(xpd, box)(
+        data, dtype=xpd.StringDtype(storage=storage, na_value=na_value)
+    )
+    pandas_obj = getattr(pd, box)(
+        data, dtype=pd.StringDtype(storage=storage, na_value=na_value)
+    )
+
+    result = np.random.default_rng(seed=2).permutation(obj)
+    expected = np.random.default_rng(seed=2).permutation(pandas_obj)
+    assert isinstance(result, np.ndarray)
+    assert result.tolist() == expected.tolist()
+
+    # The original object is left untouched by the shuffle.
+    tm.assert_equal(
+        obj,
+        getattr(xpd, box)(
+            data, dtype=xpd.StringDtype(storage=storage, na_value=na_value)
+        ),
+    )

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,13 +14,16 @@
 #include <memory>
 #include <vector>
 
+/**
+ * @file
+ * @brief Packed table and column types for serialization
+ */
+
 namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup copy_split
  * @{
- * @file
- * @brief Packed table and column types for serialization
  */
 
 /**
@@ -30,6 +33,7 @@ namespace CUDF_EXPORT cudf {
  * table metadata and one on device which contains the table data.
  */
 struct packed_columns {
+  /// @brief Construct empty packed columns
   packed_columns()
     : metadata(std::make_unique<std::vector<uint8_t>>()),
       gpu_data(std::make_unique<rmm::device_buffer>())

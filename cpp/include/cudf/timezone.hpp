@@ -1,14 +1,17 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/wrappers/durations.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/std/chrono>
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -24,6 +27,33 @@ static constexpr int32_t solar_cycle_years = 400;
 static constexpr uint32_t solar_cycle_entry_count = 2 * solar_cycle_years;
 
 /**
+ * @brief Returns the time from the epoch to the start of a year.
+ *
+ * @param year Year to return the start of
+ *
+ * @return Time from the epoch to January 1st of the year, in seconds
+ */
+CUDF_HOST_DEVICE constexpr duration_s year_start_since_epoch(int32_t year)
+{
+  return cuda::std::chrono::duration_cast<duration_s>(
+    cuda::std::chrono::sys_days{cuda::std::chrono::year{year} / 1 / 1} -
+    cuda::std::chrono::sys_days{cuda::std::chrono::year{1970} / 1 / 1});
+}
+
+/**
+ * @brief Returns the length of the Gregorian calendar's solar cycle.
+ *
+ * A function rather than a variable because device code cannot use a namespace-scope `constexpr`
+ * object of a class type.
+ *
+ * @return Length of the solar cycle, in seconds
+ */
+CUDF_HOST_DEVICE constexpr duration_s solar_cycle_duration()
+{
+  return year_start_since_epoch(1970 + solar_cycle_years);
+}
+
+/**
  * @brief Creates a transition table to convert ORC timestamps to UTC.
  *
  * Uses system's TZif files. Assumes little-endian platform when parsing these files.
@@ -32,6 +62,10 @@ static constexpr uint32_t solar_cycle_entry_count = 2 * solar_cycle_years;
  * entries). This portion of the table has `solar_cycle_entry_count` elements, as it assumes two
  * transitions per year from Daylight Saving Time. If the timezone does not have DST, the table will
  * still include the future entries, which will all have the same offset.
+ *
+ * If `timezone_name` does not resolve to a TZif file in `tzif_dir`, the directory's `tzdata.zi`
+ * index file is consulted (if present) and `Link` entries are followed to a canonical zone name
+ * whose TZif file exists on disk.
  *
  * @param tzif_dir The directory where the TZif files are located
  * @param timezone_name standard timezone name (for example, "America/Los_Angeles")
@@ -43,7 +77,7 @@ static constexpr uint32_t solar_cycle_entry_count = 2 * solar_cycle_years;
 std::unique_ptr<table> make_timezone_transition_table(
   std::optional<std::string_view> tzif_dir,
   std::string_view timezone_name,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 }  // namespace CUDF_EXPORT cudf

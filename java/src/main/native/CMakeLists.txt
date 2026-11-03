@@ -1,18 +1,20 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
 
-cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 include(../../../../cmake/rapids_config.cmake)
 include(rapids-cmake)
 include(rapids-cuda)
 include(rapids-find)
 include(rapids-cpm)
-rapids_cpm_init()
+rapids_cpm_init(
+  OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../cpp/cmake/thirdparty/patches/override.json"
+)
 
 rapids_cuda_init_architectures(CUDF_JNI)
 
@@ -29,7 +31,6 @@ option(USE_NVTX "Build with NVTX support" ON)
 option(BUILD_SHARED_LIBS "Build cuDF JNI shared libraries" ON)
 option(BUILD_TESTS "Configure CMake to build tests" ON)
 option(CUDF_USE_PER_THREAD_DEFAULT_STREAM "Build with per-thread default stream" OFF)
-option(CUDA_STATIC_RUNTIME "Statically link the CUDA runtime" OFF)
 option(USE_GDS "Build with GPUDirect Storage (GDS)/cuFile support" OFF)
 option(CUDF_JNI_LIBCUDF_STATIC "Link with libcudf.a" OFF)
 option(CUDF_JNI_ENABLE_PROFILING "Build with profiling support" ON)
@@ -41,7 +42,6 @@ message(VERBOSE "CUDF_JNI: Configure CMake to build tests: ${BUILD_TESTS}")
 message(VERBOSE
         "CUDF_JNI: Build with per-thread default stream: ${CUDF_USE_PER_THREAD_DEFAULT_STREAM}"
 )
-message(VERBOSE "CUDF_JNI: Statically link the CUDA runtime: ${CUDA_STATIC_RUNTIME}")
 message(VERBOSE "CUDF_JNI: Build with GPUDirect Storage support: ${USE_GDS}")
 message(VERBOSE "CUDF_JNI: Link with libcudf statically: ${CUDF_JNI_LIBCUDF_STATIC}")
 
@@ -92,6 +92,10 @@ get_target_property(CUDF_CUDA_FLAGS cudf::cudf CUDF_CUDA_FLAGS)
 get_target_property(CUDF_CXX_DEFINITIONS cudf::cudf CUDF_CXX_DEFINITIONS)
 get_target_property(CUDF_CUDA_DEFINITIONS cudf::cudf CUDF_CUDA_DEFINITIONS)
 
+# The Java/JNI build always triggers static builds of both libcudf itself and its dependencies, and
+# therefore needs all of them to be installed to link against later.
+set(CUDF_INSTALL_LIBRARY_DEPS ON)
+
 # ##################################################################################################
 # * nvtx3 and nvcomp-------------------------------------------------------------------------------
 #   Reuse any cached package that is already available after configuring/installing libcudf. Only
@@ -105,12 +109,11 @@ endif()
 find_package(nvtx3 REQUIRED)
 
 if(NOT TARGET nvcomp
-   AND NOT TARGET nvcomp::nvcomp
+   AND NOT TARGET nvcomp::nvcomp_static
    AND NOT DEFINED ENV{CUDF_INSTALL_DIR}
 )
   include(${CUDF_SOURCE_DIR}/cmake/thirdparty/get_nvcomp.cmake)
 endif()
-find_package(nvcomp REQUIRED)
 
 # ##################################################################################################
 # * find JNI --------------------------------------------------------------------------------------
@@ -153,6 +156,7 @@ add_library(
   cudfjni
   src/Aggregation128UtilsJni.cpp
   src/AggregationJni.cpp
+  src/AstJitProgram.cpp
   src/ChunkedPackJni.cpp
   src/ChunkedReaderJni.cpp
   src/CudfJni.cpp
@@ -164,8 +168,13 @@ add_library(
   src/ContiguousTableJni.cpp
   src/DataSourceHelperJni.cpp
   src/DeletionVectorJni.cpp
+  src/DistinctHashJoinJni.cpp
+  src/FilteredJoinJni.cpp
   src/HashJoinJni.cpp
   src/HostMemoryBufferNativeUtilsJni.cpp
+  src/HybridScanReaderJni.cpp
+  src/HybridScanReaderJniInternal.cpp
+  src/HybridScanReaderJniMaterialize.cpp
   src/KeyRemappingJni.cpp
   src/HostUDFWrapperJni.cpp
   src/NvcompJni.cpp
@@ -175,6 +184,7 @@ add_library(
   src/RmmJni.cpp
   src/ScalarJni.cpp
   src/TableJni.cpp
+  src/VariantUtilsJni.cpp
   src/aggregation128_utils.cu
   src/check_nvcomp_output_sizes.cu
   src/maps_column_view.cu
@@ -240,7 +250,7 @@ target_compile_definitions(
 target_link_options(cudfjni PRIVATE "-Wl,--no-undefined")
 
 set(CUDF_ENABLE_ARROW_PARQUET ON)
-include(../../../../cpp/cmake/thirdparty/get_arrow.cmake)
+include(cmake/thirdparty/get_arrow.cmake)
 target_link_libraries(cudfjni PRIVATE ${ARROW_LIBRARIES})
 
 if(USE_GDS)
@@ -260,36 +270,19 @@ endif()
 
 # ##################################################################################################
 # * link libraries --------------------------------------------------------------------------------
-
-set(CUDF_LINK PUBLIC cudf::cudf)
 if(CUDF_JNI_LIBCUDF_STATIC)
-  # Whole-link libcudf.a into the shared library but not its dependencies
-  set(CUDF_LINK PRIVATE -Wl,--whole-archive cudf::cudf -Wl,--no-whole-archive)
-endif()
-
-# When nvcomp is installed we need to use nvcomp::nvcomp but from the cudf build directory it will
-# just be nvcomp.
-target_link_libraries(
-  cudfjni ${CUDF_LINK} PRIVATE nvtx3::nvtx3-cpp $<TARGET_NAME_IF_EXISTS:nvcomp>
-                               $<TARGET_NAME_IF_EXISTS:nvcomp::nvcomp>
-)
-
-# ##################################################################################################
-# * cudart options --------------------------------------------------------------------------------
-#   cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic
-#   linking
-
-if(CUDA_STATIC_RUNTIME)
-  # Tell CMake what CUDA language runtime to use
-  set_target_properties(cudfjni PROPERTIES CUDA_RUNTIME_LIBRARY Static)
+  target_link_libraries(cudfjni PRIVATE $<LINK_LIBRARY:WHOLE_ARCHIVE,cudf::cudf>)
 else()
-  # Tell CMake what CUDA language runtime to use
-  set_target_properties(cudfjni PROPERTIES CUDA_RUNTIME_LIBRARY Shared)
+  target_link_libraries(cudfjni PUBLIC cudf::cudf)
 endif()
 
-# ##################################################################################################
-# * install shared libraries ----------------------------------------------------------------------
-if(TARGET nvcomp::nvcomp)
+get_target_property(cudf_static_linked_projects cudf::cudf CUDF_STATIC_LINKED_PROJECTS)
+if(nvcomp IN_LIST cudf_static_linked_projects)
+  target_link_libraries(cudfjni PRIVATE $<COMPILE_ONLY:nvcomp::nvcomp_static>)
+else()
+  target_link_libraries(cudfjni PRIVATE nvcomp::nvcomp)
+
+  # * install nvcomp for tests
   add_custom_command(
     TARGET cudfjni
     PRE_LINK
@@ -298,3 +291,11 @@ if(TARGET nvcomp::nvcomp)
     COMMENT "Copying nvcomp libraries to ${PROJECT_BINARY_DIR}"
   )
 endif()
+
+target_link_libraries(cudfjni PRIVATE nvtx3::nvtx3-cpp)
+
+# ##################################################################################################
+# * cudart options --------------------------------------------------------------------------------
+#   cudart can be statically linked or dynamically linked. The python ecosystem wants dynamic
+#   linking
+set_target_properties(cudfjni PROPERTIES CUDA_RUNTIME_LIBRARY Static)

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -7,6 +7,7 @@ from libcpp.cast cimport dynamic_cast
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf.aggregation cimport (
+    Kind as kind_t,
     aggregation,
     bitwise_op,
     correlation_type,
@@ -48,7 +49,6 @@ from pylibcudf.libcudf.aggregation cimport (
     make_sum_aggregation,
     make_sum_of_squares_aggregation,
     make_tdigest_aggregation,
-    make_udf_aggregation,
     make_variance_aggregation,
     rank_method,
     rank_percentage,
@@ -77,10 +77,8 @@ from pylibcudf.libcudf.aggregation import \
     rank_method as RankMethod  # no-cython-lint
 from pylibcudf.libcudf.aggregation import \
     rank_percentage as RankPercentage  # no-cython-lint
-from pylibcudf.libcudf.aggregation import udf_type as UdfType  # no-cython-lint
 
 from .types cimport DataType
-
 
 __all__ = [
     "Aggregation",
@@ -90,7 +88,6 @@ __all__ = [
     "Kind",
     "RankMethod",
     "RankPercentage",
-    "UdfType",
     "all",
     "any",
     "argmax",
@@ -126,7 +123,6 @@ __all__ = [
     "sum",
     "sum_of_squares",
     "tdigest",
-    "udf",
     "variance",
 ]
 
@@ -154,10 +150,7 @@ cdef class Aggregation:
     def __hash__(self):
         return dereference(self.c_obj).do_hash()
 
-    # TODO: Ideally we would include the return type here, but we need to do so
-    # in a way that Sphinx understands (currently have issues due to
-    # https://github.com/cython/cython/issues/5609).
-    cpdef kind(self):
+    cpdef kind_t kind(self):
         """Get the kind of the aggregation."""
         return dereference(self.c_obj).kind
 
@@ -427,7 +420,10 @@ cpdef Aggregation median():
     return Aggregation.from_libcudf(move(make_median_aggregation[aggregation]()))
 
 
-cpdef Aggregation quantile(list quantiles, interpolation interp = interpolation.LINEAR):
+cpdef Aggregation quantile(
+    list quantiles: list[float],
+    interpolation interp = interpolation.LINEAR,
+):
     """Create a quantile aggregation.
 
     For details, see :cpp:func:`make_quantile_aggregation`.
@@ -569,35 +565,11 @@ cpdef Aggregation collect_set(
         )
     )
 
-cpdef Aggregation udf(str operation, DataType output_type):
-    """Create a udf aggregation.
 
-    For details, see :cpp:func:`make_udf_aggregation`.
-
-    Parameters
-    ----------
-    operation : str
-        The operation to perform as a string of PTX code.
-    output_type : DataType
-        The output type of the aggregation.
-
-    Returns
-    -------
-    Aggregation
-        The udf aggregation.
-    """
-    return Aggregation.from_libcudf(
-        move(
-            make_udf_aggregation[aggregation](
-                UdfType.PTX,
-                operation.encode("utf-8"),
-                output_type.c_obj,
-            )
-        )
-    )
-
-
-cpdef Aggregation correlation(correlation_type type, size_type min_periods):
+cpdef Aggregation correlation(
+    correlation_type type,
+    size_type min_periods,
+):
     """Create a correlation aggregation.
 
     For details, see :cpp:func:`make_correlation_aggregation`.
@@ -926,4 +898,3 @@ CorrelationType.__str__ = CorrelationType.__repr__
 EWMHistory.__str__ = EWMHistory.__repr__
 RankMethod.__str__ = RankMethod.__repr__
 RankPercentage.__str__ = RankPercentage.__repr__
-UdfType.__str__ = UdfType.__repr__

@@ -52,7 +52,7 @@ class _NameExtractor(ast.NodeVisitor):
 def query_parser(text):
     """The query expression parser.
 
-    See https://pandas.pydata.org/pandas-docs/version/2.3.3/generated/pandas.DataFrame.query.html
+    See https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.query.html
 
     * names with '@' prefix are global reference.
     * other names must be column names of the dataframe.

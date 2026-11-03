@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -13,12 +14,14 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 #include <nvbench/types.cuh>
 
+#include <array>
 #include <concepts>
+#include <span>
 #include <vector>
 
 namespace {
@@ -69,8 +72,8 @@ void BM_filter_min_max(nvbench::state& state)
   profile.set_null_probability(nullable ? std::optional{0.3} : std::nullopt);
 
   std::vector<std::unique_ptr<cudf::column>> filter_columns;
-  std::transform(thrust::make_counting_iterator(0),
-                 thrust::make_counting_iterator(num_filter_columns),
+  std::transform(cuda::counting_iterator<cudf::size_type>{0},
+                 cuda::counting_iterator{num_filter_columns},
                  std::back_inserter(filter_columns),
                  [&](auto) {
                    return create_random_column(
@@ -114,35 +117,47 @@ void BM_filter_min_max(nvbench::state& state)
     create_random_column(cudf::type_to_id<key_type>(), row_count{num_rows}, profile);
 
   // Use the number of bytes read from global memory
-  state.add_global_memory_reads<key_type>(static_cast<size_t>(num_rows));
+  state.add_global_memory_reads<key_type>(static_cast<std::size_t>(num_rows));
   state.add_global_memory_writes<key_type>(num_rows);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    auto stream = launch.get_stream().get_stream();
-    auto mr     = cudf::get_current_device_resource_ref();
+    auto stream       = launch.get_stream().get_stream();
+    auto mr           = cudf::get_current_device_resource_ref();
+    auto filter_table = cudf::table_view{filter_column_views};
 
     switch (engine) {
       case engine_type::AST: {
         auto predicate_table      = cudf::table_view{{predicate_column->view()}};
-        auto filter_table         = cudf::table_view{filter_column_views};
         auto const filter_boolean = cudf::compute_column(predicate_table, tree.back(), stream, mr);
         auto const result =
-          cudf::apply_boolean_mask(filter_table, filter_boolean->view(), stream, mr);
+          cudf::apply_retention_mask(filter_table, filter_boolean->view(), stream, mr);
       } break;
       case engine_type::JIT: {
-        auto result = cudf::filter(
-          {predicate_column->view(), min_scalar_column->view(), max_scalar_column->view()},
-          udf,
-          filter_column_views,
-          false,
-          std::nullopt,
-          cudf::null_aware::NO,
-          stream,
-          mr);
+        cudf::transform_input predicate_inputs[] = {
+          predicate_column->view(),
+          cudf::scalar_column_view(min_scalar_column->view()),
+          cudf::scalar_column_view(max_scalar_column->view())};
+        auto predicate =
+          cudf::transform(udf,
+                          cudf::udf_source_type::CUDA,
+                          cudf::null_aware::NO,
+                          std::nullopt,
+                          std::span{predicate_inputs},
+                          std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
+                                                            cudf::output_nullability::PRESERVE}},
+                          {},
+                          num_rows,
+                          stream,
+                          mr);
+        auto result = cudf::apply_retention_mask(
+          cudf::table_view{filter_column_views}, predicate->view().column(0), stream, mr);
       } break;
       default: CUDF_UNREACHABLE("Unrecognised engine type requested");
     }
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define FILTER_BENCHMARK_DEFINE(name, key_type)                                 \

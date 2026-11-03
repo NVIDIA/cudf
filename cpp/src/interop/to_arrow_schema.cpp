@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -81,7 +81,7 @@ int dispatch_to_arrow_type::operator()<numeric::decimal32>(column_view input,
                                                            ArrowSchema* out)
 {
   using DeviceType  = int32_t;
-  int32_t precision = metadata.precision.value_or(cudf::detail::max_precision<DeviceType>());
+  int32_t precision = metadata.precision.value_or(std::numeric_limits<DeviceType>::digits10);
   return decimals_to_arrow<DeviceType>(input, precision, out);
 }
 
@@ -90,10 +90,8 @@ int dispatch_to_arrow_type::operator()<numeric::decimal64>(column_view input,
                                                            column_metadata const& metadata,
                                                            ArrowSchema* out)
 {
-  using DeviceType = int64_t;
-  // Arrow decimal 64 maxes at precision of 18, cudf::detail::max_precision<int64_t>() produces 19.
-  // decimal32 has precision 1 - 9, decimal64 has precision 10 - 18, decimal128 is 19 - 38
-  int32_t precision = metadata.precision.value_or(cudf::detail::max_precision<DeviceType>() - 1);
+  using DeviceType  = int64_t;
+  int32_t precision = metadata.precision.value_or(std::numeric_limits<DeviceType>::digits10);
   return decimals_to_arrow<DeviceType>(input, precision, out);
 }
 
@@ -103,7 +101,7 @@ int dispatch_to_arrow_type::operator()<numeric::decimal128>(column_view input,
                                                             ArrowSchema* out)
 {
   using DeviceType  = __int128_t;
-  int32_t precision = metadata.precision.value_or(cudf::detail::max_precision<DeviceType>());
+  int32_t precision = metadata.precision.value_or(std::numeric_limits<DeviceType>::digits10);
   return decimals_to_arrow<DeviceType>(input, precision, out);
 }
 
@@ -171,9 +169,9 @@ int dispatch_to_arrow_type::operator()<cudf::list_view>(column_view input,
                       ? column_metadata{"element"}
                       : metadata.children_meta[cudf::lists_column_view::child_column_index];
 
-  out->flags = input.has_nulls() ? ARROW_FLAG_NULLABLE : 0;
+  out->flags = input.nullable() ? ARROW_FLAG_NULLABLE : 0;
   NANOARROW_RETURN_NOT_OK(ArrowSchemaSetName(out->children[0], child_meta.name.c_str()));
-  out->children[0]->flags = child.has_nulls() ? ARROW_FLAG_NULLABLE : 0;
+  out->children[0]->flags = child.nullable() ? ARROW_FLAG_NULLABLE : 0;
   if (child.type().id() == cudf::type_id::EMPTY) {
     return ArrowSchemaSetType(out->children[0], NANOARROW_TYPE_NA);
   }
@@ -187,12 +185,13 @@ int dispatch_to_arrow_type::operator()<cudf::dictionary32>(column_view input,
                                                            ArrowSchema* out)
 {
   cudf::dictionary_column_view const dview{input};
+  auto const has_children = input.num_children() == 2;
 
   NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(
-    out, dview.is_empty() ? NANOARROW_TYPE_INT32 : id_to_arrow_type(dview.indices().type().id())));
+    out, has_children ? id_to_arrow_type(dview.indices().type().id()) : NANOARROW_TYPE_INT32));
   NANOARROW_RETURN_NOT_OK(ArrowSchemaAllocateDictionary(out));
   ArrowSchemaInit(out->dictionary);
-  if (dview.is_empty()) { return ArrowSchemaSetType(out->dictionary, NANOARROW_TYPE_INT64); }
+  if (not has_children) { return ArrowSchemaSetType(out->dictionary, NANOARROW_TYPE_INT64); }
 
   auto dict_keys = dview.keys();
   return cudf::type_dispatcher(
@@ -206,7 +205,7 @@ int dispatch_to_arrow_type::operator()<cudf::dictionary32>(column_view input,
 }  // namespace detail
 
 unique_schema_t to_arrow_schema(cudf::table_view const& input,
-                                cudf::host_span<column_metadata const> metadata)
+                                std::span<column_metadata const> metadata)
 {
   CUDF_EXPECTS((metadata.size() == static_cast<std::size_t>(input.num_columns())),
                "columns' metadata should be equal to the number of columns in table");
@@ -220,7 +219,7 @@ unique_schema_t to_arrow_schema(cudf::table_view const& input,
     auto col   = input.column(i);
     ArrowSchemaInit(child);
     NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(child, metadata[i].name.c_str()));
-    child->flags = col.has_nulls() ? ARROW_FLAG_NULLABLE : 0;
+    child->flags = col.nullable() ? ARROW_FLAG_NULLABLE : 0;
 
     if (col.type().id() == cudf::type_id::EMPTY) {
       NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(child, NANOARROW_TYPE_NA));

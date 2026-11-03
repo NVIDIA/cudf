@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,10 +15,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -27,12 +27,12 @@ namespace detail {
 // Convert strings column to boolean column
 std::unique_ptr<column> to_booleans(strings_column_view const& input,
                                     string_scalar const& true_string,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   size_type strings_count = input.size();
   if (strings_count == 0) {
-    return make_numeric_column(data_type{type_id::BOOL8}, 0, mask_state::UNALLOCATED, stream);
+    return make_numeric_column(data_type{type_id::BOOL8}, 0, mask_state::UNALLOCATED, stream, mr);
   }
 
   CUDF_EXPECTS(true_string.is_valid(stream) && true_string.size() > 0,
@@ -51,9 +51,9 @@ std::unique_ptr<column> to_booleans(strings_column_view const& input,
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
 
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::make_counting_iterator<size_type>(0),
-                    thrust::make_counting_iterator<size_type>(strings_count),
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<size_type>{0},
+                    cuda::counting_iterator<size_type>{strings_count},
                     d_results,
                     [d_strings, d_true] __device__(size_type idx) {
                       bool result = false;
@@ -70,7 +70,7 @@ std::unique_ptr<column> to_booleans(strings_column_view const& input,
 // external API
 std::unique_ptr<column> to_booleans(strings_column_view const& input,
                                     string_scalar const& true_string,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -109,7 +109,7 @@ struct from_booleans_fn {
 std::unique_ptr<column> from_booleans(column_view const& booleans,
                                       string_scalar const& true_string,
                                       string_scalar const& false_string,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   size_type strings_count = booleans.size();
@@ -127,7 +127,8 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
   auto d_column = *column;
 
   // copy null mask
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(booleans, stream, mr);
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
+    cudf::detail::copy_bitmask(booleans, stream, mr);
 
   auto [offsets, chars] =
     make_strings_children(from_booleans_fn{d_column, d_true, d_false}, strings_count, stream, mr);
@@ -146,7 +147,7 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
 std::unique_ptr<column> from_booleans(column_view const& booleans,
                                       string_scalar const& true_string,
                                       string_scalar const& false_string,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

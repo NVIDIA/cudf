@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,15 +19,15 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/limits>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/iterator/counting_iterator.h>
 
 #include <algorithm>
 #include <memory>
@@ -38,7 +38,7 @@ namespace cudf {
 namespace hashing {
 namespace detail {
 
-const __constant__ uint32_t sha256_hash_constants[64] = {
+__constant__ constexpr uint32_t sha256_hash_constants[64] = {
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
   0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
@@ -49,7 +49,7 @@ const __constant__ uint32_t sha256_hash_constants[64] = {
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 };
 
-const __constant__ uint64_t sha512_hash_constants[80] = {
+__constant__ constexpr uint64_t sha512_hash_constants[80] = {
   0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc,
   0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b, 0xab1c5ed5da6d8118,
   0xd807aa98a3030242, 0x12835b0145706fbe, 0x243185be4ee4b28c, 0x550c7dc3d5ffb4e2,
@@ -193,7 +193,7 @@ struct HashBase : public crtp<Hasher> {
     }
 
     // Convert the 64-bit message length from little-endian to big-endian.
-    uint64_t const full_length_flipped = swap_endian(message_length_in_bits);
+    uint64_t const full_length_flipped = cuda::std::byteswap(message_length_in_bits);
     memcpy(state.buffer + Hasher::message_chunk_size - message_length_supported_size,
            reinterpret_cast<uint8_t const*>(&full_length_flipped),
            message_length_supported_size);
@@ -206,7 +206,7 @@ struct HashBase : public crtp<Hasher> {
       Hasher::digest_size / (2 * sizeof(typename Hasher::sha_word_type));
     for (int i = 0; i < num_words_to_copy; i++) {
       // Convert word representation from big-endian to little-endian.
-      typename Hasher::sha_word_type flipped = swap_endian(state.hash_value[i]);
+      typename Hasher::sha_word_type flipped = cuda::std::byteswap(state.hash_value[i]);
       if constexpr (std::is_same_v<typename Hasher::sha_word_type, uint32_t>) {
         uint32ToLowercaseHexString(flipped, result_location + (8 * i));
       } else if constexpr (std::is_same_v<typename Hasher::sha_word_type, uint64_t>) {
@@ -288,13 +288,13 @@ __device__ inline void sha1_hash_step(hash_state& state)
   memcpy(&words[0], state.buffer, sizeof(words[0]) * 16);
   for (int i = 0; i < 16; i++) {
     // Convert word representation from little-endian to big-endian.
-    words[i] = swap_endian(words[i]);
+    words[i] = cuda::std::byteswap(words[i]);
   }
 
   // The rest of the 80 words are generated from the first 16 words.
   for (int i = 16; i < 80; i++) {
     uint32_t const temp = words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16];
-    words[i]            = rotate_bits_left(temp, 1);
+    words[i]            = cuda::std::rotl(temp, 1);
   }
 
   uint32_t A = state.hash_value[0];
@@ -325,10 +325,10 @@ __device__ inline void sha1_hash_step(hash_state& state)
         k = 0xca62c1d6;
         break;
     }
-    temp = rotate_bits_left(A, 5) + F + E + k + words[i];
+    temp = cuda::std::rotl(A, 5) + F + E + k + words[i];
     E    = D;
     D    = C;
-    C    = rotate_bits_left(B, 30);
+    C    = cuda::std::rotl(B, 30);
     B    = A;
     A    = temp;
   }
@@ -357,15 +357,15 @@ __device__ inline void sha256_hash_step(hash_state& state)
   memcpy(&words[0], state.buffer, sizeof(words[0]) * 16);
   for (int i = 0; i < 16; i++) {
     // Convert word representation from little-endian to big-endian.
-    words[i] = swap_endian(words[i]);
+    words[i] = cuda::std::byteswap(words[i]);
   }
 
   // The rest of the 64 words are generated from the first 16 words.
   for (int i = 16; i < 64; i++) {
-    uint32_t const s0 = rotate_bits_right(words[i - 15], 7) ^ rotate_bits_right(words[i - 15], 18) ^
-                        (words[i - 15] >> 3);
-    uint32_t const s1 = rotate_bits_right(words[i - 2], 17) ^ rotate_bits_right(words[i - 2], 19) ^
-                        (words[i - 2] >> 10);
+    uint32_t const s0 =
+      cuda::std::rotr(words[i - 15], 7) ^ cuda::std::rotr(words[i - 15], 18) ^ (words[i - 15] >> 3);
+    uint32_t const s1 =
+      cuda::std::rotr(words[i - 2], 17) ^ cuda::std::rotr(words[i - 2], 19) ^ (words[i - 2] >> 10);
     words[i] = words[i - 16] + s0 + words[i - 7] + s1;
   }
 
@@ -379,12 +379,10 @@ __device__ inline void sha256_hash_step(hash_state& state)
   uint32_t H = state.hash_value[7];
 
   for (int i = 0; i < 64; i++) {
-    uint32_t const s1 =
-      rotate_bits_right(E, 6) ^ rotate_bits_right(E, 11) ^ rotate_bits_right(E, 25);
+    uint32_t const s1    = cuda::std::rotr(E, 6) ^ cuda::std::rotr(E, 11) ^ cuda::std::rotr(E, 25);
     uint32_t const ch    = (E & F) ^ ((~E) & G);
     uint32_t const temp1 = H + s1 + ch + sha256_hash_constants[i] + words[i];
-    uint32_t const s0 =
-      rotate_bits_right(A, 2) ^ rotate_bits_right(A, 13) ^ rotate_bits_right(A, 22);
+    uint32_t const s0    = cuda::std::rotr(A, 2) ^ cuda::std::rotr(A, 13) ^ cuda::std::rotr(A, 22);
     uint32_t const maj   = (A & B) ^ (A & C) ^ (B & C);
     uint32_t const temp2 = s0 + maj;
 
@@ -425,15 +423,15 @@ __device__ inline void sha512_hash_step(hash_state& state)
   memcpy(&words[0], state.buffer, sizeof(words[0]) * 16);
   for (int i = 0; i < 16; i++) {
     // Convert word representation from little-endian to big-endian.
-    words[i] = swap_endian(words[i]);
+    words[i] = cuda::std::byteswap(words[i]);
   }
 
   // The rest of the 80 words are generated from the first 16 words.
   for (int i = 16; i < 80; i++) {
-    uint64_t const s0 = rotate_bits_right(words[i - 15], 1) ^ rotate_bits_right(words[i - 15], 8) ^
-                        (words[i - 15] >> 7);
-    uint64_t const s1 = rotate_bits_right(words[i - 2], 19) ^ rotate_bits_right(words[i - 2], 61) ^
-                        (words[i - 2] >> 6);
+    uint64_t const s0 =
+      cuda::std::rotr(words[i - 15], 1) ^ cuda::std::rotr(words[i - 15], 8) ^ (words[i - 15] >> 7);
+    uint64_t const s1 =
+      cuda::std::rotr(words[i - 2], 19) ^ cuda::std::rotr(words[i - 2], 61) ^ (words[i - 2] >> 6);
     words[i] = words[i - 16] + s0 + words[i - 7] + s1;
   }
 
@@ -447,12 +445,10 @@ __device__ inline void sha512_hash_step(hash_state& state)
   uint64_t H = state.hash_value[7];
 
   for (int i = 0; i < 80; i++) {
-    uint64_t const s1 =
-      rotate_bits_right(E, 14) ^ rotate_bits_right(E, 18) ^ rotate_bits_right(E, 41);
+    uint64_t const s1    = cuda::std::rotr(E, 14) ^ cuda::std::rotr(E, 18) ^ cuda::std::rotr(E, 41);
     uint64_t const ch    = (E & F) ^ ((~E) & G);
     uint64_t const temp1 = H + s1 + ch + sha512_hash_constants[i] + words[i];
-    uint64_t const s0 =
-      rotate_bits_right(A, 28) ^ rotate_bits_right(A, 34) ^ rotate_bits_right(A, 39);
+    uint64_t const s0    = cuda::std::rotr(A, 28) ^ cuda::std::rotr(A, 34) ^ cuda::std::rotr(A, 39);
     uint64_t const maj   = (A & B) ^ (A & C) ^ (B & C);
     uint64_t const temp2 = s0 + maj;
 
@@ -496,7 +492,7 @@ bool inline sha_leaf_type_check(data_type dt)
  */
 template <typename Hasher>
 std::unique_ptr<column> sha_hash(table_view const& input,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   if (input.num_rows() == 0) { return cudf::make_empty_column(cudf::type_id::STRING); }
@@ -510,7 +506,7 @@ std::unique_ptr<column> sha_hash(table_view const& input,
     cudf::data_type_error);
 
   // Result column allocation and creation
-  auto begin = thrust::make_constant_iterator(Hasher::digest_size);
+  auto begin = cuda::make_constant_iterator(Hasher::digest_size);
   auto [offsets_column, bytes] =
     cudf::strings::detail::make_offsets_child_column(begin, begin + input.num_rows(), stream, mr);
 
@@ -521,9 +517,9 @@ std::unique_ptr<column> sha_hash(table_view const& input,
 
   // Hash each row, hashing each element sequentially left to right
   thrust::for_each(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator(input.num_rows()),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{input.num_rows()},
     [d_chars, device_input = *device_input] __device__(auto row_index) {
       Hasher hasher(d_chars + (static_cast<int64_t>(row_index) * Hasher::digest_size));
       for (auto const& col : device_input) {
@@ -535,7 +531,11 @@ std::unique_ptr<column> sha_hash(table_view const& input,
       hasher.finalize();
     });
 
-  return make_strings_column(input.num_rows(), std::move(offsets_column), chars.release(), 0, {});
+  return make_strings_column(input.num_rows(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

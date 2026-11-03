@@ -1,9 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "strings/regex/regcomp.h"
+#include "strings/regex/regcomp.hpp"
 #include "strings/regex/regex.cuh"
 
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
@@ -11,9 +11,12 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <functional>
 #include <numeric>
@@ -34,7 +37,7 @@ reprog_device::reprog_device(reprog const& prog)
 }
 
 std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_device::create(
-  reprog const& h_prog, rmm::cuda_stream_view stream)
+  reprog const& h_prog, cuda::stream_ref stream)
 {
   // compute size to hold all the member data
   auto const insts_count   = h_prog.insts_count();
@@ -51,16 +54,19 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
                           std::plus<std::size_t>{},
                           [](auto& cls) { return cls.literals.size() * sizeof(reclass_range); });
   // make sure each section is aligned for the subsequent section's data type
-  auto const memsize = cudf::util::round_up_safe(insts_size, sizeof(_startinst_ids[0])) +
-                       cudf::util::round_up_safe(startids_size, sizeof(_classes[0])) +
-                       cudf::util::round_up_safe(classes_size, sizeof(char32_t));
+  auto const memsize = cudf::detail::round_up_safe(insts_size, sizeof(_startinst_ids[0])) +
+                       cudf::detail::round_up_safe(startids_size, sizeof(_classes[0])) +
+                       cudf::detail::round_up_safe(classes_size, sizeof(char32_t));
 
   // allocate memory to store all the prog data in a flat contiguous buffer
   auto h_buffer =
     cudf::detail::make_host_vector<u_char>(memsize, stream);  // copy everything into here;
   auto h_ptr    = h_buffer.data();                            // this is our running host ptr;
-  auto d_buffer = new rmm::device_uvector<u_char>(memsize, stream);  // output device memory;
-  auto d_ptr    = d_buffer->data();                                  // running device pointer
+  auto d_buffer = new cuda::device_buffer<u_char>(stream,
+                                                  cudf::get_current_device_resource_ref(),
+                                                  memsize,
+                                                  cuda::no_init);  // output device memory;
+  auto d_ptr    = d_buffer->data();                                // running device pointer
 
   // create our device object; this is managed separately and returned to the caller
   auto* d_prog = new reprog_device(h_prog);
@@ -72,7 +78,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
   d_prog->_insts = reinterpret_cast<reinst*>(d_ptr);
 
   // point to the end for the next section
-  insts_size = cudf::util::round_up_safe(insts_size, sizeof(_startinst_ids[0]));
+  insts_size = cudf::detail::round_up_safe(insts_size, sizeof(_startinst_ids[0]));
   h_ptr += insts_size;
   d_ptr += insts_size;
   // copy the startinst_ids next
@@ -80,7 +86,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
   d_prog->_startinst_ids = reinterpret_cast<int32_t*>(d_ptr);
 
   // next section; align the size for next data type
-  startids_size = cudf::util::round_up_safe(startids_size, sizeof(_classes[0]));
+  startids_size = cudf::detail::round_up_safe(startids_size, sizeof(_classes[0]));
   h_ptr += startids_size;
   d_ptr += startids_size;
   // copy classes into flat memory: [class1,class2,...][char32 arrays]
@@ -104,6 +110,8 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
   // initialize the rest of the elements
   d_prog->_max_insts = insts_count;
   d_prog->_prog_size = memsize + sizeof(reprog_device);
+  d_prog->_empty_match_possible =
+    (h_prog.compute_match_flags() == cudf::strings::detail::match_flags::EMPTY_MATCH);
 
   // copy flat prog to device memory
   cudf::detail::cuda_memcpy_async<u_char>(*d_buffer, h_buffer, stream);
@@ -114,6 +122,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
     delete d_buffer;
   };
 
+  stream.sync();  // wait for h_buffer to finish copying
   return std::unique_ptr<reprog_device, std::function<void(reprog_device*)>>(d_prog, deleter);
 }
 
@@ -145,7 +154,7 @@ void reprog_device::set_working_memory(void* buffer, int32_t thread_count, int32
 {
   _buffer       = buffer;
   _thread_count = thread_count;
-  _max_insts    = _max_insts > 0 ? _max_insts : _insts_count;
+  _max_insts    = max_insts > 0 ? max_insts : _insts_count;
 }
 
 int32_t reprog_device::compute_shared_memory_size() const
@@ -153,7 +162,7 @@ int32_t reprog_device::compute_shared_memory_size() const
   return _prog_size < MAX_SHARED_MEM ? static_cast<int32_t>(_prog_size) : 0;
 }
 
-std::size_t compute_working_memory_size(int32_t num_threads, int32_t insts_count)
+std::size_t reprog_device::compute_working_memory_size(int32_t num_threads, int32_t insts_count)
 {
   return relist::alloc_size(insts_count, num_threads) * 2;
 }

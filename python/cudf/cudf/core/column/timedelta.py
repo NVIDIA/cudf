@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -15,13 +15,21 @@ import pylibcudf as plc
 
 import cudf
 from cudf.core._internals import binaryop
-from cudf.core.column.column import ColumnBase, as_column
-from cudf.core.column.temporal_base import TemporalBaseColumn
+from cudf.core.column.column import (
+    ColumnBase,
+    PylibcudfFunction,
+    as_column,
+    fixed_dtype_policy,
+)
+from cudf.core.column.temporal_base import (
+    TemporalBaseColumn,
+    _raise_on_invalid_ordering_scalar,
+)
 from cudf.errors import MixedTypeError
 from cudf.utils.dtypes import (
-    CUDF_STRING_DTYPE,
     cudf_dtype_from_pa_type,
     cudf_dtype_to_pa_type,
+    dtype_to_pylibcudf_type,
     find_common_type,
     get_dtype_of_same_kind,
     is_pandas_nullable_extension_dtype,
@@ -77,21 +85,6 @@ class TimeDeltaColumn(TemporalBaseColumn):
         "__rtruediv__",
         "__rfloordiv__",
     }
-    _VALID_PLC_TYPES = {
-        plc.TypeId.DURATION_SECONDS,
-        plc.TypeId.DURATION_MILLISECONDS,
-        plc.TypeId.DURATION_MICROSECONDS,
-        plc.TypeId.DURATION_NANOSECONDS,
-    }
-
-    @classmethod
-    def _validate_args(
-        cls, plc_column: plc.Column, dtype: np.dtype
-    ) -> tuple[plc.Column, np.dtype]:
-        plc_column, dtype = super()._validate_args(plc_column, dtype)
-        if dtype.kind != "m":
-            raise ValueError("dtype must be a timedelta dtype.")
-        return plc_column, dtype
 
     def _reduce(
         self,
@@ -129,6 +122,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
 
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
         reflect, op = self._check_reflected_op(op)
+        _raise_on_invalid_ordering_scalar(self.dtype, other, op)
         other = self._normalize_binop_operand(other)
         if other is NotImplemented:
             return NotImplemented
@@ -141,6 +135,11 @@ class TimeDeltaColumn(TemporalBaseColumn):
             else other.dtype
         )
         other_is_null_scalar = is_na_like(other)
+        if (
+            isinstance(self.dtype, pd.ArrowDtype)
+            or isinstance(other_cudf_dtype, pd.ArrowDtype)
+        ) and op == "__mod__":
+            raise NotImplementedError("ArrowDtype does not support modulo")
 
         if other_cudf_dtype.kind == "m":
             # TODO: pandas will allow these operators to work but return false
@@ -221,8 +220,8 @@ class TimeDeltaColumn(TemporalBaseColumn):
     def total_seconds(self) -> ColumnBase:
         conversion = unit_to_nanoseconds_conversion[self.time_unit] / 1e9
         # Typecast to decimal128 to avoid floating point precision issues
-        # https://github.com/rapidsai/cudf/issues/17664
-        return (
+        # https://github.com/NVIDIA/cudf/issues/17664
+        result = (
             (self.astype(self._UNDERLYING_DTYPE) * conversion)
             .astype(
                 cudf.Decimal128Dtype(cudf.Decimal128Dtype.MAX_PRECISION, 9)
@@ -230,35 +229,128 @@ class TimeDeltaColumn(TemporalBaseColumn):
             .round(decimals=abs(int(math.log10(conversion))))
             .astype(np.dtype(np.float64))
         )
+        if isinstance(self.dtype, pd.ArrowDtype):
+            result = result.astype(
+                get_dtype_of_same_kind(self.dtype, np.dtype(np.float64))
+            )
+        return result
 
     def as_datetime_column(self, dtype: np.dtype) -> None:  # type: ignore[override]
         raise TypeError(
             f"cannot astype a timedelta from {self.dtype} to {dtype}"
         )
 
-    def strftime(
-        self, format: str, dtype: DtypeObj = CUDF_STRING_DTYPE
-    ) -> StringColumn:
+    def strftime(self, format: str, dtype: DtypeObj) -> StringColumn:
         if len(self) == 0:
-            return super().strftime(format)
-        with self.access(mode="read", scope="internal"):
-            return cast(
-                cudf.core.column.string.StringColumn,
-                ColumnBase.create(
-                    plc.strings.convert.convert_durations.from_durations(
-                        self.plc_column, format
-                    ),
-                    dtype,
-                ),
-            )
+            return super().strftime(format, dtype)
+        return cast(
+            "cudf.core.column.string.StringColumn",
+            PylibcudfFunction(
+                plc.strings.convert.convert_durations.from_durations,
+                fixed_dtype_policy(dtype),
+            ).execute_with_args(self, format),
+        )
 
     def as_string_column(self, dtype: DtypeObj) -> StringColumn:
-        if cudf.get_option("mode.pandas_compatible"):
-            if isinstance(dtype, np.dtype) and dtype.kind == "O":
-                raise MixedTypeError(
-                    f"cannot astype a timedelta like from {self.dtype} to {dtype}"
+        if (
+            cudf.get_option("mode.pandas_compatible")
+            and isinstance(dtype, np.dtype)
+            and dtype.kind == "O"
+        ):
+            raise MixedTypeError(
+                f"cannot astype a timedelta like from {self.dtype} to {dtype}"
+            )
+        if isinstance(dtype, np.dtype) and dtype.kind == "U":
+            dtype = np.dtype("object")
+        components = self.components
+        has_hours = components["hours"].any()
+        has_minutes = components["minutes"].any()
+        has_seconds = components["seconds"].any()
+        has_millis = (
+            self.time_unit in {"ns", "us", "ms"}
+            and components["milliseconds"].any()
+        )
+        has_micros = self.time_unit in {"ns", "us"} and self.microseconds.any()
+        has_nanos = self.time_unit == "ns" and self.nanoseconds.any()
+
+        has_subday = has_hours or has_minutes or has_seconds
+        has_fraction = has_millis or has_micros or has_nanos
+        return self._as_string_pandas_compat(
+            dtype,
+            has_subday=has_subday,
+            has_fraction=has_fraction,
+            has_nanos=has_nanos,
+        )
+
+    def _as_string_pandas_compat(
+        self,
+        dtype: DtypeObj,
+        *,
+        has_subday: bool,
+        has_fraction: bool,
+        has_nanos: bool,
+    ) -> StringColumn:
+        """Convert to string using pandas-compatible formatting."""
+        if not (has_subday or has_fraction):
+            fmt = "%D days"
+        else:
+            fmt = "%D days %H:%M:%S"
+
+        with self.access(mode="read", scope="internal"):
+            # Determine which pylibcudf column to format: for ms we
+            # cast to us so %S natively outputs 6 fractional digits.
+            if has_fraction and self.time_unit == "ms":
+                cast_type = dtype_to_pylibcudf_type(
+                    np.dtype("timedelta64[us]")
                 )
-        return self.strftime("%D days %H:%M:%S", dtype=dtype)
+                plc_col = plc.unary.cast(self.plc_column, cast_type)
+            else:
+                plc_col = self.plc_column
+
+            # Convert durations to strings.
+            plc_result = plc.strings.convert.convert_durations.from_durations(
+                plc_col, fmt
+            )
+
+        if has_fraction:
+            if has_nanos:
+                # Rows that are exact microseconds: strip the
+                # trailing "000" → 6 digits.
+                plc_result = plc.strings.replace_re.replace_with_backrefs(
+                    plc_result,
+                    plc.strings.regex_program.RegexProgram.create(
+                        r"(\.\d{6})000$",
+                        plc.strings.regex_flags.RegexFlags.DEFAULT,
+                    ),
+                    r"\1",
+                )
+            elif self.time_unit == "ns":
+                # No actual nanos but stored as ns: trim 9 → 6.
+                plc_result = plc.strings.replace_re.replace_with_backrefs(
+                    plc_result,
+                    plc.strings.regex_program.RegexProgram.create(
+                        r"(\.\d{6})\d{3}$",
+                        plc.strings.regex_flags.RegexFlags.DEFAULT,
+                    ),
+                    r"\1",
+                )
+
+            # Drop fully-zero fractional seconds on rows that
+            # have no sub-second component (keeps HH:MM:SS for
+            # mixed columns).
+            plc_result = plc.strings.replace_re.replace_with_backrefs(
+                plc_result,
+                plc.strings.regex_program.RegexProgram.create(
+                    r"(\d{2}:\d{2}:\d{2})\.000000$",
+                    plc.strings.regex_flags.RegexFlags.DEFAULT,
+                ),
+                r"\1",
+            )
+
+        return cast(
+            "cudf.core.column.string.StringColumn",
+            ColumnBase.create(plc_result, dtype),
+        )
 
     def as_timedelta_column(self, dtype: np.dtype) -> TimeDeltaColumn:
         if dtype == self.dtype:

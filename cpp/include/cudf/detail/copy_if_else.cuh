@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,7 +19,6 @@
 
 namespace cudf {
 namespace detail {
-namespace {  // anonymous
 
 template <size_type block_size,
           typename T,
@@ -91,8 +90,6 @@ __launch_bounds__(block_size) CUDF_KERNEL
   }
 }
 
-}  // anonymous namespace
-
 /**
  * @brief Returns a new column, where each element is selected from either of two input ranges based
  * on a filter
@@ -130,7 +127,7 @@ __launch_bounds__(block_size) CUDF_KERNEL
  * @param rhs         Begin iterator of rhs range
  * @param filter      Function of type `FilterFn` which determines for index `i` where to get the
  *                    corresponding output value from
- * @param out_type    `cudf::data_type` of the returned column
+ * @param output_type `cudf::data_type` of the returned column
  * @param stream      CUDA stream used for device memory operations and kernel launches.
  * @param mr          Device memory resource used to allocate the returned column's device memory
  * @return            A new column that contains the values from either `lhs` or `rhs` as determined
@@ -143,14 +140,14 @@ std::unique_ptr<column> copy_if_else(bool nullable,
                                      RightIter rhs,
                                      FilterFn filter,
                                      cudf::data_type output_type,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
 {
   // This is the type of the cuda::std::optional element in the passed iterators
   using Element = typename cuda::std::iter_value_t<LeftIter>::value_type;
 
   size_type size           = std::distance(lhs_begin, lhs_end);
-  size_type num_els        = cudf::util::round_up_safe(size, cudf::detail::warp_size);
+  size_type num_els        = cudf::detail::round_up_safe(size, cudf::detail::warp_size);
   constexpr int block_size = 256;
   cudf::detail::grid_1d grid{num_els, block_size, 1};
 
@@ -161,18 +158,19 @@ std::unique_ptr<column> copy_if_else(bool nullable,
 
   // if we have validity in the output
   if (nullable) {
-    cudf::detail::device_scalar<size_type> valid_count{0, stream};
+    cudf::detail::device_scalar<size_type> valid_count{
+      0, stream, cudf::get_current_device_resource_ref()};
 
     // call the kernel
     copy_if_else_kernel<block_size, Element, LeftIter, RightIter, FilterFn, true>
-      <<<grid.num_blocks, block_size, 0, stream.value()>>>(
+      <<<grid.num_blocks, block_size, 0, stream.get()>>>(
         lhs_begin, rhs, filter, *out_v, valid_count.data());
 
     out->set_null_count(size - valid_count.value(stream));
   } else {
     // call the kernel
     copy_if_else_kernel<block_size, Element, LeftIter, RightIter, FilterFn, false>
-      <<<grid.num_blocks, block_size, 0, stream.value()>>>(lhs_begin, rhs, filter, *out_v, nullptr);
+      <<<grid.num_blocks, block_size, 0, stream.get()>>>(lhs_begin, rhs, filter, *out_v, nullptr);
   }
 
   return out;

@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
@@ -22,10 +23,12 @@ void cudftable_read_common(cudf::size_type num_rows_to_read,
   auto const data_size = static_cast<size_t>(state.get_int64("data_size"));
   auto source_info     = source_sink.make_source_info();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch&, auto& timer) {
-      try_drop_l3_cache();
+      drop_page_cache_if_enabled(source_info.filepaths());
 
       timer.start();
       auto result = cudf::io::experimental::read_cudftable(
@@ -39,6 +42,8 @@ void cudftable_read_common(cudf::size_type num_rows_to_read,
   auto const time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count(static_cast<double>(data_size) / time, "bytes_per_second");
   state.add_buffer_size(source_sink.size(), "encoded_file_size", "encoded_file_size");
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void BM_cudftable_read_data_sizes(nvbench::state& state)

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -21,15 +21,17 @@ from cudf.testing import assert_eq
 @pytest.mark.parametrize("periods", (-5, -1, 0, 1, 5))
 def test_diff_numeric_dtypes(data, periods):
     gdf = cudf.DataFrame(data)
-    pdf = gdf.to_pandas()
+    # Use arrow_type=True because that is the only case where we can guarantee that the
+    # same NaN/null representation will be used. Without it, pandas will fall back to
+    # object dtype for calling shift (called internally by diff) on boolean data.
+    pdf = gdf.to_pandas(arrow_type=True)
 
     actual = gdf.diff(periods=periods, axis=0)
     expected = pdf.diff(periods=periods, axis=0)
 
     assert_eq(
         expected,
-        actual,
-        check_dtype=False,
+        actual.to_pandas(arrow_type=True),
     )
 
 
@@ -46,7 +48,7 @@ def test_diff_decimal_dtypes(precision, scale, dtype):
         np.random.default_rng(seed=42).uniform(10.5, 75.5, (10, 6)),
         dtype=dtype(precision=precision, scale=scale),
     )
-    pdf = gdf.to_pandas()
+    pdf = gdf.to_pandas(arrow_type=True)
 
     actual = gdf.diff()
     expected = pdf.diff()
@@ -60,7 +62,9 @@ def test_diff_decimal_dtypes(precision, scale, dtype):
 
 def test_diff_invalid_axis():
     gdf = cudf.DataFrame(np.array([1.123, 2.343, 5.890, 0.0]))
-    with pytest.raises(NotImplementedError, match="Only axis=0 is supported."):
+    with pytest.raises(
+        NotImplementedError, match=r"Only axis=0 is supported."
+    ):
         gdf.diff(periods=1, axis=1)
 
 
@@ -88,10 +92,16 @@ def test_diff_many_dtypes():
     pdf = pd.DataFrame(
         {
             "dates": pd.date_range("2020-01-01", "2020-01-06", freq="D"),
-            "bools": [True, True, True, False, True, True],
-            "floats": [1.0, 2.0, 3.5, np.nan, 5.0, -1.7],
-            "ints": [1, 2, 3, 3, 4, 5],
-            "nans_nulls": [np.nan, None, None, np.nan, np.nan, None],
+            "bools": pd.array(
+                [True, True, True, False, True, True], dtype="boolean"
+            ),
+            "floats": pd.array(
+                [1.0, 2.0, 3.5, np.nan, 5.0, -1.7], dtype="Float64"
+            ),
+            "ints": pd.array([1, 2, 3, 3, 4, 5], dtype="Int64"),
+            "nans_nulls": pd.array(
+                [np.nan, None, None, np.nan, np.nan, None], dtype="Float64"
+            ),
         }
     )
     gdf = cudf.from_pandas(pdf)

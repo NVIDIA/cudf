@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,12 +10,18 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cstdint>
+
+/**
+ * @file
+ * @brief APIs for identifying and filtering strings by character type
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_types
  * @{
- * @file
  */
 
 /**
@@ -54,7 +60,7 @@ std::unique_ptr<column> all_characters_of_type(
   strings_column_view const& input,
   string_character_types types,
   string_character_types verify_types = string_character_types::ALL_TYPES,
-  rmm::cuda_stream_view stream        = cudf::get_default_stream(),
+  cuda::stream_ref stream             = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr   = cudf::get_current_device_resource_ref());
 
 /**
@@ -102,8 +108,23 @@ std::unique_ptr<column> filter_characters_of_type(
   string_character_types types_to_remove,
   string_scalar const& replacement     = string_scalar(""),
   string_character_types types_to_keep = string_character_types::ALL_TYPES,
-  rmm::cuda_stream_view stream         = cudf::get_default_stream(),
+  cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Returns a pointer to device memory holding the static character flags table.
+ *
+ * The table is a static lookup indexed by Unicode code-point (values up to 0xFFFF),
+ * where each entry is a bitmask classifying the character. The bits correspond to the
+ * values in @ref string_character_types (for example `DECIMAL`, `ALPHA`, `SPACE`).
+ *
+ * On first call the table is copied into device memory and cached; subsequent calls
+ * return the cached pointer. This call is thread-safe.
+ *
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return Device memory pointer to the character flags table
+ */
+std::uint8_t const* get_character_flags_table(cuda::stream_ref stream = cudf::get_default_stream());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

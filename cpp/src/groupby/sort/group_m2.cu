@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,19 +7,20 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/null_mask.hpp>
-#include <cudf/detail/utilities/algorithm.cuh>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/discard_iterator.h>
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -52,35 +53,38 @@ void compute_m2_fn(column_device_view const& values,
                    cudf::device_span<size_type const> group_labels,
                    ResultType const* d_means,
                    ResultType* d_result,
-                   rmm::cuda_stream_view stream)
+                   cuda::stream_ref stream)
 {
   auto m2_fn = m2_transform<ResultType, decltype(values_iter)>{
     values, values_iter, d_means, group_labels.data()};
-  auto const itr = thrust::counting_iterator<size_type>(0);
+  auto const itr = cuda::counting_iterator<size_type>{0};
   // Using a temporary buffer for intermediate transform results instead of
   // using the transform-iterator directly in reduce_by_key
   // improves compile-time significantly.
-  auto m2_vals = rmm::device_uvector<ResultType>(values.size(), stream);
-  thrust::transform(
-    rmm::exec_policy_nosync(stream), itr, itr + values.size(), m2_vals.begin(), m2_fn);
+  auto m2_vals = cuda::device_buffer<ResultType>(
+    stream, cudf::get_current_device_resource_ref(), values.size(), cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    itr,
+                    itr + values.size(),
+                    m2_vals.begin(),
+                    m2_fn);
 
   cudf::detail::reduce_by_key_async(group_labels.begin(),
                                     group_labels.end(),
                                     m2_vals.begin(),
-                                    thrust::make_discard_iterator(),
+                                    cuda::make_discard_iterator(),
                                     d_result,
                                     cuda::std::plus<ResultType>(),
                                     stream);
 }
 
 struct m2_functor {
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   std::unique_ptr<column> operator()(column_view const& values,
                                      column_view const& group_means,
                                      cudf::device_span<size_type const> group_labels,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(std::is_arithmetic_v<T>)
   {
     using result_type = cudf::detail::target_type_t<T, aggregation::Kind::M2>;
     auto result       = make_numeric_column(data_type(type_to_id<result_type>()),
@@ -108,7 +112,7 @@ struct m2_functor {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(!std::is_arithmetic_v<T>)
+    requires(not cudf::concepts::arithmetic<T>)
   {
     CUDF_FAIL("Only numeric types are supported in M2 groupby aggregation");
   }
@@ -119,7 +123,7 @@ struct m2_functor {
 std::unique_ptr<column> group_m2(column_view const& values,
                                  column_view const& group_means,
                                  cudf::device_span<size_type const> group_labels,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   auto values_type = cudf::is_dictionary(values.type())

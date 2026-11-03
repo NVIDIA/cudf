@@ -1,9 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 import pyarrow as pa
@@ -11,8 +11,8 @@ import pyarrow as pa
 from cudf.api.types import is_scalar
 from cudf.core.accessors.base_accessor import BaseAccessor
 from cudf.core.column.column import as_column
-from cudf.core.dtype.validators import is_dtype_obj_list, is_dtype_obj_numeric
-from cudf.core.dtypes import ListDtype, dtype as cudf_dtype
+from cudf.core.dtype.validators import is_dtype_obj_list
+from cudf.core.dtypes import dtype as cudf_dtype
 from cudf.utils.scalar import pa_scalar_to_plc_scalar
 
 if TYPE_CHECKING:
@@ -32,7 +32,8 @@ class ListMethods(BaseAccessor):
     def __init__(self, parent: Series | Index):
         if not is_dtype_obj_list(parent.dtype):
             raise AttributeError(
-                "Can only use .list accessor with a 'list' dtype"
+                "Can only use the '.list' accessor with 'list[pyarrow]' "
+                f"dtype, not {parent.dtype}."
             )
         super().__init__(parent=parent)
 
@@ -135,7 +136,9 @@ class ListMethods(BaseAccessor):
         --------
         >>> s = cudf.Series([[1, 2, 3], [3, 4, 5], [4, 5, 6]])
         >>> s.list.contains(4)
-        Series([False, True, True])
+        0    False
+        1     True
+        2     True
         dtype: bool
         """
         return self._return_or_inplace(
@@ -269,25 +272,8 @@ class ListMethods(BaseAccessor):
         2        []
         dtype: list
         """
-        lists_indices_col = as_column(lists_indices)
-        if not isinstance(lists_indices_col.dtype, ListDtype):
-            raise ValueError("lists_indices should be list type array.")
-        if not lists_indices_col.size == self._column.size:
-            raise ValueError(
-                "lists_indices and list column is of different size."
-            )
-        if (
-            not is_dtype_obj_numeric(
-                lists_indices_col.dtype.element_type, include_decimal=False
-            )
-            or lists_indices_col.dtype.element_type.kind not in "iu"
-        ):
-            raise TypeError(
-                "lists_indices should be column of values of index types."
-            )
-
         return self._return_or_inplace(
-            self._column.segmented_gather(lists_indices_col)
+            self._column.segmented_gather(as_column(lists_indices))
         )
 
     def unique(self) -> Series | Index:
@@ -303,23 +289,18 @@ class ListMethods(BaseAccessor):
         --------
         >>> s = cudf.Series([[1, 1, 2, None, None], None, [4, 4], []])
         >>> s
-        0    [1.0, 1.0, 2.0, nan, nan]
-        1                         None
-        2                   [4.0, 4.0]
-        3                           []
+        0    [1, 1, 2, None, None]
+        1                     None
+        2                   [4, 4]
+        3                       []
         dtype: list
         >>> s.list.unique() # Order of list element is not guaranteed
-        0              [1.0, 2.0, nan]
-        1                         None
-        2                        [4.0]
-        3                           []
+        0    [1, 2, None]
+        1            None
+        2             [4]
+        3              []
         dtype: list
         """
-        if isinstance(
-            cast("ListDtype", self._column.dtype).element_type, ListDtype
-        ):
-            raise NotImplementedError("Nested lists unique is not supported.")
-
         return self._return_or_inplace(
             self._column.distinct(nulls_equal=True, nans_all_equal=True)
         )
@@ -354,9 +335,9 @@ class ListMethods(BaseAccessor):
         --------
         >>> s = cudf.Series([[4, 2, None, 9], [8, 8, 2], [2, 1]])
         >>> s.list.sort_values(ascending=True, na_position="last")
-        0    [2.0, 4.0, 9.0, nan]
-        1         [2.0, 8.0, 8.0]
-        2              [1.0, 2.0]
+        0    [2, 4, 9, None]
+        1          [2, 8, 8]
+        2             [1, 2]
         dtype: list
 
         .. pandas-compat::
@@ -376,13 +357,6 @@ class ListMethods(BaseAccessor):
             raise NotImplementedError("`inplace` not currently implemented.")
         if kind != "quicksort":
             raise NotImplementedError("`kind` not currently implemented.")
-        if na_position not in {"first", "last"}:
-            raise ValueError(f"Unknown `na_position` value {na_position}")
-        if isinstance(
-            cast("ListDtype", self._column.dtype).element_type, ListDtype
-        ):
-            raise NotImplementedError("Nested lists sort is not supported.")
-
         return self._return_or_inplace(
             self._column.sort_lists(ascending, na_position),
             retain_index=not ignore_index,
@@ -406,6 +380,7 @@ class ListMethods(BaseAccessor):
 
         Examples
         --------
+        >>> s1 = cudf.Series([[[1.0, 2.0], [3.0, 4.0, 5.0]], [[6.0, None], [7.0], [8.0, 9.0]]])
         >>> s1
         0      [[1.0, 2.0], [3.0, 4.0, 5.0]]
         1    [[6.0, None], [7.0], [8.0, 9.0]]
@@ -417,6 +392,7 @@ class ListMethods(BaseAccessor):
 
         Null values at the top-level in each row are dropped by default:
 
+        >>> s2 = cudf.Series([[[1.0, 2.0], None, [3.0, 4.0, 5.0]], [[6.0, None], [7.0], [8.0, 9.0]]])
         >>> s2
         0    [[1.0, 2.0], None, [3.0, 4.0, 5.0]]
         1        [[6.0, None], [7.0], [8.0, 9.0]]
@@ -429,8 +405,8 @@ class ListMethods(BaseAccessor):
         Use ``dropna=False`` to produce a null instead:
 
         >>> s2.list.concat(dropna=False)
-        0                         None
-        1    [6.0, nan, 7.0, 8.0, 9.0]
+        0                          None
+        1    [6.0, None, 7.0, 8.0, 9.0]
         dtype: list
         """
         return self._return_or_inplace(

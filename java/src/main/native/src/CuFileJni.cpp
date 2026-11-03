@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "cudf_jni_apis.hpp"
@@ -66,9 +66,8 @@ class cufile_driver {
   cufile_driver()
   {
     auto const status = cuFileDriverOpen();
-    if (status.err != CU_FILE_SUCCESS) {
-      CUDF_FAIL("Failed to initialize cuFile driver: " + cuFileGetErrorString(status));
-    }
+    CUDF_EXPECTS(status.err == CU_FILE_SUCCESS,
+                 "Failed to initialize cuFile driver: " + cuFileGetErrorString(status));
   }
 
   // Disable copy (and move) semantics.
@@ -95,9 +94,8 @@ class cufile_buffer {
   {
     if (register_buffer_) {
       auto const status = cuFileBufRegister(device_pointer_, size_, 0);
-      if (status.err != CU_FILE_SUCCESS) {
-        CUDF_FAIL("Failed to register cuFile buffer: " + cuFileGetErrorString(status));
-      }
+      CUDF_EXPECTS(status.err == CU_FILE_SUCCESS,
+                   "Failed to register cuFile buffer: " + cuFileGetErrorString(status));
     }
   }
 
@@ -163,9 +161,8 @@ class cufile_file {
   static auto make_reader(char const* path)
   {
     auto const file_descriptor = open(path, O_RDONLY | O_DIRECT);
-    if (file_descriptor < 0) {
-      CUDF_FAIL("Failed to open file to read: " + cuFileGetErrorString(errno));
-    }
+    CUDF_EXPECTS(file_descriptor >= 0,
+                 "Failed to open file to read: " + cuFileGetErrorString(errno));
     return std::make_unique<cufile_file>(file_descriptor);
   }
 
@@ -178,9 +175,8 @@ class cufile_file {
   static auto make_writer(char const* path)
   {
     auto const file_descriptor = open(path, O_CREAT | O_WRONLY | O_DIRECT, S_IRUSR | S_IWUSR);
-    if (file_descriptor < 0) {
-      CUDF_FAIL("Failed to open file to write: " + cuFileGetErrorString(errno));
-    }
+    CUDF_EXPECTS(file_descriptor >= 0,
+                 "Failed to open file to write: " + cuFileGetErrorString(errno));
     return std::make_unique<cufile_file>(file_descriptor);
   }
 
@@ -206,13 +202,9 @@ class cufile_file {
     auto const status =
       cuFileRead(cufile_handle_, buffer.device_pointer(), buffer.size(), file_offset, 0);
 
-    if (status < 0) {
-      if (IS_CUFILE_ERR(status)) {
-        CUDF_FAIL("Failed to read file into buffer: " + cuFileGetErrorString(status));
-      } else {
-        CUDF_FAIL("Failed to read file into buffer: " + cuFileGetErrorString(errno));
-      }
-    }
+    CUDF_EXPECTS(status >= 0,
+                 "Failed to read file into buffer: " +
+                   cuFileGetErrorString(IS_CUFILE_ERR(status) ? status : errno));
 
     CUDF_EXPECTS(static_cast<std::size_t>(status) == buffer.size(),
                  "Size of bytes read is different from buffer size");
@@ -229,13 +221,9 @@ class cufile_file {
   {
     auto const status = cuFileWrite(cufile_handle_, buffer.device_pointer(), size, file_offset, 0);
 
-    if (status < 0) {
-      if (IS_CUFILE_ERR(status)) {
-        CUDF_FAIL("Failed to write buffer to file: " + cuFileGetErrorString(status));
-      } else {
-        CUDF_FAIL("Failed to write buffer to file: " + cuFileGetErrorString(errno));
-      }
-    }
+    CUDF_EXPECTS(status >= 0,
+                 "Failed to write buffer to file: " +
+                   cuFileGetErrorString(IS_CUFILE_ERR(status) ? status : errno));
 
     CUDF_EXPECTS(static_cast<std::size_t>(status) == size,
                  "Size of bytes written is different from the specified size");
@@ -252,9 +240,8 @@ class cufile_file {
   {
     struct stat stat_buffer;
     auto const status = fstat(file_descriptor_, &stat_buffer);
-    if (status < 0) {
-      CUDF_FAIL("Failed to get file status for appending: " + cuFileGetErrorString(errno));
-    }
+    CUDF_EXPECTS(status >= 0,
+                 "Failed to get file status for appending: " + cuFileGetErrorString(errno));
 
     auto const file_offset = static_cast<std::size_t>(stat_buffer.st_size);
     write(buffer, size, file_offset);
@@ -299,7 +286,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_CuFileDriver_destroy(JNIEnv* env, jcl
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cufile_driver*>(pointer);
+    cudf::jni::safe_delete<cufile_driver>(pointer);
   }
   JNI_CATCH(env, );
 }
@@ -337,7 +324,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_CuFileBuffer_destroy(JNIEnv* env, jcl
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cufile_buffer*>(pointer);
+    cudf::jni::safe_delete<cufile_buffer>(pointer);
   }
   JNI_CATCH(env, );
 }
@@ -458,7 +445,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_CuFileHandle_destroy(JNIEnv* env, jcl
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cufile_file*>(pointer);
+    cudf::jni::safe_delete<cufile_file>(pointer);
   }
   JNI_CATCH(env, );
 }

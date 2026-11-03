@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
@@ -26,13 +26,12 @@ from pylibcudf.libcudf.types import order as Order  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import sorted as Sorted  # no-cython-lint, isort:skip
 
 from functools import cache
+from typing import Any, TYPE_CHECKING, TypeAlias
 
-try:
+if TYPE_CHECKING:
     import pyarrow as pa
-    pa_err = None
-except ImportError as e:
-    pa = None
-    pa_err = e
+
+PyarrowDataType: TypeAlias = Any
 
 try:
     import pyarrow as pa
@@ -53,6 +52,7 @@ try:
         pa.bool_(): type_id.BOOL8,
         pa.string(): type_id.STRING,
         pa.large_string(): type_id.STRING,
+        pa.string_view(): type_id.STRING,
         pa.duration('s'): type_id.DURATION_SECONDS,
         pa.duration('ms'): type_id.DURATION_MILLISECONDS,
         pa.duration('us'): type_id.DURATION_MICROSECONDS,
@@ -65,14 +65,10 @@ try:
         pa.null(): type_id.EMPTY,
     }
 
-    # New in pyarrow 18.0.0
-    if (string_view := getattr(pa, "string_view", None)) is not None:
-        ARROW_TO_PYLIBCUDF_TYPES[string_view()] = type_id.STRING
-
     LIBCUDF_TO_ARROW_TYPES = {
         v: k for k, v in ARROW_TO_PYLIBCUDF_TYPES.items()
     }
-    # Because we map 2-3 pyarrow string types to type_id.STRING,
+    # Because we map 3 pyarrow string types to type_id.STRING,
     # just map type_id.STRING to pa.string
     LIBCUDF_TO_ARROW_TYPES[type_id.STRING] = pa.string()
 except ImportError as e:
@@ -200,7 +196,7 @@ cdef class DataType:
         ret.c_obj = dt
         return ret
 
-    def to_arrow(self, **kwargs):
+    def to_arrow(self, **kwargs) -> PyarrowDataType:
         """
         Convert a datatype to arrow.
 
@@ -255,7 +251,7 @@ cdef class DataType:
                 )
 
     @staticmethod
-    def from_arrow(pa_typ) -> DataType:
+    def from_arrow(pa_typ: PyarrowDataType) -> DataType:
         """
         Construct a DataType from a Python type.
 
@@ -335,7 +331,7 @@ cpdef size_t size_of(DataType t):
 
 
 @cache
-def _from_arrow(obj: pa.DataType) -> DataType:
+def _from_arrow(obj: PyarrowDataType) -> DataType:
     if pa_err is not None:
         raise RuntimeError(
             "pyarrow was not found on your system. Please "

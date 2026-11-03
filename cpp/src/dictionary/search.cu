@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,19 +7,17 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/search.hpp>
+#include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/exec_policy.hpp>
-
-#include <cuda/std/iterator>
-#include <thrust/binary_search.h>
-#include <thrust/execution_policy.h>
+#include <cub/device/device_find.cuh>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 namespace cudf {
 namespace dictionary {
@@ -27,116 +25,58 @@ namespace detail {
 
 namespace {
 
-struct dispatch_scalar_index {
-  template <typename IndexType>
-  std::unique_ptr<scalar> operator()(size_type index,
-                                     bool is_valid,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(is_index_type<IndexType>())
-  {
-    return std::make_unique<numeric_scalar<IndexType>>(index, is_valid, stream, mr);
-  }
-  template <typename IndexType, typename... Args>
-  std::unique_ptr<scalar> operator()(Args&&...)
-    requires(not is_index_type<IndexType>())
-  {
-    CUDF_FAIL("indices must be an integral type");
-  }
-};
-
 /**
- * @brief Find index of a given key within a dictionary's keys column.
+ * @brief Find index of a given key within a dictionary's keys column
  *
  * The index is the position within the keys column where the given key (scalar) is found.
- * The keys column is sorted and unique so only one value is expected.
  * The result is an integer scalar identifying the index value.
- * If the key is not found, the resulting scalar has `is_valid()=false`.
+ * If the key is not found, the resulting scalar is set `is_valid()=false`.
  */
 struct find_index_fn {
   template <typename Element>
   std::unique_ptr<scalar> operator()(dictionary_column_view const& input,
                                      scalar const& key,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(not std::is_same_v<Element, dictionary32> and
-             not std::is_same_v<Element, list_view> and not std::is_same_v<Element, struct_view>)
+    requires(not cudf::concepts::dictionary<Element> and not cudf::concepts::nested<Element>)
   {
-    if (!key.is_valid(stream)) {
-      return type_dispatcher(input.indices().type(), dispatch_scalar_index{}, 0, false, stream, mr);
+    auto const num_keys = input.keys_size();
+    if (!key.is_valid(stream) || num_keys == 0) {
+      return std::make_unique<numeric_scalar<size_type>>(0, false, stream, mr);
     }
+
     CUDF_EXPECTS(cudf::have_same_types(input.parent(), key),
                  "search key type must match dictionary keys type",
-                 cudf::data_type_error);
+                 std::invalid_argument);
 
     using ScalarType = cudf::scalar_type_t<Element>;
-    auto find_key    = static_cast<ScalarType const&>(key).value(stream);
-    auto keys_view   = column_device_view::create(input.keys(), stream);
-    auto iter        = thrust::equal_range(rmm::exec_policy_nosync(stream),
-                                    keys_view->begin<Element>(),
-                                    keys_view->end<Element>(),
-                                    find_key);
-    return type_dispatcher(input.indices().type(),
-                           dispatch_scalar_index{},
-                           cuda::std::distance(keys_view->begin<Element>(), iter.first),
-                           (cuda::std::distance(iter.first, iter.second) > 0),
-                           stream,
-                           mr);
+    auto const find_key =
+      get_scalar_device_view(static_cast<ScalarType&>(const_cast<scalar&>(key)));
+    auto keys_view  = column_device_view::create(input.keys(), stream);
+    auto const keys = keys_view->begin<Element>();
+
+    auto result   = std::make_unique<numeric_scalar<size_type>>(-1, true, stream, mr);
+    auto find_fn  = [find_key] __device__(auto const& k) { return k == find_key.value(); };
+    auto tmp_size = std::size_t{0};
+    CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
+      nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
+    auto tmp = cuda::device_buffer<std::byte>(
+      stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
+    CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
+      tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
+    if (result->value(stream) == num_keys) { result->set_valid_async(false, stream); }
+    return result;
   }
 
   template <typename Element>
   std::unique_ptr<scalar> operator()(dictionary_column_view const&,
                                      scalar const&,
-                                     rmm::cuda_stream_view,
+                                     cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-    requires(std::is_same_v<Element, dictionary32> or std::is_same_v<Element, list_view> or
-             std::is_same_v<Element, struct_view>)
+    requires(cudf::concepts::dictionary<Element> or cudf::concepts::nested<Element>)
   {
     CUDF_FAIL(
       "dictionary, list_view, and struct_view columns cannot be the keys column of a dictionary");
-  }
-};
-
-struct find_insert_index_fn {
-  template <typename Element>
-  std::unique_ptr<scalar> operator()(dictionary_column_view const& input,
-                                     scalar const& key,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(not std::is_same_v<Element, dictionary32> and
-             not std::is_same_v<Element, list_view> and not std::is_same_v<Element, struct_view>)
-  {
-    if (!key.is_valid(stream)) {
-      return type_dispatcher(input.indices().type(), dispatch_scalar_index{}, 0, false, stream, mr);
-    }
-    CUDF_EXPECTS(cudf::have_same_types(input.parent(), key),
-                 "search key type must match dictionary keys type",
-                 cudf::data_type_error);
-
-    using ScalarType = cudf::scalar_type_t<Element>;
-    auto find_key    = static_cast<ScalarType const&>(key).value(stream);
-    auto keys_view   = column_device_view::create(input.keys(), stream);
-    auto iter        = thrust::lower_bound(rmm::exec_policy_nosync(stream),
-                                    keys_view->begin<Element>(),
-                                    keys_view->end<Element>(),
-                                    find_key);
-    return type_dispatcher(input.indices().type(),
-                           dispatch_scalar_index{},
-                           cuda::std::distance(keys_view->begin<Element>(), iter),
-                           true,
-                           stream,
-                           mr);
-  }
-
-  template <typename Element>
-  std::unique_ptr<scalar> operator()(dictionary_column_view const&,
-                                     scalar const&,
-                                     rmm::cuda_stream_view,
-                                     rmm::device_async_resource_ref) const
-    requires(std::is_same_v<Element, dictionary32> or std::is_same_v<Element, list_view> or
-             std::is_same_v<Element, struct_view>)
-  {
-    CUDF_FAIL("dictionary, list_view, and struct_view columns cannot be the keys for a dictionary");
   }
 };
 
@@ -144,7 +84,7 @@ struct find_insert_index_fn {
 
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   if (dictionary.is_empty()) {
@@ -154,25 +94,13 @@ std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
     dictionary.keys().type(), find_index_fn(), dictionary, key, stream, mr);
 }
 
-std::unique_ptr<scalar> get_insert_index(dictionary_column_view const& dictionary,
-                                         scalar const& key,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
-{
-  if (dictionary.is_empty()) {
-    return std::make_unique<numeric_scalar<int32_t>>(0, false, stream, mr);
-  }
-  return type_dispatcher<dispatch_storage_type>(
-    dictionary.keys().type(), find_insert_index_fn(), dictionary, key, stream, mr);
-}
-
 }  // namespace detail
 
 // external API
 
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

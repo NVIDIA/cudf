@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,23 +9,23 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
+#include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/device_memory_resource.hpp>
-#include <rmm/mr/owning_wrapper.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/iterator>
+#include <cuda/stream>
 
 #include <filesystem>
 #include <fstream>
-#include <memory>
 #include <numeric>
 
 /**
@@ -40,9 +40,7 @@ namespace {
  * given column index
  */
 [[nodiscard]] auto compute_page_row_counts_and_offsets(
-  cudf::io::parquet::FileMetaData const& metadata,
-  cudf::size_type col_idx,
-  rmm::cuda_stream_view stream)
+  cudf::io::parquet::FileMetaData const& metadata, cudf::size_type col_idx, cuda::stream_ref stream)
 {
   auto const num_colchunks = metadata.row_groups.front().columns.size();
 
@@ -84,8 +82,8 @@ namespace {
 
         // For all pages in this column chunk, update page row counts and offsets.
         std::for_each(
-          thrust::counting_iterator<size_t>(0),
-          thrust::counting_iterator(row_group_num_pages),
+          cuda::counting_iterator<std::size_t>{0},
+          cuda::counting_iterator{row_group_num_pages},
           [&](auto const page_idx) {
             int64_t const first_row_idx = offset_index.page_locations[page_idx].first_row_index;
             // For the last page, this is simply the total number of rows in the
@@ -116,15 +114,16 @@ namespace {
  *
  * @return A unique pointer to a column
  */
-auto make_index_column(cudf::size_type num_rows, rmm::cuda_stream_view stream)
+auto make_index_column(cudf::size_type num_rows, cuda::stream_ref stream)
 {
   std::vector<cudf::size_type> data(num_rows);
   std::iota(data.begin(), data.end(), 0);
   auto buffer = rmm::device_buffer(data.data(), num_rows * sizeof(int64_t), stream);
+  stream.sync();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                         num_rows,
                                         std::move(buffer),
-                                        rmm::device_buffer{},
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                         0);
 }
 
@@ -138,13 +137,14 @@ auto make_index_column(cudf::size_type num_rows, rmm::cuda_stream_view stream)
  * @return A unique pointer to a column
  */
 template <typename T>
-auto make_column(cudf::host_span<T const> host_data, rmm::cuda_stream_view stream)
+auto make_column(cudf::host_span<T const> host_data, cuda::stream_ref stream)
 {
   auto device_buffer = rmm::device_buffer(host_data.data(), host_data.size() * sizeof(T), stream);
+  stream.sync();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<T>()},
                                         host_data.size(),
                                         std::move(device_buffer),
-                                        rmm::device_buffer{},
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                         0);
 }
 
@@ -165,7 +165,7 @@ auto make_page_data_list_column(cudf::host_span<T const> data,
                                 cudf::host_span<cudf::size_type const> col_page_offsets,
                                 cudf::size_type num_row_groups,
                                 cudf::size_type num_pages_this_column,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   CUDF_EXPECTS(col_page_offsets.size() == num_row_groups + 1,
                "Mismatch between offsets and number of row groups");
@@ -174,65 +174,31 @@ auto make_page_data_list_column(cudf::host_span<T const> data,
 
   auto page_data_buffer =
     rmm::device_buffer(data.data(), num_pages_this_column * sizeof(int64_t), stream);
+  stream.sync();
 
   auto page_data_column =
     std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
                                    num_pages_this_column,
                                    std::move(page_data_buffer),
-                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                    0);
 
   return cudf::make_lists_column(num_row_groups,
                                  std::move(offsets_column),
                                  std::move(page_data_column),
                                  0,
-                                 rmm::device_buffer{},
-                                 stream);
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace
 
-std::shared_ptr<rmm::mr::device_memory_resource> create_memory_resource(bool is_pool_used)
+cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used)
 {
   if (is_pool_used) {
-    return rmm::mr::make_owning_wrapper<rmm::mr::pool_memory_resource>(
-      std::make_shared<rmm::mr::cuda_memory_resource>(), rmm::percent_of_free_device_memory(50));
+    return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
+                                         rmm::percent_of_free_device_memory(50)};
   }
-  return std::make_shared<rmm::mr::cuda_async_memory_resource>();
-}
-
-cudf::host_span<uint8_t const> fetch_footer_bytes(cudf::host_span<uint8_t const> buffer)
-{
-  CUDF_FUNC_RANGE();
-
-  using namespace cudf::io::parquet;
-
-  constexpr auto header_len = sizeof(file_header_s);
-  constexpr auto ender_len  = sizeof(file_ender_s);
-  size_t const len          = buffer.size();
-
-  auto const header_buffer = cudf::host_span<uint8_t const>(buffer.data(), header_len);
-  auto const header        = reinterpret_cast<file_header_s const*>(header_buffer.data());
-  auto const ender_buffer =
-    cudf::host_span<uint8_t const>(buffer.data() + len - ender_len, ender_len);
-  auto const ender = reinterpret_cast<file_ender_s const*>(ender_buffer.data());
-  CUDF_EXPECTS(len > header_len + ender_len, "Incorrect data source");
-  constexpr uint32_t parquet_magic = (('P' << 0) | ('A' << 8) | ('R' << 16) | ('1' << 24));
-  CUDF_EXPECTS(header->magic == parquet_magic && ender->magic == parquet_magic,
-               "Corrupted header or footer");
-  CUDF_EXPECTS(ender->footer_len != 0 && ender->footer_len <= (len - header_len - ender_len),
-               "Incorrect footer length");
-
-  return cudf::host_span<uint8_t const>(buffer.data() + len - ender->footer_len - ender_len,
-                                        ender->footer_len);
-}
-
-cudf::host_span<uint8_t const> fetch_page_index_bytes(
-  cudf::host_span<uint8_t const> buffer, cudf::io::text::byte_range_info const page_index_bytes)
-{
-  return cudf::host_span<uint8_t const>(
-    reinterpret_cast<uint8_t const*>(buffer.data()) + page_index_bytes.offset(),
-    page_index_bytes.size());
+  return rmm::mr::cuda_async_memory_resource{};
 }
 
 std::tuple<cudf::io::parquet::FileMetaData, bool> read_parquet_file_metadata(
@@ -247,10 +213,12 @@ std::tuple<cudf::io::parquet::FileMetaData, bool> read_parquet_file_metadata(
 
   auto options = cudf::io::parquet_reader_options::builder().build();
 
-  // Fetch footer bytes and setup reader
-  auto const footer_buffer = fetch_footer_bytes(file_buffer);
+  auto datasource     = cudf::io::datasource::create(std::string(input_filepath));
+  auto datasource_ref = std::ref(*datasource);
+
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(datasource_ref);
   auto const reader =
-    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(footer_buffer, options);
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
 
   // Get page index byte range from the reader
   auto const page_index_byte_range = reader->page_index_byte_range();
@@ -258,8 +226,9 @@ std::tuple<cudf::io::parquet::FileMetaData, bool> read_parquet_file_metadata(
   // Check and setup page index if the file contains one
   auto const has_page_index = not page_index_byte_range.is_empty();
   if (has_page_index) {
-    auto const page_index_buffer = fetch_page_index_bytes(file_buffer, page_index_byte_range);
-    reader->setup_page_index(page_index_buffer);
+    auto const page_index_buffer =
+      cudf::io::parquet::fetch_page_index_to_host(datasource_ref, page_index_byte_range);
+    reader->setup_page_index(*page_index_buffer);
   } else {
     std::cout << "The input parquet file does not contain a page index\n";
   }
@@ -269,7 +238,7 @@ std::tuple<cudf::io::parquet::FileMetaData, bool> read_parquet_file_metadata(
 
 void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
                              std::string const& output_filepath,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -317,21 +286,25 @@ void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
   auto byte_offsets_buffer =
     rmm::device_buffer(row_group_byte_offsets.data(), num_row_groups * sizeof(int64_t), stream);
 
-  columns.emplace_back(std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
-                                                      num_row_groups,
-                                                      std::move(row_offsets_buffer),
-                                                      rmm::device_buffer{},
-                                                      0));
-  columns.emplace_back(std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
-                                                      num_row_groups,
-                                                      std::move(row_counts_buffer),
-                                                      rmm::device_buffer{},
-                                                      0));
-  columns.emplace_back(std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
-                                                      num_row_groups,
-                                                      std::move(byte_offsets_buffer),
-                                                      rmm::device_buffer{},
-                                                      0));
+  stream.sync();
+  columns.emplace_back(
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
+                                   num_row_groups,
+                                   std::move(row_offsets_buffer),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0));
+  columns.emplace_back(
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
+                                   num_row_groups,
+                                   std::move(row_counts_buffer),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0));
+  columns.emplace_back(
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
+                                   num_row_groups,
+                                   std::move(byte_offsets_buffer),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0));
 
   auto table = std::make_unique<cudf::table>(std::move(columns));
 
@@ -350,7 +323,7 @@ void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
 
 void write_page_metadata(cudf::io::parquet::FileMetaData const& metadata,
                          std::string const& output_filepath,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
 
@@ -363,8 +336,8 @@ void write_page_metadata(cudf::io::parquet::FileMetaData const& metadata,
   columns.emplace_back(make_index_column(num_row_groups, stream));
 
   std::for_each(
-    thrust::counting_iterator<size_t>(0),
-    thrust::counting_iterator(num_columns),
+    cuda::counting_iterator<std::size_t>{0},
+    cuda::counting_iterator{num_columns},
     [&](auto const col_idx) {
       auto const [page_row_counts, page_row_offsets, page_byte_offsets, col_page_offsets] =
         compute_page_row_counts_and_offsets(metadata, col_idx, stream);
@@ -381,7 +354,7 @@ void write_page_metadata(cudf::io::parquet::FileMetaData const& metadata,
       columns.emplace_back(make_page_data_list_column<int64_t>(
         page_byte_offsets, col_page_offsets, num_row_groups, num_pages_this_column, stream));
 
-      stream.synchronize();
+      stream.sync();
     });
 
   CUDF_EXPECTS(columns.size() == (num_columns * output_cols_per_column) + 1,
@@ -391,8 +364,8 @@ void write_page_metadata(cudf::io::parquet::FileMetaData const& metadata,
   cudf::io::table_input_metadata out_metadata(table->view());
   out_metadata.column_metadata[0].set_name("row group index");
 
-  std::for_each(thrust::counting_iterator<size_t>(0),
-                thrust::counting_iterator(num_columns),
+  std::for_each(cuda::counting_iterator<std::size_t>{0},
+                cuda::counting_iterator{num_columns},
                 [&](auto const col_idx) {
                   std::string const col_name = "col" + std::to_string(col_idx);
                   out_metadata.column_metadata[1 + col_idx * output_cols_per_column].set_name(

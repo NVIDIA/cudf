@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <memory>
 #include <type_traits>
@@ -22,8 +23,8 @@ template <typename T>
 std::unique_ptr<cudf::column> example_column()
   requires(cudf::is_fixed_width<T>())
 {
-  auto begin = thrust::make_counting_iterator(1);
-  auto end   = thrust::make_counting_iterator(16);
+  auto begin = cuda::counting_iterator<int32_t>{1};
+  auto end   = cuda::counting_iterator<int32_t>{16};
   return cudf::test::fixed_width_column_wrapper<T>(begin, end).release();
 }
 
@@ -58,8 +59,8 @@ template <typename T>
 std::unique_ptr<cudf::column> example_column()
   requires(std::is_same_v<T, cudf::struct_view>)
 {
-  auto begin    = thrust::make_counting_iterator(1);
-  auto end      = thrust::make_counting_iterator(16);
+  auto begin    = cuda::counting_iterator<int32_t>{1};
+  auto end      = cuda::counting_iterator<int32_t>{16};
   auto member_0 = cudf::test::fixed_width_column_wrapper<int32_t>(begin, end);
   auto member_1 = cudf::test::fixed_width_column_wrapper<int32_t>(begin + 10, end + 10);
   return cudf::test::structs_column_wrapper({member_0, member_1}).release();
@@ -138,11 +139,11 @@ TYPED_TEST(ColumnViewShallowTests, shallow_hash_update_data)
     // update data by modifying some bits: fixed_width, string, dict, list, struct
     if constexpr (cudf::is_fixed_width<TypeParam>()) {
       // Update data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->mutable_view().head());
+      auto data = col->mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 2, 64, true);
     } else {
       // Update child(0).data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->child(0).mutable_view().head());
+      auto data = col->child(0).mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 2, 64, true);
     }
     auto col_view_new = cudf::column_view{*col};
@@ -210,10 +211,10 @@ TYPED_TEST(ColumnViewShallowTests, shallow_hash_slice)
 
   // column_view, bit_cast         = diff hash
   {
-    if constexpr (std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
-      using newType    = std::conditional_t<std::is_signed_v<TypeParam>,
-                                            std::make_unsigned_t<TypeParam>,
-                                            std::make_signed_t<TypeParam>>;
+    if constexpr (cuda::std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
+      using newType    = std::conditional_t<cuda::std::is_signed_v<TypeParam>,
+                                            cuda::std::make_unsigned_t<TypeParam>,
+                                            cuda::std::make_signed_t<TypeParam>>;
       auto new_type    = cudf::data_type(cudf::type_to_id<newType>());
       auto col_bitcast = cudf::bit_cast(col_view, new_type);
       EXPECT_NE(shallow_hash(col_view), shallow_hash(col_bitcast));
@@ -237,11 +238,11 @@ TYPED_TEST(ColumnViewShallowTests, shallow_hash_mutable)
     auto col_mutable = cudf::mutable_column_view{*col};
     if constexpr (cudf::is_fixed_width<TypeParam>()) {
       // Update data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->mutable_view().head());
+      auto data = col->mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 1, 32, false);
     } else {
       // Update child(0).data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->child(0).mutable_view().head());
+      auto data = col->child(0).mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 1, 32, false);
     }
     EXPECT_EQ(shallow_hash(col_view), shallow_hash(col_mutable));
@@ -305,11 +306,11 @@ TYPED_TEST(ColumnViewShallowTests, is_shallow_equivalent_update_data)
     // update data by modifying some bits: fixed_width, string, dict, list, struct
     if constexpr (cudf::is_fixed_width<TypeParam>()) {
       // Update data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->mutable_view().head());
+      auto data = col->mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 2, 64, true);
     } else {
       // Update child(0).data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->child(0).mutable_view().head());
+      auto data = col->child(0).mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 2, 64, true);
     }
     auto col_view_new = cudf::column_view{*col};
@@ -377,10 +378,10 @@ TYPED_TEST(ColumnViewShallowTests, is_shallow_equivalent_slice)
 
   // column_view, bit_cast         = diff hash
   {
-    if constexpr (std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
-      using newType    = std::conditional_t<std::is_signed_v<TypeParam>,
-                                            std::make_unsigned_t<TypeParam>,
-                                            std::make_signed_t<TypeParam>>;
+    if constexpr (cuda::std::is_integral_v<TypeParam> and not std::is_same_v<TypeParam, bool>) {
+      using newType    = std::conditional_t<cuda::std::is_signed_v<TypeParam>,
+                                            cuda::std::make_unsigned_t<TypeParam>,
+                                            cuda::std::make_signed_t<TypeParam>>;
       auto new_type    = cudf::data_type(cudf::type_to_id<newType>());
       auto col_bitcast = cudf::bit_cast(col_view, new_type);
       EXPECT_FALSE(is_shallow_equivalent(col_view, col_bitcast));
@@ -404,11 +405,11 @@ TYPED_TEST(ColumnViewShallowTests, is_shallow_equivalent_mutable)
     auto col_mutable = cudf::mutable_column_view{*col};
     if constexpr (cudf::is_fixed_width<TypeParam>()) {
       // Update data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->mutable_view().head());
+      auto data = col->mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 1, 32, false);
     } else {
       // Update child(0).data
-      auto data = reinterpret_cast<cudf::bitmask_type*>(col->child(0).mutable_view().head());
+      auto data = col->child(0).mutable_view().template head<cudf::bitmask_type>();
       cudf::set_null_mask(data, 1, 32, false);
     }
     EXPECT_TRUE(is_shallow_equivalent(col_view, col_mutable));

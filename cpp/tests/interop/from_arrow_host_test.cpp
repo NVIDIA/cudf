@@ -1,83 +1,120 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/nanoarrow_utils.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/interop.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/interop.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/std/type_traits>
 
-// create a cudf::table and equivalent arrow table with host memory
-std::tuple<std::unique_ptr<cudf::table>, nanoarrow::UniqueSchema, nanoarrow::UniqueArray>
-get_nanoarrow_host_tables(cudf::size_type length)
-{
-  auto [table, schema, test_data] = get_nanoarrow_cudf_table(length);
+#include <array>
+#include <cstring>
+#include <limits>
+#include <numeric>
+#include <vector>
 
-  auto int64_array = get_nanoarrow_array<int64_t>(test_data.int64_data, test_data.validity);
-  auto string_array =
-    get_nanoarrow_array<cudf::string_view>(test_data.string_data, test_data.validity);
-  cudf::dictionary_column_view view(table->get_column(2).view());
-  auto keys       = cudf::test::to_host<int64_t>(view.keys()).first;
-  auto indices    = cudf::test::to_host<uint32_t>(view.indices()).first;
-  auto dict_array = get_nanoarrow_dict_array(std::vector<int64_t>(keys.begin(), keys.end()),
-                                             std::vector<int32_t>(indices.begin(), indices.end()),
-                                             test_data.validity);
-  auto boolarray  = get_nanoarrow_array<bool>(test_data.bool_data, test_data.bool_validity);
-  auto list_array = get_nanoarrow_list_array<int64_t>(test_data.list_int64_data,
-                                                      test_data.list_offsets,
-                                                      test_data.list_int64_data_validity,
-                                                      test_data.list_validity);
+namespace {
 
-  nanoarrow::UniqueArray arrow;
-  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(arrow.get(), schema.get(), nullptr));
-  arrow->length = length;
+void release_schema(ArrowSchema* schema) { schema->release = nullptr; }
 
-  int64_array.move(arrow->children[0]);
-  string_array.move(arrow->children[1]);
-  dict_array.move(arrow->children[2]);
-  boolarray.move(arrow->children[3]);
-  list_array.move(arrow->children[4]);
+void release_array(ArrowArray* array) { array->release = nullptr; }
 
-  int64_array  = get_nanoarrow_array<int64_t>(test_data.int64_data, test_data.validity);
-  string_array = get_nanoarrow_array<cudf::string_view>(test_data.string_data, test_data.validity);
-  int64_array.move(arrow->children[5]->children[0]);
-  string_array.move(arrow->children[5]->children[1]);
+struct direct_arrow_c_producer {
+  static constexpr int64_t num_rows = 5;
 
-  ArrowBitmap struct_validity;
-  ArrowBitmapInit(&struct_validity);
-  NANOARROW_THROW_NOT_OK(ArrowBitmapReserve(&struct_validity, length));
-  ArrowBitmapAppendInt8Unsafe(
-    &struct_validity, reinterpret_cast<int8_t const*>(test_data.bool_data_validity.data()), length);
-  arrow->children[5]->length = length;
-  ArrowArraySetValidityBitmap(arrow->children[5], &struct_validity);
-  arrow->children[5]->null_count =
-    length - ArrowBitCountSet(ArrowArrayValidityBitmap(arrow->children[5])->buffer.data, 0, length);
+  std::array<int32_t, num_rows> int_values{1, 2, 5, 2, 7};
+  std::array<uint8_t, 1> int_validity{0b00011101};
 
-  ArrowError error;
-  if (ArrowArrayFinishBuilding(arrow.get(), NANOARROW_VALIDATION_LEVEL_MINIMAL, &error) !=
-      NANOARROW_OK) {
-    std::cerr << ArrowErrorMessage(&error) << std::endl;
-    CUDF_FAIL("failed to build example arrays");
+  std::array<int32_t, num_rows + 1> string_offsets{0, 3, 6, 6, 6, 9};
+  std::array<char, 9> string_chars{'f', 'f', 'f', 'a', 'a', 'a', 'c', 'c', 'c'};
+  std::array<uint8_t, 1> string_validity{0b00010111};
+
+  ArrowSchema schema{};
+  std::array<ArrowSchema, 2> child_schemas{};
+  std::array<ArrowSchema*, 2> child_schema_ptrs{};
+
+  ArrowArray array{};
+  std::array<ArrowArray, 2> child_arrays{};
+  std::array<ArrowArray*, 2> child_array_ptrs{};
+  std::array<void const*, 1> parent_buffers{nullptr};
+  std::array<void const*, 2> int_buffers{int_validity.data(), int_values.data()};
+  std::array<void const*, 3> string_buffers{
+    string_validity.data(), string_offsets.data(), string_chars.data()};
+
+  direct_arrow_c_producer()
+  {
+    child_schema_ptrs = {&child_schemas[0], &child_schemas[1]};
+    child_array_ptrs  = {&child_arrays[0], &child_arrays[1]};
+
+    schema.format     = "+s";
+    schema.name       = "";
+    schema.flags      = 0;
+    schema.n_children = child_schemas.size();
+    schema.children   = child_schema_ptrs.data();
+    schema.release    = release_schema;
+
+    child_schemas[0].format  = "i";
+    child_schemas[0].name    = "ints";
+    child_schemas[0].flags   = ARROW_FLAG_NULLABLE;
+    child_schemas[0].release = release_schema;
+
+    child_schemas[1].format  = "u";
+    child_schemas[1].name    = "strings";
+    child_schemas[1].flags   = ARROW_FLAG_NULLABLE;
+    child_schemas[1].release = release_schema;
+
+    array.length     = num_rows;
+    array.null_count = 0;
+    array.n_buffers  = parent_buffers.size();
+    array.n_children = child_arrays.size();
+    array.buffers    = parent_buffers.data();
+    array.children   = child_array_ptrs.data();
+    array.release    = release_array;
+
+    child_arrays[0].length     = num_rows;
+    child_arrays[0].null_count = 1;
+    child_arrays[0].n_buffers  = int_buffers.size();
+    child_arrays[0].buffers    = int_buffers.data();
+    child_arrays[0].release    = release_array;
+
+    child_arrays[1].length     = num_rows;
+    child_arrays[1].null_count = 1;
+    child_arrays[1].n_buffers  = string_buffers.size();
+    child_arrays[1].buffers    = string_buffers.data();
+    child_arrays[1].release    = release_array;
   }
 
-  return std::make_tuple(std::move(table), std::move(schema), std::move(arrow));
-}
+  ArrowDeviceArray device_array() const
+  {
+    ArrowDeviceArray out{};
+    std::memcpy(&out.array, &array, sizeof(ArrowArray));
+    out.device_type = ARROW_DEVICE_CPU;
+    out.device_id   = -1;
+    return out;
+  }
+};
+
+}  // namespace
 
 struct FromArrowHostDeviceTest : public cudf::test::BaseFixture {};
 
@@ -105,11 +142,51 @@ TEST_F(FromArrowHostDeviceTest, EmptyTable)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected_cudf_table, got_cudf_table->view());
 }
 
+TEST_F(FromArrowHostDeviceTest, DirectArrowCProducerTable)
+{
+  direct_arrow_c_producer producer;
+  auto input = producer.device_array();
+
+  auto const expected_ints =
+    cudf::test::fixed_width_column_wrapper<int32_t>{{1, 2, 5, 2, 7}, {1, 0, 1, 1, 1}};
+  auto const expected_strings =
+    cudf::test::strings_column_wrapper{{"fff", "aaa", "", "xxx", "ccc"}, {1, 1, 1, 0, 1}};
+  auto const expected = cudf::table_view{{expected_ints, expected_strings}};
+
+  auto got_cudf_table = cudf::from_arrow_host(&producer.schema, &input);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, got_cudf_table->view());
+}
+
+TEST_F(FromArrowHostDeviceTest, ZeroColumnsWithRows)
+{
+  constexpr cudf::size_type num_rows = 5;
+
+  nanoarrow::UniqueSchema input_schema;
+  ArrowSchemaInit(input_schema.get());
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(input_schema.get(), 0));
+
+  nanoarrow::UniqueArray input_array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(input_array.get(), input_schema.get(), nullptr));
+  input_array->length     = num_rows;
+  input_array->null_count = 0;
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(input_array.get(), NANOARROW_VALIDATION_LEVEL_MINIMAL, nullptr));
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, input_array.get(), sizeof(ArrowArray));
+  input.device_id   = -1;
+  input.device_type = ARROW_DEVICE_CPU;
+
+  auto got_cudf_table = cudf::from_arrow_host(input_schema.get(), &input);
+  EXPECT_EQ(got_cudf_table->num_columns(), 0);
+  EXPECT_EQ(got_cudf_table->num_rows(), num_rows);
+}
+
 TEST_F(FromArrowHostDeviceTest, DateTimeTable)
 {
   auto data = std::vector<int64_t>{1, 2, 3, 4, 5, 6};
   auto col  = cudf::test::fixed_width_column_wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>(
-    data.begin(), data.end());
+    data.begin(), data.end(), cuda::constant_iterator<bool>(true));
   cudf::table_view expected_table_view({col});
 
   // construct equivalent arrow schema with nanoarrow
@@ -158,10 +235,10 @@ TYPED_TEST(FromArrowHostDeviceTestDurationsTest, DurationTable)
   if (cudf::type_to_id<TypeParam>() == cudf::type_id::DURATION_DAYS) { return; }
 
   auto data = {T{1}, T{2}, T{3}, T{4}, T{5}, T{6}};
-  auto col  = cudf::test::fixed_width_column_wrapper<T>(data);
+  auto col  = cudf::test::fixed_width_column_wrapper<T>(data, cuda::constant_iterator<bool>(true));
 
   cudf::table_view expected_table_view({col});
-  const ArrowTimeUnit time_unit = [&] {
+  ArrowTimeUnit const time_unit = [&] {
     switch (cudf::type_to_id<TypeParam>()) {
       case cudf::type_id::DURATION_SECONDS: return NANOARROW_TIME_UNIT_SECOND;
       case cudf::type_id::DURATION_MILLISECONDS: return NANOARROW_TIME_UNIT_MILLI;
@@ -219,8 +296,9 @@ TYPED_TEST(FromArrowHostDeviceTestDecimalsTest, FixedPointTable)
 
   auto const precision = get_decimal_precision<T>();
   for (auto const scale : {3, 2, 1, 0, -1, -2, -3}) {
-    auto const data     = std::vector<T>{1, 2, 3, 4, 5, 6};
-    auto const col      = fp_wrapper<T>(data.cbegin(), data.cend(), scale_type{scale});
+    auto const data = std::vector<T>{1, 2, 3, 4, 5, 6};
+    auto const col  = fp_wrapper<T>(
+      data.cbegin(), data.cend(), cuda::constant_iterator<bool>(true), scale_type{scale});
     auto const expected = cudf::table_view({col});
 
     nanoarrow::UniqueSchema input_schema;
@@ -271,9 +349,10 @@ TYPED_TEST(FromArrowHostDeviceTestDecimalsTest, FixedPointTableLarge)
   auto constexpr NUM_ELEMENTS = 1000;
 
   for (auto const scale : {3, 2, 1, 0, -1, -2, -3}) {
-    auto iota           = thrust::make_counting_iterator(1);
-    auto const data     = std::vector<T>(iota, iota + NUM_ELEMENTS);
-    auto const col      = fp_wrapper<T>(iota, iota + NUM_ELEMENTS, scale_type{scale});
+    auto iota       = cudf::detail::make_counting_transform_iterator(1, [](int i) { return T{i}; });
+    auto const data = std::vector<T>(iota, iota + NUM_ELEMENTS);
+    auto const col  = fp_wrapper<T>(
+      iota, iota + NUM_ELEMENTS, cuda::constant_iterator<bool>(true), scale_type{scale});
     auto const expected = cudf::table_view({col});
 
     nanoarrow::UniqueSchema input_schema;
@@ -377,9 +456,9 @@ TYPED_TEST(FromArrowHostDeviceTestDecimalsTest, FixedPointTableLargeNulls)
     auto every_other = [](auto i) { return i % 2 ? 0 : 1; };
     auto validity    = cudf::detail::make_counting_transform_iterator(0, every_other);
     std::vector<uint8_t> validity_vec(validity, validity + NUM_ELEMENTS);
-    auto iota           = thrust::make_counting_iterator(1);
-    auto const data     = std::vector<T>(iota, iota + NUM_ELEMENTS);
-    auto const col      = fp_wrapper<T>(iota,
+    auto iota       = cudf::detail::make_counting_transform_iterator(1, [](int i) { return T{i}; });
+    auto const data = std::vector<T>(iota, iota + NUM_ELEMENTS);
+    auto const col  = fp_wrapper<T>(iota,
                                    iota + NUM_ELEMENTS,
                                    cudf::detail::make_counting_transform_iterator(0, every_other),
                                    scale_type{scale});
@@ -425,10 +504,9 @@ TYPED_TEST(FromArrowHostDeviceTestDecimalsTest, FixedPointTableLargeNulls)
 
 TEST_F(FromArrowHostDeviceTest, NestedList)
 {
-  auto valids =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 3 != 0; });
-  auto col = cudf::test::lists_column_wrapper<int64_t>(
-    {{{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids});
+  auto valids = cudf::test::iterators::nulls_at_multiples_of(3);
+  using LCW   = cudf::test::lists_column_wrapper<int64_t>;
+  auto col = LCW({{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids);
   cudf::table_view expected_table_view({col});
 
   nanoarrow::UniqueSchema input_schema;
@@ -499,6 +577,219 @@ TEST_F(FromArrowHostDeviceTest, NestedList)
   CUDF_TEST_EXPECT_TABLES_EQUAL(got_cudf_table->view(), from_struct);
 }
 
+namespace {
+ArrowDeviceArray as_host_device_array(nanoarrow::UniqueArray const& array)
+{
+  ArrowDeviceArray input{};
+  memcpy(&input.array, array.get(), sizeof(ArrowArray));
+  input.device_id   = -1;
+  input.device_type = ARROW_DEVICE_CPU;
+  return input;
+}
+
+}  // namespace
+
+TEST_F(FromArrowHostDeviceTest, FixedSizeListColumn)
+{
+  constexpr int32_t width    = 3;
+  constexpr int64_t num_rows = 4;
+  std::vector<int64_t> values{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+
+  auto expected_col =
+    cudf::test::lists_column_wrapper<int64_t>{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}, {10, 11, 12}};
+  cudf::table_view expected_table_view({expected_col});
+
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows);
+  auto input        = as_host_device_array(input_array);
+
+  auto got_cudf_table = cudf::from_arrow_host(input_schema.get(), &input);
+  EXPECT_EQ(got_cudf_table->get_column(0).type(), cudf::data_type{cudf::type_id::LIST});
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_table_view, got_cudf_table->view());
+
+  ArrowDeviceArray direct_input;
+  memcpy(&direct_input.array, input_array->children[0], sizeof(ArrowArray));
+  direct_input.device_id   = -1;
+  direct_input.device_type = ARROW_DEVICE_CPU;
+  direct_input.sync_event  = nullptr;
+  auto got_direct_col      = cudf::from_arrow_host_column(input_schema->children[0], &direct_input);
+  EXPECT_EQ(got_direct_col->type(), cudf::data_type{cudf::type_id::LIST});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_col, got_direct_col->view());
+
+  auto got_cudf_col = cudf::from_arrow_host_column(input_schema.get(), &input);
+  EXPECT_EQ(got_cudf_col->type(), cudf::data_type{cudf::type_id::STRUCT});
+  auto got_cudf_col_view = got_cudf_col->view();
+  cudf::table_view from_struct{
+    std::vector<cudf::column_view>(got_cudf_col_view.child_begin(), got_cudf_col_view.child_end())};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(got_cudf_table->view(), from_struct);
+}
+
+TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnNulls)
+{
+  constexpr int32_t width    = 2;
+  constexpr int64_t num_rows = 4;
+  // a null fixed-size-list row still occupies `width` child slots, so the child data is
+  // dense and the offsets stay exact multiples of the width
+  std::vector<int64_t> values{1, 2, 3, 4, 5, 6, 7, 8};
+  std::vector<uint8_t> list_validity{1, 0, 1, 0};
+
+  // lists_column_wrapper cannot express this: it encodes a null row as a repeated offset
+  // and drops that row's child values, which breaks the multiple-of-width invariant.
+  auto child =
+    cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end()).release();
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8}.release();
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(list_validity.begin(), list_validity.end());
+  auto expected_col = cudf::make_lists_column(
+    num_rows, std::move(offsets), std::move(child), null_count, std::move(null_mask));
+
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/true);
+  auto input_array =
+    make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows, list_validity);
+  auto input = as_host_device_array(input_array);
+
+  auto got_cudf_table       = cudf::from_arrow_host(input_schema.get(), &input);
+  auto const expected_lists = cudf::lists_column_view(expected_col->view());
+  auto const got_lists      = cudf::lists_column_view(got_cudf_table->get_column(0));
+
+  EXPECT_TRUE(cudf::has_nonempty_nulls(got_lists.parent()));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_lists.offsets(), got_lists.offsets());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_lists.child(), got_lists.child());
+
+  auto const expected_logical = cudf::purge_nonempty_nulls(expected_lists.parent());
+  auto const got_logical      = cudf::purge_nonempty_nulls(got_lists.parent());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_logical, *got_logical);
+}
+
+TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnSliced)
+{
+  constexpr int32_t width    = 3;
+  constexpr int64_t num_rows = 4;
+  std::vector<int64_t> values{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+
+  auto full_col =
+    cudf::test::lists_column_wrapper<int64_t>{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}, {10, 11, 12}};
+  auto sliced = cudf::slice(full_col, {1, 3});
+  cudf::table_view expected_table_view({sliced.front()});
+
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows);
+  auto input        = as_host_device_array(input_array);
+  // this is what catches an incorrect `input->offset * width`, since the child range must
+  // start at row 1 * width rather than at zero
+  slice_host_nanoarrow(&input.array, 1, 3);
+
+  auto got_cudf_table = cudf::from_arrow_host(input_schema.get(), &input);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_table_view, got_cudf_table->view());
+}
+
+TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnZeroLength)
+{
+  constexpr int32_t width = 3;
+
+  auto expected_col = cudf::test::lists_column_wrapper<int64_t>{};
+  cudf::table_view expected_table_view({expected_col});
+
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), {}, 0);
+  auto input        = as_host_device_array(input_array);
+
+  auto got_cudf_table = cudf::from_arrow_host(input_schema.get(), &input);
+  EXPECT_EQ(got_cudf_table->num_rows(), 0);
+  EXPECT_EQ(got_cudf_table->get_column(0).type(), cudf::data_type{cudf::type_id::LIST});
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_table_view, got_cudf_table->view());
+}
+
+TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnZeroWidth)
+{
+  constexpr cudf::size_type num_rows = 3;
+  auto offsets  = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release();
+  auto child    = cudf::test::fixed_width_column_wrapper<int64_t>{}.release();
+  auto expected = cudf::make_lists_column(num_rows,
+                                          std::move(offsets),
+                                          std::move(child),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+
+  // nanoarrow's schema builder rejects width zero, but ArrowSchemaView accepts it from a
+  // foreign producer. Replace a normally constructed fixed-size-list format to exercise it.
+  auto input_schema = make_struct_fixed_size_list_int64_schema(1, /*nullable=*/false);
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetFormat(input_schema->children[0], "+w:0"));
+  auto input_array = make_struct_fixed_size_list_int64_array(input_schema.get(), {}, num_rows);
+  auto input       = as_host_device_array(input_array);
+
+  auto result = cudf::from_arrow_host(input_schema.get(), &input);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->get_column(0));
+}
+
+TEST_F(FromArrowHostDeviceTest, FixedSizeListColumnLarge)
+{
+  constexpr int32_t width = 2;
+
+  constexpr cudf::size_type num_rows = 1025;
+  std::vector<int64_t> values(num_rows * width);
+  std::iota(values.begin(), values.end(), int64_t{0});
+  std::vector<int32_t> offsets(num_rows + 1);
+  for (cudf::size_type i = 0; i <= num_rows; ++i) {
+    offsets[i] = static_cast<int32_t>(i) * width;
+  }
+
+  auto expected_offsets =
+    cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
+  auto expected_child =
+    cudf::test::fixed_width_column_wrapper<int64_t>(values.begin(), values.end());
+
+  auto input_schema = make_struct_fixed_size_list_int64_schema(width, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), values, num_rows);
+  auto input        = as_host_device_array(input_array);
+
+  auto result       = cudf::from_arrow_host(input_schema.get(), &input);
+  auto result_lists = cudf::lists_column_view{result->get_column(0)};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_offsets, result_lists.offsets());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_child, result_lists.child());
+}
+
+TEST_F(FromArrowHostDeviceTest, FixedSizeListInvalidBounds)
+{
+  auto input_schema = make_struct_fixed_size_list_int64_schema(3, /*nullable=*/false);
+  auto input_array  = make_struct_fixed_size_list_int64_array(input_schema.get(), {1, 2, 3}, 1);
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, input_array->children[0], sizeof(ArrowArray));
+  input.device_id   = -1;
+  input.device_type = ARROW_DEVICE_CPU;
+  input.sync_event  = nullptr;
+
+  input.array.offset = -1;
+  EXPECT_THROW(cudf::from_arrow_host_column(input_schema->children[0], &input),
+               std::invalid_argument);
+
+  input.array.offset = 0;
+  input.array.length = -1;
+  EXPECT_THROW(cudf::from_arrow_host_column(input_schema->children[0], &input),
+               std::invalid_argument);
+
+  input.array.length = std::numeric_limits<cudf::size_type>::max();
+  EXPECT_THROW(cudf::from_arrow_host_column(input_schema->children[0], &input),
+               std::overflow_error);
+
+  input.array.offset = std::numeric_limits<int64_t>::max();
+  input.array.length = 1;
+  EXPECT_THROW(cudf::from_arrow_host_column(input_schema->children[0], &input),
+               std::overflow_error);
+
+  input.array.offset = std::numeric_limits<int64_t>::max() / 3 + 1;
+  input.array.length = 1;
+  EXPECT_THROW(cudf::from_arrow_host_column(input_schema->children[0], &input),
+               std::overflow_error);
+
+  input.array.offset              = 0;
+  input.array.length              = 1;
+  input.array.children[0]->length = 2;
+  EXPECT_THROW(cudf::from_arrow_host_column(input_schema->children[0], &input),
+               std::invalid_argument);
+}
+
 TEST_F(FromArrowHostDeviceTest, StructColumn)
 {
   // Create cudf table
@@ -515,9 +806,8 @@ TEST_F(FromArrowHostDeviceTest, StructColumn)
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();
   auto bool_col = cudf::test::fixed_width_column_wrapper<bool>{{true, true, false}}.release();
-  auto list_col = cudf::test::lists_column_wrapper<int64_t>(
-                    {{{1, 2}, {3, 4}, {5}}, {{{6}}}, {{7}, {8, 9}}})  // NOLINT
-                    .release();
+  using LCW     = cudf::test::lists_column_wrapper<int64_t>;
+  auto list_col = LCW{{{1, 2}, {3, 4}, {5}}, {{6}}, {{7}, {8, 9}}}.release();
   vector_of_columns cols2;
   cols2.push_back(std::move(str_col2));
   cols2.push_back(std::move(int_col2));
@@ -532,7 +822,8 @@ TEST_F(FromArrowHostDeviceTest, StructColumn)
   cols.push_back(std::move(list_col));
   cols.push_back(std::move(sub_struct_col));
 
-  auto struct_col = cudf::make_structs_column(num_rows, std::move(cols), 0, {});
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::table_view expected_table_view({struct_col->view()});
 
   // Create name metadata
@@ -739,32 +1030,6 @@ TEST_F(FromArrowHostDeviceTest, DictionaryIndicesType)
   CUDF_TEST_EXPECT_TABLES_EQUAL(got_cudf_table->view(), from_struct);
 }
 
-void slice_host_nanoarrow(ArrowArray* arr, int64_t start, int64_t end)
-{
-  auto op = [&](ArrowArray* array) {
-    // slicing only needs to happen at the top level of an array
-    array->offset = start;
-    array->length = end - start;
-    if (array->null_count != 0) {
-      array->null_count =
-        array->length -
-        ArrowBitCountSet(ArrowArrayValidityBitmap(array)->buffer.data, start, end - start);
-    }
-  };
-
-  if (arr->n_children == 0) {
-    op(arr);
-    return;
-  }
-
-  // since we want to simulate a sliced table where the children are sliced,
-  // we slice each individual child of the record batch
-  arr->length = end - start;
-  for (int64_t i = 0; i < arr->n_children; ++i) {
-    op(arr->children[i]);
-  }
-}
-
 TEST_F(FromArrowHostDeviceTest, StringViewType)
 {
   auto data = std::vector<std::string>({"hello",
@@ -870,3 +1135,135 @@ INSTANTIATE_TEST_CASE_P(FromArrowHostDeviceTest,
                                           std::make_tuple(0, 0),
                                           std::make_tuple(0, 3000),
                                           std::make_tuple(10000, 10000)));
+
+namespace {
+template <typename IndexType>
+std::unique_ptr<cudf::column> dictionary_from_arrow_host(std::vector<int64_t> const& keys,
+                                                         std::vector<IndexType> const& indices,
+                                                         std::vector<uint8_t> const& validity,
+                                                         int64_t offset = 0)
+{
+  nanoarrow::UniqueSchema schema;
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaInitFromType(schema.get(), nanoarrow_storage_type<IndexType>::type));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaAllocateDictionary(schema.get()));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema->dictionary, NANOARROW_TYPE_INT64));
+
+  auto array = get_nanoarrow_dict_array<int64_t, IndexType>(keys, indices, validity);
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+  slice_host_nanoarrow(array.get(), offset, static_cast<int64_t>(indices.size()));
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, array.get(), sizeof(ArrowArray));
+  input.device_id   = -1;
+  input.device_type = ARROW_DEVICE_CPU;
+  return cudf::from_arrow_host_column(schema.get(), &input);
+}
+
+template <typename SignedType>
+std::unique_ptr<cudf::column> expected_dictionary(std::vector<int64_t> const& keys,
+                                                  std::vector<SignedType> const& indices,
+                                                  std::vector<uint8_t> const& validity)
+{
+  auto keys_col    = cudf::test::fixed_width_column_wrapper<int64_t>(keys.begin(), keys.end());
+  auto indices_col = cudf::test::fixed_width_column_wrapper<SignedType>(
+    indices.begin(), indices.end(), validity.begin());
+  return cudf::make_dictionary_column(keys_col, indices_col);
+}
+
+std::vector<int64_t> sequential_keys(int64_t num_keys)
+{
+  std::vector<int64_t> keys(num_keys);
+  std::iota(keys.begin(), keys.end(), int64_t{0});
+  return keys;
+}
+
+}  // namespace
+
+template <typename T>
+struct FromArrowHostDictionaryUnsignedIndicesTest : public cudf::test::BaseFixture {};
+
+using UnsignedIndexTypes = cudf::test::Types<uint8_t, uint16_t, uint32_t>;
+TYPED_TEST_SUITE(FromArrowHostDictionaryUnsignedIndicesTest, UnsignedIndexTypes);
+
+TYPED_TEST(FromArrowHostDictionaryUnsignedIndicesTest, SameWidthWhenKeysFit)
+{
+  using IndexType  = TypeParam;
+  using SignedType = cuda::std::make_signed_t<IndexType>;
+  std::vector<int64_t> keys{10, 20, 30, 40};
+  std::vector<uint8_t> validity{1, 0, 1, 1, 1};
+
+  auto got =
+    dictionary_from_arrow_host<IndexType>(keys, std::vector<IndexType>{3, 0, 1, 2, 3}, validity);
+
+  auto expected =
+    expected_dictionary<SignedType>(keys, std::vector<SignedType>{3, 0, 1, 2, 3}, validity);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<SignedType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), got->view());
+}
+
+TYPED_TEST(FromArrowHostDictionaryUnsignedIndicesTest, AllNullWithNoKeysKeepsRows)
+{
+  using IndexType  = TypeParam;
+  using SignedType = cuda::std::make_signed_t<IndexType>;
+  std::vector<uint8_t> validity{0, 0, 0};
+
+  auto got = dictionary_from_arrow_host<IndexType>({}, std::vector<IndexType>{0, 0, 0}, validity);
+
+  EXPECT_EQ(got->size(), 3);
+  EXPECT_EQ(got->null_count(), 3);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<SignedType>()});
+}
+
+template <typename T>
+struct FromArrowHostDictionaryNarrowIndicesTest : public cudf::test::BaseFixture {};
+
+using NarrowUnsignedIndexTypes = cudf::test::Types<uint8_t, uint16_t>;
+TYPED_TEST_SUITE(FromArrowHostDictionaryNarrowIndicesTest, NarrowUnsignedIndexTypes);
+
+TYPED_TEST(FromArrowHostDictionaryNarrowIndicesTest, ReinterpretAtSignedLimit)
+{
+  using IndexType          = TypeParam;
+  using SignedType         = cuda::std::make_signed_t<IndexType>;
+  auto constexpr max_index = std::numeric_limits<SignedType>::max();
+  auto const keys          = sequential_keys(int64_t{max_index} + 1);
+  std::vector<uint8_t> validity{1, 0, 1};
+
+  auto got = dictionary_from_arrow_host<IndexType>(
+    keys, std::vector<IndexType>{static_cast<IndexType>(max_index), 0, 1}, validity);
+
+  auto expected =
+    expected_dictionary<SignedType>(keys, std::vector<SignedType>{max_index, 0, 1}, validity);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<SignedType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), got->view());
+}
+
+TYPED_TEST(FromArrowHostDictionaryNarrowIndicesTest, WidenAboveSignedLimit)
+{
+  using IndexType = TypeParam;
+  using WiderType = std::conditional_t<std::is_same_v<IndexType, uint8_t>, int16_t, int32_t>;
+  auto constexpr max_index =
+    static_cast<WiderType>(std::numeric_limits<cuda::std::make_signed_t<IndexType>>::max() + 1);
+  auto const keys = sequential_keys(int64_t{max_index} + 1);
+  std::vector<uint8_t> validity{1, 0, 1};
+
+  auto got = dictionary_from_arrow_host<IndexType>(
+    keys, std::vector<IndexType>{static_cast<IndexType>(max_index), 0, 1}, validity);
+
+  auto expected =
+    expected_dictionary<WiderType>(keys, std::vector<WiderType>{max_index, 0, 1}, validity);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<WiderType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), got->view());
+
+  auto got_sliced = dictionary_from_arrow_host<IndexType>(
+    keys, std::vector<IndexType>{static_cast<IndexType>(max_index), 0, 1}, validity, 1);
+  auto expected_sliced = cudf::slice(expected->view(), {1, 3}).front();
+  EXPECT_EQ(cudf::dictionary_column_view(got_sliced->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<WiderType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sliced, got_sliced->view());
+}

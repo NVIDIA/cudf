@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
@@ -55,16 +56,21 @@ static void bench_vocab_tokenize(nvbench::state& state)
     return static_cast<cudf::scalar_type_t<cudf::size_type>*>(count.get())->value(stream);
   }();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto chars_size =
     input.chars_size(stream) + cudf::strings_column_view(vocab_col->view()).chars_size(stream);
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);
   state.add_global_memory_writes<nvbench::int32_t>(token_count);
 
-  auto const delimiter = cudf::string_scalar("");
+  auto const delimiter        = cudf::string_scalar("");
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = nvtext::tokenize_with_vocabulary(input, *vocab, delimiter);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_vocab_tokenize)

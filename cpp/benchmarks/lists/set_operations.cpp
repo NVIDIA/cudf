@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/lists/set_operations.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -38,7 +39,8 @@ void nvbench_set_op(nvbench::state& state, BenchFuncPtr bfunc)
   auto const lhs = generate_random_lists(num_rows, depth, null_freq);
   auto const rhs = generate_random_lists(num_rows, depth, null_freq);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     bfunc(cudf::lists_column_view{*lhs},
           cudf::lists_column_view{*rhs},
@@ -47,6 +49,8 @@ void nvbench_set_op(nvbench::state& state, BenchFuncPtr bfunc)
           cudf::get_default_stream(),
           cudf::get_current_device_resource_ref());
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 }  // namespace

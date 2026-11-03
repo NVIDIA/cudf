@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,17 +25,6 @@ TEST_F(StringsReplaceTest, Replace)
   cudf::strings::replace(view, target, repl, -1, cudf::test::get_default_stream());
   cudf::strings::replace_multiple(view, view, view, cudf::test::get_default_stream());
   cudf::strings::replace_slice(view, repl, 1, 2, cudf::test::get_default_stream());
-
-  auto const pattern = std::string("[a-z]");
-  auto const prog    = cudf::strings::regex_program::create(pattern);
-  cudf::strings::replace_re(view, *prog, repl, 1, cudf::test::get_default_stream());
-
-  cudf::test::strings_column_wrapper repls({"1", "a", " "});
-  cudf::strings::replace_re(view,
-                            {pattern, pattern, pattern},
-                            cudf::strings_column_view(repls),
-                            cudf::strings::regex_flags::DEFAULT,
-                            cudf::test::get_default_stream());
 }
 
 TEST_F(StringsReplaceTest, ReplaceRegex)
@@ -47,13 +36,6 @@ TEST_F(StringsReplaceTest, ReplaceRegex)
   auto const pattern = std::string("[a-z]");
   auto const prog    = cudf::strings::regex_program::create(pattern);
   cudf::strings::replace_re(view, *prog, repl, 1, cudf::test::get_default_stream());
-
-  cudf::test::strings_column_wrapper repls({"1", "a", " "});
-  cudf::strings::replace_re(view,
-                            {pattern, pattern, pattern},
-                            cudf::strings_column_view(repls),
-                            cudf::strings::regex_flags::DEFAULT,
-                            cudf::test::get_default_stream());
 }
 
 TEST_F(StringsReplaceTest, ReplaceRegexBackref)

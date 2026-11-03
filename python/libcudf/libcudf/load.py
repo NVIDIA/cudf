@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -35,10 +35,12 @@ def _load_wheel_installation(soname: str):
 
 def load_library():
     """Dynamically load libcudf.so and its dependencies"""
+
     try:
         from cuda.pathfinder import load_nvidia_dynamic_lib
 
         load_nvidia_dynamic_lib("nvJitLink")
+        load_nvidia_dynamic_lib("nvrtc")
     except ModuleNotFoundError:
         pass
 

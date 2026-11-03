@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -10,11 +10,7 @@ import polars as pl
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
 
-@pytest.mark.parametrize("executor", [None, "in-memory", "streaming"])
-def test_executor_basics(executor):
-    if executor == "streaming":
-        pytest.importorskip("dask")
-
+def test_executor_basics(streaming_engine):
     df = pl.LazyFrame(
         {
             "a": pl.Series([[1, 2], [3]], dtype=pl.List(pl.Int8())),
@@ -30,10 +26,10 @@ def test_executor_basics(executor):
         }
     )
 
-    assert_gpu_result_equal(df, executor=executor)
+    assert_gpu_result_equal(df, engine=streaming_engine)
 
 
-def test_cudf_cache_evaluate():
+def test_cudf_cache_evaluate(engine):
     ldf = pl.DataFrame(
         {
             "a": [1, 2, 3, 4, 5, 6, 7],
@@ -42,10 +38,10 @@ def test_cudf_cache_evaluate():
     ).lazy()
     ldf2 = ldf.select((pl.col("a") + pl.col("b")).alias("c"), pl.col("a"))
     query = pl.concat([ldf, ldf2], how="diagonal")
-    assert_gpu_result_equal(query, executor="in-memory")
+    assert_gpu_result_equal(query, engine=engine)
 
 
-def test_dask_experimental_map_function_get_hashable():
+def test_dask_experimental_map_function_get_hashable(streaming_engine):
     df = pl.LazyFrame(
         {
             "a": pl.Series([11, 12, 13], dtype=pl.UInt16),
@@ -55,7 +51,7 @@ def test_dask_experimental_map_function_get_hashable():
         }
     )
     q = df.unpivot(index="d")
-    assert_gpu_result_equal(q, executor="streaming")
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_unknown_executor():
@@ -65,7 +61,9 @@ def test_unknown_executor():
         pl.exceptions.ComputeError,
         match="ValueError: Unknown executor 'unknown-executor'",
     ):
-        assert_gpu_result_equal(df, executor="unknown-executor")
+        assert_gpu_result_equal(
+            df, engine=pl.GPUEngine(executor="unknown-executor", raise_on_fail=True)
+        )
 
 
 @pytest.mark.parametrize("executor", [None, "in-memory", "streaming"])
@@ -80,5 +78,6 @@ def test_unknown_executor_options(executor):
             engine=pl.GPUEngine(
                 executor=executor,
                 executor_options={"foo": None},
+                raise_on_fail=True,
             )
         )

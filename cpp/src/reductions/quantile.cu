@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace reduction {
@@ -21,7 +21,7 @@ std::unique_ptr<cudf::scalar> quantile(column_view const& col,
                                        double quantile_value,
                                        cudf::interpolation interpolation,
                                        cudf::data_type const output_type,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   auto current_mr = cudf::get_current_device_resource_ref();

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_132
 
 
 @pytest.fixture
@@ -50,7 +49,6 @@ def partition_by(request):
         pl.col("b").min(),
         pl.col("b").sum(),
         pl.col("b").count(),
-        pl.col("b").sum(),
         pl.col("b").mean(),
         pl.col("b").var(),
     ],
@@ -77,7 +75,7 @@ def unsupported_agg_expr(request):
     return request.param
 
 
-def test_over(df: pl.LazyFrame, partition_by, agg_expr):
+def test_over(engine: pl.GPUEngine, df: pl.LazyFrame, partition_by, agg_expr):
     """Test window functions over partitions."""
 
     window_expr = agg_expr.over(partition_by)
@@ -91,19 +89,18 @@ def test_over(df: pl.LazyFrame, partition_by, agg_expr):
     # GPU: 1.333333333333334
     # Classic floating-point gotcha: looks the same, but the test fails
     assert_gpu_result_equal(
-        q, check_exact=False, rtol=1e-15, atol=1e-15
-    ) if "var" in str(agg_expr) else assert_gpu_result_equal(q)
+        q, engine=engine, check_exact=False, rtol=1e-15, atol=1e-15
+    ) if "var" in str(agg_expr) else assert_gpu_result_equal(q, engine=engine)
 
 
-def test_over_with_sort(df: pl.LazyFrame):
+def test_over_with_sort(in_memory_engine, df: pl.LazyFrame):
     """Test window functions with sorting."""
     query = df.with_columns([pl.col("c").rank().sort().over(pl.col("a"))])
-    assert_ir_translation_raises(query, NotImplementedError)
+    assert_ir_translation_raises(query, in_memory_engine, NotImplementedError)
 
 
-@pytest.mark.parametrize("mapping_strategy", ["group_to_rows", "explode", "join"])
-def test_over_mapping_strategy(df: pl.LazyFrame, mapping_strategy: str):
-    """Test window functions with different mapping strategies."""
+def test_over_mapping_strategy(engine: pl.GPUEngine, df: pl.LazyFrame):
+    """Test the supported window mapping strategy."""
     # ignore is for polars' WindowMappingStrategy, which isn't publicly exported.
     # https://github.com/pola-rs/polars/issues/17420
     q = df.with_columns(
@@ -113,19 +110,38 @@ def test_over_mapping_strategy(df: pl.LazyFrame, mapping_strategy: str):
             .over(
                 pl.col("a"),
                 mapping_strategy=cast(
-                    Literal["group_to_rows", "join", "explode"], mapping_strategy
+                    "Literal['group_to_rows', 'join', 'explode']", "group_to_rows"
                 ),
             )
         ]
     )
-    if not POLARS_VERSION_LT_132 and mapping_strategy == "group_to_rows":
-        assert_gpu_result_equal(q)
-    else:
-        assert_ir_translation_raises(q, NotImplementedError)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("mapping_strategy", ["explode", "join"])
+def test_over_unsupported_mapping_strategy(
+    in_memory_engine, df: pl.LazyFrame, mapping_strategy: str
+):
+    """Unsupported strategies fail while translating the window expression."""
+    q = df.with_columns(
+        [
+            pl.col("b")
+            .rank()
+            .over(
+                pl.col("a"),
+                mapping_strategy=cast(
+                    "Literal['group_to_rows', 'join', 'explode']", mapping_strategy
+                ),
+            )
+        ]
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("period", ["2d", "3d"])
-def test_rolling(df: pl.LazyFrame, agg_expr, period: str):
+def test_rolling(
+    engine: pl.GPUEngine, request, df: pl.LazyFrame, agg_expr, period: str
+):
     """Test rolling window functions over time series."""
     window_expr = agg_expr.rolling(period=period, index_column="date")
     result_name = f"{agg_expr!s}_rolling_{period}"
@@ -133,22 +149,22 @@ def test_rolling(df: pl.LazyFrame, agg_expr, period: str):
 
     query = df.with_columns(window_expr)
 
-    assert_gpu_result_equal(query)
+    assert_gpu_result_equal(query, engine=engine)
 
 
-def test_rolling_unsupported(df: pl.LazyFrame, unsupported_agg_expr):
+def test_rolling_unsupported(in_memory_engine, df: pl.LazyFrame, unsupported_agg_expr):
     """Test rolling window functions over time series."""
     window_expr = unsupported_agg_expr.rolling(period="2d", index_column="date")
-    result_name = f"{agg_expr!s}_rolling"
+    result_name = f"{unsupported_agg_expr!s}_rolling"
     window_expr = window_expr.alias(result_name)
 
     query = df.with_columns(window_expr)
 
-    assert_ir_translation_raises(query, NotImplementedError)
+    assert_ir_translation_raises(query, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("closed", ["left", "right", "both", "none"])
-def test_rolling_closed(df: pl.LazyFrame, closed: str):
+def test_rolling_closed(engine: pl.GPUEngine, request, df: pl.LazyFrame, closed: str):
     """Test rolling window functions with different closed parameters."""
     # ignore is for polars' ClosedInterval, which isn't publicly exported.
     # https://github.com/pola-rs/polars/issues/17420
@@ -159,8 +175,8 @@ def test_rolling_closed(df: pl.LazyFrame, closed: str):
             .rolling(
                 period="2d",
                 index_column="date",
-                closed=cast(Literal["left", "right", "both", "none"], closed),
+                closed=cast("Literal['left', 'right', 'both', 'none']", closed),
             )
         ]
     )
-    assert_gpu_result_equal(query)
+    assert_gpu_result_equal(query, engine=engine)

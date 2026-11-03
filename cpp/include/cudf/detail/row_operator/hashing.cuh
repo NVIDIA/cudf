@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
-#include <cudf/detail/utilities/algorithm.cuh>
+#include <cudf/detail/utilities/accumulate.cuh>
 #include <cudf/detail/utilities/assert.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/hashing/detail/default_hash.cuh>
@@ -18,13 +18,14 @@
 #include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/structs/structs_column_device_view.cuh>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
 
@@ -51,7 +52,7 @@ class element_hasher {
    */
   __device__ element_hasher(
     Nullate nulls,
-    result_type seed      = DEFAULT_HASH_SEED,
+    result_type seed,
     result_type null_hash = cuda::std::numeric_limits<result_type>::max()) noexcept
     : _check_nulls(nulls), _seed(seed), _null_hash(null_hash)
   {
@@ -85,7 +86,6 @@ class element_hasher {
   template <typename T>
   __device__ result_type operator()(column_device_view const& col,
                                     size_type row_index) const noexcept
-    requires(not column_device_view::has_element_accessor<T>())
   {
     CUDF_UNREACHABLE("Unsupported type in hash.");
   }
@@ -126,7 +126,7 @@ class device_row_hasher {
     auto const init        = has_columns ? hasher(_table.column(0)) : _seed;
     auto const start_col   = static_cast<size_type>(has_columns);
 
-    auto it = thrust::make_transform_iterator(_table.begin() + start_col, hasher);
+    auto it = cuda::transform_iterator(_table.begin() + start_col, hasher);
     return detail::accumulate(
       it, it + (_table.num_columns() - start_col), init, [](auto hash, auto h) {
         return cudf::hashing::detail::hash_combine(hash, h);
@@ -154,15 +154,13 @@ class device_row_hasher {
     template <typename T>
     __device__ result_type operator()(column_device_view const& col,
                                       size_type row_index) const noexcept
-      requires(not cudf::is_nested<T>() and not cudf::is_dictionary<T>())
     {
       return _element_hasher.template operator()<T>(col, row_index);
     }
 
-    template <typename T>
+    template <cudf::concepts::dictionary T>
     __device__ result_type operator()(column_device_view const& col,
                                       size_type row_index) const noexcept
-      requires(cudf::is_dictionary<T>())
     {
       if (_check_nulls && col.is_null(row_index)) { return NULL_HASH; }
 
@@ -174,10 +172,9 @@ class device_row_hasher {
         static_cast<size_type>(col.element<dictionary32>(row_index)));
     }
 
-    template <typename T>
+    template <cudf::concepts::nested T>
     __device__ result_type operator()(column_device_view const& col,
                                       size_type row_index) const noexcept
-      requires(cudf::is_nested<T>())
     {
       auto hash                   = result_type{0};
       column_device_view curr_col = col.slice(row_index, 1);
@@ -192,9 +189,9 @@ class device_row_hasher {
         }
         if (curr_col.type().id() == type_id::STRUCT) {
           if (curr_col.num_child_columns() == 0) { return hash; }
-          curr_col = detail::structs_column_device_view(curr_col).get_sliced_child(0);
+          curr_col = structs_column_device_view(curr_col).get_sliced_child(0);
         } else if (curr_col.type().id() == type_id::LIST) {
-          auto list_col   = detail::lists_column_device_view(curr_col);
+          auto list_col   = lists_column_device_view(curr_col);
           auto list_sizes = make_list_size_iterator(list_col);
           hash            = detail::accumulate(
             list_sizes, list_sizes + list_col.size(), hash, [](auto hash, auto size) {
@@ -215,9 +212,10 @@ class device_row_hasher {
     Nullate const _check_nulls;
   };
 
-  CUDF_HOST_DEVICE device_row_hasher(Nullate check_nulls,
-                                     table_device_view t,
-                                     result_type seed = DEFAULT_HASH_SEED) noexcept
+  CUDF_HOST_DEVICE device_row_hasher(
+    Nullate check_nulls,
+    table_device_view t,
+    result_type seed = hashing::detail::DEFAULT_ALGORITHM_HASH_SEED) noexcept
     : _check_nulls{check_nulls}, _table{t}, _seed(seed)
   {
   }
@@ -240,9 +238,10 @@ class row_hasher {
    * @param t The table containing rows to hash
    * @param stream The stream to construct this object on. Not the stream that will be used for
    * comparisons using this object.
+   * @param temp_mr Device memory resource used for temporary allocations
    */
-  row_hasher(table_view const& t, rmm::cuda_stream_view stream)
-    : d_t(preprocessed_table::create(t, stream))
+  row_hasher(table_view const& t, cuda::stream_ref stream, rmm::device_async_resource_ref temp_mr)
+    : d_t(preprocessed_table::create(t, stream, temp_mr))
   {
   }
 
@@ -275,8 +274,9 @@ class row_hasher {
     template <template <typename> class, typename> class DeviceRowHasher = device_row_hasher,
     typename Nullate>
   DeviceRowHasher<hash_function, Nullate> device_hasher(
-    Nullate nullate                                                  = {},
-    cuda::std::invoke_result_t<hash_function<int32_t>, int32_t> seed = DEFAULT_HASH_SEED) const
+    Nullate nullate = {},
+    cuda::std::invoke_result_t<hash_function<int32_t>, int32_t> seed =
+      hashing::detail::DEFAULT_ALGORITHM_HASH_SEED) const
   {
     return DeviceRowHasher<hash_function, Nullate>(nullate, *d_t, seed);
   }

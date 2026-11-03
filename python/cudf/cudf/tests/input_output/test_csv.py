@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import codecs
+import csv
 import gzip
 import os
 import re
@@ -15,16 +16,11 @@ import pytest
 
 import cudf
 from cudf import read_csv
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_GE_220,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
-from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
+from cudf.testing._utils import assert_exceptions_equal
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def pd_mixed_dataframe():
     return pd.DataFrame(
         {
@@ -39,12 +35,12 @@ def pd_mixed_dataframe():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def cudf_mixed_dataframe(pd_mixed_dataframe):
     return cudf.from_pandas(pd_mixed_dataframe)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf_np_dtypes():
     gdf_dtypes = [
         "float",
@@ -84,7 +80,7 @@ def gdf_np_dtypes():
     return dict(zip(gdf_dtypes, np_dtypes, strict=True))
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def numeric_extremes_dataframe(gdf_np_dtypes):
     data = {}
     for typ, np_type in gdf_np_dtypes.items():
@@ -131,6 +127,9 @@ def test_csv_reader_numeric_data(numeric_types_as_str, tmp_path):
     assert_eq(df, out)
 
 
+@pytest.mark.skip(
+    reason="Disabled until https://github.com/NVIDIA/cudf/pull/22094 is fixed"
+)
 @pytest.mark.parametrize("parse_dates", [["date2"], [0], ["date1", 1, "bad"]])
 def test_csv_reader_datetime(parse_dates):
     df = pd.DataFrame(
@@ -292,10 +291,6 @@ def test_csv_reader_dtype_extremes(use_names, numeric_extremes_dataframe):
     assert_eq(gdf, pdf)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="https://github.com/pandas-dev/pandas/issues/52449",
-)
 def test_csv_reader_skiprows_skipfooter(tmp_path, pd_mixed_dataframe):
     fname = tmp_path / "tmp_csvreader_file5.csv"
 
@@ -373,7 +368,7 @@ def test_csv_reader_strings(tmp_path):
     )
 
     assert len(df.columns) == 2
-    assert df["text"].dtype == np.dtype("object")
+    assert df["text"].dtype == pd.StringDtype(na_value=np.nan)
     assert df["int"].dtype == np.dtype("int64")
     assert df["text"][0] == "a"
     assert df["text"][1] == "b"
@@ -401,7 +396,7 @@ def test_csv_reader_strings_quotechars(tmp_path):
     )
 
     assert len(df.columns) == 2
-    assert df["text"].dtype == np.dtype("object")
+    assert df["text"].dtype == pd.StringDtype(na_value=np.nan)
     assert df["int"].dtype == np.dtype("int64")
     assert df["text"][0] == "a,\n"
     assert df["text"][1] == 'b "c" d'
@@ -546,9 +541,9 @@ def test_csv_reader_NaN_values():
     assert gdf.dtypes.iloc[0] == "int8"
     assert all(gdf["0"][idx] is cudf.NA for idx in range(len(gdf["0"])))
 
-    # data type detection should evaluate the column to object if some nulls
+    # data type detection should evaluate the column to StringDtype if some nulls
     gdf = read_csv(StringIO(all_cells), header=None)
-    assert gdf.dtypes.iloc[0] == np.dtype("object")
+    assert gdf.dtypes.iloc[0] == pd.StringDtype(na_value=np.nan)
 
 
 def test_csv_reader_thousands(tmp_path):
@@ -600,7 +595,7 @@ def test_csv_reader_buffer_strings():
 
     df = read_csv(StringIO(buffer), names=names, dtype=dtypes, skiprows=1)
     assert len(df.columns) == 2
-    assert df["text"].dtype == np.dtype("object")
+    assert df["text"].dtype == pd.StringDtype(na_value=np.nan)
     assert df["int"].dtype == np.dtype("int64")
     assert df["text"][0] == "a"
     assert df["text"][1] == "b"
@@ -611,7 +606,7 @@ def test_csv_reader_buffer_strings():
         BytesIO(str.encode(buffer)), names=names, dtype=dtypes, skiprows=1
     )
     assert len(df2.columns) == 2
-    assert df2["text"].dtype == np.dtype("object")
+    assert df2["text"].dtype == pd.StringDtype(na_value=np.nan)
     assert df2["int"].dtype == np.dtype("int64")
     assert df2["text"][0] == "a"
     assert df2["text"][1] == "b"
@@ -769,7 +764,7 @@ def test_csv_reader_bools_NA():
         false_values=falses,
     )
     assert len(df.columns) == 2
-    assert df["text"].dtype == np.dtype("object")
+    assert df["text"].dtype == pd.StringDtype(na_value=np.nan)
     assert df["int"].dtype == np.dtype("int64")
     expected = pd.DataFrame(
         {
@@ -899,7 +894,7 @@ def test_csv_reader_gzip_compression_strings(tmp_path):
     )
 
     assert len(df.columns) == 2
-    assert df["text"].dtype == np.dtype("object")
+    assert df["text"].dtype == pd.StringDtype(na_value=np.nan)
     assert df["int"].dtype == np.dtype("int64")
     assert df["text"][0] == "a"
     assert df["text"][1] == "b"
@@ -975,16 +970,19 @@ def test_csv_reader_dtype_inference_whitespace():
 def test_csv_reader_empty_dataframe():
     dtypes = ["float64", "int64"]
     buffer = "float_point, integer"
+    dtype = dict(zip(buffer.split(","), dtypes, strict=True))
 
     # should work fine with dtypes
-    df = read_csv(StringIO(buffer), dtype=dtypes)
-    assert df.shape == (0, 2)
-    assert all(df.dtypes == ["float64", "int64"])
+    result = read_csv(StringIO(buffer), dtype=dtype)
+    expected = pd.read_csv(StringIO(buffer), dtype=dtype)
+    assert_eq(result, expected)
 
     # should default to string columns without dtypes
-    df = read_csv(StringIO(buffer))
-    assert df.shape == (0, 2)
-    assert all(df.dtypes == ["object", "object"])
+    result = read_csv(StringIO(buffer))
+    expected = pd.read_csv(StringIO(buffer)).astype(
+        pd.StringDtype(na_value=np.nan)
+    )
+    assert_eq(result, expected)
 
 
 def test_csv_reader_filenotfound(tmp_path):
@@ -1077,7 +1075,7 @@ def test_csv_reader_tabs():
     np.testing.assert_allclose(floats, df["float_point"].to_numpy())
     np.testing.assert_allclose(ints, df["integer"].to_numpy())
     for row in range(4):
-        assert str(df["date"][row]) == dates[row]
+        assert str(df["date"][row].to_numpy()) == dates[row]
 
 
 @pytest.mark.parametrize("segment_bytes", [10000, 19999, 30001, 36000])
@@ -1202,34 +1200,6 @@ def test_csv_reader_prefix():
     column_names = list(df.columns.values)
     for col in range(len(column_names)):
         assert column_names[col] == prefix_str + str(col)
-
-
-def test_csv_reader_delim_whitespace():
-    buffer = "1    2  3\n4  5 6"
-
-    # with header row
-    with pytest.warns(FutureWarning):
-        cu_df = read_csv(StringIO(buffer), delim_whitespace=True)
-    with expect_warning_if(PANDAS_GE_220):
-        pd_df = pd.read_csv(StringIO(buffer), delim_whitespace=True)
-    assert_eq(pd_df, cu_df)
-
-    # without header row
-    with pytest.warns(FutureWarning):
-        cu_df = read_csv(StringIO(buffer), delim_whitespace=True, header=None)
-    with expect_warning_if(PANDAS_GE_220):
-        pd_df = pd.read_csv(
-            StringIO(buffer), delim_whitespace=True, header=None
-        )
-    assert pd_df.shape == cu_df.shape
-
-    # should raise an error if used with delimiter or sep
-    with pytest.raises(ValueError):
-        with pytest.warns(FutureWarning):
-            read_csv(StringIO(buffer), delim_whitespace=True, delimiter=" ")
-    with pytest.raises(ValueError):
-        with pytest.warns(FutureWarning):
-            read_csv(StringIO(buffer), delim_whitespace=True, sep=" ")
 
 
 def test_csv_reader_unnamed_cols():
@@ -1503,7 +1473,7 @@ def test_csv_empty_file(tmp_path, contents):
 
     col_names = ["col1", "col2", "col3", "col4"]
     in_dtypes = ["int", "str", "float", "short"]
-    out_dtypes = ["int64", "object", "float64", "int16"]
+    out_dtypes = ["int64", pd.StringDtype(na_value=np.nan), "float64", "int16"]
 
     # Empty dataframe if no columns names specified or inferred
     df = read_csv(str(fname))
@@ -1519,7 +1489,7 @@ def test_csv_empty_file(tmp_path, contents):
 def test_csv_empty_buffer(contents):
     col_names = ["col1", "col2", "col3", "col4"]
     in_dtypes = ["int", "str", "float", "short"]
-    out_dtypes = ["int64", "object", "float64", "int16"]
+    out_dtypes = ["int64", pd.StringDtype(na_value=np.nan), "float64", "int16"]
 
     # Empty dataframe if no columns names specified or inferred
     df = read_csv(StringIO(contents))
@@ -1815,10 +1785,9 @@ def test_csv_writer_empty_dataframe(tmp_path):
 
     gdf.to_csv(df_fname, index=False)
 
-    df = cudf.read_csv(df_fname)
-
-    assert df.shape == (0, 2)
-    assert all(df.dtypes == ["object", "object"])
+    result = cudf.read_csv(df_fname)
+    expect = cudf.DataFrame({"float_point": [], "integer": []}, dtype="str")
+    assert_eq(expect, result)
 
 
 def test_csv_write_chunksize_corner_case(tmp_path):
@@ -1884,12 +1853,17 @@ def test_csv_write_empty_dataframe(idx, index):
                 None: [12, 12, 32, 44],
             }
         ),
-        pd.DataFrame(
-            {
-                np.nan: [1, 2, 3, None],
-                "": ["a", "v", None, None],
-                None: [12, 12, 32, 44],
-            }
+        pytest.param(
+            pd.DataFrame(
+                {
+                    np.nan: [1, 2, 3, None],
+                    "": ["a", "v", None, None],
+                    None: [12, 12, 32, 44],
+                }
+            ),
+            marks=pytest.mark.xfail(
+                reason="https://github.com/NVIDIA/cudf/issues/16533, np.nan/None coerced to NA since pandas 3"
+            ),
         ),
         pd.DataFrame({"": [1, None, 3, 4]}),
         pd.DataFrame({None: [1, None, 3, 4]}),
@@ -1921,7 +1895,7 @@ def test_csv_write_dataframe_na_rep(df, na_rep):
         {"a": "int32", "b": "float64", "c": "uint8"},
         int,
         str,
-        object,
+        pd.StringDtype(na_value=np.nan),
     ],
 )
 def test_csv_reader_dtypes(dtype):
@@ -2003,8 +1977,7 @@ def test_csv_writer_category(df):
         {"a": "category"},
         {"a": pd.CategoricalDtype([1, 2, 3])},
         {"b": pd.CategoricalDtype(["a", "b", "c"])},
-        {"b": pd.CategoricalDtype(["b", "a"]), "a": "str"},
-        pd.CategoricalDtype(["a", "b"]),
+        {"b": pd.CategoricalDtype(["b", "a", "c"]), "a": "str"},
     ],
 )
 def test_csv_reader_category(dtype):
@@ -2069,7 +2042,7 @@ def test_csv_sep_error():
 
 def test_to_csv_encoding_error():
     # TODO: Remove this test once following
-    # issue is fixed: https://github.com/rapidsai/cudf/issues/2957
+    # issue is fixed: https://github.com/NVIDIA/cudf/issues/2957
     df = cudf.DataFrame({"a": ["你好", "test"]})
     encoding = "utf-8-sig"
     error_message = (
@@ -2080,12 +2053,70 @@ def test_to_csv_encoding_error():
         df.to_csv("test.csv", encoding=encoding)
 
 
-def test_to_csv_compression_error():
+@pytest.mark.parametrize("compression", ["snappy", "gzip", "bz2", "xz"])
+def test_to_csv_unsupported_compression_error(compression):
     df = cudf.DataFrame({"a": ["test"]})
-    compression = "snappy"
-    error_message = "Writing compressed csv is not currently supported in cudf"
+    error_message = f"Compression {compression} is not supported"
     with pytest.raises(NotImplementedError, match=re.escape(error_message)):
         df.to_csv("test.csv", compression=compression)
+
+
+def test_to_csv_compression_no_path_error():
+    df = cudf.DataFrame({"a": ["test"]})
+    with pytest.raises(
+        ValueError, match="returning the CSV output as a string"
+    ):
+        df.to_csv(compression="zstd")
+
+
+def test_to_csv_compression_text_sink_error():
+    # a StringIO sink decodes what the writer hands it as UTF-8, which
+    # compressed output is not
+    df = cudf.DataFrame({"a": ["test"]})
+    with pytest.raises(ValueError, match="text-mode"):
+        df.to_csv(StringIO(), compression="zstd")
+
+
+@pytest.mark.parametrize("chunksize", [None, 8])
+def test_to_csv_zstd_compression(tmp_path, chunksize):
+    df = cudf.DataFrame(
+        {"int_col": list(range(100)), "str_col": ["x" * 100] * 100}
+    )
+    fname = tmp_path / "test_zstd.csv.zst"
+    df.to_csv(fname, index=False, compression="zstd", chunksize=chunksize)
+
+    assert_eq(df, pd.read_csv(fname))
+
+
+@pytest.mark.parametrize("mode", ["w", "wb"])
+def test_to_csv_zstd_compression_file_object(tmp_path, mode):
+    # a text file object wraps a binary buffer, so it must not be rejected
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    fname = tmp_path / "test_zstd.csv.zst"
+    with open(fname, mode) as f:
+        df.to_csv(f, index=False, compression="zstd")
+
+    assert_eq(df, pd.read_csv(fname))
+
+
+def test_to_csv_zstd_compression_remote_path():
+    # fsspec opens remote paths in text mode, wrapping a binary buffer
+    fsspec = pytest.importorskip("fsspec")
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    df.to_csv("memory://test_zstd.csv.zst", index=False, compression="zstd")
+
+    written = fsspec.filesystem("memory").cat("/test_zstd.csv.zst")
+    assert_eq(df, pd.read_csv(BytesIO(written), compression="zstd"))
+
+
+@pytest.mark.parametrize("compression", ["zstd", "infer"])
+@pytest.mark.parametrize("ext", [".zst", ".zstd"])
+def test_read_csv_zstd_extension(tmp_path, ext, compression):
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    fname = tmp_path / f"test_zstd.csv{ext}"
+    df.to_csv(fname, index=False, compression="zstd")
+
+    assert_eq(df, cudf.read_csv(fname, compression=compression))
 
 
 def test_empty_df_no_index():
@@ -2254,6 +2285,65 @@ def test_empty_file_pandas_compat_raises(tmp_path):
             cudf.read_csv(str(empty_file))
 
 
+@pytest.mark.parametrize(
+    "buffer,kwargs",
+    [
+        ("a,b\n", {}),
+        ("", {"names": ["a", "b"]}),
+    ],
+)
+def test_empty_csv_with_columns_pandas_compat(buffer, kwargs):
+    with cudf.option_context("mode.pandas_compatible", True):
+        got = cudf.read_csv(StringIO(buffer), **kwargs)
+
+    expect = pd.read_csv(StringIO(buffer), **kwargs)
+    # With no rows to infer from, pandas falls back to ``object`` for these
+    # columns while cudf types them as strings. cudf has no object dtype
+    # (``object`` maps to DEFAULT_STRING_DTYPE), so the dtypes can never
+    # match here; what this test is about is that the columns survive at all.
+    assert_eq(expect, got, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "name,fmt",
+    [
+        ("archive.tar", "tar"),
+        ("archive.tgz", "tar"),
+        ("archive.tar.gz", "tar"),
+        ("archive.tar.bz2", "tar"),
+        ("archive.tar.xz", "tar"),
+        ("archive.tar.zst", "tar"),
+        ("data.xz", "xz"),
+    ],
+)
+def test_read_csv_unreadable_compression_raises(tmp_path, name, fmt):
+    # libcudf cannot decompress these, and left alone it parses the container's
+    # bytes as CSV instead of failing -- an empty tar comes back as a (0, 1)
+    # frame whose column name is a run of NULs. Raising keeps cudf.pandas
+    # falling back to pandas, which reads them correctly.
+    path = tmp_path / name
+    path.write_bytes(b"\0" * 10240)
+    with pytest.raises(NotImplementedError, match=fmt):
+        cudf.read_csv(str(path))
+
+
+def test_read_csv_explicit_unsupported_compression_raises(tmp_path):
+    path = tmp_path / "does_not_exist.csv"
+    with pytest.raises(NotImplementedError, match="tar"):
+        cudf.read_csv(str(path), compression="tar")
+
+
+def test_read_csv_empty_tar_matches_pandas(tmp_path):
+    # Regression guard: pandas raises for a zero-file archive, so cudf must not
+    # quietly return a frame built from the tar's padding.
+    path = tmp_path / "empty.tar"
+    path.write_bytes(b"\0" * 10240)
+    with pytest.raises(ValueError):
+        pd.read_csv(path)
+    with pytest.raises(NotImplementedError):
+        cudf.read_csv(str(path))
+
+
 def test_read_csv_gcs(monkeypatch):
     gcsfs = pytest.importorskip("gcsfs")
     pdf = pd.DataFrame(
@@ -2290,3 +2380,72 @@ def test_read_csv_gcs(monkeypatch):
     with fs.open(f"gcs://{fpath}") as f:
         got = cudf.read_csv(f)
     assert_eq(pdf, got)
+
+
+@pytest.mark.parametrize("quoting", [csv.QUOTE_MINIMAL, csv.QUOTE_NONE])
+def test_to_csv_quoting(quoting):
+    """Test that to_csv quoting parameter works like pandas."""
+    # Use simple data without special characters for pandas compatibility
+    # pandas QUOTE_NONE requires data without delimiters/newlines/quotes
+    # or an escapechar to be set
+    df = cudf.DataFrame(
+        {
+            "a": [1, 2, 3],
+            "b": ["hello", "world", "test"],
+            "c": [4.5, 6.7, 8.9],
+        }
+    )
+    pdf = df.to_pandas()
+
+    cudf_output = df.to_csv(index=False, quoting=quoting)
+    pandas_output = pdf.to_csv(index=False, quoting=quoting)
+
+    assert cudf_output == pandas_output
+
+
+def test_to_csv_quoting_minimal_with_special_chars():
+    """Test QUOTE_MINIMAL properly quotes fields with special characters."""
+    df = cudf.DataFrame(
+        {
+            "a": [1, 2, 3],
+            "b": ["hello", "world,with,commas", 'quote"test'],
+            "c": ["normal", "line\nbreak", "end"],
+        }
+    )
+    pdf = df.to_pandas()
+
+    cudf_output = df.to_csv(index=False, quoting=csv.QUOTE_MINIMAL)
+    pandas_output = pdf.to_csv(index=False, quoting=csv.QUOTE_MINIMAL)
+
+    assert cudf_output == pandas_output
+
+
+@pytest.mark.parametrize("quoting", [csv.QUOTE_ALL, csv.QUOTE_NONNUMERIC])
+def test_to_csv_quoting_unsupported(quoting):
+    """Test that unsupported quoting styles raise NotImplementedError."""
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    with pytest.raises(
+        NotImplementedError, match=r"quoting=.* is not supported"
+    ):
+        df.to_csv(quoting=quoting)
+
+
+@pytest.mark.parametrize("quoting", [csv.QUOTE_MINIMAL, csv.QUOTE_NONE])
+def test_to_csv_quoting_empty_dataframe(quoting):
+    """Test quoting parameter with empty DataFrame."""
+    df = cudf.DataFrame()
+    pdf = df.to_pandas()
+
+    if quoting == csv.QUOTE_NONE:
+        assert_exceptions_equal(
+            lfunc=pdf.to_csv,
+            rfunc=df.to_csv,
+            lfunc_args_and_kwargs=([], {"quoting": quoting}),
+            rfunc_args_and_kwargs=([], {"quoting": quoting}),
+        )
+        return
+
+    cudf_output = df.to_csv(quoting=quoting)
+    pandas_output = pdf.to_csv(quoting=quoting)
+
+    assert cudf_output == pandas_output

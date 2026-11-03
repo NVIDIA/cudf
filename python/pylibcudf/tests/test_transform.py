@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import math
@@ -11,7 +11,7 @@ from utils import assert_column_eq, assert_table_eq
 import pylibcudf as plc
 
 
-def test_nans_to_nulls(has_nans):
+def test_column_nans_to_nulls(has_nans):
     if has_nans:
         values = [1, float("nan"), float("nan"), None, 3, None]
     else:
@@ -24,13 +24,25 @@ def test_nans_to_nulls(has_nans):
 
     h_input = pa.array(values, type=pa.float32())
     input = plc.Column.from_arrow(h_input)
-    assert input.null_count() == h_input.null_count
     expect = pa.array(replaced, type=pa.float32())
 
-    mask, null_count = plc.transform.nans_to_nulls(input)
+    got = plc.transform.column_nans_to_nulls(input)
 
-    assert null_count == expect.null_count
-    got = input.with_mask(mask, null_count)
+    assert_column_eq(expect, got)
+
+
+def test_column_nans_to_nulls_sliced():
+    values = [1, float("nan"), 3, float("nan"), 5, float("nan"), 7]
+    h_input = pa.array(values, type=pa.float64())
+    input = plc.Column.from_arrow(h_input)
+
+    # Slice to get elements [1:5] = [nan, 3, nan, 5]
+    sliced = plc.copying.slice(input, [1, 5])[0]
+
+    # Expected result with nans converted to nulls
+    expect = pa.array([None, 3, None, 5], type=pa.float64())
+
+    got = plc.transform.column_nans_to_nulls(sliced)
 
     assert_column_eq(expect, got)
 

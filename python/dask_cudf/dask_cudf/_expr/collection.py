@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import warnings
@@ -32,8 +32,8 @@ class CudfFrameBase(FrameBase):
         # to 2 by default (which is not supported by cudf)
         # TODO: Remove when cudf supports both min_periods
         # and numeric_only
-        # See: https://github.com/rapidsai/cudf/issues/12626
-        # See: https://github.com/rapidsai/cudf/issues/9009
+        # See: https://github.com/NVIDIA/cudf/issues/12626
+        # See: https://github.com/NVIDIA/cudf/issues/9009
         self._meta.cov(min_periods=min_periods)
 
         frame = self
@@ -44,7 +44,7 @@ class CudfFrameBase(FrameBase):
         return frame, min_periods
 
     # var can be removed if cudf#15179 is addressed.
-    # See: https://github.com/rapidsai/cudf/issues/14935
+    # See: https://github.com/NVIDIA/cudf/issues/14935
     def var(
         self,
         axis=0,

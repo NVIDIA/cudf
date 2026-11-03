@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -24,6 +24,14 @@ set +u
 conda activate clang_tidy
 set -u
 
+# clang-tidy parses the GCC compile command with clang. Newer conda compilers add
+# this GCC-only optimization flag, which clang reports as an error.
+for flags_var in CFLAGS CXXFLAGS; do
+  if [[ -n "${!flags_var:-}" ]]; then
+    export "${flags_var}=$(printf '%s' "${!flags_var}" | sed -E 's/(^|[[:space:]])-fno-merge-constants([[:space:]]|$)/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  fi
+done
+
 export SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX="cudf-cpp-linters-preprocessor-cache"
 export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
 
@@ -38,10 +46,10 @@ iwyu_flag=""
 # if [[ "${RAPIDS_BUILD_TYPE:-}" == "nightly" ]]; then
 #  iwyu_flag="-DCUDF_IWYU=ON"
 # fi
-rapids-telemetry-record cpp_linters_build.log cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release -DCUDF_CLANG_TIDY=ON ${iwyu_flag} -DBUILD_TESTS=OFF -DCMAKE_CUDA_ARCHITECTURES=75 -GNinja
+cmake -S cpp -B cpp/build -DCMAKE_BUILD_TYPE=Release -DCUDF_CLANG_TIDY=ON ${iwyu_flag} -DBUILD_TESTS=OFF -DCMAKE_CUDA_ARCHITECTURES=75 -GNinja
 cmake --build cpp/build 2>&1 | python cpp/scripts/parse_iwyu_output.py
 
-rapids-telemetry-record sccache-stats.txt sccache --show-adv-stats
+sccache --show-adv-stats
 sccache --stop-server >/dev/null 2>&1 || true
 
 # Remove invalid components of the path for local usage. The path below is

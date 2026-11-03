@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,22 +10,23 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
+#include <span>
 #include <vector>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace detail {
 
 /**
- * @copydoc cudf::create_null_mask(size_type, mask_state, rmm::device_async_resource_ref)
+ * @copydoc cudf::create_null_mask(size_type, mask_state, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-rmm::device_buffer create_null_mask(size_type size,
-                                    mask_state state,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr);
+cuda::device_buffer<cudf::bitmask_type> create_null_mask(size_type size,
+                                                         mask_state state,
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::set_null_mask(bitmask_type*, size_type, size_type, bool)
@@ -36,7 +37,7 @@ void set_null_mask(bitmask_type* bitmask,
                    size_type begin_bit,
                    size_type end_bit,
                    bool valid,
-                   rmm::cuda_stream_view stream);
+                   cuda::stream_ref stream);
 
 /**
  * @brief Given a bitmask, counts the number of set (1) bits in the range
@@ -52,11 +53,10 @@ void set_null_mask(bitmask_type* bitmask,
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @return The number of non-zero bits in the specified range.
  */
-CUDF_EXPORT
 cudf::size_type count_set_bits(bitmask_type const* bitmask,
                                size_type start,
                                size_type stop,
-                               rmm::cuda_stream_view stream);
+                               cuda::stream_ref stream);
 
 /**
  * @brief Given a bitmask, counts the number of unset (0) bits in the range
@@ -72,11 +72,10 @@ cudf::size_type count_set_bits(bitmask_type const* bitmask,
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @return The number of zero bits in the specified range.
  */
-CUDF_EXPORT
 cudf::size_type count_unset_bits(bitmask_type const* bitmask,
                                  size_type start,
                                  size_type stop,
-                                 rmm::cuda_stream_view stream);
+                                 cuda::stream_ref stream);
 
 /**
  * @brief Given a bitmask, counts the number of set (1) bits in every range
@@ -91,10 +90,9 @@ cudf::size_type count_unset_bits(bitmask_type const* bitmask,
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  * @return A vector storing the number of non-zero bits in the specified ranges.
  */
-CUDF_EXPORT
 std::vector<size_type> segmented_count_set_bits(bitmask_type const* bitmask,
                                                 host_span<size_type const> indices,
-                                                rmm::cuda_stream_view stream);
+                                                cuda::stream_ref stream);
 
 /**
  * @brief Given a bitmask, counts the number of unset (0) bits in every range
@@ -109,10 +107,9 @@ std::vector<size_type> segmented_count_set_bits(bitmask_type const* bitmask,
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  * @return A vector storing the number of zero bits in the specified ranges.
  */
-CUDF_EXPORT
 std::vector<size_type> segmented_count_unset_bits(bitmask_type const* bitmask,
                                                   host_span<size_type const> indices,
-                                                  rmm::cuda_stream_view stream);
+                                                  cuda::stream_ref stream);
 
 /**
  * @brief Given a validity bitmask, counts the number of valid elements (set bits)
@@ -130,11 +127,10 @@ std::vector<size_type> segmented_count_unset_bits(bitmask_type const* bitmask,
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  * @return The number of valid elements in the specified range.
  */
-CUDF_EXPORT
 cudf::size_type valid_count(bitmask_type const* bitmask,
                             size_type start,
                             size_type stop,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * @copydoc null_count(bitmask_type const* bitmask, size_type start, size_type stop)
@@ -144,111 +140,92 @@ cudf::size_type valid_count(bitmask_type const* bitmask,
 cudf::size_type null_count(bitmask_type const* bitmask,
                            size_type start,
                            size_type stop,
-                           rmm::cuda_stream_view stream);
+                           cuda::stream_ref stream);
 
 /**
- * @brief Given a validity bitmask, counts the number of valid elements (set
- * bits) in every range `[indices[2*i], indices[(2*i)+1])` (where 0 <= i <
- * indices.size() / 2).
- *
- * If `bitmask == nullptr`, all elements are assumed to be valid and a vector of
- * length `indices.size()` containing segment lengths is returned.
- *
- * @throws cudf::logic_error if `indices.size() % 2 != 0`.
- * @throws cudf::logic_error if `indices[2*i] < 0 or indices[2*i] > indices[(2*i)+1]`.
- *
- * @param[in] bitmask Validity bitmask residing in device memory.
- * @param[in] indices A host_span of indices specifying ranges to count the number of valid
- * elements.
- * @param[in] stream CUDA stream used for device memory operations and kernel launches.
- * @return A vector storing the number of valid elements in each specified range.
+ * @copydoc cudf::segmented_valid_count
  */
-CUDF_EXPORT
 std::vector<size_type> segmented_valid_count(bitmask_type const* bitmask,
-                                             host_span<size_type const> indices,
-                                             rmm::cuda_stream_view stream);
+                                             std::span<size_type const> indices,
+                                             cuda::stream_ref stream);
 
 /**
- * @brief Given a validity bitmask, counts the number of null elements (unset
- * bits) in every range `[indices[2*i], indices[(2*i)+1])` (where 0 <= i <
- * indices.size() / 2).
- *
- * If `bitmask == nullptr`, all elements are assumed to be valid and a vector of
- * length `indices.size()` containing all zeros is returned.
- *
- * @throws cudf::logic_error if `indices.size() % 2 != 0`
- * @throws cudf::logic_error if `indices[2*i] < 0 or indices[2*i] > indices[(2*i)+1]`
- *
- * @param[in] bitmask Validity bitmask residing in device memory.
- * @param[in] indices A host_span of indices specifying ranges to count the number of null elements.
- * @param[in] stream CUDA stream used for device memory operations and kernel launches.
- * @return A vector storing the number of null elements in each specified range.
+ * @copydoc cudf::segmented_null_count
  */
-CUDF_EXPORT
 std::vector<size_type> segmented_null_count(bitmask_type const* bitmask,
-                                            host_span<size_type const> indices,
-                                            rmm::cuda_stream_view stream);
+                                            std::span<size_type const> indices,
+                                            cuda::stream_ref stream);
 
 /**
  * @copydoc cudf::copy_bitmask(bitmask_type const*, size_type, size_type,
- *rmm::device_async_resource_ref)
+ *cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-rmm::device_buffer copy_bitmask(bitmask_type const* mask,
-                                size_type begin_bit,
-                                size_type end_bit,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr);
+cuda::device_buffer<cudf::bitmask_type> copy_bitmask(bitmask_type const* mask,
+                                                     size_type begin_bit,
+                                                     size_type end_bit,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
 
 /**
- * @copydoc cudf::copy_bitmask(column_view const& view, rmm::device_async_resource_ref)
+ * @copydoc cudf::copy_bitmask(column_view const& view, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-rmm::device_buffer copy_bitmask(column_view const& view,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr);
+cuda::device_buffer<cudf::bitmask_type> copy_bitmask(column_view const& view,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
 
 /**
  * @copydoc bitmask_and(host_span<bitmask_type const* const>, host_span<size_type> const,
- * size_type, rmm::device_async_resource_ref)
+ * size_type, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
-CUDF_EXPORT
-std::pair<rmm::device_buffer, size_type> bitmask_and(host_span<bitmask_type const* const> masks,
-                                                     host_span<size_type const> masks_begin_bits,
-                                                     size_type mask_size_bits,
-                                                     rmm::cuda_stream_view stream,
-                                                     rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_and(
+  host_span<bitmask_type const* const> masks,
+  host_span<size_type const> masks_begin_bits,
+  size_type mask_size_bits,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::bitmask_and
  *
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  */
-std::pair<rmm::device_buffer, size_type> bitmask_and(table_view const& view,
-                                                     rmm::cuda_stream_view stream,
-                                                     rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_and(
+  table_view const& view, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::segmented_bitmask_and
  */
-std::pair<std::vector<std::unique_ptr<rmm::device_buffer>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>>,
+          std::vector<size_type>>
 segmented_bitmask_and(host_span<column_view const> colviews,
                       host_span<size_type const> segment_offsets,
-                      rmm::cuda_stream_view stream,
-                      rmm::device_async_resource_ref mr);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 
+/**
+ * @copydoc cudf::segmented_bitmask_and
+ */
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>>,
+          std::vector<size_type>>
+segmented_bitmask_and(host_span<bitmask_type const* const> masks,
+                      host_span<size_type const> segment_offsets,
+                      size_type mask_size_bits,
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 /**
  * @copydoc cudf::bitmask_or
  *
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  */
-std::pair<rmm::device_buffer, size_type> bitmask_or(table_view const& view,
-                                                    rmm::cuda_stream_view stream,
-                                                    rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_or(table_view const& view,
+                                                                         cuda::stream_ref stream,
+                                                                         cudf::memory_resources mr);
 
 /**
  * @brief Performs a bitwise AND of the specified bitmasks,
@@ -265,7 +242,7 @@ cudf::size_type inplace_bitmask_and(device_span<bitmask_type> dest_mask,
                                     host_span<bitmask_type const* const> masks,
                                     host_span<size_type const> masks_begin_bits,
                                     size_type mask_size_bits,
-                                    rmm::cuda_stream_view stream);
+                                    cuda::stream_ref stream);
 
 /**
  * @brief Recursively set valid null masks for all children.
@@ -276,13 +253,13 @@ cudf::size_type inplace_bitmask_and(device_span<bitmask_type> dest_mask,
  * @param input input column to check for nullability
  * @param output output column to mirror nullability of input
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned null masks
  */
 void set_all_valid_null_masks(column_view const& input,
                               column& output,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
 
 }  // namespace detail
 
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

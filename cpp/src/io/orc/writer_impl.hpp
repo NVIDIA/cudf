@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,13 +16,18 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
+#include <cudf/wrappers/durations.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/counting_iterator.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -45,15 +50,15 @@ struct stripe_rowgroups {
   size_type id;     // stripe id
   size_type first;  // first rowgroup in the stripe
   size_type size;   // number of rowgroups in the stripe
-  [[nodiscard]] auto cbegin() const { return thrust::make_counting_iterator(first); }
-  [[nodiscard]] auto cend() const { return thrust::make_counting_iterator(first + size); }
+  [[nodiscard]] auto cbegin() const { return cuda::counting_iterator{first}; }
+  [[nodiscard]] auto cend() const { return cuda::counting_iterator{first + size}; }
 };
 
 /**
  * @brief Holds the sizes of encoded elements of decimal columns.
  */
 struct encoder_decimal_info {
-  std::map<uint32_t, rmm::device_uvector<uint32_t>>
+  std::map<uint32_t, cuda::device_buffer<uint32_t>>
     elem_sizes;  ///< Column index -> per-element size map
   std::map<uint32_t, cudf::detail::host_vector<uint32_t>>
     rg_sizes;  ///< Column index -> per-rowgroup size map
@@ -97,20 +102,27 @@ struct file_segmentation {
 
 /**
  * @brief ORC per-chunk streams of encoded data.
+ *
+ * The encoded bytes of each (stripe, stream) pair occupy an aligned byte range (extent) within one
+ * of the arenas below. Streams with size that is not known in advance are written into the
+ * transient arena, which is freed as soon as gathering completes.
  */
 struct encoded_data {
-  std::vector<std::vector<rmm::device_uvector<uint8_t>>> data;  // Owning array of the encoded data
-  hostdevice_2dvector<encoder_chunk_streams> streams;  // streams of encoded data, per chunk
+  cuda::device_buffer<uint8_t> persistent_buffer;       // extents that may be read in place
+  cuda::device_buffer<uint8_t> transient_buffer;        // extents always copied out by the gather
+  cuda::device_buffer<uint8_t> gathered_buffer;         // arena for gather_stripes output
+  std::vector<std::vector<device_span<uint8_t>>> data;  // [stripe][strm_id] views
+  hostdevice_2dvector<encoder_chunk_streams> streams;   // streams of encoded data, per chunk
 };
 
 /**
  * @brief Dictionary data for string columns and their device views, per column.
  */
 struct string_dictionaries {
-  std::vector<rmm::device_uvector<uint32_t>> data;
-  std::vector<rmm::device_uvector<uint32_t>> index;
-  rmm::device_uvector<device_span<uint32_t>> d_data_view;
-  rmm::device_uvector<device_span<uint32_t>> d_index_view;
+  std::vector<cuda::device_buffer<uint32_t>> data;
+  std::vector<cuda::device_buffer<uint32_t>> index;
+  cuda::device_buffer<device_span<uint32_t>> d_data_view;
+  cuda::device_buffer<device_span<uint32_t>> d_index_view;
   // Dictionaries are currently disabled for columns with a rowgroup larger than 2^15
   thrust::host_vector<bool> dictionary_enabled;
 };
@@ -128,12 +140,15 @@ struct stripe_size_limits {
  *
  */
 struct intermediate_statistics {
-  explicit intermediate_statistics(rmm::cuda_stream_view stream) : stripe_stat_chunks(0, stream) {}
+  explicit intermediate_statistics(cuda::stream_ref stream)
+    : stripe_stat_chunks(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
+  {
+  }
 
-  intermediate_statistics(orc_table_view const& table, rmm::cuda_stream_view stream);
+  intermediate_statistics(orc_table_view const& table, cuda::stream_ref stream);
 
   intermediate_statistics(std::vector<col_stats_blob> rb,
-                          rmm::device_uvector<statistics_chunk> sc,
+                          cuda::device_buffer<statistics_chunk> sc,
                           cudf::detail::hostdevice_vector<statistics_merge_group> smg,
                           std::vector<statistics_dtype> sdt,
                           std::vector<data_type> sct)
@@ -148,7 +163,7 @@ struct intermediate_statistics {
   // blobs for the rowgroups. Not persisted
   std::vector<col_stats_blob> rowgroup_blobs;
 
-  rmm::device_uvector<statistics_chunk> stripe_stat_chunks;
+  cuda::device_buffer<statistics_chunk> stripe_stat_chunks;
   cudf::detail::hostdevice_vector<statistics_merge_group> stripe_stat_merge;
   std::vector<statistics_dtype> stats_dtypes;
   std::vector<data_type> col_types;
@@ -169,17 +184,17 @@ struct persisted_statistics {
     num_rows = 0;
   }
 
-  void persist(int num_table_rows,
+  void persist(uint64_t num_table_rows,
                single_write_mode write_mode,
                intermediate_statistics&& intermediate_stats,
-               rmm::cuda_stream_view stream);
+               cuda::stream_ref stream);
 
-  std::vector<rmm::device_uvector<statistics_chunk>> stripe_stat_chunks;
+  std::vector<cuda::device_buffer<statistics_chunk>> stripe_stat_chunks;
   std::vector<cudf::detail::hostdevice_vector<statistics_merge_group>> stripe_stat_merge;
-  std::vector<rmm::device_uvector<char>> string_pools;
+  std::vector<cuda::device_buffer<char>> string_pools;
   std::vector<statistics_dtype> stats_dtypes;
   std::vector<data_type> col_types;
-  int num_rows = 0;
+  uint64_t num_rows = 0;
 };
 
 /**
@@ -191,11 +206,37 @@ struct encoded_footer_statistics {
   std::vector<col_stats_blob> file_level;
 };
 
+/**
+ * @brief Timezone that the written timestamps are relative to.
+ */
+struct writer_timezone {
+  // Recorded in the stripe footers as `writerTimezone`
+  std::string const name;
+  // Instant that encoded timestamps are stored relative to: the ORC epoch as wall-clock time in
+  // `name`. Equal to `orc_utc_epoch` when writing UTC.
+  duration_s const base_epoch;
+
+  /**
+   * @brief Resolves a timezone name into the epoch that timestamps are encoded relative to.
+   *
+   * Uses `base_epoch_in_timezone`, so the writer and the reader resolve the epoch the same way.
+   *
+   * @param timezone Timezone name
+   *
+   * @throw cudf::logic_error if `timezone` is empty or does not resolve to a TZif file
+   */
+  explicit writer_timezone(std::string timezone);
+
+ private:
+  [[nodiscard]] static duration_s compute_base_epoch(std::string_view timezone);
+};
+
 enum class writer_state {
   NO_DATA_WRITTEN,  // No table data has been written to the sink; if the writer is closed or
                     // destroyed in this state, it should not write the footer.
   DATA_WRITTEN,     // At least one table has been written to the sink; when the writer is closed,
                     // it should write the footer.
+  FAILED,           // A write or close failed after output started; no further writes are allowed.
   CLOSED            // Writer has been closed; no further writes are allowed.
 };
 
@@ -218,7 +259,7 @@ class writer::impl {
   explicit impl(std::unique_ptr<data_sink> sink,
                 orc_writer_options const& options,
                 single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Constructor with chunked writer options.
@@ -231,7 +272,7 @@ class writer::impl {
   explicit impl(std::unique_ptr<data_sink> sink,
                 chunked_orc_writer_options const& options,
                 single_write_mode mode,
-                rmm::cuda_stream_view stream);
+                cuda::stream_ref stream);
 
   /**
    * @brief Destructor to complete any incomplete write and release resources.
@@ -293,20 +334,9 @@ class writer::impl {
   void add_table_to_footer_data(orc_table_view const& orc_table,
                                 std::vector<StripeInformation>& stripes);
 
-  /**
-   * @brief Update writer-level statistics with data from the current table.
-   *
-   * @param num_rows Number of rows in the current table
-   * @param single_table_stats Statistics data from the current table
-   * @param compression_stats Compression statistics from the current table
-   */
-  void update_statistics(size_type num_rows,
-                         intermediate_statistics&& single_table_stats,
-                         std::optional<writer_compression_statistics> const& compression_stats);
-
  private:
   // CUDA stream.
-  rmm::cuda_stream_view const _stream;
+  cuda::stream_ref const _stream;
 
   // Writer options.
   stripe_size_limits const _max_stripe_size;
@@ -320,6 +350,7 @@ class writer::impl {
                                                // indicate that we are guaranteeing a single table
                                                // write. This enables some internal optimizations.
   std::map<std::string, std::string> const _kv_meta;  // Optional user metadata.
+  writer_timezone const _timezone;
   std::unique_ptr<data_sink> const _out_sink;
 
   // Debug parameter---currently not yet supported to be user-specified.

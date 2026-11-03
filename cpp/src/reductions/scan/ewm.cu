@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,14 +9,18 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/transform_scan.h>
 
@@ -45,7 +49,7 @@ class recurrence_functor {
 template <typename T>
 struct ewma_functor_base {
   T beta;
-  const pair_type<T> IDENTITY{1.0, 0.0};
+  pair_type<T> const IDENTITY{1.0, 0.0};
 };
 
 template <typename T, bool is_numerator>
@@ -129,84 +133,90 @@ struct ewma_noadjust_no_nulls_functor : public ewma_functor_base<T> {
 * Example: {1, NULL, 3, 4, NULL, NULL, 7}
         -> {0, 0     1, 0, 0,    1,    2}
 */
-rmm::device_uvector<cudf::size_type> null_roll_up(column_view const& input,
-                                                  rmm::cuda_stream_view stream)
+cuda::device_buffer<cudf::size_type> null_roll_up(column_view const& input, cuda::stream_ref stream)
 {
-  rmm::device_uvector<cudf::size_type> output(input.size(), stream);
+  cuda::device_buffer<cudf::size_type> output(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
-  auto device_view = column_device_view::create(input);
-  auto invalid_it  = thrust::make_transform_iterator(
+  auto device_view = column_device_view::create(input, stream);
+  auto invalid_it  = cuda::transform_iterator(
     cudf::detail::make_validity_iterator(*device_view),
     cuda::proclaim_return_type<int>([] __device__(int valid) -> int { return 1 - valid; }));
 
   // valid mask {1, 0, 1, 0, 0, 1} leads to output array {0, 0, 1, 0, 1, 2}
-  thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream),
-                                invalid_it,
-                                invalid_it + input.size() - 1,
-                                invalid_it,
-                                std::next(output.begin()));
+  thrust::inclusive_scan_by_key(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    invalid_it,
+    invalid_it + input.size() - 1,
+    invalid_it,
+    std::next(output.begin()));
   return output;
 }
 
 template <typename T>
 rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
                                            T const beta,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
-  rmm::device_uvector<pair_type<T>> pairs(input.size(), stream);
+  cuda::device_buffer<pair_type<T>> pairs(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
   if (input.has_nulls()) {
-    rmm::device_uvector<cudf::size_type> nullcnt = null_roll_up(input, stream);
-    auto device_view                             = column_device_view::create(input);
+    cuda::device_buffer<cudf::size_type> nullcnt = null_roll_up(input, stream);
+    auto device_view                             = column_device_view::create(input, stream);
     auto valid_it = cudf::detail::make_validity_iterator(*device_view);
     auto data =
-      thrust::make_zip_iterator(cuda::std::make_tuple(valid_it, nullcnt.begin(), input.begin<T>()));
+      cuda::make_zip_iterator(cuda::std::make_tuple(valid_it, nullcnt.begin(), input.begin<T>()));
 
-    thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream),
-                                     data,
-                                     data + input.size(),
-                                     pairs.begin(),
-                                     ewma_adjust_nulls_functor<T, true>{beta},
-                                     recurrence_functor<T>{});
-    thrust::transform(rmm::exec_policy_nosync(stream),
+    thrust::transform_inclusive_scan(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      data,
+      data + input.size(),
+      pairs.begin(),
+      ewma_adjust_nulls_functor<T, true>{beta},
+      recurrence_functor<T>{});
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       pairs.begin(),
                       pairs.end(),
                       output.begin(),
                       [] __device__(pair_type<T> pair) -> T { return pair.second; });
 
-    thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream),
-                                     data,
-                                     data + input.size(),
-                                     pairs.begin(),
-                                     ewma_adjust_nulls_functor<T, false>{beta},
-                                     recurrence_functor<T>{});
+    thrust::transform_inclusive_scan(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      data,
+      data + input.size(),
+      pairs.begin(),
+      ewma_adjust_nulls_functor<T, false>{beta},
+      recurrence_functor<T>{});
 
   } else {
-    thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream),
-                                     input.begin<T>(),
-                                     input.end<T>(),
-                                     pairs.begin(),
-                                     ewma_adjust_no_nulls_functor<T, true>{beta},
-                                     recurrence_functor<T>{});
-    thrust::transform(rmm::exec_policy_nosync(stream),
+    thrust::transform_inclusive_scan(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      input.begin<T>(),
+      input.end<T>(),
+      pairs.begin(),
+      ewma_adjust_no_nulls_functor<T, true>{beta},
+      recurrence_functor<T>{});
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       pairs.begin(),
                       pairs.end(),
                       output.begin(),
                       [] __device__(pair_type<T> pair) -> T { return pair.second; });
-    auto itr = thrust::make_counting_iterator<size_type>(0);
+    auto itr = cuda::counting_iterator<size_type>{0};
 
-    thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream),
-                                     itr,
-                                     itr + input.size(),
-                                     pairs.begin(),
-                                     ewma_adjust_no_nulls_functor<T, false>{beta},
-                                     recurrence_functor<T>{});
+    thrust::transform_inclusive_scan(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      itr,
+      itr + input.size(),
+      pairs.begin(),
+      ewma_adjust_no_nulls_functor<T, false>{beta},
+      recurrence_functor<T>{});
   }
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     pairs.begin(),
     pairs.end(),
     output.begin(),
@@ -219,49 +229,53 @@ rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
 template <typename T>
 rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
                                              T const beta,
-                                             rmm::cuda_stream_view stream,
+                                             cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
-  rmm::device_uvector<pair_type<T>> pairs(input.size(), stream);
-  rmm::device_uvector<cudf::size_type> nullcnt =
-    [&input, stream]() -> rmm::device_uvector<cudf::size_type> {
+  cuda::device_buffer<pair_type<T>> pairs(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+  cuda::device_buffer<cudf::size_type> nullcnt =
+    [&input, stream]() -> cuda::device_buffer<cudf::size_type> {
     if (input.has_nulls()) {
       return null_roll_up(input, stream);
     } else {
-      return rmm::device_uvector<cudf::size_type>(input.size(), stream);
+      return cuda::device_buffer<cudf::size_type>(
+        stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     }
   }();
   // denominators are all 1 and do not need to be computed
   // pairs are all (beta, 1-beta x_i) except for the first one
 
   if (!input.has_nulls()) {
-    auto data = thrust::make_zip_iterator(
-      cuda::std::make_tuple(input.begin<T>(), thrust::make_counting_iterator<size_type>(0)));
-    thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream),
-                                     data,
-                                     data + input.size(),
-                                     pairs.begin(),
-                                     ewma_noadjust_no_nulls_functor<T>{beta},
-                                     recurrence_functor<T>{});
+    auto data = cuda::make_zip_iterator(
+      cuda::std::make_tuple(input.begin<T>(), cuda::counting_iterator<size_type>{0}));
+    thrust::transform_inclusive_scan(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      data,
+      data + input.size(),
+      pairs.begin(),
+      ewma_noadjust_no_nulls_functor<T>{beta},
+      recurrence_functor<T>{});
 
   } else {
-    auto device_view = column_device_view::create(input);
+    auto device_view = column_device_view::create(input, stream);
     auto valid_it    = detail::make_validity_iterator(*device_view);
 
-    auto data = thrust::make_zip_iterator(cuda::std::make_tuple(
-      input.begin<T>(), thrust::make_counting_iterator<size_type>(0), valid_it, nullcnt.begin()));
+    auto data = cuda::make_zip_iterator(cuda::std::make_tuple(
+      input.begin<T>(), cuda::counting_iterator<size_type>{0}, valid_it, nullcnt.begin()));
 
-    thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream),
-                                     data,
-                                     data + input.size(),
-                                     pairs.begin(),
-                                     ewma_noadjust_nulls_functor<T>{beta},
-                                     recurrence_functor<T>());
+    thrust::transform_inclusive_scan(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      data,
+      data + input.size(),
+      pairs.begin(),
+      ewma_noadjust_nulls_functor<T>{beta},
+      recurrence_functor<T>());
   }
 
   // copy the second elements to the output for now
-  thrust::transform(rmm::exec_policy_nosync(stream),
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     pairs.begin(),
                     pairs.end(),
                     output.begin(),
@@ -270,19 +284,19 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
 }
 
 struct ewma_functor {
-  template <typename T, CUDF_ENABLE_IF(!std::is_floating_point<T>::value)>
+  template <typename T>
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     CUDF_FAIL("Unsupported type for EWMA.");
   }
 
-  template <typename T, CUDF_ENABLE_IF(std::is_floating_point<T>::value)>
+  template <cuda::std::floating_point T>
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     auto const ewma_agg       = dynamic_cast<ewma_aggregation const*>(&agg);
@@ -303,14 +317,14 @@ struct ewma_functor {
     return std::make_unique<column>(cudf::data_type(cudf::type_to_id<T>()),
                                     input.size(),
                                     result.release(),
-                                    rmm::device_buffer{},
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     0);
   }
 };
 
 std::unique_ptr<column> exponentially_weighted_moving_average(column_view const& input,
                                                               scan_aggregation const& agg,
-                                                              rmm::cuda_stream_view stream,
+                                                              cuda::stream_ref stream,
                                                               rmm::device_async_resource_ref mr)
 {
   return type_dispatcher(input.type(), ewma_functor{}, agg, input, stream, mr);

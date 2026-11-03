@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
 
 #include <initializer_list>
 #include <vector>
@@ -37,7 +37,7 @@ using K = int32_t;
 TYPED_TEST(groupby_mean_test, basic)
 {
   using V  = TypeParam;
-  using R  = cudf::detail::target_type_t<V, cudf::aggregation::MEAN>;
+  using R  = std::conditional_t<cudf::is_duration<V>(), V, double>;
   using RT = std::conditional_t<cudf::is_duration<R>(), int, double>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
@@ -57,7 +57,7 @@ TYPED_TEST(groupby_mean_test, basic)
 TYPED_TEST(groupby_mean_test, empty_cols)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MEAN>;
+  using R = std::conditional_t<cudf::is_duration<V>(), V, double>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> vals{};
@@ -72,7 +72,7 @@ TYPED_TEST(groupby_mean_test, empty_cols)
 TYPED_TEST(groupby_mean_test, zero_valid_keys)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MEAN>;
+  using R = std::conditional_t<cudf::is_duration<V>(), V, double>;
 
   cudf::test::fixed_width_column_wrapper<K> keys({1, 2, 3}, all_nulls());
   cudf::test::fixed_width_column_wrapper<V> vals{3, 4, 5};
@@ -87,7 +87,7 @@ TYPED_TEST(groupby_mean_test, zero_valid_keys)
 TYPED_TEST(groupby_mean_test, zero_valid_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MEAN>;
+  using R = std::conditional_t<cudf::is_duration<V>(), V, double>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5}, all_nulls());
@@ -102,7 +102,7 @@ TYPED_TEST(groupby_mean_test, zero_valid_values)
 TYPED_TEST(groupby_mean_test, null_keys_and_values)
 {
   using V  = TypeParam;
-  using R  = cudf::detail::target_type_t<V, cudf::aggregation::MEAN>;
+  using R  = std::conditional_t<cudf::is_duration<V>(), V, double>;
   using RT = std::conditional_t<cudf::is_duration<R>(), int, double>;
 
   cudf::test::fixed_width_column_wrapper<K> keys(
@@ -130,7 +130,7 @@ struct groupby_dictionary_mean_test : public cudf::test::BaseFixture {};
 TEST_F(groupby_dictionary_mean_test, basic)
 {
   using V = int16_t;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MEAN>;
+  using R = double;
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};

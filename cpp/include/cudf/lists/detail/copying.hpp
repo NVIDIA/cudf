@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -7,9 +7,9 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace lists::detail {
 
 /**
@@ -34,8 +34,8 @@ namespace lists::detail {
 std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
                                          size_type start,
                                          size_type end,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr);
 
 }  // namespace lists::detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

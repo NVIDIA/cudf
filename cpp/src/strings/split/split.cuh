@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,28 +10,29 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
-#include <cudf/detail/utilities/algorithm.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/detail/split_utils.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/atomic>
+#include <cuda/buffer>
+#include <cuda/iterator>
 #include <cuda/std/functional>
-#include <cuda/std/iterator>
-#include <thrust/copy.h>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform.h>
+
+#include <type_traits>
 
 namespace cudf::strings::detail {
 
@@ -48,6 +49,15 @@ struct string_delimiter_fn {
   int64_t chars_bytes{};
   char const* d_chars{};
 };
+
+// Keep one host entry point per fixed predicate so split_part.cu owns the count/select kernels
+// instead of emitting duplicate instantiations in each caller TU.
+cuda::device_buffer<int64_t> find_string_delimiter_positions(strings_column_view const& input,
+                                                             cudf::string_view delimiter,
+                                                             cuda::stream_ref stream);
+
+cuda::device_buffer<int64_t> find_whitespace_delimiter_positions(strings_column_view const& input,
+                                                                 cuda::stream_ref stream);
 
 /**
  * @brief Returns `true` if the byte at `idx` is a whitespace character
@@ -181,7 +191,8 @@ struct split_tokenizer_fn : base_split_tokenizer<split_tokenizer_fn> {
    * The tokens are processed from the beginning of each string ignoring overlapping
    * delimiters and honoring the `max_tokens` value.
    *
-   * @param d_str String to tokenize
+   * @param pos_begin Start position of the string in the character data
+   * @param pos_end End position of the string in the character data
    * @param d_delimiters Positions of delimiters for this string
    * @param d_tokens Output vector to store tokens for this string
    */
@@ -239,7 +250,8 @@ struct rsplit_tokenizer_fn : base_split_tokenizer<rsplit_tokenizer_fn> {
    * The tokens are processed from the end of each string ignoring overlapping
    * delimiters and honoring the `max_tokens` value.
    *
-   * @param d_str String to tokenize
+   * @param pos_begin Start position of the string in the character data
+   * @param pos_end End position of the string in the character data
    * @param d_delimiters Positions of delimiters for this string
    * @param d_tokens Output vector to store tokens for this string
    */
@@ -375,8 +387,6 @@ struct split_ws_tokenizer_fn : base_ws_split_tokenizer<split_ws_tokenizer_fn> {
   {
     auto const base_ptr = d_strings.head<char>();  // d_delimiters, pos_begin/end based on this ptr
     auto const token_count = static_cast<size_type>(d_tokens.size());
-    auto const all_tokens =
-      (max_tokens == cuda::std::numeric_limits<size_type>::max()) || (token_count == 1);
 
     // build the index-pair of each token for this string
     size_type token_idx = 0;
@@ -387,7 +397,8 @@ struct split_ws_tokenizer_fn : base_ws_split_tokenizer<split_ws_tokenizer_fn> {
         ++last_pos;
         continue;
       }
-      auto const end_pos    = all_tokens || (token_idx + 1 < token_count) ? d_pos : pos_end;
+      auto const end_pos =
+        (token_count < max_tokens) || (token_idx + 1 < token_count) ? d_pos : pos_end;
       d_tokens[token_idx++] = string_index_pair{base_ptr + last_pos, end_pos - last_pos};
 
       last_pos = d_pos + 1;
@@ -418,8 +429,6 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
     auto const base_ptr = d_strings.head<char>();  // d_delimiters, pos_begin/end based on this ptr
     auto const token_count = static_cast<size_type>(d_tokens.size());
     auto const delim_count = static_cast<size_type>(delimiters.size());
-    auto const all_tokens =
-      (max_tokens == cuda::std::numeric_limits<size_type>::max()) || (token_count == 1);
 
     // build the index-pair of each token for this string
     auto last_pos       = pos_end;
@@ -431,7 +440,8 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
         continue;
       }
       // store the token into the output vector right-to-left
-      auto const start_pos = all_tokens || (token_idx + 1 < token_count) ? d_pos + 1 : pos_begin;
+      auto const start_pos =
+        (token_count < max_tokens) || (token_idx + 1 < token_count) ? d_pos + 1 : pos_begin;
       d_tokens[token_count - token_idx - 1] =
         string_index_pair{base_ptr + start_pos, last_pos - start_pos};
 
@@ -449,6 +459,12 @@ struct rsplit_ws_tokenizer_fn : base_ws_split_tokenizer<rsplit_ws_tokenizer_fn> 
   {
   }
 };
+
+// Per-string kernel outperforms the global-scan split_helper for short strings;
+// fall back to split_helper above this average byte length per non-null string.
+// This value was determined using the split benchmarks by varying the row width
+// and the row count using an RTX A6000.
+constexpr size_type AVG_CHAR_BYTES_THRESHOLD = 120;
 
 /**
  * @brief Count the number of delimiters in a strings column
@@ -486,6 +502,55 @@ CUDF_KERNEL void count_delimiters_kernel(DelimiterFn delimiter_fn,
   }
 }
 
+// Declaration-only owners avoid instantiating split_per_row_impl for each caller's
+// extractor-building lambda. Both helpers are explicitly instantiated in split_record.cu,
+// so table and record splits share count/scan/extract kernels while direction stays compile-time.
+template <bool Forward>
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_per_row(
+  column_device_view const& d_strings,
+  string_view delimiter,
+  size_type max_tokens,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+template <bool Forward>
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_ws_per_row(
+  column_device_view const& d_strings,
+  size_type max_tokens,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+// These non-template overloads prevent callers from emitting the same fixed helper kernels in
+// multiple TUs. split.cu owns the forward explicit-delimiter variant; split_record.cu owns the
+// reverse and whitespace variants. Keep definitions out of this header to preserve that ownership.
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
+  strings_column_view const& input,
+  rsplit_tokenizer_fn tokenizer,
+  string_delimiter_fn delimiter_fn,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
+  strings_column_view const& input,
+  split_ws_tokenizer_fn tokenizer,
+  whitespace_delimiter_fn delimiter_fn,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
+  strings_column_view const& input,
+  rsplit_ws_tokenizer_fn tokenizer,
+  whitespace_delimiter_fn delimiter_fn,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
+  strings_column_view const& input,
+  split_tokenizer_fn tokenizer,
+  string_delimiter_fn delimiter_fn,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
+
 /**
  * @brief Helper function used by split/rsplit and split_record/rsplit_record
  *
@@ -503,38 +568,47 @@ CUDF_KERNEL void count_delimiters_kernel(DelimiterFn delimiter_fn,
  * @return Token offsets and a vector of string indices
  */
 template <typename Tokenizer, typename DelimiterFn>
-std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split_helper(
+std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   Tokenizer tokenizer,
   DelimiterFn delimiter_fn,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
-  auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
-  auto const chars_bytes           = last_offset - first_offset;
-  delimiter_fn.d_chars             = input.chars_begin(stream) + first_offset;
-  delimiter_fn.chars_bytes         = chars_bytes;
+  auto delimiter_positions = [&] {
+    if constexpr (std::is_same_v<DelimiterFn, string_delimiter_fn>) {
+      return find_string_delimiter_positions(input, delimiter_fn.d_delimiter, stream);
+    } else if constexpr (std::is_same_v<std::remove_cvref_t<DelimiterFn>,
+                                        whitespace_delimiter_fn>) {
+      return find_whitespace_delimiter_positions(input, stream);
+    } else {
+      auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
+      auto const chars_bytes           = last_offset - first_offset;
+      delimiter_fn.d_chars             = input.chars_begin(stream) + first_offset;
+      delimiter_fn.chars_bytes         = chars_bytes;
 
-  // count the number of delimiters in the entire column
-  cudf::detail::device_scalar<int64_t> d_count(0, stream);
-  if (chars_bytes > 0) {
-    constexpr int64_t block_size         = 512;
-    constexpr size_type bytes_per_thread = 4;
-    auto const num_blocks                = util::div_rounding_up_safe(
-      util::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)), block_size);
-    count_delimiters_kernel<DelimiterFn, block_size, bytes_per_thread>
-      <<<num_blocks, block_size, 0, stream.value()>>>(delimiter_fn, chars_bytes, d_count.data());
-  }
-
-  // Create a vector of every delimiter position in the chars column.
-  // These may include overlapping or otherwise out-of-bounds delimiters which
-  // will be resolved during token processing.
-  auto delimiter_positions = rmm::device_uvector<int64_t>(d_count.value(stream), stream);
-  cudf::detail::copy_if(thrust::counting_iterator<int64_t>(0),
-                        thrust::counting_iterator<int64_t>(chars_bytes),
-                        delimiter_positions.begin(),
-                        delimiter_fn,
-                        stream);
+      cudf::detail::device_scalar<int64_t> d_count(
+        0, stream, cudf::get_current_device_resource_ref());
+      if (chars_bytes > 0) {
+        constexpr int64_t block_size         = 512;
+        constexpr size_type bytes_per_thread = 4;
+        auto const num_blocks                = cudf::detail::div_rounding_up_safe(
+          cudf::detail::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)),
+          block_size);
+        count_delimiters_kernel<DelimiterFn, block_size, bytes_per_thread>
+          <<<num_blocks, block_size, 0, stream.get()>>>(delimiter_fn, chars_bytes, d_count.data());
+        CUDF_CUDA_TRY(cudaGetLastError());
+      }
+      auto positions = cuda::device_buffer<int64_t>(
+        stream, cudf::get_current_device_resource_ref(), d_count.value(stream), cuda::no_init);
+      cudf::detail::copy_if_async(cuda::counting_iterator<int64_t>{0},
+                                  cuda::counting_iterator<int64_t>{chars_bytes},
+                                  positions.begin(),
+                                  delimiter_fn,
+                                  stream);
+      return positions;
+    }
+  }();
 
   // create a vector of offsets to each string's delimiter set within delimiter_positions
   auto const delimiter_offsets =
@@ -543,11 +617,12 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
     cudf::detail::offsetalator_factory::make_input_iterator(delimiter_offsets->view());
 
   // compute the number of tokens per string
-  auto token_counts    = rmm::device_uvector<size_type>(input.size(), stream);
+  auto token_counts = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   auto d_positions     = delimiter_positions.data();
-  auto const zero_iter = thrust::make_counting_iterator<size_type>(0);
+  auto const zero_iter = cuda::counting_iterator<size_type>{0};
   thrust::transform(
-    rmm::exec_policy_nosync(stream),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     zero_iter,
     zero_iter + input.size(),
     token_counts.begin(),
@@ -562,14 +637,18 @@ std::pair<std::unique_ptr<column>, rmm::device_uvector<string_index_pair>> split
     cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // build a vector of all the token positions for all the strings
-  auto tokens   = rmm::device_uvector<string_index_pair>(total_tokens, stream);
+  auto tokens = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), total_tokens, cuda::no_init);
   auto d_tokens = tokens.data();
   auto get_tokens_fn =
     [tokenizer, d_tokens_offsets, d_positions, d_delimiter_offsets, d_tokens] __device__(
       size_type idx) {
       tokenizer.get_tokens(idx, d_tokens_offsets, d_positions, d_delimiter_offsets, d_tokens);
     };
-  thrust::for_each_n(rmm::exec_policy_nosync(stream), zero_iter, input.size(), get_tokens_fn);
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     zero_iter,
+                     input.size(),
+                     get_tokens_fn);
 
   return std::make_pair(std::move(offsets), std::move(tokens));
 }

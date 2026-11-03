@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,30 +7,33 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.cuh>
+#include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
-#include <cudf/detail/utilities/algorithm.cuh>
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
-#include <thrust/iterator/discard_iterator.h>
+#include <cuda/stream>
 
 namespace cudf::groupby::detail {
 
 namespace {
 
 struct bitwise_group_reduction_functor {
-  template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>)>
+  template <cuda::std::integral T>
   std::unique_ptr<column> operator()(bitwise_op bit_op,
                                      column_view const& values,
                                      device_span<size_type const> group_labels,
                                      size_type num_groups,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
 
   {
@@ -42,7 +45,7 @@ struct bitwise_group_reduction_functor {
       cudf::detail::reduce_by_key_async(group_labels.data(),
                                         group_labels.data() + group_labels.size(),
                                         inp_iter,
-                                        thrust::make_discard_iterator(),
+                                        cuda::make_discard_iterator(),
                                         out_iter,
                                         binop,
                                         stream);
@@ -68,7 +71,8 @@ struct bitwise_group_reduction_functor {
     }
 
     if (values.has_nulls()) {
-      rmm::device_uvector<bool> validity(num_groups, stream);
+      cuda::device_buffer<bool> validity(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});
@@ -80,7 +84,8 @@ struct bitwise_group_reduction_functor {
     return result;
   }
 
-  template <typename T, typename... Args, CUDF_ENABLE_IF(!std::is_integral<T>())>
+  template <typename T, typename... Args>
+    requires(not cuda::std::integral<T>)
   std::unique_ptr<column> operator()(Args...) const
   {
     CUDF_FAIL("Bitwise operations are only supported for integral types.");
@@ -93,7 +98,7 @@ std::unique_ptr<column> group_bitwise(bitwise_op bit_op,
                                       column_view const& values,
                                       device_span<size_type const> group_labels,
                                       size_type num_groups,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(values.type(),

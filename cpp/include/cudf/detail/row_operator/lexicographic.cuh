@@ -1,14 +1,15 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/common_utils.cuh>
-#include <cudf/detail/utilities/algorithm.cuh>
+#include <cudf/detail/row_operator/lexicographic_common.cuh>
 #include <cudf/detail/utilities/assert.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/lists/detail/dremel.hpp>
@@ -17,92 +18,34 @@
 #include <cudf/sorting.hpp>
 #include <cudf/structs/structs_column_device_view.cuh>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/export.hpp>
+#include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <rmm/device_uvector.hpp>
+#include <rmm/resource_ref.hpp>
+
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/std/tuple>
+#include <cuda/std/type_traits>
 #include <cuda/std/utility>
-#include <thrust/detail/use_default.h>
-#include <thrust/iterator/iterator_adaptor.h>
-#include <thrust/iterator/iterator_categories.h>
-#include <thrust/iterator/iterator_facade.h>
+#include <cuda/stream>
 
 #include <memory>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace CUDF_EXPORT cudf {
 namespace detail::row::lexicographic {
-
-/**
- * @brief Computes a weak ordering of two values with special sorting behavior.
- *
- * This relational comparator functor compares physical values rather than logical
- * elements like lists, strings, or structs. It evaluates `NaN` as not less than, equal to, or
- * greater than other values and is IEEE-754 compliant.
- */
-struct physical_element_comparator {
-  /**
-   * @brief Operator for relational comparisons.
-   *
-   * @param lhs First element
-   * @param rhs Second element
-   * @return Relation between elements
-   */
-  template <typename Element>
-  __device__ constexpr cudf::detail::weak_ordering operator()(Element const lhs,
-                                                              Element const rhs) const noexcept
-  {
-    return cudf::detail::compare_elements(lhs, rhs);
-  }
-};
-
-/**
- * @brief Relational comparator functor that compares physical values rather than logical
- * elements like lists, strings, or structs. It evaluates `NaN` as equivalent to other `NaN`s and
- * greater than all other values.
- */
-struct sorting_physical_element_comparator {
-  /**
-   * @brief Operator for relational comparison of non-floating point values.
-   *
-   * @param lhs First element
-   * @param rhs Second element
-   * @return Relation between elements
-   */
-  template <typename Element>
-  __device__ constexpr cudf::detail::weak_ordering operator()(Element const lhs,
-                                                              Element const rhs) const noexcept
-    requires(not cuda::std::is_floating_point_v<Element>)
-  {
-    return cudf::detail::compare_elements(lhs, rhs);
-  }
-
-  /**
-   * @brief Operator for relational comparison of floating point values.
-   *
-   * @param lhs First element
-   * @param rhs Second element
-   * @return Relation between elements
-   */
-  template <typename Element>
-  __device__ constexpr cudf::detail::weak_ordering operator()(Element const lhs,
-                                                              Element const rhs) const noexcept
-    requires(cuda::std::is_floating_point_v<Element>)
-  {
-    if (isnan(lhs)) {
-      return isnan(rhs) ? cudf::detail::weak_ordering::EQUIVALENT
-                        : cudf::detail::weak_ordering::GREATER;
-    } else if (isnan(rhs)) {
-      return cudf::detail::weak_ordering::LESS;
-    }
-
-    return cudf::detail::compare_elements(lhs, rhs);
-  }
-};
 
 using optional_dremel_view = cuda::std::optional<detail::dremel_device_view const>;
 
@@ -250,10 +193,9 @@ class device_row_comparator {
     {
     }
 
-    template <typename KeyType>
+    template <cuda::std::totally_ordered KeyType>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type lhs_element_index, size_type rhs_element_index) const noexcept
-      requires(cudf::is_relationally_comparable<KeyType, KeyType>())
     {
       auto const lidx = _lhs.element<cudf::dictionary32>(lhs_element_index).value();
       auto const ridx = _rhs.element<cudf::dictionary32>(rhs_element_index).value();
@@ -267,7 +209,6 @@ class device_row_comparator {
     template <typename KeyType>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type const, size_type const) const noexcept
-      requires(not cudf::is_relationally_comparable<KeyType, KeyType>())
     {
       CUDF_UNREACHABLE("Key types are not comparable");
     }
@@ -326,11 +267,10 @@ class device_row_comparator {
      * @return Indicates the relationship between the elements in the `lhs` and `rhs` columns, along
      * with the depth at which a null value was encountered.
      */
-    template <typename Element>
+    template <cuda::std::totally_ordered Element>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(cudf::is_relationally_comparable<Element, Element>() and
-               not cudf::is_dictionary<Element>())
+      requires(not cudf::concepts::dictionary<Element>)
     {
       if (_check_nulls) {
         bool const lhs_is_null{_lhs.is_null(lhs_element_index)};
@@ -347,13 +287,12 @@ class device_row_comparator {
                              cuda::std::numeric_limits<int>::max());
     }
 
-    template <typename Element>
+    template <cudf::concepts::dictionary Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
     operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(cudf::is_dictionary<Element>())
     {
       if (_check_nulls) {
         bool const lhs_is_null{_lhs.is_null(lhs_element_index)};
@@ -382,8 +321,8 @@ class device_row_comparator {
     template <typename Element>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type const, size_type const) const noexcept
-      requires(not cudf::is_relationally_comparable<Element, Element>() and
-               (not has_nested_columns or not cudf::is_nested<Element>()))
+      requires(not cuda::std::totally_ordered<Element> and
+               (not has_nested_columns or not cudf::concepts::nested<Element>))
     {
       CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
     }
@@ -396,13 +335,13 @@ class device_row_comparator {
      * @return Indicates the relationship between the elements in the `lhs` and `rhs` columns, along
      * with the depth at which a null value was encountered.
      */
-    template <typename Element>
+    template <cudf::concepts::struct_view Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
     operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(has_nested_columns and cuda::std::is_same_v<Element, cudf::struct_view>)
+      requires(has_nested_columns)
     {
       column_device_view lcol = _lhs;
       column_device_view rcol = _rhs;
@@ -422,8 +361,8 @@ class device_row_comparator {
                                  cuda::std::numeric_limits<int>::max());
         }
 
-        lcol = detail::structs_column_device_view(lcol).get_sliced_child(0);
-        rcol = detail::structs_column_device_view(rcol).get_sliced_child(0);
+        lcol = structs_column_device_view(lcol).get_sliced_child(0);
+        rcol = structs_column_device_view(rcol).get_sliced_child(0);
         ++depth;
       }
 
@@ -442,13 +381,13 @@ class device_row_comparator {
      * @return Indicates the relationship between the elements in the `lhs` and `rhs` columns, along
      * with the depth at which a null value was encountered.
      */
-    template <typename Element>
+    template <cudf::concepts::list_view Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
     operator()(size_type lhs_element_index, size_type rhs_element_index)
-      requires(has_nested_columns and cuda::std::is_same_v<Element, cudf::list_view>)
+      requires(has_nested_columns)
     {
       auto const is_l_row_null = _lhs.is_null(lhs_element_index);
       auto const is_r_row_null = _rhs.is_null(rhs_element_index);
@@ -468,8 +407,8 @@ class device_row_comparator {
       column_device_view rcol = _rhs.slice(rhs_element_index, 1);
 
       while (lcol.type().id() == type_id::LIST) {
-        lcol = detail::lists_column_device_view(lcol).get_sliced_child();
-        rcol = detail::lists_column_device_view(rcol).get_sliced_child();
+        lcol = lists_column_device_view(lcol).get_sliced_child();
+        rcol = lists_column_device_view(rcol).get_sliced_child();
       }
 
       auto const l_offsets = _l_dremel_device_view->offsets;
@@ -589,88 +528,15 @@ class device_row_comparator {
   }
 
  private:
-  table_device_view const _lhs;
-  table_device_view const _rhs;
-  device_span<detail::dremel_device_view const> const _l_dremel;
-  device_span<detail::dremel_device_view const> const _r_dremel;
-  Nullate const _check_nulls;
-  cuda::std::optional<device_span<int const>> const _depth;
-  cuda::std::optional<device_span<order const>> const _column_order;
-  cuda::std::optional<device_span<null_order const>> const _null_precedence;
-  PhysicalElementComparator const _comparator;
-};
-
-/**
- * @brief Wraps and interprets the result of templated Comparator that returns a
- * cudf::detail::weak_ordering. Returns true if the cudf::detail::weak_ordering matches any of the
- * templated values.
- *
- * Note that this should never be used with only `cudf::detail::weak_ordering::EQUIVALENT`.
- * An equality comparator should be used instead for optimal performance.
- *
- * @tparam Comparator generic comparator that returns a cudf::detail::weak_ordering.
- * @tparam values cudf::detail::weak_ordering parameter pack of orderings to interpret as true
- */
-template <typename Comparator, cudf::detail::weak_ordering... values>
-struct weak_ordering_comparator_impl {
-  static_assert(
-    not((cudf::detail::weak_ordering::EQUIVALENT == values) && ...),
-    "cudf::detail::weak_ordering_comparator should not be used for pure equality comparisons. The "
-    "`row_equality_comparator` should be used instead");
-
-  template <typename LhsType, typename RhsType>
-  __device__ constexpr bool operator()(LhsType const lhs_index,
-                                       RhsType const rhs_index) const noexcept
-  {
-    cudf::detail::weak_ordering const result = comparator(lhs_index, rhs_index);
-    return ((result == values) || ...);
-  }
-  Comparator const comparator;
-};
-
-/**
- * @brief Wraps and interprets the result of device_row_comparator, true if the result is
- * cudf::detail::weak_ordering::LESS meaning one row is lexicographically *less* than another row.
- *
- * @tparam Comparator generic comparator that returns a cudf::detail::weak_ordering
- */
-template <typename Comparator>
-struct less_comparator
-  : weak_ordering_comparator_impl<Comparator, cudf::detail::weak_ordering::LESS> {
-  /**
-   * @brief Constructs a less_comparator
-   *
-   * @param comparator The comparator to wrap
-   */
-  less_comparator(Comparator const& comparator)
-    : weak_ordering_comparator_impl<Comparator, cudf::detail::weak_ordering::LESS>{comparator}
-  {
-  }
-};
-
-/**
- * @brief Wraps and interprets the result of device_row_comparator, true if the result is
- * cudf::detail::weak_ordering::LESS or cudf::detail::weak_ordering::EQUIVALENT meaning one row is
- * lexicographically *less* than or *equivalent* to another row.
- *
- * @tparam Comparator generic comparator that returns a cudf::detail::weak_ordering
- */
-template <typename Comparator>
-struct less_equivalent_comparator
-  : weak_ordering_comparator_impl<Comparator,
-                                  cudf::detail::weak_ordering::LESS,
-                                  cudf::detail::weak_ordering::EQUIVALENT> {
-  /**
-   * @brief Constructs a less_equivalent_comparator
-   *
-   * @param comparator The comparator to wrap
-   */
-  less_equivalent_comparator(Comparator const& comparator)
-    : weak_ordering_comparator_impl<Comparator,
-                                    cudf::detail::weak_ordering::LESS,
-                                    cudf::detail::weak_ordering::EQUIVALENT>{comparator}
-  {
-  }
+  table_device_view _lhs;
+  table_device_view _rhs;
+  device_span<detail::dremel_device_view const> _l_dremel;
+  device_span<detail::dremel_device_view const> _r_dremel;
+  Nullate _check_nulls;
+  cuda::std::optional<device_span<int const>> _depth;
+  cuda::std::optional<device_span<order const>> _column_order;
+  cuda::std::optional<device_span<null_order const>> _null_precedence;
+  PhysicalElementComparator _comparator;
 };
 
 /**
@@ -678,8 +544,10 @@ struct less_equivalent_comparator
  *
  */
 struct preprocessed_table {
-  using table_device_view_owner =
-    std::invoke_result_t<decltype(table_device_view::create), table_view, rmm::cuda_stream_view>;
+  using table_device_view_owner = std::invoke_result_t<decltype(table_device_view::create),
+                                                       table_view,
+                                                       cuda::stream_ref,
+                                                       rmm::device_async_resource_ref>;
 
   /**
    * @brief Preprocess table for use with lexicographical comparison
@@ -706,7 +574,7 @@ struct preprocessed_table {
   static std::shared_ptr<preprocessed_table> create(table_view const& table,
                                                     host_span<order const> column_order,
                                                     host_span<null_order const> null_precedence,
-                                                    rmm::cuda_stream_view stream);
+                                                    cuda::stream_ref stream);
 
   /**
    * @brief Preprocess tables for use with lexicographical comparison
@@ -734,7 +602,7 @@ struct preprocessed_table {
     table_view const& rhs,
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
  private:
   friend class self_comparator;
@@ -766,7 +634,7 @@ struct preprocessed_table {
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
     bool has_ranked_children,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   /**
    * @brief Construct a preprocessed table for use with lexicographical comparison
@@ -923,7 +791,7 @@ class self_comparator {
   self_comparator(table_view const& t,
                   host_span<order const> column_order         = {},
                   host_span<null_order const> null_precedence = {},
-                  rmm::cuda_stream_view stream                = cudf::get_default_stream())
+                  cuda::stream_ref stream                     = cudf::get_default_stream())
     : d_t{preprocessed_table::create(t, column_order, null_precedence, stream)}
   {
   }
@@ -1038,7 +906,7 @@ struct strong_index_comparator_adapter {
     return cudf::detail::weak_ordering::EQUIVALENT;
   }
 
-  Comparator const comparator;
+  Comparator comparator;
 };
 // @endcond
 
@@ -1080,7 +948,7 @@ class two_table_comparator {
                        table_view const& right,
                        host_span<order const> column_order         = {},
                        host_span<null_order const> null_precedence = {},
-                       rmm::cuda_stream_view stream                = cudf::get_default_stream());
+                       cuda::stream_ref stream                     = cudf::get_default_stream());
 
   /**
    * @brief Construct an owning object for performing a lexicographic comparison between two rows of

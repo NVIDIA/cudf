@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -17,13 +17,7 @@ def test_series_describe_numeric(numeric_types_as_str):
     assert_eq(expected, actual, check_dtype=True)
 
 
-def test_series_describe_temporal(temporal_types_as_str, request):
-    if "ms" in temporal_types_as_str:
-        request.applymarker(
-            pytest.mark.xfail(
-                reason=f"string formatting of {temporal_types_as_str} incorrect in cuDF"
-            )
-        )
+def test_series_describe_temporal(temporal_types_as_str):
     gs = cudf.Series([0, 1, 2, 3, 1, 2, 3], dtype=temporal_types_as_str)
     ps = gs.to_pandas()
 

@@ -1,25 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
+import pandas as pd
 import pytest
 
 import cudf
-from cudf.api.extensions import no_default
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
-from cudf.testing._utils import (
-    expect_warning_if,
-)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.parametrize(
     "data, gkey",
     [
@@ -40,34 +29,29 @@ from cudf.testing._utils import (
             },
             ["id", "a"],
         ),
-        (
+        pytest.param(
             {
                 "id": ["a", "a", "b", "b", "c", "c"],
                 "val1": [None, None, None, None, None, None],
             },
             ["id"],
+            marks=pytest.mark.xfail(
+                reason="cuDF null values are None instead of NaN"
+            ),
         ),
     ],
 )
 @pytest.mark.parametrize("periods", [-2, 0, 5])
-@pytest.mark.parametrize("fill_method", ["ffill", "bfill", no_default, None])
-def test_groupby_pct_change(data, gkey, periods, fill_method):
+def test_groupby_pct_change(data, gkey, periods):
     gdf = cudf.DataFrame(data)
     pdf = gdf.to_pandas()
 
-    with expect_warning_if(fill_method not in (no_default, None)):
-        actual = gdf.groupby(gkey).pct_change(
-            periods=periods, fill_method=fill_method
-        )
-    with expect_warning_if(
-        (
-            fill_method not in (no_default, None)
-            or (fill_method is not None and pdf.isna().any().any())
-        )
-    ):
-        expected = pdf.groupby(gkey).pct_change(
-            periods=periods, fill_method=fill_method
-        )
+    actual = gdf.groupby(gkey).pct_change(
+        periods=periods,
+    )
+    expected = pdf.groupby(gkey).pct_change(
+        periods=periods,
+    )
 
     assert_eq(expected, actual)
 
@@ -90,10 +74,33 @@ def test_groupby_pct_change_multiindex_dataframe(periods):
 
 
 def test_groupby_pct_change_empty_columns():
-    gdf = cudf.DataFrame(columns=["id", "val1", "val2"])
+    gdf = cudf.DataFrame(
+        {
+            "id": cudf.Series([], dtype="object"),
+            "val1": cudf.Series([], dtype="float64"),
+            "val2": cudf.Series([], dtype="float64"),
+        }
+    )
     pdf = gdf.to_pandas()
 
     actual = gdf.groupby("id").pct_change()
     expected = pdf.groupby("id").pct_change()
+
+    assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize("periods", [-1, 1])
+def test_groupby_pct_change_no_fill(periods):
+    # pandas 3.0 removed fill_method: values are not forward-filled, so
+    # NaN propagates into the percent change
+    data = {
+        "key": ["a"] * 5 + ["b"] * 5,
+        "vals": [3.0, None, None, 1.0, 2.0] * 2,
+    }
+    pdf = pd.DataFrame(data)
+    gdf = cudf.DataFrame(data)
+
+    expected = pdf.groupby("key")["vals"].pct_change(periods=periods)
+    actual = gdf.groupby("key")["vals"].pct_change(periods=periods)
 
     assert_eq(expected, actual)

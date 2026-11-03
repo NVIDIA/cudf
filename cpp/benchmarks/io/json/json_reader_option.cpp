@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,9 +8,10 @@
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/io/json.hpp>
 #include <cudf/utilities/default_stream.hpp>
+
+#include <cuda/cmath>
 
 #include <nvbench/nvbench.cuh>
 
@@ -46,10 +47,10 @@ void BM_json_read_options(nvbench::state& state, nvbench::type_list<nvbench::enu
     cudf::io::json_reader_options::builder(source_sink.make_source_info()).lines(json_lines_bool);
 
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
-      try_drop_l3_cache();
+      drop_page_cache_if_enabled(read_options.get_source().filepaths());
       timer.start();
       auto const result        = cudf::io::read_json(read_options);
       auto const num_rows_read = result.tbl->num_rows();
@@ -120,12 +121,12 @@ void BM_jsonlines_read_options(nvbench::state& state,
       .mixed_types_as_string(mixed_types_as_string_bool)
       .recovery_mode(recovery_mode_enum);
 
-  size_t const chunk_size = cudf::util::div_rounding_up_safe(source_sink.size(), num_chunks);
+  size_t const chunk_size = cuda::ceil_div(source_sink.size(), num_chunks);
   auto mem_stats_logger   = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
-      try_drop_l3_cache();
+      drop_page_cache_if_enabled(read_options.get_source().filepaths());
       cudf::size_type num_rows_read = 0;
       cudf::size_type num_cols_read = 0;
       timer.start();

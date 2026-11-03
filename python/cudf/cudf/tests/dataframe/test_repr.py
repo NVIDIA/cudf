@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import textwrap
@@ -9,6 +9,43 @@ import pytest
 from hypothesis import given, settings, strategies as st
 
 import cudf
+
+_FULL_REPR_DTYPES = [
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "float32",
+    "float64",
+    "datetime64[ns]",
+    "datetime64[us]",
+    "datetime64[ms]",
+    "datetime64[s]",
+    "timedelta64[ns]",
+    "timedelta64[us]",
+    "timedelta64[ms]",
+    "timedelta64[s]",
+    "str",
+    "bool",
+    "category",
+]
+
+
+@pytest.fixture(
+    scope="module",
+    params=[(dtype, size) for dtype in _FULL_REPR_DTYPES for size in [20, 21]],
+)
+def full_dataframe(request):
+    dtype, size = request.param
+    rng = np.random.default_rng(seed=0)
+    pdf = pd.DataFrame(
+        {idx: rng.integers(0, 100, size) for idx in range(size)}
+    ).astype(dtype)
+    return pdf, cudf.from_pandas(pdf)
 
 
 @pytest.mark.parametrize("ncols", [1, 2, 10])
@@ -31,18 +68,14 @@ def test_null_dataframe(ncols):
     pdf = gdf.to_pandas()
     with pd.option_context("display.max_columns", int(ncols)):
         pdf_repr = repr(pdf).replace("NaN", "<NA>").replace("None", "<NA>")
-        assert pdf_repr.split() == repr(gdf).split()
+        gdf_repr = repr(gdf).replace("NaN", "<NA>")
+        assert pdf_repr.split() == gdf_repr.split()
 
 
 @pytest.mark.parametrize("nrows", [5, 10, 15])
 @pytest.mark.parametrize("ncols", [5, 10, 15])
-@pytest.mark.parametrize("size", [20, 21])
-def test_full_dataframe_20(all_supported_types_as_str, size, nrows, ncols):
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(
-        {idx: rng.integers(0, 100, size) for idx in range(size)}
-    ).astype(all_supported_types_as_str)
-    gdf = cudf.from_pandas(pdf)
+def test_full_dataframe_20(full_dataframe, nrows, ncols):
+    pdf, gdf = full_dataframe
 
     with pd.option_context(
         "display.max_rows", int(nrows), "display.max_columns", int(ncols)
@@ -133,9 +166,9 @@ def test_groupby_MI(nrows, ncols):
         assert repr(gdg.T) == repr(pdg.T)
 
 
-@pytest.mark.parametrize(
-    "gdf",
-    [
+@pytest.fixture(
+    scope="module",
+    params=[
         lambda: cudf.DataFrame({"a": range(10000)}),
         lambda: cudf.DataFrame({"a": range(10000), "b": range(10000)}),
         lambda: cudf.DataFrame({"a": range(20), "b": range(20)}),
@@ -160,6 +193,10 @@ def test_groupby_MI(nrows, ncols):
         ),
     ],
 )
+def sliced_dataframe(request):
+    return request.param()
+
+
 @pytest.mark.parametrize(
     "slc",
     [
@@ -173,136 +210,130 @@ def test_groupby_MI(nrows, ncols):
 )
 @pytest.mark.parametrize("max_seq_items", [1, 10, 60, 10000, None])
 @pytest.mark.parametrize("max_rows", [1, 10, 60, 10000, None])
-def test_dataframe_sliced(gdf, slc, max_seq_items, max_rows):
-    gdf = gdf()
+def test_dataframe_sliced(sliced_dataframe, slc, max_seq_items, max_rows):
     with pd.option_context(
         "display.max_seq_items", max_seq_items, "display.max_rows", max_rows
     ):
-        pdf = gdf.to_pandas()
+        pdf = sliced_dataframe.to_pandas()
 
-        sliced_gdf = gdf[slc]
+        sliced_gdf = sliced_dataframe[slc]
         sliced_pdf = pdf[slc]
 
-        expected_repr = repr(sliced_pdf).replace("None", "<NA>")
+        expected_repr = repr(sliced_pdf)
         actual_repr = repr(sliced_gdf)
 
         assert expected_repr == actual_repr
 
 
 @pytest.mark.parametrize(
-    "df,pandas_special_case",
+    "df",
     [
-        (pd.DataFrame({"a": [1, 2, 3]}, index=[10, 20, None]), False),
-        (
-            pd.DataFrame(
-                {
-                    "a": [1, None, 3],
-                    "string_col": ["hello", "world", "rapids"],
-                },
-                index=[None, "a", "b"],
-            ),
-            True,
+        pd.DataFrame({"a": [1, 2, 3]}, index=[10, 20, None]),
+        pd.DataFrame(
+            {
+                "a": [1, None, 3],
+                "string_col": ["hello", "world", "rapids"],
+            },
+            index=[None, "a", "b"],
         ),
-        (pd.DataFrame([], index=[None, "a", "b"]), False),
-        (pd.DataFrame({"aa": [None, None]}, index=[None, None]), False),
-        (pd.DataFrame({"aa": [1, 2, 3]}, index=[None, None, None]), False),
-        (
-            pd.DataFrame(
-                {"aa": [None, 2, 3]},
-                index=np.array([1, None, None], dtype="datetime64[ns]"),
-            ),
-            False,
+        pd.DataFrame([], index=[None, "a", "b"]),
+        pd.DataFrame({"aa": [None, None]}, index=[None, None]),
+        pd.DataFrame({"aa": [1, 2, 3]}, index=[None, None, None]),
+        pd.DataFrame(
+            {"aa": [None, 2, 3]},
+            index=np.array([1, None, None], dtype="datetime64[ns]"),
         ),
-        (
-            pd.DataFrame(
-                {"aa": [None, 2, 3]},
-                index=np.array([100, None, None], dtype="datetime64[ns]"),
-            ),
-            False,
+        pd.DataFrame(
+            {"aa": [None, 2, 3]},
+            index=np.array([100, None, None], dtype="datetime64[ns]"),
         ),
-        (
-            pd.DataFrame(
-                {"aa": [None, None, None]},
-                index=np.array([None, None, None], dtype="datetime64[ns]"),
-            ),
-            False,
+        pd.DataFrame(
+            {"aa": [None, None, None]},
+            index=np.array([None, None, None], dtype="datetime64[ns]"),
         ),
-        (
-            pd.DataFrame(
-                {"aa": [1, None, 3]},
-                index=np.array([10, 15, None], dtype="datetime64[ns]"),
-            ),
-            False,
+        pd.DataFrame(
+            {"aa": [1, None, 3]},
+            index=np.array([10, 15, None], dtype="datetime64[ns]"),
         ),
-        (
-            pd.DataFrame(
-                {"a": [1, 2, None], "v": [10, None, 22], "p": [100, 200, 300]}
-            ).set_index(["a", "v"]),
-            False,
-        ),
-        (
-            pd.DataFrame(
-                {
-                    "a": [1, 2, None],
-                    "v": ["n", "c", "a"],
-                    "p": [None, None, None],
-                }
-            ).set_index(["a", "v"]),
-            False,
-        ),
-        (
-            pd.DataFrame(
-                {
-                    "a": np.array([1, None, None], dtype="datetime64[ns]"),
-                    "v": ["n", "c", "a"],
-                    "p": [None, None, None],
-                }
-            ).set_index(["a", "v"]),
-            False,
-        ),
+        pd.DataFrame(
+            {"a": [1, 2, None], "v": [10, None, 22], "p": [100, 200, 300]}
+        ).set_index(["a", "v"]),
+        pd.DataFrame(
+            {
+                "a": [1, 2, None],
+                "v": ["n", "c", "a"],
+                "p": [None, None, None],
+            }
+        ).set_index(["a", "v"]),
+        pd.DataFrame(
+            {
+                "a": np.array([1, None, None], dtype="datetime64[ns]"),
+                "v": ["n", "c", "a"],
+                "p": [None, None, None],
+            }
+        ).set_index(["a", "v"]),
     ],
 )
-def test_dataframe_null_index_repr(df, pandas_special_case):
-    pdf = df
-    gdf = cudf.from_pandas(pdf)
+def test_dataframe_null_index_repr(df):
+    with cudf.option_context("mode.pandas_compatible", True):
+        pdf = df
+        gdf = cudf.from_pandas(pdf)
 
-    expected_repr = repr(pdf).replace("NaN", "<NA>").replace("None", "<NA>")
-    actual_repr = repr(gdf)
-
-    if pandas_special_case:
-        # Pandas inconsistently print Index null values
-        # as `None` at some places and `NaN` at few other places
-        # Whereas cudf is consistent with strings `null` values
-        # to be printed as `None` everywhere.
-        actual_repr = repr(gdf).replace("None", "<NA>")
+        expected_repr = repr(pdf)
+        actual_repr = repr(gdf)
 
     assert expected_repr.split() == actual_repr.split()
 
 
 @pytest.mark.parametrize(
-    "df,expected_repr",
+    "df",
     [
-        (
-            lambda: cudf.DataFrame(
-                {
-                    "a": cudf.Series(
-                        [1000000, 200000, 3000000], dtype="timedelta64[s]"
-                    )
-                }
-            ),
-            textwrap.dedent(
-                """
-                                  a
-                0  11 days 13:46:40
-                1   2 days 07:33:20
-                2  34 days 17:20:00
-                """
-            ),
+        lambda: cudf.DataFrame(
+            {
+                "a": cudf.Series(
+                    [1000000, 200000, 3000000], dtype="timedelta64[s]"
+                )
+            }
         ),
-        (
-            lambda: cudf.DataFrame(
-                {
-                    "a": cudf.Series(
+        lambda: cudf.DataFrame(
+            {
+                "a": cudf.Series(
+                    [
+                        136457654,
+                        None,
+                        245345345,
+                        223432411,
+                        None,
+                        3634548734,
+                        23234,
+                    ],
+                    dtype="timedelta64[s]",
+                ),
+                "b": [10, 11, 22, 33, 44, 55, 66],
+            }
+        ),
+        lambda: cudf.DataFrame(
+            {
+                "a": cudf.Series(
+                    [
+                        136457654,
+                        None,
+                        245345345,
+                        223432411,
+                        None,
+                        3634548734,
+                        23234,
+                    ],
+                    dtype="timedelta64[s]",
+                    index=["a", "b", "c", "d", "e", "f", "g"],
+                )
+            }
+        ),
+        lambda: cudf.DataFrame(
+            {
+                "a": cudf.Series(
+                    [1, 2, 3, 4, 5, 6, 7],
+                    index=cudf.Index(
                         [
                             136457654,
                             None,
@@ -312,28 +343,16 @@ def test_dataframe_null_index_repr(df, pandas_special_case):
                             3634548734,
                             23234,
                         ],
-                        dtype="timedelta64[s]",
+                        dtype="timedelta64[ms]",
                     ),
-                    "b": [10, 11, 22, 33, 44, 55, 66],
-                }
-            ),
-            textwrap.dedent(
-                """
-                                     a   b
-                0   1579 days 08:54:14  10
-                1                  NaT  11
-                2   2839 days 15:29:05  22
-                3   2586 days 00:33:31  33
-                4                  NaT  44
-                5  42066 days 12:52:14  55
-                6      0 days 06:27:14  66
-                """
-            ),
+                )
+            }
         ),
-        (
-            lambda: cudf.DataFrame(
-                {
-                    "a": cudf.Series(
+        lambda: cudf.DataFrame(
+            {
+                "a": cudf.Series(
+                    ["a", "f", "q", "e", "w", "e", "t"],
+                    index=cudf.Index(
                         [
                             136457654,
                             None,
@@ -343,96 +362,17 @@ def test_dataframe_null_index_repr(df, pandas_special_case):
                             3634548734,
                             23234,
                         ],
-                        dtype="timedelta64[s]",
-                        index=["a", "b", "c", "d", "e", "f", "g"],
-                    )
-                }
-            ),
-            textwrap.dedent(
-                """
-                                     a
-                a   1579 days 08:54:14
-                b                  NaT
-                c   2839 days 15:29:05
-                d   2586 days 00:33:31
-                e                  NaT
-                f  42066 days 12:52:14
-                g      0 days 06:27:14
-                """
-            ),
-        ),
-        (
-            lambda: cudf.DataFrame(
-                {
-                    "a": cudf.Series(
-                        [1, 2, 3, 4, 5, 6, 7],
-                        index=cudf.Index(
-                            [
-                                136457654,
-                                None,
-                                245345345,
-                                223432411,
-                                None,
-                                3634548734,
-                                23234,
-                            ],
-                            dtype="timedelta64[ms]",
-                        ),
-                    )
-                }
-            ),
-            textwrap.dedent(
-                """
-                                      a
-                1 days 13:54:17.654   1
-                NaT                   2
-                2 days 20:09:05.345   3
-                2 days 14:03:52.411   4
-                NaT                   5
-                42 days 01:35:48.734  6
-                0 days 00:00:23.234   7
-                """
-            ),
-        ),
-        (
-            lambda: cudf.DataFrame(
-                {
-                    "a": cudf.Series(
-                        ["a", "f", "q", "e", "w", "e", "t"],
-                        index=cudf.Index(
-                            [
-                                136457654,
-                                None,
-                                245345345,
-                                223432411,
-                                None,
-                                3634548734,
-                                23234,
-                            ],
-                            dtype="timedelta64[ns]",
-                        ),
-                    )
-                }
-            ),
-            textwrap.dedent(
-                """
-                                    a
-                0 days 00:00:00.136457654  a
-                NaT                 f
-                0 days 00:00:00.245345345  q
-                0 days 00:00:00.223432411  e
-                NaT                 w
-                0 days 00:00:03.634548734  e
-                0 days 00:00:00.000023234  t
-                """
-            ),
+                        dtype="timedelta64[ns]",
+                    ),
+                )
+            }
         ),
     ],
 )
-def test_timedelta_dataframe_repr(df, expected_repr):
-    actual_repr = repr(df())
-
-    assert actual_repr.split() == expected_repr.split()
+def test_timedelta_dataframe_repr(df):
+    gdf = df()
+    pdf = gdf.to_pandas()
+    assert repr(gdf).split() == repr(pdf).split()
 
 
 def test_categorical_dataframe_with_nan_repr():
@@ -445,9 +385,9 @@ def test_categorical_dataframe_with_nan_repr():
           a
     0   1.0
     1   2.0
-    2   NaN
+    2  <NA>
     3  10.0
-    4   NaN
+    4  <NA>
     5  <NA>
     """
     )

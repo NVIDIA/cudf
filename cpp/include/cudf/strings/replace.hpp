@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,12 +9,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for replacing target strings or slices with replacement strings.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_replace
  * @{
- * @file
  */
 
 /**
@@ -56,7 +60,7 @@ std::unique_ptr<column> replace(
   string_scalar const& target,
   string_scalar const& repl,
   cudf::size_type maxrepl           = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -98,7 +102,43 @@ std::unique_ptr<column> replace_slice(
   string_scalar const& repl         = string_scalar(""),
   size_type start                   = 0,
   size_type stop                    = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Replaces, per row, all occurrences of `targets[i]` within `input[i]` with `repls[i]`.
+ *
+ * For each row `i`, this function searches `input[i]` for the substring `targets[i]`
+ * and replaces every occurrence with `repls[i]`. If `targets[i]` is an empty string,
+ * `input[i]` is copied unchanged. If `targets[i]` is not found,
+ * the output entry is a copy of `input[i]`.
+ *
+ * Output row `i` is null if any of `input[i]`, `targets[i]`, or `repls[i]` is null.
+ *
+ * @code{.pseudo}
+ * Example:
+ * input   = ["hello world", "foo bar", "aaa"]
+ * targets = ["o", "bar", "a"]
+ * repls   = ["0", "BAR", "X"]
+ * result  = replace(input, targets, repls)
+ * result is now ["hell0 w0rld", "foo BAR", "XXX"]
+ * @endcode
+ *
+ * @throw std::invalid_argument if `targets.size() != input.size()`
+ * @throw std::invalid_argument if `repls.size() != input.size()`
+ *
+ * @param input Strings column for this operation
+ * @param targets Per-row strings to search for within each input string
+ * @param repls Per-row replacement strings used when the corresponding target is found
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return New strings column
+ */
+std::unique_ptr<column> replace(
+  strings_column_view const& input,
+  strings_column_view const& targets,
+  strings_column_view const& repls,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -144,7 +184,7 @@ std::unique_ptr<column> replace_multiple(
   strings_column_view const& input,
   strings_column_view const& targets,
   strings_column_view const& repls,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

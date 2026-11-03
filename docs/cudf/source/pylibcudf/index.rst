@@ -1,5 +1,5 @@
-pylibcudf documentation
-=======================
+pylibcudf
+=========
 
 pylibcudf is a lightweight Cython interface to libcudf that provides near-zero overhead for GPU-accelerated data processing in Python.
 It aims to provide minimal overhead interfaces to the C++ libcudf library, while integrating seamlessly with community protocols like ``__cuda_array_interface__``, and common libraries such as CuPy and Numba.

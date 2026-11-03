@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,12 +15,14 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/algorithm>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 
 #include <vector>
 
@@ -55,9 +57,9 @@ struct partition_fn {
 
   partition_fn(column_device_view const& d_strings,
                string_view const& d_delimiter,
-               rmm::device_uvector<string_index_pair>& indices_left,
-               rmm::device_uvector<string_index_pair>& indices_delim,
-               rmm::device_uvector<string_index_pair>& indices_right)
+               cuda::device_buffer<string_index_pair>& indices_left,
+               cuda::device_buffer<string_index_pair>& indices_delim,
+               cuda::device_buffer<string_index_pair>& indices_right)
     : d_strings(d_strings),
       d_delimiter(d_delimiter),
       d_indices_left(indices_left.data()),
@@ -85,7 +87,7 @@ struct partition_fn {
       if (*itr <= ' ')  // whitespace delimited
         pos = offset;
     } else {
-      auto bytes = std::min(d_str.size_bytes() - offset, d_delimiter.size_bytes());
+      auto bytes = cuda::std::min(d_str.size_bytes() - offset, d_delimiter.size_bytes());
       if (d_delimiter.compare(d_str.data() + offset, bytes) == 0) pos = offset;
     }
     if (pos >= 0)  // delimiter found, set results
@@ -140,9 +142,9 @@ struct partition_fn {
 struct rpartition_fn : public partition_fn {
   rpartition_fn(column_device_view const& d_strings,
                 string_view const& d_delimiter,
-                rmm::device_uvector<string_index_pair>& indices_left,
-                rmm::device_uvector<string_index_pair>& indices_delim,
-                rmm::device_uvector<string_index_pair>& indices_right)
+                cuda::device_buffer<string_index_pair>& indices_left,
+                cuda::device_buffer<string_index_pair>& indices_delim,
+                cuda::device_buffer<string_index_pair>& indices_right)
     : partition_fn(d_strings, d_delimiter, indices_left, indices_delim, indices_right)
   {
   }
@@ -173,7 +175,7 @@ struct rpartition_fn : public partition_fn {
 
 std::unique_ptr<table> partition(strings_column_view const& strings,
                                  string_scalar const& delimiter,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -181,14 +183,17 @@ std::unique_ptr<table> partition(strings_column_view const& strings,
   if (strings_count == 0) return std::make_unique<table>(std::vector<std::unique_ptr<column>>());
   auto strings_column = column_device_view::create(strings.parent(), stream);
   string_view d_delimiter(delimiter.data(), delimiter.size());
-  auto left_indices  = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto delim_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto right_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
+  auto left_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto delim_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto right_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   partition_fn partitioner(
     *strings_column, d_delimiter, left_indices, delim_indices, right_indices);
 
-  thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::make_counting_iterator<size_type>(0),
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<size_type>{0},
                      strings_count,
                      partitioner);
   std::vector<std::unique_ptr<column>> results;
@@ -200,7 +205,7 @@ std::unique_ptr<table> partition(strings_column_view const& strings,
 
 std::unique_ptr<table> rpartition(strings_column_view const& strings,
                                   string_scalar const& delimiter,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
@@ -208,13 +213,16 @@ std::unique_ptr<table> rpartition(strings_column_view const& strings,
   if (strings_count == 0) return std::make_unique<table>(std::vector<std::unique_ptr<column>>());
   auto strings_column = column_device_view::create(strings.parent(), stream);
   string_view d_delimiter(delimiter.data(), delimiter.size());
-  auto left_indices  = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto delim_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto right_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
+  auto left_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto delim_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto right_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   rpartition_fn partitioner(
     *strings_column, d_delimiter, left_indices, delim_indices, right_indices);
-  thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                     thrust::make_counting_iterator<size_type>(0),
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     cuda::counting_iterator<size_type>{0},
                      strings_count,
                      partitioner);
 
@@ -231,7 +239,7 @@ std::unique_ptr<table> rpartition(strings_column_view const& strings,
 
 std::unique_ptr<table> partition(strings_column_view const& input,
                                  string_scalar const& delimiter,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -240,7 +248,7 @@ std::unique_ptr<table> partition(strings_column_view const& input,
 
 std::unique_ptr<table> rpartition(strings_column_view const& input,
                                   string_scalar const& delimiter,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

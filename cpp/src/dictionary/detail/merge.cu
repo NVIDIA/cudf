@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,9 +13,9 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -25,7 +25,7 @@ namespace detail {
 std::unique_ptr<column> merge(dictionary_column_view const& lcol,
                               dictionary_column_view const& rcol,
                               cudf::detail::index_vector const& row_order,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
   auto const lcol_iter = cudf::detail::indexalator_factory::make_input_iterator(lcol.indices());
@@ -40,7 +40,7 @@ std::unique_ptr<column> merge(dictionary_column_view const& lcol,
     cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
 
   // merge the input indices columns into the output column
-  thrust::transform(rmm::exec_policy_nosync(stream),
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     row_order.begin(),
                     row_order.end(),
                     output_iter,

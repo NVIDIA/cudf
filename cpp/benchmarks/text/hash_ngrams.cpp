@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/strings/strings_column_view.hpp>
 
@@ -26,16 +27,20 @@ static void bench_hash_ngrams(nvbench::state& state)
     create_random_table({cudf::type_id::STRING}, row_count{num_rows}, strings_profile);
   cudf::strings_column_view input(strings_table->view().column(0));
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   auto chars_size = input.chars_size(cudf::get_default_stream());
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);
   // output are hashes: approximate total number of hashes
   state.add_global_memory_writes<nvbench::int32_t>(num_rows * ngrams);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto result = nvtext::hash_character_ngrams(input, ngrams);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_hash_ngrams)

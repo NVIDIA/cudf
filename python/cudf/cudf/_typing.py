@@ -1,12 +1,14 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, Union
 
 import numpy as np
 import pandas as pd
-from packaging.version import parse
+from pandas.api.typing import NoDefault  # noqa: F401
+
+import pylibcudf as plc
 
 if TYPE_CHECKING:
     from pandas.api.extensions import ExtensionDtype
@@ -20,6 +22,13 @@ if TYPE_CHECKING:
 Dtype = Union["ExtensionDtype", str, np.dtype]
 # DtypeObj should be used otherwise
 DtypeObj = Union["ExtensionDtype", np.dtype]
+
+
+class DtypePolicy(Protocol):
+    def __call__(
+        self, result: plc.Column, dtypes: list[DtypeObj]
+    ) -> DtypeObj: ...
+
 
 # scalars
 DatetimeLikeScalar = TypeVar(
@@ -44,8 +53,3 @@ MultiColumnAggType = Union[  # noqa: UP007
 ]
 
 Axis = Literal[0, 1, "index", "columns"]
-
-if parse(pd.__version__) >= parse("3.0.0"):
-    from pandas.api.typing import NoDefault
-else:
-    NoDefault = Any

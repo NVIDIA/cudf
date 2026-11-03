@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/unary.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -15,13 +16,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/iterator/counting_iterator.h>
 
 #include <type_traits>
 
@@ -45,7 +45,7 @@ struct byte_list_conversion_dispatcher {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      flip_endianness configuration,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
   {
     return byte_list_conversion_fn<T>::invoke(input, configuration, stream, mr);
@@ -56,12 +56,10 @@ template <typename T>
 struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness configuration,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
-    if (input.size() == 0) {
-      return cudf::lists::detail::make_empty_lists_column(output_type, stream, mr);
-    }
+    if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
     if (input.size() == input.null_count()) {
       return cudf::lists::detail::make_all_nulls_lists_column(
         input.size(), output_type, stream, mr);
@@ -75,18 +73,21 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
     auto const d_out = byte_column->mutable_view().data<char>();
 
     if (configuration == flip_endianness::YES) {
-      thrust::for_each(rmm::exec_policy_nosync(stream),
-                       thrust::make_counting_iterator(0),
-                       thrust::make_counting_iterator(num_bytes),
+      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<cudf::size_type>{0},
+                       cuda::counting_iterator{num_bytes},
                        [d_inp, d_out] __device__(auto index) {
                          constexpr auto mask = static_cast<size_type>(sizeof(T) - 1);
                          d_out[index]        = d_inp[index + mask - ((index & mask) << 1)];
                        });
     } else {
-      thrust::copy_n(rmm::exec_policy_nosync(stream), d_inp, num_bytes, d_out);
+      thrust::copy_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                     d_inp,
+                     num_bytes,
+                     d_out);
     }
 
-    auto const it = thrust::make_constant_iterator(sizeof(T));
+    auto const it = cuda::make_constant_iterator(sizeof(T));
     auto offsets_column =
       std::get<0>(cudf::detail::make_offsets_child_column(it, it + input.size(), stream, mr));
 
@@ -94,9 +95,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
                                     std::move(offsets_column),
                                     std::move(byte_column),
                                     input.null_count(),
-                                    detail::copy_bitmask(input, stream, mr),
-                                    stream,
-                                    mr);
+                                    detail::copy_bitmask(input, stream, mr));
 
     // If any nulls are present, the corresponding lists must be purged so that
     // the result is sanitized.
@@ -113,35 +112,39 @@ template <typename T>
 struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
-    if (input.size() == 0) {
-      return cudf::lists::detail::make_empty_lists_column(output_type, stream, mr);
-    }
+    if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
     if (input.size() == input.null_count()) {
       return cudf::lists::detail::make_all_nulls_lists_column(
         input.size(), output_type, stream, mr);
     }
 
     auto const num_chars = strings_column_view(input).chars_size(stream);
-    CUDF_EXPECTS(num_chars < static_cast<int64_t>(std::numeric_limits<size_type>::max()),
+    CUDF_EXPECTS(num_chars < static_cast<int64_t>(std::numeric_limits<int32_t>::max()),
                  "Cannot convert strings column to lists column due to size_type limit",
                  std::overflow_error);
 
     auto col_content = std::make_unique<column>(input, stream, mr)->release();
 
-    auto uint8_col = std::make_unique<column>(
-      output_type, num_chars, std::move(*(col_content.data)), rmm::device_buffer{}, 0);
+    auto uint8_col =
+      std::make_unique<column>(output_type,
+                               num_chars,
+                               std::move(*(col_content.data)),
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                               0);
 
-    auto result = make_lists_column(
-      input.size(),
-      std::move(col_content.children[cudf::strings_column_view::offsets_column_index]),
-      std::move(uint8_col),
-      input.null_count(),
-      detail::copy_bitmask(input, stream, mr),
-      stream,
-      mr);
+    auto offsets_col = std::move(col_content.children[strings_column_view::offsets_column_index]);
+    if (offsets_col->type().id() != type_id::INT32) {
+      offsets_col = cudf::detail::cast(offsets_col->view(), data_type{type_id::INT32}, stream, mr);
+    }
+
+    auto result = make_lists_column(input.size(),
+                                    std::move(offsets_col),
+                                    std::move(uint8_col),
+                                    input.null_count(),
+                                    detail::copy_bitmask(input, stream, mr));
 
     // If any nulls are present, the corresponding lists must be purged so that
     // the result is sanitized.
@@ -158,7 +161,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
 
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   return type_dispatcher(
@@ -169,7 +172,7 @@ std::unique_ptr<column> byte_cast(column_view const& input,
 
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
-                                  rmm::cuda_stream_view stream,
+                                  cuda::stream_ref stream,
                                   rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
@@ -6,15 +6,21 @@ from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.strings cimport translate as cpp_translate
 from pylibcudf.libcudf.types cimport char_utf8
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from cython.operator import dereference
+from cuda.bindings.cyruntime cimport cudaStream_t
 from pylibcudf.libcudf.strings.translate import \
     filter_type as FilterType  # no-cython-lint
 
@@ -43,7 +49,10 @@ cdef vector[pair[char_utf8, char_utf8]] _table_to_c_table(dict table):
 
 
 cpdef Column translate(
-    Column input, dict chars_table, Stream stream=None, DeviceMemoryResource mr=None
+    Column input,
+    dict chars_table: dict[int | str, int | str],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
 ):
     """
     Translates individual characters within each string.
@@ -69,25 +78,26 @@ cpdef Column translate(
     cdef vector[pair[char_utf8, char_utf8]] c_chars_table = _table_to_c_table(
         chars_table
     )
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_translate.translate(
-            input.view(),
+            c_input,
             c_chars_table,
-            stream.view(),
+            _cs,
             mr.get_mr()
         )
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)
 
 
 cpdef Column filter_characters(
     Column input,
-    dict characters_to_filter,
+    dict characters_to_filter: dict[int | str, int | str],
     filter_type keep_characters,
     Scalar replacement,
-    Stream stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -124,18 +134,19 @@ cpdef Column filter_characters(
     cdef const string_scalar* c_replacement = <const string_scalar*>(
         replacement.c_obj.get()
     )
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
-
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_translate.filter_characters(
-            input.view(),
+            c_input,
             c_characters_to_filter,
             keep_characters,
             dereference(c_replacement),
-            stream.view(),
+            _cs,
             mr.get_mr()
         )
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)
 
 FilterType.__str__ = FilterType.__repr__

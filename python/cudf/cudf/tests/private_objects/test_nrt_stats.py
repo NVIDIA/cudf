@@ -1,5 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import numpy as np
 import pytest
 from numba.cuda import config
 from numba.cuda.memory_management.nrt import rtsys
@@ -16,7 +17,7 @@ from cudf.core.udf.utils import (
 from cudf.utils._numba import _CUDFNumbaConfig
 
 
-@pytest.mark.skip(reason="https://github.com/rapidsai/cudf/issues/19880")
+@pytest.mark.skip(reason="https://github.com/NVIDIA/cudf/issues/19880")
 def test_string_udf_basic(monkeypatch):
     monkeypatch.setattr(config, "CUDA_NRT_STATS", True)
 
@@ -37,7 +38,7 @@ def test_string_udf_basic(monkeypatch):
     assert stats.alloc - stats.free == 0
 
 
-@pytest.mark.skip(reason="https://github.com/rapidsai/cudf/issues/19880")
+@pytest.mark.skip(reason="https://github.com/NVIDIA/cudf/issues/19880")
 def test_string_udf_conditional_allocations(monkeypatch):
     monkeypatch.setattr(config, "CUDA_NRT_STATS", True)
 
@@ -58,7 +59,7 @@ def test_string_udf_conditional_allocations(monkeypatch):
     assert after_stats.alloc - before_stats.free == 1
 
 
-@pytest.mark.skip(reason="https://github.com/rapidsai/cudf/issues/19880")
+@pytest.mark.skip(reason="https://github.com/NVIDIA/cudf/issues/19880")
 def test_string_udf_free_kernel(monkeypatch):
     monkeypatch.setattr(config, "CUDA_NRT_STATS", True)
 
@@ -77,8 +78,9 @@ def test_string_udf_free_kernel(monkeypatch):
 
     with _CUDFNumbaConfig():
         kernel.forall(len(sr))(*launch_args)
-    col = ColumnBase.from_pylibcudf(
-        strings_udf.column_from_managed_udf_string_array(ans_col)
+    col = ColumnBase.create(
+        strings_udf.column_from_managed_udf_string_array(ans_col),
+        dtype=np.dtype(object),
     )
 
     # MemInfos that own the strings should still be alive

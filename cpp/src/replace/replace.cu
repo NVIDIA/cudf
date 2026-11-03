@@ -3,7 +3,7 @@
  * SPDX-FileCopyrightText: Copyright 2018 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Cristhian Alberto Gonzales Castillo <cristhian@blazingdb.com>
  * SPDX-FileCopyrightText: Copyright 2018 Alexander Ocsa <alexander@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 // clang-format on
@@ -48,10 +48,9 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/find.h>
 #include <thrust/tuple.h>
@@ -95,18 +94,12 @@ __device__ auto get_new_value(cudf::size_type idx,
  * specialize this kernel for the different scenario for performance without writing different
  * kernel.
  *
- * @param[in] input_data Device array with the data to be modified
- * @param[in] input_valid Valid mask associated with input_data
- * @param[out] output_data Device array to store the data from input_data
- * @param[out] output_valid Valid mask associated with output_data
- * @param[out] output_valid_count #valid in output column
- * @param[in] nrows # rows in `output_data`
- * @param[in] values_to_replace_begin Device pointer to the beginning of the sequence
- * of old values to be replaced
- * @param[in] values_to_replace_end  Device pointer to the end of the sequence
- * of old values to be replaced
- * @param[in] d_replacement_values Device array with the new values
- * @param[in] replacement_valid Valid mask associated with d_replacement_values
+ * @param[in] input Input column to read data from
+ * @param[out] output Output column to store replaced data
+ * @param[out] output_valid_count Number of valid entries in the output column
+ * @param[in] nrows Number of rows in the input/output columns
+ * @param[in] values_to_replace Column containing the old values to search for
+ * @param[in] replacement Column containing the new values to substitute
  */
 template <class T, bool input_has_nulls, bool replacement_has_nulls>
 CUDF_KERNEL void replace_kernel(cudf::column_device_view input,
@@ -175,10 +168,11 @@ struct replace_kernel_forwarder {
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input_col,
                                            cudf::column_view const& values_to_replace,
                                            cudf::column_view const& replacement_values,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
   {
-    cudf::detail::device_scalar<cudf::size_type> valid_counter(0, stream);
+    cudf::detail::device_scalar<cudf::size_type> valid_counter(
+      0, stream, cudf::get_current_device_resource_ref());
     cudf::size_type* valid_count = valid_counter.data();
 
     auto replace = [&] {
@@ -206,12 +200,13 @@ struct replace_kernel_forwarder {
     auto device_values_to_replace  = cudf::column_device_view::create(values_to_replace, stream);
     auto device_replacement_values = cudf::column_device_view::create(replacement_values, stream);
 
-    replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.value()>>>(*device_in,
-                                                                *device_out,
-                                                                valid_count,
-                                                                output_view.size(),
-                                                                *device_values_to_replace,
-                                                                *device_replacement_values);
+    replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.get()>>>(*device_in,
+                                                              *device_out,
+                                                              valid_count,
+                                                              output_view.size(),
+                                                              *device_values_to_replace,
+                                                              *device_replacement_values);
+    CUDF_CUDA_TRY(cudaGetLastError());
 
     if (output_view.nullable()) {
       output->set_null_count(output->size() - valid_counter.value(stream));
@@ -223,7 +218,7 @@ struct replace_kernel_forwarder {
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cudf::column_view const&,
                                            cudf::column_view const&,
-                                           rmm::cuda_stream_view,
+                                           cuda::stream_ref,
                                            rmm::device_async_resource_ref)
   {
     CUDF_FAIL("No specialization exists for this type");
@@ -235,7 +230,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::string_
   cudf::column_view const& input_col,
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   return cudf::strings::detail::find_and_replace_all(
@@ -247,7 +242,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::diction
   cudf::column_view const& input_col,
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto input        = cudf::dictionary_column_view(input_col);
@@ -289,7 +284,7 @@ namespace detail {
 std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& input_col,
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(values_to_replace.size() == replacement_values.size(),
@@ -324,13 +319,15 @@ std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& inpu
  * @param[in] input_col column_view of the data to be modified
  * @param[in] values_to_replace column_view of the old values to be replaced
  * @param[in] replacement_values column_view of the new values
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned device memory
  *
  * @returns output cudf::column with the modified data
  */
 std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& input_col,
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   return detail::find_and_replace_all(input_col, values_to_replace, replacement_values, stream, mr);

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Any
@@ -6,9 +6,9 @@ from typing import Any
 import numpy as np
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
-from rmm.pylibrmm.stream import Stream
 
 from pylibcudf.column import Column
+from pylibcudf.utils import CudaStreamLike
 
 def minhash(
     input: Column,
@@ -16,7 +16,7 @@ def minhash(
     a: Column,
     b: Column,
     width: int,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def minhash64(
@@ -25,7 +25,7 @@ def minhash64(
     a: Column,
     b: Column,
     width: int,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def minhash_ngrams(
@@ -34,7 +34,7 @@ def minhash_ngrams(
     seed: int | np.unsignedinteger[Any],
     a: Column,
     b: Column,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def minhash64_ngrams(
@@ -43,6 +43,6 @@ def minhash64_ngrams(
     seed: int | np.unsignedinteger[Any],
     a: Column,
     b: Column,
-    stream: Stream | None = None,
+    stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...

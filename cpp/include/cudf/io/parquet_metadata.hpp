@@ -1,11 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /**
  * @file parquet_metadata.hpp
- * @brief cuDF-IO freeform API
+ * @brief Freeform APIs for Parquet metadata
  */
 
 #pragma once
@@ -13,8 +13,14 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <memory>
+#include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -23,7 +29,6 @@ namespace io {
 /**
  * @addtogroup io_types
  * @{
- * @file
  */
 
 //! Parquet physical `Type`
@@ -39,7 +44,7 @@ struct parquet_column_schema {
    *
    * This has been added since Cython requires a default constructor to create objects on stack.
    */
-  explicit parquet_column_schema() = default;
+  explicit parquet_column_schema() : _cudf_type{data_type{type_id::EMPTY}} {}
 
   /**
    * @brief constructor
@@ -47,11 +52,13 @@ struct parquet_column_schema {
    * @param name column name
    * @param type parquet type
    * @param children child columns (empty for non-nested types)
+   * @param cudf_type cudf data type
    */
   parquet_column_schema(std::string_view name,
                         Type type,
-                        std::vector<parquet_column_schema> children)
-    : _name{name}, _type{type}, _children{std::move(children)}
+                        std::vector<parquet_column_schema>&& children,
+                        data_type cudf_type)
+    : _name{name}, _type{type}, _children{std::move(children)}, _cudf_type{cudf_type}
   {
   }
 
@@ -104,11 +111,21 @@ struct parquet_column_schema {
    */
   [[nodiscard]] auto num_children() const { return children().size(); }
 
+  /**
+   * @brief Returns the cudf data type for this column
+   *
+   * This is the resolved cudf data type mapped from the Parquet physical/logical types.
+   *
+   * @return cudf data type
+   */
+  [[nodiscard]] auto cudf_type() const { return _cudf_type; }
+
  private:
   std::string _name;
   // 3 types available: Physical, Converted, Logical
   Type _type;  // Physical type
   std::vector<parquet_column_schema> _children;
+  data_type _cudf_type;
 };
 
 /**
@@ -280,7 +297,37 @@ parquet_metadata read_parquet_metadata(source_info const& src_info);
  * @return List of FileMetaData objects, one per parquet source
  */
 std::vector<parquet::FileMetaData> read_parquet_footers(
-  cudf::host_span<std::unique_ptr<cudf::io::datasource> const> sources);
+  std::span<std::unique_ptr<cudf::io::datasource> const> sources);
+
+/**
+ * @brief Decode parquet column-chunk min/max statistics for selected leaf columns.
+ *
+ * Missing min/max statistics are represented as nulls in the corresponding output column. Parquet
+ * min/max exactness flags are not interpreted by this function. The requested column names are
+ * resolved against each file's schema. The returned table contains one row per source row group.
+ * Column 0 is the source file index, column 1 is the file-local row-group index, and subsequent
+ * columns are min/max pairs in the order of ``column_names``.
+ *
+ * @ingroup io_readers
+ *
+ * @param parquet_metadatas Parquet file metadata, one per source
+ * @param column_names Dotted leaf-column paths to decode statistics for
+ * @param stream CUDA stream used for device memory operations
+ * @param mr Memory resources to use for device memory allocation
+ * @return Table of row-group identifiers and decoded min/max bounds. For requested column
+ * ``column_names[i]``, the min column is at ``2 + 2 * i`` and the max column is at
+ * ``3 + 2 * i``.
+ *
+ * @throw std::invalid_argument If a requested leaf-column path is missing or ambiguous.
+ * @throw std::invalid_argument If a requested column has unsupported or compound statistics dtype.
+ * @throw std::invalid_argument If a requested column has mismatching statistics dtype across
+ * sources.
+ */
+std::unique_ptr<table> read_parquet_column_chunk_bounds(
+  std::span<parquet::FileMetaData const> parquet_metadatas,
+  std::span<std::string const> column_names,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace io

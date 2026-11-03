@@ -6,9 +6,9 @@ You will need:
    devcontainer](https://github.com/rapidsai/devcontainers/), add
    `"./features/src/rust": {"version": "latest", "profile": "default"},` to your
    preferred configuration. Or else, use
-   [rustup](https://www.rust-lang.org/tools/install)
+   [rustup](https://rust-lang.org/tools/install/)
 2. A [cudf development
-   environment](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
+   environment](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
    The combined devcontainer works, or whatever your favourite approach is.
 
 :::{note}
@@ -389,201 +389,55 @@ def rename(e: Expr, mapping: Mapping[str, str]) -> Expr:
     return mapper(e)
 ```
 
-# Estimated column statistics
+# IO partition statistics
 
 :::{note}
-Column-statistics estimation is experimental and the details are
+IO partition statistics are experimental and the details are
 likely to change in the future.
 :::
 
-The `cudf-polars` streaming executor (enabled by default) may use
-estimated column statistics to help transform translated logical-plan
-IR nodes into the final "physical-plan" IR nodes. This will only
-happen for queries that read from in-memory or Parquet data, and
-only when statistics planning is enabled (see the following
-section for more details).
-
-## Configuration
-
-The statistics-based query planning behavior can be controlled through
-the `StatsPlanningOptions` configuration class. These options can be
-configured either through the `stats_planning` parameter of the
-streaming executor, or via environment variables with the prefix
-`CUDF_POLARS__EXECUTOR__STATS_PLANNING__`.
+The streaming executor samples Parquet footer metadata to estimate
+per-column storage sizes, then uses those estimates together with
+`target_partition_size` (bytes) on the streaming executor to decide how
+to split or fuse file-level partitions so that each input partition is
+close to that target size. Tune `target_partition_size` via
+`executor_options` or `CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`.
 
 ```python
-import polars as pl
-
-# Configure via GPUEngine
 engine = pl.GPUEngine(
     executor="streaming",
-    executor_options={
-        "stats_planning": {
-            "use_io_partitioning": True,
-            "use_reduction_planning": True,
-            "use_join_heuristics": True,
-            "use_sampling": False,
-            "default_selectivity": 0.5,
-        }
-    }
+    executor_options={"target_partition_size": 2_000_000_000},
 )
-
-result = query.collect(engine=engine)
 ```
 
-:::{note}
-Column statistics are currently supported for queries that originate
-from Parquet or in-memory DataFrame objects.
-:::
+Each scan node may run up to `max_concurrent_io_tasks` reads concurrently. By
+default, the streaming executor chooses this limit automatically based on the
+scan's paths. The limit applies independently to each scan node, each
+corresponding to a single `pl.scan_parquet` call in the query. Configure it
+explicitly through `executor_options` or
+`CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`:
 
-The available configuration options are:
-
-- **`use_io_partitioning`** (default: `True`): Whether to use estimated file-size
-  statistics to calculate the ideal input-partition count for IO operations.
-  This option currently applies to Parquet data only. This option can also be set via the
-  `CUDF_POLARS__EXECUTOR__STATS_PLANNING__USE_IO_PARTITIONING` environment variable.
-
-- **`use_reduction_planning`** (default: `False`): Whether to use estimated column
-  statistics to calculate the output-partition count for reduction operations
-  like `Distinct`, `GroupBy`, and `Select(unique)`. This can also be set via the
-  `CUDF_POLARS__EXECUTOR__STATS_PLANNING__USE_REDUCTION_PLANNING` environment variable.
-
-- **`use_join_heuristics`** (default: `True`): Whether to use join heuristics
-  to estimate row-count and unique-count statistics. These statistics may only
-  be collected when they are actually needed for query planning. These statistics
-  may only be collected when they are actually needed for query planning and when
-  row-count statistics are available for the underlying datasource (e.g. Parquet
-  and in-memory LazyFrame data). This option can also be set via the `CUDF_POLARS__EXECUTOR__STATS_PLANNING__USE_JOIN_HEURISTICS` environment variable.
-
-- **`use_sampling`** (default: `True`): Whether to sample real data to estimate
-  unique-value statistics. These statistics may only be collected when they are
-  actually needed for query planning and if the underlying datasource supports
-  sampling (e.g. Parquet and in-memory LazyFrame data). This option can also be
-  set via the
-  `CUDF_POLARS__EXECUTOR__STATS_PLANNING__USE_SAMPLING` environment variable.
-
-- **`default_selectivity`** (default: `0.8`): The default selectivity of a
-  predicate, used for estimating how much a filter operation will reduce the
-  number of rows. This can also be set via the
-  `CUDF_POLARS__EXECUTOR__STATS_PLANNING__DEFAULT_SELECTIVITY` environment variable.
-
-For example, to enable reduction planning via environment variables:
-
-```bash
-export CUDF_POLARS__EXECUTOR__STATS_PLANNING__REDUCTION_PLANNING=True
+```python
+engine = pl.GPUEngine(
+    executor="streaming",
+    executor_options={"max_concurrent_io_tasks": 4},
+)
 ```
 
-## How it works: Storing statistics
+Passing an integer uses the same limit for all scans. Pass a
+`{"local": ..., "remote": ...}` dict, or set the environment variable to a
+JSON value like `{"remote": 16}`, to tune local and remote scans separately.
 
-The following classes are used to store column statistics (listed
-in order of decreasing granularity):
+Before each read is submitted, it waits for a device-memory reservation.
+This makes aggregate read concurrency respond to memory pressure across all
+scan nodes on the rank.
 
-- `ColumnStat`: This class is used to store an individual column
-statistic (e.g. row count or unique-value count). Each object
-has two important attributes:
-  - `ColumnStat.value`: Returns the actual column-statistic value
-  (e.g. an `int` if the statistic is a row-count) or `None` if no
-  estimate is available.
-  - `ColumnStat.exact`: Whether the statistic is known "exactly".
-- `UniqueStats`: Since we usually sample both the unique-value
-**count** and the unique-value **fraction** of a column at once,
-we use `UniqueStats` to group these `ColumnStat`s into one object.
-- `DataSourceInfo`: This class is used to sample and store
-`ColumnStat`/`UniqueStats` objects associated with a single
-datasource (e.g. a Parquet dataset or in-memory `DataFrame`).
-  - Since it can be expensive to sample datasource statistics,
-  this class is specifically designed to enable **lazy** and
-  **aggregated** column sampling via sub-classing. For example,
-  The `ParquetSourceInfo` sub-class uses caching to avoid
-  redundant file-system access.
-- `ColumnSourceInfo`: This class wraps a `DataSourceInfo` object.
-Since `DataSourceInfo` tracks information for an entire table, we use
-`ColumnSourceInfo` to provide a single-column view of the object.
-- `ColumnStats`: This class is used to group together the "base"
-`ColumnSourceInfo` reference and the local unique-count estimate
-for a specific IR + column combination. We bundle these references
-together to simplify the design and maintenance of `StatsCollector`.
-**NOTE:** The local unique-count estimate is not yet populated.
-- `JoinKey`: This class is used to define a set of columns being
-joined on and the estimated unique-value count of the key.
-- `JoinInfo`: This class is used to define the necessary data
-structures for applying join heuristics to our query plan.
-Each object contains the following attributes:
-  - `JoinInfo.key_map`: Returns a mapping between distinct
-  `JoinKey` objects that are joined on in the query plan.
-  - `JoinInfo.col_map`: Returns a mapping between distinct
-  `ColumnStats` objects that are joined on in the query plan.
-  - `JoinInfo.join_map`: Returns a mapping between each IR node
-  and the associated `JoinKey` objects.
-- `StatsCollector`: This class is used to collect and store
-statistics for all IR nodes within a single query. The statistics
-attached to each IR node refer to the **output** columns of the
-IR node in question. The `StatsCollector` class is especially important,
-because it is used to organize **all** statistics within a logical plan.
-Each object has two important attributes:
-  - `StatsCollector.row_count`: Returns a mapping between each IR
-  node and the row-count `ColumnStat` estimate for that node.
-  **NOTE:** This attribute is not yet populated.
-  - `StatsCollector.column_stats`: Returns a mapping between each IR
-  node and the `dict[str, ColumnStats]` mapping for that node.
-  - `StatsCollector.join_info`: Returns a `JoinInfo` object.
-
-## How it works: Collecting statistics
-
-The top-level API for collecting statistics is
-`cudf_polars.experimental.statistics.collect_statistics`. This
-function performs the following steps:
-
-1. **Collect base statistics**: We build an outline of the statistics that
-   will be collected before any real data is sampled. No Parquet metadata
-   reading or unique-value sampling occurs during this step.
-
-   The top-level API for this "base-statistics" step is
-   `cudf_polars.experimental.statistics.collect_base_stats`. This
-   function calls into the `initialize_column_stats` single-dispatch
-   function to collect a `dict[str, ColumnStats]` mapping for each
-   IR node in the logical plan.
-
-   The IR-specific logic for each `initialize_column_stats` dispatch is
-   relatively simple, because the only goal is to initialize and propagate
-   the underlying `DataSourceInfo` reference and child-`ColumnStats`
-   references for each column.
-
-   This means that most IR classes simply need to propagate reference
-   from child-IR nodes. However, `Scan` and `DataFrameScan` objects
-   must initialize the root `DataSourceInfo` objects. In order to
-   avoid redundant unique-value sampling during later steps, we
-   also need any IR node containing a unique-value reduction (e.g.
-   `Distinct`, `GroupBy`, and `Select(unique)`) to update
-   `unique_stats_columns` for each of its `DataSourceInfo` references.
-
-2. **Apply PK-FK heuristics** (if enabled): We use primary key-foreign key heuristics
-   to estimate the unique count for each join key. Parquet metadata is used to
-   estimate row counts for each table source during this step, but no unique-value
-   sampling is performed yet.
-
-3. **Update statistics for each node**: We set local row-count and unique-value
-   statistics on each node in the IR graph. This step performs unique-value
-   sampling, but only for columns within the `unique_stats_columns` set for
-   the corresponding `DataSourceInfo` object (populated during the first step).
-   Whenever a datasource object has non-empty `unique_stats_columns`, all
-   columns in that set are sampled at the same time (to minimize file-system
-   operations).
-
-## How it works: Using statistics
-
-Base `DataSourceInfo` references are currently used to calculate
-the partition count when a Parquet-based `Scan` node is lowered
-by the `cudf-polars` streaming executor. This behavior does **not**
-currently depend on the `StatsPlanningOptions` configuration.
-
-If the `StatsPlanningOptions.enable` configuration is set to `True`,
-cudf-polars will use unique-value and row-count statistics to
-estimate the ideal output-partition count for reduction operations
-like `Distinct`, `GroupBy`, and `Select(unique)`. If column statistics
-is **not** enabled, the user-provided `unique_fraction` configuration
-may be necessary for reductions on high-cardinality columns. Otherwise,
-the default tree-reduction algorithm may have insufficient GPU memory.
+Internally, `collect_statistics` walks the IR graph, groups Parquet
+`Scan` nodes that share the same file paths (unioning projected columns
+for sampling), and builds one `DataSourceInfo` per path group. It then
+attaches that source to every `Scan` in the group. Leaf `DataFrameScan`
+nodes are handled separately. Results live in `StatsCollector.scan_stats`.
+Parquet metadata sampling is shared across scans that read the same files.
 
 # Containers
 
@@ -719,15 +573,22 @@ def test_whatever():
 Where translation of a query should fail due to the feature being
 unsupported we should test this. To assert that _translation_ raises
 an exception (usually `NotImplementedError`), use the utility function
-`assert_ir_translation_raises`:
+`assert_ir_translation_raises` with the `in_memory_engine` fixture. This fixture
+provides an in-memory GPU engine configuration, not the Polars CPU engine.
+For unsupported features rejected by the shared translator, testing every
+execution engine repeats the same check and unnecessarily initializes streaming
+engines. Use the parametrized `engine` fixture for execution tests and for
+failure modes that depend on the engine configuration.
 
 ```python
 from cudf_polars.testing.asserts import assert_ir_translation_raises
 
 
-def test_whatever():
+def test_whatever(in_memory_engine):
     unsupported_query = ...
-    assert_ir_translation_raises(unsupported_query, NotImplementedError)
+    assert_ir_translation_raises(
+        unsupported_query, in_memory_engine, NotImplementedError
+    )
 ```
 
 This test will fail if translation does not raise.
@@ -756,7 +617,7 @@ translator = Translator(q._ldf.visit(), pl.GPUEngine())
 ir = translator.translate_ir()
 
 # DataFrame living on the device
-result = ir.evaluate(cache={}, timer=None, context=IRExecutionContext.from_config_options(translator.config_options))
+result = ir.evaluate(cache={}, context=IRExecutionContext())
 
 # Polars dataframe
 host_result = result.to_polars()
@@ -793,6 +654,99 @@ another `nvtx` range (e.g. `Scan.do_evaluate`, `GroupBy.do_evaluate`, etc.).
 These provide a higher-level grouping over the lower-level libcudf calls (e.g.
 `read_chunk`, `aggregate`).
 
-Finally, if using [rapidsmpf](https://docs.rapids.ai/api/rapidsmpf/nightly/)
-for shuffling, the methods inserting and extracting partitions to shuffle are
-annotated with nvtx ranges.
+# Query Plans
+
+The module `cudf_polars.streaming.explain` contains functions for dumping
+the query for a given `LazyFrame`.
+
+## Quent
+
+cudf-polars uses [Quent] for instrumentation. The output can be opened
+with `quent-open` and might be helpful for users and developers of cudf-polars.
+
+### Enabling Quent Telemetry
+
+Set `CUDF_POLARS__EXECUTOR__QUENT_CONTEXT=1` to export plans, actor lifetimes,
+aggregate actor statistics, runtime decisions, and per-node `Evaluate`
+lifecycles. Asynchronous scan work uses the same lifecycle with task metadata,
+disk-to-device transfer usage, failures, and actual output bytes.
+
+### Schema
+
+Quent uses a YAML file to define its event schema. Ours is at
+[model.yaml](../quent/model.yaml). See the [Quent Tutorial][qt] for background
+on these schemas. You can view it in the Quent [Schema Viewer][qsv].
+
+We define entities to represent the high-level execution model of cudf-polars.
+We won't repeat them all here, but this includes things like Plans (logical and
+physical) and [resources][qr] like Device Memory.
+
+Certain entities have special lifecycle rules, so they should be modeled as a
+[Quent FSM][fsm]. These include entities like a `Query`, `Engine`, and `Actor`.
+
+[qt]: https://rapidsai.github.io/quent/tutorial/
+[qsv]: https://rapidsai.github.io/quent/schema/
+[fsm]: https://rapidsai.github.io/quent/tutorial/instrumentation/modules/finite-state-machine/index.html
+[qr]: https://rapidsai.github.io/quent/tutorial/instrumentation/modules/resource/index.html
+
+### Implementation Notes
+
+The telemetry model is declared in [model.yaml](../quent/model.yaml). The
+`cudf-polars-quent-bridge` project uses maturin and Quent to
+
+- validate the schema
+- generate the Rust instrumentation library
+- generate python bindings to the Rust instrumentation library
+
+See [`cudf-polars-quent-bridge`](../quent/bridge/README.md) for details. These
+bindings are used in `cudf_polars` to build and emit Quent events matching the
+declared schema. cudf-polars starts a Quent Collector on the controller (rank 0
+for SPMD), distributes its address to every worker, and sends every process's
+events to it. The Collector writes all contexts under a common run directory,
+which our benchmark scripts package into a ZIP archive after the clients and
+Collector have closed.
+
+`QuentConfig.output_root`, which may also be configured with
+`CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT`, is local to the process hosting the
+Collector. Workers do not need access to that path or to a shared filesystem.
+
+The `cudf-polars-quent-analyzer` project is a Rust library that's used
+by `quent-open` to visualize cudf-polars instrumentation in the Quent UI.
+
+Ranks need to coordinate on the creation of some entities. For example, each
+actor in a `RayEngine` needs to use the same `engine_id` so that plans can be
+associated with the engine correctly. `QuentConfig` carries the shared
+engine-level values and is provided through `StreamingExecutor.quent_context`;
+its `QuentQueryConfig` carries display metadata that may change per query.
+`QuentQueryWorkerState` binds a query ID to the worker runtime that owns the
+rank-local generated handles and resource UUIDs.
+
+### Concepts
+
+cudf-polars and Quent's Query Engine domain have somewhat overlapping names for
+somewhat overlapping concepts. The following table relates cudf-polars' names to
+Quent's names.
+
+#### Cluster Types
+
+| cudf-polars Type | Quent Type | Notes |
+| ---------------- | ---------- | ----- |
+| `StreamingEngine`  | `Engine`     | The Quent `Engine.implementation` field includes runtime information like the version of cudf-polars. |
+| `RankActor` / `_WorkerContext` | Worker | The logical rank / worker responsible for executing the given query plan. |
+
+#### Query Types
+
+| cudf-polars Type | Quent Type | Notes |
+| ---------------- | ---------- | ----- |
+| `LazyFrame.collect` / `sink` | `Query` | A single query, executed by an `Engine` |
+| - | `QueryGroup` | A group of queries; this is a purely logical grouping, optionally controlled by the user. `polars` / `cudf-polars` don't have any concept of a query group. |
+| `IR` | `Plan` | A plan, translated from a polars expression. Traversing the `.children` of a cudf-polars `IR` node will give you the full plan. |
+| `IR` | `Operator` | A node in the query plan. |
+| - | `Port` | The input or output of some Operator. In cudf-polars, intermediate results are typically passed between IR nodes / operators as a `pylibcudf.Table` |
+| - | `Edge` | A connection between two `Port`s. |
+| `IR.do_evaluate` | `Evaluate` | Synchronous host-side evaluation of an IR node. |
+| rapidsmpf streaming actor | `Actor` | Actor lifetime and aggregate chunk/byte statistics. |
+| worker I/O or rank link | `DataChannel` | A concrete resource used for data transfer. |
+
+
+[Quent]: https://github.com/rapidsai/quent

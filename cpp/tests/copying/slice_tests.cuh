@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,8 @@
 
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+
+#include <cuda/iterator>
 
 template <typename T, typename InputIterator>
 cudf::test::fixed_width_column_wrapper<T> create_fixed_columns(cudf::size_type start,
@@ -215,7 +217,7 @@ inline std::unique_ptr<cudf::column> make_long_offsets_string_column()
   // manually specified long offsets, but < 2B chars
   auto const num_chars = 1024;
   std::vector<int8_t> chars(num_chars);
-  auto iter = thrust::make_counting_iterator(0);
+  auto iter = cuda::counting_iterator<cudf::size_type>{0};
   std::transform(iter, iter + num_chars, chars.begin(), [](cudf::size_type i) {
     return static_cast<int8_t>('a' + (i % 26));
   });
@@ -227,7 +229,11 @@ inline std::unique_ptr<cudf::column> make_long_offsets_string_column()
 
   cudf::test::fixed_width_column_wrapper<int64_t> long_offsets{
     0, 20, 40, 60, 80, 100, 500, 600, 700, 1000, 1010};
-  auto str = cudf::make_strings_column(10, long_offsets.release(), std::move(d_chars), 0, {});
+  auto str = cudf::make_strings_column(10,
+                                       long_offsets.release(),
+                                       std::move(d_chars),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::strings_column_view scv(*str);
   CUDF_EXPECTS(scv.offsets().type().id() == cudf::type_id::INT64, "Unexpected short offset type");
 
@@ -242,14 +248,17 @@ inline std::unique_ptr<cudf::column> make_long_offsets_and_chars_string_column()
   auto const block_size = 100 * 1024 * 1024;
   // memset a few blocks to known values, leave the rest uninitialized
   int64_t const block_a = 0;
-  cudaMemsetAsync(charp + block_a, 'a', block_size, cudf::get_default_stream());  // first 100 MB
+  cudaMemsetAsync(charp + block_a, 'a', block_size, cudf::get_default_stream().get());
+  // first 100 MB
   int64_t const block_b = block_size;
-  cudaMemsetAsync(charp + block_b, 'b', block_size, cudf::get_default_stream());  // second 100 MB
+  cudaMemsetAsync(charp + block_b, 'b', block_size, cudf::get_default_stream().get());
+  // second 100 MB
   int64_t const block_c = d_chars.size() - (block_size * 2);
-  cudaMemsetAsync(
-    charp + block_c, 'c', block_size, cudf::get_default_stream());  // second-to-last 100 MB
+  cudaMemsetAsync(charp + block_c, 'c', block_size, cudf::get_default_stream().get());
+  // second-to-last 100 MB
   int64_t const block_d = d_chars.size() - block_size;
-  cudaMemsetAsync(charp + block_d, 'd', block_size, cudf::get_default_stream());  // last 100 MB
+  cudaMemsetAsync(charp + block_d, 'd', block_size, cudf::get_default_stream().get());
+  // last 100 MB
 
   // choose some rows that span various boundaries of the blocks
   cudf::test::fixed_width_column_wrapper<int64_t> long_offsets{
@@ -264,7 +273,11 @@ inline std::unique_ptr<cudf::column> make_long_offsets_and_chars_string_column()
     block_d - 1000,
     block_d + (block_size / 2),
     static_cast<int64_t>(d_chars.size())};
-  auto str = cudf::make_strings_column(10, long_offsets.release(), std::move(d_chars), 0, {});
+  auto str = cudf::make_strings_column(10,
+                                       long_offsets.release(),
+                                       std::move(d_chars),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::strings_column_view scv(*str);
   CUDF_EXPECTS(scv.offsets().type().id() == cudf::type_id::INT64, "Unexpected short offset type");
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,9 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
+
+#include <concepts>
 
 namespace cudf::detail {
 
@@ -30,9 +32,8 @@ class hostdevice_span {
 
   // Copy construction to support const conversion
   /// @param other The span to copy
-  template <typename OtherT,
-            std::enable_if_t<std::is_convertible_v<OtherT (*)[], T (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename OtherT>
+    requires std::convertible_to<OtherT (*)[], T (*)[]>  // NOLINT(modernize-avoid-c-arrays)
   constexpr hostdevice_span(hostdevice_span<OtherT> const& other) noexcept
     : _host_data{host_span<OtherT>{other}}, _device_data{other.device_ptr()}
   {
@@ -51,12 +52,11 @@ class hostdevice_span {
    * @tparam T The device span type.
    * @return A typed device span of the hostdevice view's data.
    */
-  template <typename U,
-            std::enable_if_t<std::is_convertible_v<T (*)[], U (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename U>
+    requires std::convertible_to<T (*)[], U (*)[]>  // NOLINT(modernize-avoid-c-arrays)
   [[nodiscard]] operator cudf::device_span<U>() const noexcept
   {
-    return {_device_data, size()};
+    return cudf::device_span<U>(_device_data, size());
   }
 
   /**
@@ -89,9 +89,8 @@ class hostdevice_span {
    * @tparam T The host span type.
    * @return A typed host span of the hostdevice_span's data.
    */
-  template <typename U,
-            std::enable_if_t<std::is_convertible_v<T (*)[], U (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename U>
+    requires std::convertible_to<T (*)[], U (*)[]>  // NOLINT(modernize-avoid-c-arrays)
   [[nodiscard]] operator host_span<U>() const noexcept
   {
     return {_host_data};
@@ -152,30 +151,30 @@ class hostdevice_span {
     return hostdevice_span<T>(_host_data.subspan(offset, count), device_ptr(offset));
   }
 
-  void host_to_device_async(rmm::cuda_stream_view stream) const
+  void host_to_device_async(cuda::stream_ref stream) const
   {
     static_assert(not std::is_const_v<T>, "Cannot copy to const device memory");
     cudf::detail::cuda_memcpy_async<T>(device_span<T>{device_ptr(), size()}, _host_data, stream);
   }
 
   [[deprecated("Use host_to_device_async instead")]] void host_to_device(
-    rmm::cuda_stream_view stream) const
+    cuda::stream_ref stream) const
   {
     host_to_device_async(stream);
-    stream.synchronize();
+    stream.sync();
   }
 
-  void device_to_host_async(rmm::cuda_stream_view stream) const
+  void device_to_host_async(cuda::stream_ref stream) const
   {
     static_assert(not std::is_const_v<T>, "Cannot copy to const host memory");
     cudf::detail::cuda_memcpy_async<T>(
       _host_data, device_span<T const>{device_ptr(), size()}, stream);
   }
 
-  void device_to_host(rmm::cuda_stream_view stream) const
+  void device_to_host(cuda::stream_ref stream) const
   {
     device_to_host_async(stream);
-    stream.synchronize();
+    stream.sync();
   }
 
  private:

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from decimal import Decimal
 
@@ -9,16 +9,8 @@ import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_VERSION,
-)
 from cudf.core.column.column import _can_values_be_equal, as_column
-from cudf.core.column.decimal import (
-    Decimal32Column,
-    Decimal64Column,
-    Decimal128Column,
-)
+from cudf.core.column.decimal import DecimalColumn
 from cudf.testing import assert_eq
 
 
@@ -49,7 +41,10 @@ def pandas_input(all_supported_types_as_str):
             data = random_ints(np.int64, size)
         elif dtype.kind == "U":
             # Unicode strings of integers like "12345"
+            # As of pandas 3.0, pandas interprets numpy string type as object
             data = random_ints(np.int64, size).astype(dtype.str)
+            data = pd.array(data, dtype=pd.StringDtype(na_value=np.nan))
+            dtype = None
         elif dtype.kind == "f":
             # floats in [0.0, 1.0)
             data = rng.random(size=size, dtype=dtype)
@@ -234,7 +229,7 @@ def test_column_series_cuda_array_dtype(data, float_types_as_str):
 
 
 def test_column_zero_length_slice():
-    # see https://github.com/rapidsai/cudf/pull/4777
+    # see https://github.com/NVIDIA/cudf/pull/4777
     x = cudf.DataFrame({"a": [1]})
     the_column = x[1:]["a"]._column
 
@@ -330,6 +325,13 @@ def test_can_cast_safely_same_kind():
     assert not data.can_cast_safely(to_dtype)
 
 
+def test_can_cast_safely_empty():
+    # An empty column can be cast to any numeric dtype losslessly.
+    data = cudf.Series([], dtype="float64")._column
+    for to_dtype in ["int8", "int64", "uint32", "float32", "bool"]:
+        assert data.can_cast_safely(np.dtype(to_dtype))
+
+
 def test_can_cast_safely_mixed_kind():
     data = cudf.Series([1, 2, 3], dtype="int32")._column
     to_dtype = np.dtype("float32")
@@ -382,6 +384,48 @@ def test_can_cast_safely_has_nulls():
 
 
 @pytest.mark.parametrize(
+    "vals, src, to, expected",
+    [
+        # same kind ('i' -> 'i', 'u' -> 'u'): exact dtype bounds fit
+        # inclusively
+        (
+            [np.iinfo(np.int8).min, np.iinfo(np.int8).max],
+            "int64",
+            "int8",
+            True,
+        ),
+        (
+            [np.iinfo(np.int16).min, np.iinfo(np.int16).max],
+            "int64",
+            "int16",
+            True,
+        ),
+        (
+            [np.iinfo(np.int8).min, np.iinfo(np.int8).max + 1],
+            "int64",
+            "int8",
+            False,
+        ),
+        ([0, np.iinfo(np.uint16).max], "uint64", "uint16", True),
+        ([0, np.iinfo(np.uint16).max + 1], "uint64", "uint16", False),
+        # int -> uint: the exact unsigned max is representable
+        ([0, np.iinfo(np.uint8).max], "int64", "uint8", True),
+        ([0, np.iinfo(np.uint32).max], "int64", "uint32", True),
+        ([0, np.iinfo(np.uint8).max + 1], "int64", "uint8", False),
+        # uint -> int: the exact signed max is representable
+        ([0, np.iinfo(np.int32).max], "uint64", "int32", True),
+        ([0, np.iinfo(np.int64).max], "uint64", "int64", True),
+        ([0, np.iinfo(np.int32).max + 1], "uint64", "int32", False),
+    ],
+)
+def test_can_cast_safely_dtype_bounds(vals, src, to, expected):
+    # A value equal to the target dtype's max must be considered castable
+    # (the bound check is inclusive).
+    data = cudf.Series(vals, dtype=src)._column
+    assert bool(data.can_cast_safely(np.dtype(to))) is expected
+
+
+@pytest.mark.parametrize(
     "data,pyarrow_kwargs,cudf_kwargs",
     [
         (
@@ -409,78 +453,6 @@ def test_as_column_arrow_array(data, pyarrow_kwargs, cudf_kwargs):
         cudf.Series._from_column(cudf_from_pyarrow),
         cudf.Series._from_column(expected),
     )
-
-
-@pytest.mark.parametrize(
-    "pd_dtype,expect_dtype",
-    [
-        # TODO: Nullable float is coming
-        (pd.StringDtype(), np.dtype("O")),
-        (pd.UInt8Dtype(), np.dtype("uint8")),
-        (pd.UInt16Dtype(), np.dtype("uint16")),
-        (pd.UInt32Dtype(), np.dtype("uint32")),
-        (pd.UInt64Dtype(), np.dtype("uint64")),
-        (pd.Int8Dtype(), np.dtype("int8")),
-        (pd.Int16Dtype(), np.dtype("int16")),
-        (pd.Int32Dtype(), np.dtype("int32")),
-        (pd.Int64Dtype(), np.dtype("int64")),
-        (pd.BooleanDtype(), np.dtype("bool")),
-    ],
-)
-def test_build_df_from_nullable_pandas_dtype(pd_dtype, expect_dtype):
-    if pd_dtype == pd.StringDtype():
-        data = ["a", pd.NA, "c", pd.NA, "e"]
-    elif pd_dtype == pd.BooleanDtype():
-        data = [True, pd.NA, False, pd.NA, True]
-    else:
-        data = [1, pd.NA, 3, pd.NA, 5]
-
-    pd_data = pd.DataFrame.from_dict({"a": data}, dtype=pd_dtype)
-    gd_data = cudf.DataFrame(pd_data)
-
-    assert gd_data["a"].dtype == expect_dtype
-
-    # check mask
-    expect_mask = [x is not pd.NA for x in pd_data["a"]]
-    got_mask = gd_data["a"]._column._get_mask_as_column().to_numpy()
-
-    np.testing.assert_array_equal(expect_mask, got_mask)
-
-
-@pytest.mark.parametrize(
-    "pd_dtype,expect_dtype",
-    [
-        # TODO: Nullable float is coming
-        (pd.StringDtype(), np.dtype("O")),
-        (pd.UInt8Dtype(), np.dtype("uint8")),
-        (pd.UInt16Dtype(), np.dtype("uint16")),
-        (pd.UInt32Dtype(), np.dtype("uint32")),
-        (pd.UInt64Dtype(), np.dtype("uint64")),
-        (pd.Int8Dtype(), np.dtype("int8")),
-        (pd.Int16Dtype(), np.dtype("int16")),
-        (pd.Int32Dtype(), np.dtype("int32")),
-        (pd.Int64Dtype(), np.dtype("int64")),
-        (pd.BooleanDtype(), np.dtype("bool")),
-    ],
-)
-def test_build_series_from_nullable_pandas_dtype(pd_dtype, expect_dtype):
-    if pd_dtype == pd.StringDtype():
-        data = ["a", pd.NA, "c", pd.NA, "e"]
-    elif pd_dtype == pd.BooleanDtype():
-        data = [True, pd.NA, False, pd.NA, True]
-    else:
-        data = [1, pd.NA, 3, pd.NA, 5]
-
-    pd_data = pd.Series(data, dtype=pd_dtype)
-    gd_data = cudf.Series(pd_data)
-
-    assert gd_data.dtype == expect_dtype
-
-    # check mask
-    expect_mask = [x is not pd.NA for x in pd_data]
-    got_mask = gd_data._column._get_mask_as_column().to_numpy()
-
-    np.testing.assert_array_equal(expect_mask, got_mask)
 
 
 @pytest.mark.parametrize(
@@ -523,10 +495,6 @@ def test_string_int_to_ipv4_dtype_fail(numeric_types_as_str):
         gsr._column.int2ip()
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas.",
-)
 def test_datetime_can_cast_safely():
     sr = cudf.Series(
         ["1679-01-01", "2000-01-31", "2261-01-01"], dtype="datetime64[ms]"
@@ -538,6 +506,16 @@ def test_datetime_can_cast_safely():
     )
 
     assert sr._column.can_cast_safely(np.dtype("datetime64[ns]")) is False
+
+    # Pre-epoch values below the target range are also unsafe.
+    sr = cudf.Series(["1600-01-01", "2000-01-31"], dtype="datetime64[ms]")
+    assert sr._column.can_cast_safely(np.dtype("datetime64[ns]")) is False
+
+    # Casting to a coarser resolution truncates sub-resolution
+    # components, so it is not considered safe; equal resolution is.
+    sr = cudf.Series(["2000-01-31"], dtype="datetime64[ns]")
+    assert sr._column.can_cast_safely(np.dtype("datetime64[s]")) is False
+    assert sr._column.can_cast_safely(np.dtype("datetime64[ns]"))
 
 
 @pytest.mark.parametrize(
@@ -555,16 +533,16 @@ def test_datetime_can_cast_safely():
     ],
 )
 @pytest.mark.parametrize(
-    "col,typ_",
+    "typ_",
     [
-        (Decimal32Column, pa.decimal32(precision=4, scale=2)),
-        (Decimal64Column, pa.decimal64(precision=5, scale=3)),
-        (Decimal128Column, pa.decimal128(precision=6, scale=4)),
+        pa.decimal32(precision=4, scale=2),
+        pa.decimal64(precision=5, scale=3),
+        pa.decimal128(precision=6, scale=4),
     ],
 )
-def test_round_trip_decimal_column(data_, typ_, col):
+def test_round_trip_decimal_column(data_, typ_):
     pa_arr = pa.array(data_, type=typ_)
-    decimal_col = col.from_arrow(pa_arr)
+    decimal_col = DecimalColumn.from_arrow(pa_arr)
     result = decimal_col.to_arrow()
 
     # Round-trip should preserve the exact PyArrow decimal type
@@ -574,7 +552,7 @@ def test_round_trip_decimal_column(data_, typ_, col):
 def test_from_arrow_max_precision_decimal64():
     # Decimal64 max precision is 18, so 19 should raise ValueError
     with pytest.raises(ValueError):
-        Decimal64Column.from_arrow(
+        DecimalColumn.from_arrow(
             pa.array([1, 2, 3], type=pa.decimal64(scale=0, precision=19))
         )
 
@@ -582,6 +560,6 @@ def test_from_arrow_max_precision_decimal64():
 def test_from_arrow_max_precision_decimal32():
     # Decimal32 max precision is 9, so 10 should raise ValueError
     with pytest.raises(ValueError):
-        Decimal32Column.from_arrow(
+        DecimalColumn.from_arrow(
             pa.array([1, 2, 3], type=pa.decimal32(scale=0, precision=10))
         )

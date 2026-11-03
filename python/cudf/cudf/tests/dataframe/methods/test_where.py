@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -27,7 +27,7 @@ def test_dataframe_with_nulls_where_with_scalars(fill_value):
     assert_eq(expect, got)
 
 
-def test_dataframe_with_different_types():
+def test_dataframe_with_different_types(request):
     # Testing for int and float
     pdf = pd.DataFrame(
         {"A": [111, 22, 31, 410, 56], "B": [-10.12, 121.2, 45.7, 98.4, 87.6]}
@@ -39,13 +39,17 @@ def test_dataframe_with_different_types():
     assert_eq(expect, got)
 
     # Testing for string
+    request.applymarker(
+        pytest.mark.xfail(
+            reason="https://github.com/pandas-dev/pandas/issues/63842"
+        )
+    )
     pdf = pd.DataFrame({"A": ["a", "bc", "cde", "fghi"]})
     gdf = cudf.from_pandas(pdf)
     pdf_mask = pd.DataFrame({"A": [True, False, True, False]})
     gdf_mask = cudf.from_pandas(pdf_mask)
     expect = pdf.where(pdf_mask, ["cudf"])
     got = gdf.where(gdf_mask, ["cudf"])
-
     assert_eq(expect, got)
 
     # Testing for categoriacal
@@ -107,6 +111,19 @@ def test_frame_series_where_other():
 
     expected = gdf.where(gdf["b"] == 1, 0)
     actual = pdf.where(pdf["b"] == 1, 0)
+    assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize("method", ["where", "mask"])
+def test_frame_series_condition_nondefault_index(method):
+    pdf = pd.DataFrame({"a": [1, 2], "b": [3, 4]}, index=["i0", "i1"])
+    gdf = cudf.from_pandas(pdf)
+    pcond = pd.Series([True, False], index=pdf.index)
+    gcond = cudf.from_pandas(pcond)
+
+    expected = getattr(pdf, method)(pcond, 100)
+    actual = getattr(gdf, method)(gcond, 100)
+
     assert_eq(expected, actual)
 
 

@@ -1,20 +1,21 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/algorithm.cuh>
+#include <cudf/detail/utilities/accumulate.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/hashing/detail/murmurhash3_x64_128.cuh>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/array>
 #include <cuda/std/limits>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -101,7 +102,7 @@ class murmur_device_row_hasher {
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   auto output1 = make_numeric_column(
@@ -109,15 +110,15 @@ std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
   auto output2 = make_numeric_column(
     data_type(type_id::UINT64), input.num_rows(), mask_state::UNALLOCATED, stream, mr);
 
-  if (!input.is_empty()) {
+  if (input.num_rows() != 0) {
     bool const nullable   = has_nulls(input);
     auto const input_view = table_device_view::create(input, stream);
     auto d_output1        = output1->mutable_view().data<uint64_t>();
     auto d_output2        = output2->mutable_view().data<uint64_t>();
 
     // Compute the hash value for each row
-    thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                       thrust::counting_iterator<size_type>(0),
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<size_type>{0},
                        input.num_rows(),
                        murmur_device_row_hasher(nullable, *input_view, seed, d_output1, d_output2));
   }
@@ -132,7 +133,7 @@ std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

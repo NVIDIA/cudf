@@ -4,6 +4,8 @@ This C++ example demonstrates using libcudf APIs to read and process
 a table with 1 billion rows. The 1 billion row challenge is described here:
 https://github.com/gunnarmorling/1brc
 
+Blog post that uses this code: https://developer.nvidia.com/blog/processing-one-billion-rows-of-data-with-rapids-cudf-pandas-accelerator-mode/
+
 The examples load the 1 billion row text file using the CSV reader.
 The file contains around 400 unique city names (string type) along with
 random temperature values (float type).

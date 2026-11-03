@@ -1,20 +1,17 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "aggregation128_utils.hpp"
 
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/null_mask.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/permutation_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <cstddef>
 #include <utility>
@@ -73,7 +70,7 @@ namespace cudf::jni {
 std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& in_col,
                                               cudf::data_type type,
                                               int chunk_idx,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   CUDF_EXPECTS(in_col.type().id() == cudf::type_id::DECIMAL128, "not a 128-bit type");
   CUDF_EXPECTS(chunk_idx >= 0 && chunk_idx < 4, "invalid chunk index");
@@ -82,14 +79,13 @@ std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& in_col,
   auto const num_rows = in_col.size();
   auto out_col =
     cudf::make_fixed_width_column(type, num_rows, copy_bitmask(in_col), in_col.null_count());
+  if (num_rows == 0) { return out_col; }
+
   auto out_view       = out_col->mutable_view();
   auto const in_begin = in_col.begin<int32_t>();
 
   // Build an iterator for every fourth 32-bit value, i.e.: one "chunk" of a __int128_t value
-  thrust::transform_iterator transform_iter{
-    thrust::counting_iterator{0},
-    cuda::proclaim_return_type<cudf::size_type>([] __device__(auto i) { return i * 4; })};
-  thrust::permutation_iterator stride_iter{in_begin + chunk_idx, transform_iter};
+  cuda::strided_iterator stride_iter{in_begin + chunk_idx, cudf::size_type{4}};
 
   thrust::copy(
     rmm::exec_policy_nosync(stream), stride_iter, stride_iter + num_rows, out_view.data<int32_t>());
@@ -99,7 +95,7 @@ std::unique_ptr<cudf::column> extract_chunk32(cudf::column_view const& in_col,
 // Reassemble a column of 128-bit values from four 64-bit integer columns with overflow detection.
 std::unique_ptr<cudf::table> assemble128_from_sum(cudf::table_view const& chunks_table,
                                                   cudf::data_type output_type,
-                                                  rmm::cuda_stream_view stream)
+                                                  cuda::stream_ref stream)
 {
   CUDF_EXPECTS(output_type.id() == cudf::type_id::DECIMAL128, "not a 128-bit type");
   CUDF_EXPECTS(chunks_table.num_columns() == 4, "must be 4 column table");
@@ -119,8 +115,8 @@ std::unique_ptr<cudf::table> assemble128_from_sum(cudf::table_view const& chunks
   auto overflows_view = columns[0]->mutable_view();
   auto assembled_view = columns[1]->mutable_view();
   thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::make_counting_iterator<cudf::size_type>(0),
-                    thrust::make_counting_iterator<cudf::size_type>(num_rows),
+                    cuda::counting_iterator{cudf::size_type{0}},
+                    cuda::counting_iterator{cudf::size_type{num_rows}},
                     assembled_view.begin<__int128_t>(),
                     chunk_assembler(overflows_view.begin<bool>(),
                                     chunks0.begin<uint64_t>(),

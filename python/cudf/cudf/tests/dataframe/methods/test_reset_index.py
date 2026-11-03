@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -143,3 +144,104 @@ def test_reset_index_invalid_level():
 
     with pytest.raises(IndexError):
         pd.DataFrame([1]).reset_index(level=2)
+
+
+@pytest.mark.parametrize(
+    "level", [-1, -2, -3, [-1], [-2], [0, -1], [-2, -1], ["l0", -1]]
+)
+def test_reset_index_negative_level_multiindex(level, drop):
+    # Negative levels count from the end of the MultiIndex.
+    midx = pd.MultiIndex.from_tuples(
+        [("a", 1, "x"), ("b", 2, "y")], names=["l0", "l1", "l2"]
+    )
+    pdf = pd.DataFrame({"v": [1, 2]}, index=midx)
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(
+        pdf.reset_index(level=level, drop=drop),
+        gdf.reset_index(level=level, drop=drop),
+    )
+
+
+@pytest.mark.parametrize("level", [-1, [-1]])
+def test_reset_index_negative_level_flat(level, drop):
+    pdf = pd.DataFrame({"a": [1, 2]}, index=pd.Index([10, 20], name="x"))
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(
+        pdf.reset_index(level=level, drop=drop),
+        gdf.reset_index(level=level, drop=drop),
+    )
+
+
+@pytest.mark.parametrize("level", [np.int64(-1), np.int32(0)])
+def test_reset_index_numpy_integer_level(level, drop):
+    midx = pd.MultiIndex.from_tuples([("a", 1), ("b", 2)], names=["l0", "l1"])
+    pdf = pd.DataFrame({"v": [1, 2]}, index=midx)
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(
+        pdf.reset_index(level=level, drop=drop),
+        gdf.reset_index(level=level, drop=drop),
+    )
+
+
+@pytest.mark.parametrize("level", [-2, -5])
+def test_reset_index_level_underflow_flat(level):
+    pdf = pd.DataFrame({"a": [1, 2]}, index=pd.Index([10, 20], name="x"))
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        lfunc=pdf.reset_index,
+        rfunc=gdf.reset_index,
+        lfunc_args_and_kwargs=([], {"level": level}),
+        rfunc_args_and_kwargs=([], {"level": level}),
+    )
+    with pytest.raises(
+        IndexError, match=f"{level} is not a valid level number"
+    ):
+        gdf.reset_index(level=level)
+
+
+@pytest.mark.parametrize("level", [-3, -4])
+def test_reset_index_level_underflow_multiindex(level):
+    midx = pd.MultiIndex.from_tuples([("a", 1), ("b", 2)], names=["l0", "l1"])
+    pdf = pd.DataFrame({"v": [1, 2]}, index=midx)
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        lfunc=pdf.reset_index,
+        rfunc=gdf.reset_index,
+        lfunc_args_and_kwargs=([], {"level": level}),
+        rfunc_args_and_kwargs=([], {"level": level}),
+    )
+    with pytest.raises(
+        IndexError, match=f"{level} is not a valid level number"
+    ):
+        gdf.reset_index(level=level)
+
+
+def test_reset_index_unknown_multiindex_level_name():
+    midx = pd.MultiIndex.from_tuples([("a", 1), ("b", 2)], names=["l0", "l1"])
+    pdf = pd.DataFrame({"v": [1, 2]}, index=midx)
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        lfunc=pdf.reset_index,
+        rfunc=gdf.reset_index,
+        lfunc_args_and_kwargs=([], {"level": "nope"}),
+        rfunc_args_and_kwargs=([], {"level": "nope"}),
+    )
+    with pytest.raises(KeyError, match="Level nope not found"):
+        gdf.reset_index(level="nope")
+
+
+def test_reset_index_ambiguous_duplicate_level_name():
+    midx = pd.MultiIndex.from_tuples([("a", 1), ("b", 2)], names=["d", "d"])
+    pdf = pd.DataFrame({"v": [1, 2]}, index=midx)
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        lfunc=pdf.reset_index,
+        rfunc=gdf.reset_index,
+        lfunc_args_and_kwargs=([], {"level": "d"}),
+        rfunc_args_and_kwargs=([], {"level": "d"}),
+    )
+    with pytest.raises(ValueError, match="occurs multiple times"):
+        gdf.reset_index(level="d")
+    # Duplicate names are still addressable by level number.
+    assert_eq(pdf.reset_index(level=0), gdf.reset_index(level=0))
+    assert_eq(pdf.reset_index(level=-1), gdf.reset_index(level=-1))

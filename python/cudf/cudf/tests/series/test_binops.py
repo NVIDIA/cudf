@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import decimal
@@ -14,19 +14,39 @@ import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_GE_210,
-    PANDAS_GE_220,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
 from cudf.testing._utils import (
     _decimal_series,
     assert_exceptions_equal,
-    expect_warning_if,
     gen_rand_series,
 )
+
+TIMEDELTA_SERIES_BINARY_OP_METHODS = [
+    "add",
+    "radd",
+    "sub",
+    "rsub",
+    "truediv",
+    "rtruediv",
+    "floordiv",
+    "rfloordiv",
+    "mod",
+    "rmod",
+    "lt",
+    "le",
+    "eq",
+    "ne",
+    "ge",
+    "gt",
+]
+
+TIMEDELTA_SCALAR_ARITHMETIC_OP_METHODS = [
+    "add",
+    "sub",
+    "truediv",
+    "floordiv",
+    "mod",
+]
 
 
 @pytest.mark.parametrize(
@@ -67,11 +87,12 @@ def test_series_error_equality(sr1, sr2, comparison_op):
         (cp.asarray([10, 20, 30, 100]), cp.asarray([10, 20, 30, 100])),
     ],
 )
+@pytest.mark.parametrize(
+    "binary_op_method", TIMEDELTA_SERIES_BINARY_OP_METHODS
+)
 def test_timedelta_ops_misc_inputs(
     data, other, timedelta_types_as_str, binary_op_method
 ):
-    if binary_op_method in {"mul", "rmul", "pow", "rpow"}:
-        pytest.skip(f"Test not applicable for {binary_op_method}")
     gsr = cudf.Series(data, dtype=timedelta_types_as_str)
     other_gsr = cudf.Series(other, dtype=timedelta_types_as_str)
 
@@ -200,60 +221,68 @@ def test_timedelta_dataframe_ops(df, op):
     assert_eq(pdf, gdf)
 
 
+_TIMEDELTA_SCALAR_DATA = [
+    [1000000, 200000, 3000000],
+    [1000000, 200000, None],
+    [],
+    [None],
+    [None, None, None, None, None],
+    [12, 12, 22, 343, 4353534, 435342],
+    np.array([10, 20, 30, None, 100]),
+    cp.asarray([10, 20, 30, 100]),
+    [1000000, 200000, 3000000],
+    [1000000, 200000, None],
+    [1],
+    [12, 11, 232, 223432411, 2343241, 234324, 23234],
+    [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
+    [1.321, 1132.324, 23223231.11, 233.41, 332, 323],
+    [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
+]
+
+_TIMEDELTA_SCALARS = [
+    datetime.timedelta(days=768),
+    datetime.timedelta(seconds=768),
+    datetime.timedelta(microseconds=7),
+    datetime.timedelta(minutes=447),
+    datetime.timedelta(hours=447),
+    datetime.timedelta(weeks=734),
+    np.timedelta64(4, "s"),
+    np.timedelta64(456, "D"),
+    np.timedelta64(46, "h"),
+    np.timedelta64("nat"),
+    np.timedelta64(1, "s"),
+    np.timedelta64(1, "ms"),
+    np.timedelta64(1, "us"),
+    np.timedelta64(1, "ns"),
+]
+
+
 @pytest.mark.parametrize(
-    "data",
+    "data, other_scalars",
     [
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [],
-        [None],
-        [None, None, None, None, None],
-        [12, 12, 22, 343, 4353534, 435342],
-        np.array([10, 20, 30, None, 100]),
-        cp.asarray([10, 20, 30, 100]),
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [1],
-        [12, 11, 232, 223432411, 2343241, 234324, 23234],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
-        [1.321, 1132.324, 23223231.11, 233.41, 332, 323],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
+        (_TIMEDELTA_SCALAR_DATA[0], _TIMEDELTA_SCALARS[0]),
+        (_TIMEDELTA_SCALAR_DATA[1], _TIMEDELTA_SCALARS[1]),
+        (_TIMEDELTA_SCALAR_DATA[2], _TIMEDELTA_SCALARS[2]),
+        (_TIMEDELTA_SCALAR_DATA[3], _TIMEDELTA_SCALARS[3]),
+        (_TIMEDELTA_SCALAR_DATA[4], _TIMEDELTA_SCALARS[4]),
+        (_TIMEDELTA_SCALAR_DATA[5], _TIMEDELTA_SCALARS[5]),
+        (_TIMEDELTA_SCALAR_DATA[6], _TIMEDELTA_SCALARS[6]),
+        (_TIMEDELTA_SCALAR_DATA[7], _TIMEDELTA_SCALARS[7]),
+        (_TIMEDELTA_SCALAR_DATA[8], _TIMEDELTA_SCALARS[8]),
+        (_TIMEDELTA_SCALAR_DATA[9], _TIMEDELTA_SCALARS[9]),
+        (_TIMEDELTA_SCALAR_DATA[10], _TIMEDELTA_SCALARS[10]),
+        (_TIMEDELTA_SCALAR_DATA[11], _TIMEDELTA_SCALARS[11]),
+        (_TIMEDELTA_SCALAR_DATA[12], _TIMEDELTA_SCALARS[12]),
+        (_TIMEDELTA_SCALAR_DATA[13], _TIMEDELTA_SCALARS[13]),
+        (_TIMEDELTA_SCALAR_DATA[14], _TIMEDELTA_SCALARS[0]),
     ],
 )
 @pytest.mark.parametrize(
-    "other_scalars",
-    [
-        datetime.timedelta(days=768),
-        datetime.timedelta(seconds=768),
-        datetime.timedelta(microseconds=7),
-        datetime.timedelta(minutes=447),
-        datetime.timedelta(hours=447),
-        datetime.timedelta(weeks=734),
-        np.timedelta64(4, "s"),
-        np.timedelta64(456, "D"),
-        np.timedelta64(46, "h"),
-        np.timedelta64("nat"),
-        np.timedelta64(1, "s"),
-        np.timedelta64(1, "ms"),
-        np.timedelta64(1, "us"),
-        np.timedelta64(1, "ns"),
-    ],
+    "arithmetic_op_method", TIMEDELTA_SCALAR_ARITHMETIC_OP_METHODS
 )
 def test_timedelta_series_ops_with_scalars(
-    data, other_scalars, timedelta_types_as_str, arithmetic_op_method, request
+    data, other_scalars, timedelta_types_as_str, arithmetic_op_method
 ):
-    if arithmetic_op_method in {
-        "mul",
-        "rmul",
-        "rtruediv",
-        "pow",
-        "rpow",
-        "radd",
-        "rsub",
-        "rfloordiv",
-        "rmod",
-    }:
-        pytest.skip(f"Test not applicable for {arithmetic_op_method}")
     gsr = cudf.Series(data=data, dtype=timedelta_types_as_str)
     psr = gsr.to_pandas()
 
@@ -305,7 +334,7 @@ def test_timedelta_series_ops_with_scalars(
                 reason=(
                     "timedelta modulo by zero is dubiously defined in "
                     "both pandas and cuDF "
-                    "(see https://github.com/rapidsai/cudf/issues/5938)"
+                    "(see https://github.com/NVIDIA/cudf/issues/5938)"
                 ),
             ),
         ),
@@ -429,10 +458,10 @@ def test_timedelta_invalid_ops():
 def test_timdelta_binop_tz_timestamp(op):
     s = cudf.Series([1, 2, 3], dtype="timedelta64[ns]")
     pd_tz_timestamp = pd.Timestamp("1970-01-01 00:00:00.000000001", tz="utc")
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TypeError):
         op(s, pd_tz_timestamp)
     date_tz_scalar = datetime.datetime.now(datetime.timezone.utc)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TypeError):
         op(s, date_tz_scalar)
 
 
@@ -462,6 +491,22 @@ def test_compare_ops_numeric_to_null_pandas_compatible(comparison_op):
     with cudf.option_context("mode.pandas_compatible", True):
         result = comparison_op(gser, 2)
     assert_eq(expected, result)
+
+
+@pytest.mark.parametrize("op", [operator.add, operator.sub])
+@pytest.mark.parametrize("reflect", [False, True])
+def test_numeric_series_pd_nat_raises(op, reflect):
+    data = [0, 1, 2, 3, 4]
+    pser = pd.Series(data, dtype="int64")
+    gser = cudf.Series(data, dtype="int64")
+    pleft, pright = (pd.NaT, pser) if reflect else (pser, pd.NaT)
+    gleft, gright = (pd.NaT, gser) if reflect else (gser, pd.NaT)
+    assert_exceptions_equal(
+        lfunc=op,
+        rfunc=op,
+        lfunc_args_and_kwargs=([pleft, pright],),
+        rfunc_args_and_kwargs=([gleft, gright],),
+    )
 
 
 def test_compare_ops_decimal_to_null_pandas_compatible(comparison_op):
@@ -604,29 +649,41 @@ def test_dt_ops(data):
     assert_eq(pd_data > pd_data, gdf_data > gdf_data)
 
 
+_DATETIME_SUBTRACT_DATA = [
+    [1, 2, 3, 4, 10, 100, 20000],
+    [None] * 7,
+    [10, 20, 30, None, 100, 200, None],
+    [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
+]
+
+_DATETIME_SUBTRACT_OTHERS = [
+    [1, 2, 3, 4, 10, 100, 20000],
+    [None] * 7,
+    [10, 20, 30, None, 100, 200, None],
+    [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
+    datetime.datetime(1993, 6, 22, 13, 30),
+    datetime.datetime(2005, 1, 22, 10, 00),
+    np.datetime64("2005-02"),
+    np.datetime64("2005-02-25"),
+    np.datetime64("2005-02-25T03:30"),
+    np.datetime64("nat"),
+    # TODO: https://github.com/pandas-dev/pandas/issues/52295
+]
+
+
 @pytest.mark.parametrize(
-    "data",
+    "data, other",
     [
-        [1, 2, 3, 4, 10, 100, 20000],
-        [None] * 7,
-        [10, 20, 30, None, 100, 200, None],
-        [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
-    ],
-)
-@pytest.mark.parametrize(
-    "other",
-    [
-        [1, 2, 3, 4, 10, 100, 20000],
-        [None] * 7,
-        [10, 20, 30, None, 100, 200, None],
-        [3223.234, 342.2332, 23423.23, 3343.23324, 23432.2323, 242.23, 233],
-        datetime.datetime(1993, 6, 22, 13, 30),
-        datetime.datetime(2005, 1, 22, 10, 00),
-        np.datetime64("2005-02"),
-        np.datetime64("2005-02-25"),
-        np.datetime64("2005-02-25T03:30"),
-        np.datetime64("nat"),
-        # TODO: https://github.com/pandas-dev/pandas/issues/52295
+        (_DATETIME_SUBTRACT_DATA[0], _DATETIME_SUBTRACT_OTHERS[0]),
+        (_DATETIME_SUBTRACT_DATA[1], _DATETIME_SUBTRACT_OTHERS[1]),
+        (_DATETIME_SUBTRACT_DATA[2], _DATETIME_SUBTRACT_OTHERS[2]),
+        (_DATETIME_SUBTRACT_DATA[3], _DATETIME_SUBTRACT_OTHERS[3]),
+        (_DATETIME_SUBTRACT_DATA[0], _DATETIME_SUBTRACT_OTHERS[4]),
+        (_DATETIME_SUBTRACT_DATA[1], _DATETIME_SUBTRACT_OTHERS[5]),
+        (_DATETIME_SUBTRACT_DATA[2], _DATETIME_SUBTRACT_OTHERS[6]),
+        (_DATETIME_SUBTRACT_DATA[3], _DATETIME_SUBTRACT_OTHERS[7]),
+        (_DATETIME_SUBTRACT_DATA[0], _DATETIME_SUBTRACT_OTHERS[8]),
+        (_DATETIME_SUBTRACT_DATA[1], _DATETIME_SUBTRACT_OTHERS[9]),
     ],
 )
 def test_datetime_subtract(
@@ -654,42 +711,23 @@ def test_datetime_subtract(
 
 
 @pytest.mark.parametrize(
-    "data",
+    "data, other_scalars",
     [
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [],
-        [None],
-        [None, None, None, None, None],
-        [12, 12, 22, 343, 4353534, 435342],
-        np.array([10, 20, 30, None, 100]),
-        cp.asarray([10, 20, 30, 100]),
-        [1000000, 200000, 3000000],
-        [1000000, 200000, None],
-        [1],
-        [12, 11, 232, 223432411, 2343241, 234324, 23234],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
-        [1.321, 1132.324, 23223231.11, 233.41, 0.2434, 332, 323],
-        [12, 11, 2.32, 2234.32411, 2343.241, 23432.4, 23234],
-    ],
-)
-@pytest.mark.parametrize(
-    "other_scalars",
-    [
-        datetime.timedelta(days=768),
-        datetime.timedelta(seconds=768),
-        datetime.timedelta(microseconds=7),
-        datetime.timedelta(minutes=447),
-        datetime.timedelta(hours=447),
-        datetime.timedelta(weeks=734),
-        np.timedelta64(4, "s"),
-        np.timedelta64(456, "D"),
-        np.timedelta64(46, "h"),
-        np.timedelta64("nat"),
-        np.timedelta64(1, "s"),
-        np.timedelta64(1, "ms"),
-        np.timedelta64(1, "us"),
-        np.timedelta64(1, "ns"),
+        (_TIMEDELTA_SCALAR_DATA[0], _TIMEDELTA_SCALARS[0]),
+        (_TIMEDELTA_SCALAR_DATA[1], _TIMEDELTA_SCALARS[1]),
+        (_TIMEDELTA_SCALAR_DATA[2], _TIMEDELTA_SCALARS[2]),
+        (_TIMEDELTA_SCALAR_DATA[3], _TIMEDELTA_SCALARS[3]),
+        (_TIMEDELTA_SCALAR_DATA[4], _TIMEDELTA_SCALARS[4]),
+        (_TIMEDELTA_SCALAR_DATA[5], _TIMEDELTA_SCALARS[5]),
+        (_TIMEDELTA_SCALAR_DATA[6], _TIMEDELTA_SCALARS[6]),
+        (_TIMEDELTA_SCALAR_DATA[7], _TIMEDELTA_SCALARS[7]),
+        (_TIMEDELTA_SCALAR_DATA[8], _TIMEDELTA_SCALARS[8]),
+        (_TIMEDELTA_SCALAR_DATA[9], _TIMEDELTA_SCALARS[9]),
+        (_TIMEDELTA_SCALAR_DATA[10], _TIMEDELTA_SCALARS[10]),
+        (_TIMEDELTA_SCALAR_DATA[11], _TIMEDELTA_SCALARS[11]),
+        (_TIMEDELTA_SCALAR_DATA[12], _TIMEDELTA_SCALARS[12]),
+        (_TIMEDELTA_SCALAR_DATA[13], _TIMEDELTA_SCALARS[13]),
+        (_TIMEDELTA_SCALAR_DATA[14], _TIMEDELTA_SCALARS[0]),
     ],
 )
 @pytest.mark.parametrize("op", ["add", "sub"])
@@ -801,12 +839,92 @@ def test_datetime_invalid_ops():
 def test_datetime_binop_tz_timestamp(comparison_op):
     s = cudf.Series([1, 2, 3], dtype="datetime64[ns]")
     pd_tz_timestamp = pd.Timestamp("1970-01-01 00:00:00.000000001", tz="utc")
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TypeError):
         comparison_op(s, pd_tz_timestamp)
 
     date_scalar = datetime.datetime.now(datetime.timezone.utc)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(TypeError):
         comparison_op(s, date_scalar)
+
+
+def test_datetime_binop_tz_timestamp_pandas_compat(comparison_op):
+    # Under pandas-compatible mode, comparing a tz-naive datetime Series
+    # with a tz-aware Timestamp scalar must raise TypeError (matching
+    # pandas), not NotImplementedError. eq/ne return False/True without
+    # raising, matching pandas semantics.
+    if comparison_op in (operator.eq, operator.ne):
+        pytest.skip("eq/ne do not raise on tz mismatch")
+    psr = pd.Series([1, 2, 3], dtype="datetime64[ns]")
+    gsr = cudf.from_pandas(psr)
+    pd_tz_timestamp = pd.Timestamp("1970-01-01 00:00:00.000000001", tz="utc")
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=comparison_op,
+            rfunc=comparison_op,
+            lfunc_args_and_kwargs=([psr, pd_tz_timestamp],),
+            rfunc_args_and_kwargs=([gsr, pd_tz_timestamp],),
+        )
+
+
+@pytest.mark.parametrize(
+    "lhs_tz,rhs_tz",
+    [(None, "US/Pacific"), ("US/Pacific", None)],
+)
+def test_datetime_column_tz_mismatch_pandas_compat(
+    comparison_op, lhs_tz, rhs_tz
+):
+    # Column-vs-column comparison between tz-naive and tz-aware datetime
+    # Series must raise TypeError under pandas-compatible mode for the
+    # inequality ops; equality ops still return False/True.
+    if comparison_op in (operator.eq, operator.ne):
+        pytest.skip("eq/ne do not raise on tz mismatch")
+    psr_lhs = pd.Series(pd.date_range("2020-01-01", periods=3, tz=lhs_tz))
+    psr_rhs = pd.Series(pd.date_range("2020-01-01", periods=3, tz=rhs_tz))
+    gsr_lhs = cudf.from_pandas(psr_lhs)
+    gsr_rhs = cudf.from_pandas(psr_rhs)
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=comparison_op,
+            rfunc=comparison_op,
+            lfunc_args_and_kwargs=([psr_lhs, psr_rhs],),
+            rfunc_args_and_kwargs=([gsr_lhs, gsr_rhs],),
+        )
+
+
+def test_datetime_sub_tz_mismatch_pandas_compat():
+    # Subtracting a tz-aware datetime Series from a tz-naive one must
+    # raise TypeError under pandas-compatible mode.
+    psr_naive = pd.Series(pd.date_range("2020-01-01", periods=3))
+    psr_aware = pd.Series(
+        pd.date_range("2020-01-01", periods=3, tz="US/Pacific")
+    )
+    gsr_naive = cudf.from_pandas(psr_naive)
+    gsr_aware = cudf.from_pandas(psr_aware)
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=operator.sub,
+            rfunc=operator.sub,
+            lfunc_args_and_kwargs=([psr_naive, psr_aware],),
+            rfunc_args_and_kwargs=([gsr_naive, gsr_aware],),
+        )
+
+
+@pytest.mark.parametrize(
+    "op", [operator.lt, operator.le, operator.gt, operator.ge]
+)
+@pytest.mark.parametrize("scalar", [None, np.nan])
+def test_datetime_inequality_vs_none_pandas_compat(op, scalar):
+    # pandas raises TypeError on inequality ops between datetime Series
+    # and None / NaN scalars; cuDF must too under pandas-compatible mode.
+    psr = pd.Series(pd.date_range("2020-01-01", periods=3))
+    gsr = cudf.from_pandas(psr)
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=op,
+            rfunc=op,
+            lfunc_args_and_kwargs=([psr, scalar],),
+            rfunc_args_and_kwargs=([gsr, scalar],),
+        )
 
 
 def test_datetime_series_cmpops_pandas_compatibility(comparison_op):
@@ -1081,7 +1199,12 @@ def test_series_compare_nulls(comparison_op, ltype, rtype):
     rmask = ~rser.isnull()
 
     got = comparison_op(lser, rser)
-    if ltype in {"datetime64[ms]", "datetime64[ns]", "timedelta64[s]"}:
+    if ltype in {
+        "datetime64[ms]",
+        "datetime64[ns]",
+        "timedelta64[s]",
+        "str",
+    }:
         expect = comparison_op(lser.to_pandas(), rser.to_pandas())
     else:
         expect_mask = np.logical_and(lmask, rmask)
@@ -1141,24 +1264,50 @@ def test_str_series_compare_num_reflected(comparison_op, cmp_scalar):
         assert_eq(expect, got)
 
 
+def test_str_nan_semantics_comparison_fills_nulls(comparison_op):
+    # GH#24393 — comparison operators on dtype="str" (NaN-semantics) should
+    # fill null rows with False (or True for !=), matching str.contains etc.
+    data = ["1", None, ""]
+    ps = pd.Series(data)  # pandas default string dtype uses NaN semantics
+    cs = cudf.Series(data)  # cudf "str" dtype
+
+    expect = comparison_op(ps, "").tolist()
+    got = comparison_op(cs, "").to_arrow().to_pylist()
+    assert got == expect, (
+        f"{comparison_op.__name__}: expected {expect}, got {got}"
+    )
+
+    # Second inconsistency from the issue: mixed-null column should behave
+    # the same as all-null column — no nulls in the result.
+    mixed = cudf.Series([None, None, "x"], dtype="str")
+    result = comparison_op(mixed, "").to_arrow().to_pylist()
+    assert None not in result, (
+        f"{comparison_op.__name__} on mixed-null str Series produced nulls: {result}"
+    )
+
+
+def test_str_comparison_mixed_null_semantics(comparison_op):
+    a = pd.Series(["a", None, "c"], dtype="str")
+    b = pd.Series([None, "b", "c"], dtype="string")
+
+    for lhs, rhs in [(a, b), (b, a)]:
+        expect = comparison_op(lhs, rhs)
+        got = comparison_op(cudf.Series(lhs), cudf.Series(rhs))
+        assert_eq(expect, got)
+
+
 @pytest.mark.parametrize("obj_class", ["Series", "Index"])
 def test_series_compare_scalar(
     request, comparison_op, obj_class, numeric_and_temporal_types_as_str
 ):
     request.applymarker(
         pytest.mark.xfail(
-            numeric_and_temporal_types_as_str
-            in {"datetime64[ns]", "timedelta64[ns]"}
-            and not (
+            numeric_and_temporal_types_as_str == "timedelta64[ns]"
+            or (
                 numeric_and_temporal_types_as_str == "datetime64[ns]"
-                and comparison_op in {operator.eq, operator.ne}
-            )
-            and not (
-                not PANDAS_GE_210
-                and numeric_and_temporal_types_as_str == "timedelta64[ns]"
-                and comparison_op in {operator.eq, operator.ne}
+                and comparison_op not in {operator.eq, operator.ne}
             ),
-            reason=f"Fails with {numeric_and_temporal_types_as_str}",
+            reason=f"Fails with {numeric_and_temporal_types_as_str} with {comparison_op.__name__}",
         )
     )
 
@@ -1177,15 +1326,8 @@ def test_series_compare_scalar(
         result1 = cudf.Series(result1)
         result2 = cudf.Series(result2)
 
-    with expect_warning_if(
-        not PANDAS_GE_210
-        and numeric_and_temporal_types_as_str
-        in {"datetime64[ns]", "timedelta64[ns]"}
-        and comparison_op in {operator.eq, operator.ne},
-        DeprecationWarning,
-    ):
-        np.testing.assert_equal(result1.to_numpy(), comparison_op(arr1, rhs))
-        np.testing.assert_equal(result2.to_numpy(), comparison_op(rhs, arr1))
+    np.testing.assert_equal(result1.to_numpy(), comparison_op(arr1, rhs))
+    np.testing.assert_equal(result2.to_numpy(), comparison_op(rhs, arr1))
 
 
 @pytest.mark.parametrize("lhs_nulls", ["none", "some"])
@@ -1373,9 +1515,19 @@ def test_operator_func_series_and_scalar(
     assert_eq(pdf_series_result, gdf_series_result)
 
 
-@pytest.mark.parametrize("fill_value", [0, 1, None, np.nan])
-@pytest.mark.parametrize("scalar_a", [0, 1, None, np.nan])
-@pytest.mark.parametrize("scalar_b", [0, 1, None, np.nan])
+@pytest.mark.parametrize(
+    "scalar_a, scalar_b, fill_value",
+    [
+        (0, 0, 0),
+        (1, 1, 1),
+        (None, None, None),
+        (np.nan, np.nan, np.nan),
+        (0, 1, None),
+        (1, 0, np.nan),
+        (None, np.nan, 0),
+        (np.nan, None, 1),
+    ],
+)
 def test_operator_func_between_series_logical(
     float_types_as_str, comparison_op_method, scalar_a, scalar_b, fill_value
 ):
@@ -1399,9 +1551,19 @@ def test_operator_func_between_series_logical(
     assert_eq(expect, got)
 
 
-@pytest.mark.parametrize("has_nulls", [True, False])
-@pytest.mark.parametrize("scalar", [-59.0, np.nan, 0, 59.0])
-@pytest.mark.parametrize("fill_value", [None, 1.0])
+@pytest.mark.parametrize(
+    "has_nulls, scalar, fill_value",
+    [
+        (False, -59.0, None),
+        (False, np.nan, 1.0),
+        (False, 0, None),
+        (False, 59.0, 1.0),
+        (True, -59.0, 1.0),
+        (True, np.nan, 1.0),
+        (True, 0, 1.0),
+        (True, 59.0, None),
+    ],
+)
 def test_operator_func_series_and_scalar_logical(
     request,
     float_types_as_str,
@@ -1412,8 +1574,7 @@ def test_operator_func_series_and_scalar_logical(
 ):
     request.applymarker(
         pytest.mark.xfail(
-            PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION
-            and fill_value == 1.0
+            fill_value == 1.0
             and scalar is np.nan
             and (
                 has_nulls
@@ -1450,7 +1611,7 @@ def test_binop_bool_uint(request, binary_op_method, rhs):
     if binary_op_method in {"rmod", "rfloordiv"}:
         request.applymarker(
             pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/12162"
+                reason="https://github.com/NVIDIA/cudf/issues/12162"
             ),
         )
     psr = pd.Series([True, False, False])
@@ -1479,7 +1640,7 @@ def test_floordiv_zero_float64(
 
 
 @pytest.mark.parametrize("scalar_divisor", [False, True])
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12162")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12162")
 def test_floordiv_zero_bool(scalar_divisor):
     sr = pd.Series([True, True, False], dtype=np.bool_)
     cr = cudf.from_pandas(sr)
@@ -1553,28 +1714,17 @@ def is_timezone_aware_dtype(dtype: str) -> bool:
     return bool(re.match(r"^datetime64\[ns, .+\]$", dtype))
 
 
-@pytest.mark.parametrize("n_periods", [0, 1, -12])
 @pytest.mark.parametrize(
-    "frequency",
+    "n_periods, frequency, dtype, components",
     [
-        "months",
-        "years",
-        "days",
-        "hours",
-        "minutes",
-        "seconds",
-        "microseconds",
-        "nanoseconds",
-    ],
-)
-@pytest.mark.parametrize(
-    "dtype, components",
-    [
-        ["datetime64[ns]", "00.012345678"],
-        ["datetime64[us]", "00.012345"],
-        ["datetime64[ms]", "00.012"],
-        ["datetime64[s]", "00"],
-        ["datetime64[ns, Asia/Kathmandu]", "00.012345678"],
+        (0, "months", "datetime64[ns]", "00.012345678"),
+        (1, "years", "datetime64[us]", "00.012345"),
+        (0, "microseconds", "datetime64[ms]", "00.012"),
+        (-12, "days", "datetime64[s]", "00"),
+        (0, "hours", "datetime64[ns, Asia/Kathmandu]", "00.012345678"),
+        (1, "minutes", "datetime64[ns]", "00.012345678"),
+        (-12, "seconds", "datetime64[us]", "00.012345"),
+        (1, "nanoseconds", "datetime64[ns, Asia/Kathmandu]", "00.012345678"),
     ],
 )
 @pytest.mark.parametrize("op", [operator.add, operator.sub])
@@ -1583,27 +1733,12 @@ def test_datetime_dateoffset_binaryop(
 ):
     request.applymarker(
         pytest.mark.xfail(
-            PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION
-            and dtype in {"datetime64[ms]", "datetime64[s]"}
+            dtype in {"datetime64[ms]", "datetime64[s]"}
             and frequency == "microseconds"
             and n_periods == 0,
             reason="https://github.com/pandas-dev/pandas/issues/57448",
         )
     )
-    if (
-        not PANDAS_GE_220
-        and dtype in {"datetime64[ms]", "datetime64[s]"}
-        and frequency in ("microseconds", "nanoseconds")
-        and n_periods != 0
-    ):
-        pytest.skip(reason="https://github.com/pandas-dev/pandas/pull/55595")
-    if (
-        not PANDAS_GE_220
-        and dtype == "datetime64[us]"
-        and frequency == "nanoseconds"
-        and n_periods != 0
-    ):
-        pytest.skip(reason="https://github.com/pandas-dev/pandas/pull/55595")
 
     date_col = [
         f"2000-01-01 00:00:{components}",
@@ -1668,10 +1803,6 @@ def test_datetime_dateoffset_binaryop(
     "ignore:Discarding nonzero nanoseconds:UserWarning"
 )
 @pytest.mark.parametrize("op", [operator.add, operator.sub])
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
-)
 def test_datetime_dateoffset_binaryop_multiple(kwargs, op):
     gsr = cudf.Series(
         [
@@ -1692,47 +1823,22 @@ def test_datetime_dateoffset_binaryop_multiple(kwargs, op):
     assert_eq(expect, got)
 
 
-@pytest.mark.parametrize("n_periods", [0, 1, -12])
 @pytest.mark.parametrize(
-    "frequency",
+    "n_periods, frequency, dtype, components",
     [
-        "months",
-        "years",
-        "days",
-        "hours",
-        "minutes",
-        "seconds",
-        "microseconds",
-        "nanoseconds",
-    ],
-)
-@pytest.mark.parametrize(
-    "dtype, components",
-    [
-        ["datetime64[ns]", "00.012345678"],
-        ["datetime64[us]", "00.012345"],
-        ["datetime64[ms]", "00.012"],
-        ["datetime64[s]", "00"],
+        (0, "months", "datetime64[ns]", "00.012345678"),
+        (1, "years", "datetime64[us]", "00.012345"),
+        (-12, "days", "datetime64[ms]", "00.012"),
+        (0, "hours", "datetime64[s]", "00"),
+        (1, "minutes", "datetime64[ns]", "00.012345678"),
+        (-12, "seconds", "datetime64[us]", "00.012345"),
+        (0, "microseconds", "datetime64[ms]", "00.012"),
+        (1, "nanoseconds", "datetime64[s]", "00"),
     ],
 )
 def test_datetime_dateoffset_binaryop_reflected(
     n_periods, frequency, dtype, components
 ):
-    if (
-        not PANDAS_GE_220
-        and dtype in {"datetime64[ms]", "datetime64[s]"}
-        and frequency in ("microseconds", "nanoseconds")
-        and n_periods != 0
-    ):
-        pytest.skip(reason="https://github.com/pandas-dev/pandas/pull/55595")
-    if (
-        not PANDAS_GE_220
-        and dtype == "datetime64[us]"
-        and frequency == "nanoseconds"
-        and n_periods != 0
-    ):
-        pytest.skip(reason="https://github.com/pandas-dev/pandas/pull/55595")
-
     date_col = [
         f"2000-01-01 00:00:{components}",
         f"2000-01-31 00:00:{components}",
@@ -2853,11 +2959,27 @@ def test_column_null_scalar_comparison(
 
     data = [1, 2, 3, 4, 5]
     sr = cudf.Series(data, dtype=dtype)
+    # Ordering comparisons between a datetime64/timedelta64 series and a
+    # non-typed null (``None``) now raise ``TypeError`` to match pandas.
+    if (
+        null_scalar is None
+        and comparison_op.__name__ in {"lt", "le", "gt", "ge"}
+        and (
+            all_supported_types_as_str.startswith("datetime64")
+            or all_supported_types_as_str.startswith("timedelta64")
+        )
+    ):
+        with pytest.raises(TypeError, match="Invalid comparison"):
+            comparison_op(sr, null_scalar)
+        return
     result = comparison_op(sr, null_scalar)
     if all_supported_types_as_str.startswith(
         "datetime64"
     ) or all_supported_types_as_str.startswith("timedelta64"):
         assert not result.isnull().all()
+    elif all_supported_types_as_str == "str":
+        # NaN-semantics strings compare null as False (True for !=)
+        assert_eq(comparison_op(sr.to_pandas(), null_scalar), result)
     else:
         assert result.isnull().all()
 
@@ -2985,7 +3107,6 @@ def test_binop_index_series(arithmetic_op):
     assert_eq(expected, actual)
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 @pytest.mark.parametrize("name1", [None, "name1"])
 @pytest.mark.parametrize("name2", [None, "name2"])
 def test_binop_index_dt_td_series_with_names(name1, name2):
@@ -3089,8 +3210,19 @@ def test_eq_ne_non_comparable_types(
 def test_binops_compare_stdlib_date_scalar(comparison_op):
     dt = datetime.date(2020, 1, 1)
     data = [dt]
-    result = comparison_op(cudf.Series(data), dt)
-    expected = comparison_op(pd.Series(data), dt)
+    sr = cudf.Series(data)
+    # cudf promotes ``date`` to ``datetime64``. pandas treats a bare
+    # ``date`` as not comparable with a datetime64 column: ordering ops
+    # raise, ``==``/``!=`` return all-False/True.
+    ps = pd.Series(data, dtype=sr.dtype)
+    if comparison_op.__name__ in {"lt", "le", "gt", "ge"}:
+        with pytest.raises(TypeError, match="Invalid comparison"):
+            comparison_op(sr, dt)
+        with pytest.raises(TypeError, match="Invalid comparison"):
+            comparison_op(ps, dt)
+        return
+    result = comparison_op(sr, dt)
+    expected = comparison_op(ps, dt)
     assert_eq(result, expected)
 
 
@@ -3110,7 +3242,7 @@ def test_binops_float_scalar_decimal():
         [decimal.Decimal("1"), decimal.Decimal("-2.5"), None],
         dtype=cudf.Decimal32Dtype(3, 2),
     )
-    expected = cudf.Series([0.0, -3.5, None], dtype="float64")
+    expected = cudf.Series([0.0, 3.5, None], dtype="float64")
     assert_eq(result, expected)
 
 
@@ -3179,3 +3311,30 @@ def test_decimal_arrow_backed_comparisons_pandas_compat(comparison_op):
         expect = comparison_op(s, s)
         got = comparison_op(gs, gs)
         assert_eq(expect, got)
+
+
+def test_arrow_backed_unsigned_subtract_python_int():
+    # An unsigned ArrowDtype minus a Python int is promoted to signed
+    # int64[pyarrow] by pandas, so it must not raise a spurious unsigned
+    # overflow even when elements are smaller than the subtrahend.
+    s = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([0, 1, 2, 5], type=pa.uint8()))
+    )
+    gs = cudf.from_pandas(s)
+    assert_eq(s - 3, gs - 3)
+    assert_eq(3 - s, 3 - gs)
+
+
+def test_arrow_backed_unsigned_subtract_overflow():
+    # Subtraction of two unsigned ArrowDtype operands that underflows raises,
+    # mirroring pyarrow.compute.subtract_checked.
+    s = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([0, 1], type=pa.uint8()))
+    )
+    other = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([1, 0], type=pa.uint8()))
+    )
+    gs = cudf.from_pandas(s)
+    gother = cudf.from_pandas(other)
+    with pytest.raises(pa.ArrowInvalid):
+        gs - gother

@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
 #include <cudf/aggregation.hpp>
@@ -58,7 +59,7 @@ static void reduction_dictionary(nvbench::state& state,
   auto agg = make_reduce_aggregation<kind>();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_element_count(size);
   state.add_global_memory_reads<DataType>(size);
   if (kind == cudf::aggregation::ANY || kind == cudf::aggregation::ALL) {
@@ -67,9 +68,12 @@ static void reduction_dictionary(nvbench::state& state,
     state.add_global_memory_writes<DataType>(1);
   }
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&values, output_type, &agg](nvbench::launch& launch) {
     cudf::reduce(*values, *agg, output_type);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   set_throughputs(state);
 }

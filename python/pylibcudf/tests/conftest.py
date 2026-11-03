@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 # Tell ruff it's OK that some imports occur after the sys.path.insert
 # ruff: noqa: E402
@@ -235,7 +235,9 @@ def _generate_table_data(types, nrows, seed=42):
 
 
 @pytest.fixture(scope="session", params=[0, 100])
-def table_data(request):
+def table_data(
+    request: pytest.FixtureRequest,
+) -> tuple[plc.io.types.TableWithMetadata, pa.Table]:
     """
     Returns (TableWithMetadata, pa_table).
 
@@ -292,7 +294,9 @@ def source_or_sink(request, tmp_path):
 @pytest.fixture(
     params=["a.txt", pathlib.Path("a.txt"), io.BytesIO],
 )
-def binary_source_or_sink(request, tmp_path):
+def binary_source_or_sink(
+    request: pytest.FixtureRequest, tmp_path: pathlib.Path
+) -> str | pathlib.Path | io.BytesIO:
     fp_or_buf = request.param
     if isinstance(fp_or_buf, str):
         return f"{tmp_path}/{fp_or_buf}"
@@ -363,3 +367,16 @@ def has_nulls(request):
 )
 def has_nans(request):
     return request.param
+
+
+@pytest.fixture(scope="session")
+def patch_cupy_stream(request):
+    import cupy as cp
+
+    # TODO: Remove this version conditional once we require CuPy 14
+    if hasattr(cp.cuda.Stream, "from_external"):
+        return cp.cuda.Stream.from_external(plc.utils.CUDF_DEFAULT_STREAM)
+    else:
+        version, stream_ptr = plc.utils.CUDF_DEFAULT_STREAM.__cuda_stream__()
+        assert version == 0
+        return cp.cuda.ExternalStream(stream_ptr)

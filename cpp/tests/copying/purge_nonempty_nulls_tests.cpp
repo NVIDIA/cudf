@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -9,8 +9,8 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/null_mask.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -40,8 +40,7 @@ TEST_F(HasNonEmptyNullsTest, TrivialTest)
   EXPECT_FALSE(cudf::has_nonempty_nulls(*input));
 
   // Set nullmask, post construction.
-  cudf::detail::set_null_mask(
-    input->mutable_view().null_mask(), 2, 3, false, cudf::get_default_stream());
+  cudf::set_null_mask(input->mutable_view().null_mask(), 2, 3, false);
   input->set_null_count(1);
   EXPECT_TRUE(cudf::may_have_nonempty_nulls(*input));
   EXPECT_TRUE(cudf::has_nonempty_nulls(*input));
@@ -91,8 +90,7 @@ TEST_F(PurgeNonEmptyNullsTest, SingleLevelList)
                        .release();
 
   // Set nullmask, post construction.
-  cudf::detail::set_null_mask(
-    input->mutable_view().null_mask(), 2, 3, false, cudf::get_default_stream());
+  cudf::set_null_mask(input->mutable_view().null_mask(), 2, 3, false);
   input->set_null_count(1);
 
   test_purge(*input);
@@ -145,10 +143,7 @@ TEST_F(PurgeNonEmptyNullsTest, SingleLevelList)
     // Test when gather selects unsanitized row specifically.
     auto const results            = gather(input->view(), {2});
     auto const results_lists_view = cudf::lists_column_view(*results);
-    auto const expected           = LCW<T>{{
-                                   LCW<T>{}  // NULL.
-                                 },
-                                           null_at(0)};
+    auto const expected           = LCW<T>{{{}}, null_at(0)};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_lists_view.offsets(), offsets_col_t{0, 0});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_lists_view.child(), values_col_t{});
@@ -173,8 +168,7 @@ TEST_F(PurgeNonEmptyNullsTest, TwoLevelList)
   EXPECT_FALSE(cudf::has_nonempty_nulls(*input));
 
   // Set nullmask, post construction.
-  cudf::detail::set_null_mask(
-    input->mutable_view().null_mask(), 3, 4, false, cudf::get_default_stream());
+  cudf::set_null_mask(input->mutable_view().null_mask(), 3, 4, false);
   input->set_null_count(1);
   EXPECT_TRUE(cudf::may_have_nonempty_nulls(*input));
   EXPECT_TRUE(cudf::has_nonempty_nulls(*input));
@@ -187,8 +181,8 @@ TEST_F(PurgeNonEmptyNullsTest, TwoLevelList)
     auto const results_lists_view = cudf::lists_column_view(*results);
 
     auto const expected = LCW<T>{{
-                                   LCW<T>{},  // NULL, because of out of bounds.
-                                   LCW<T>{},  // NULL, because input row was null.
+                                   {},  // NULL, because of out of bounds.
+                                   {},  // NULL, because input row was null.
                                    {{1, 2, 3}, {4, 5, 6, 7}, {8}, {9, 1}, {2}},  // i.e. input[0]
                                    {{11, 12}, {13, 14, 15}, {16, 17, 18}, {19}}  // i.e. input[1]
                                  },
@@ -229,8 +223,7 @@ TEST_F(PurgeNonEmptyNullsTest, ThreeLevelList)
   EXPECT_FALSE(cudf::has_nonempty_nulls(*input));
 
   // Set nullmask, post construction.
-  cudf::detail::set_null_mask(
-    input->mutable_view().null_mask(), 3, 4, false, cudf::get_default_stream());
+  cudf::set_null_mask(input->mutable_view().null_mask(), 3, 4, false);
   input->set_null_count(1);
   EXPECT_TRUE(cudf::may_have_nonempty_nulls(*input));
   EXPECT_TRUE(cudf::has_nonempty_nulls(*input));
@@ -243,8 +236,8 @@ TEST_F(PurgeNonEmptyNullsTest, ThreeLevelList)
 
     auto const expected = LCW<T>{
       {
-        LCW<T>{},  // NULL, because of out of bounds.
-        LCW<T>{},  // NULL, because input row was null.
+        {},  // NULL, because of out of bounds.
+        {},  // NULL, because input row was null.
         {{{1, 2}, {3}}, {{4, 5}, {6, 7}}, {{8, 8}, {}}, {{9, 1}}, {{2, 3}}},  // i.e. input[0]
         {{{11, 12}}, {{13}, {14, 15}}, {{16, 17, 18}}, {{19, 19}, {}}}        // i.e. input[1]
       },
@@ -284,8 +277,7 @@ TEST_F(PurgeNonEmptyNullsTest, ListOfStrings)
   EXPECT_FALSE(cudf::has_nonempty_nulls(*input));
 
   // Set nullmask, post construction.
-  cudf::detail::set_null_mask(
-    input->mutable_view().null_mask(), 2, 3, false, cudf::get_default_stream());
+  cudf::set_null_mask(input->mutable_view().null_mask(), 2, 3, false);
   input->set_null_count(1);
   EXPECT_TRUE(cudf::may_have_nonempty_nulls(*input));
   EXPECT_TRUE(cudf::has_nonempty_nulls(*input));
@@ -374,8 +366,7 @@ TEST_F(PurgeNonEmptyNullsTest, UnsanitizedListOfUnsanitizedStrings)
   EXPECT_TRUE(cudf::has_nonempty_nulls(*lists));
 
   // Set lists nullmask, post construction.
-  cudf::detail::set_null_mask(
-    lists->mutable_view().null_mask(), 2, 3, false, cudf::get_default_stream());
+  cudf::set_null_mask(lists->mutable_view().null_mask(), 2, 3, false);
   lists->set_null_count(1);
   EXPECT_TRUE(cudf::may_have_nonempty_nulls(*lists));
   EXPECT_TRUE(cudf::has_nonempty_nulls(*lists));
@@ -449,7 +440,7 @@ TEST_F(PurgeNonEmptyNullsTest, StructOfList)
     auto const result          = gather(structs_input->view(), gather_map);
     auto const expected_result = [] {
       auto child = LCW<T>{{{5},
-                           LCW<T>{},  //<--- Now, sanitized.
+                           {},  //<--- Now, sanitized.
                            {{1, 2, 3, 4}, null_at(2)},
                            {8, 9, 10}},
                           null_at(1)};

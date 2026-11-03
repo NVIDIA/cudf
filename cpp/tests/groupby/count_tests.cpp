@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,9 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
+
+#include <cuda/iterator>
 
 template <typename V>
 struct groupby_count_test : public cudf::test::BaseFixture {};
@@ -21,7 +23,7 @@ TYPED_TEST_SUITE(groupby_count_test, cudf::test::AllTypes);
 TYPED_TEST(groupby_count_test, basic)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -42,7 +44,7 @@ TYPED_TEST(groupby_count_test, basic)
 TYPED_TEST(groupby_count_test, empty_cols)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> vals;
@@ -60,7 +62,7 @@ TYPED_TEST(groupby_count_test, empty_cols)
 TYPED_TEST(groupby_count_test, zero_valid_keys)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   cudf::test::fixed_width_column_wrapper<K> keys({1, 2, 3}, cudf::test::iterators::all_nulls());
   cudf::test::fixed_width_column_wrapper<V> vals{3, 4, 5};
@@ -81,7 +83,7 @@ TYPED_TEST(groupby_count_test, zero_valid_keys)
 TYPED_TEST(groupby_count_test, zero_valid_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5}, cudf::test::iterators::all_nulls());
@@ -103,7 +105,7 @@ TYPED_TEST(groupby_count_test, zero_valid_values)
 TYPED_TEST(groupby_count_test, null_keys_and_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   cudf::test::fixed_width_column_wrapper<K> keys(
     {1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
@@ -129,12 +131,43 @@ TYPED_TEST(groupby_count_test, null_keys_and_values)
   test_single_agg(keys, vals, expect_keys, expect_vals2, std::move(agg2));
 }
 
+using groupby_count_shape_test = groupby_count_test<int32_t>;
+
+TEST_F(groupby_count_shape_test, SingletonGroups)
+{
+  constexpr cudf::size_type num_rows = 67;
+  auto const begin                   = cuda::counting_iterator<K>{0};
+  auto const ones                    = cuda::make_constant_iterator(cudf::size_type{1});
+  auto const validity                = cudf::test::iterators::null_at(num_rows - 1);
+  cudf::test::fixed_width_column_wrapper<K> keys(begin, begin + num_rows);
+  cudf::test::fixed_width_column_wrapper<K> nullable_values(begin, begin + num_rows, validity);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_counts(ones, ones + num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_valid_counts(
+    validity, validity + num_rows);
+
+  // A partial final warp and singleton groups exercise counting without row positions.
+  test_single_agg(
+    keys, keys, keys, expected_counts, cudf::make_count_aggregation<cudf::groupby_aggregation>());
+  test_single_agg(
+    keys,
+    nullable_values,
+    keys,
+    expected_counts,
+    cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE));
+
+  // Nullable COUNT_VALID still needs the grouped rows to identify the null singleton.
+  test_single_agg(keys,
+                  nullable_values,
+                  keys,
+                  expected_valid_counts,
+                  cudf::make_count_aggregation<cudf::groupby_aggregation>());
+}
+
 struct groupby_count_string_test : public cudf::test::BaseFixture {};
 
 TEST_F(groupby_count_string_test, basic)
 {
-  using V = cudf::string_view;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys{1,    3,  3,   5,   5,   0};
@@ -164,8 +197,7 @@ TYPED_TEST(GroupByCountFixedPointTest, GroupByCount)
   using RepType    = cudf::device_storage_type_t<decimalXX>;
   using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
 
-  using V = decimalXX;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   auto const scale = scale_type{-1};
   auto const keys  = cudf::test::fixed_width_column_wrapper<K>{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
@@ -188,8 +220,7 @@ struct groupby_dictionary_count_test : public cudf::test::BaseFixture {};
 
 TEST_F(groupby_dictionary_count_test, basic)
 {
-  using V = std::string;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_VALID>;
+  using R = cudf::size_type;
 
   // clang-format off
   cudf::test::strings_column_wrapper        keys{"1", "3", "3", "5", "5", "0"};

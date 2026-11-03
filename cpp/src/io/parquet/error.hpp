@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,7 +7,7 @@
 
 #include "io/utilities/hostdevice_vector.hpp"
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <sstream>
@@ -18,7 +18,7 @@ namespace cudf::io::parquet {
  * @brief Specialized device scalar for use in reporting errors that occur in
  * kernel calls.
  *
- * The `kernel_error` object is created with a `rmm::cuda_stream_view` which is used throughout
+ * The `kernel_error` object is created with a `cuda::stream_ref` which is used throughout
  * the object's lifetime.
  */
 class kernel_error {
@@ -38,9 +38,10 @@ class kernel_error {
    * @throws `rmm::bad_alloc` if allocating the device memory for `initial_value` fails.
    * @throws `rmm::cuda_error` if copying `initial_value` to device memory fails.
    *
-   * @param CUDA stream to use
+   * @param stream CUDA stream to use
    */
-  kernel_error(rmm::cuda_stream_view stream) : _error_code(1, stream)
+  kernel_error(cuda::stream_ref stream)
+    : _error_code(1, stream, cudf::get_current_device_resource_ref())
   {
     _error_code[0] = 0;
     _error_code.host_to_device_async(stream);
@@ -56,7 +57,7 @@ class kernel_error {
    *
    * @param stream The CUDA stream to synchronize with
    */
-  [[nodiscard]] auto value_sync(rmm::cuda_stream_view stream) const
+  [[nodiscard]] auto value_sync(cuda::stream_ref stream) const
   {
     _error_code.device_to_host(stream);
     return _error_code[0];

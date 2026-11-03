@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -16,7 +16,7 @@ def data_col():
 
 
 def test_partition(data_col):
-    pa_arr, plc_column = data_col
+    _pa_arr, plc_column = data_col
     got = plc.strings.split.partition.partition(
         plc_column, plc.Scalar.from_arrow(pa.scalar("_"))
     )
@@ -31,7 +31,7 @@ def test_partition(data_col):
 
 
 def test_rpartition(data_col):
-    pa_arr, plc_column = data_col
+    _pa_arr, plc_column = data_col
     got = plc.strings.split.partition.rpartition(
         plc_column, plc.Scalar.from_arrow(pa.scalar("_"))
     )

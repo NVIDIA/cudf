@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 from contextlib import contextmanager
@@ -9,10 +9,6 @@ import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
 
@@ -108,8 +104,7 @@ def test_series_setitem_index():
 def test_setitem_dataframe_series_inplace(index):
     gdf = cudf.DataFrame({"a": [1, 2, 3]}, index=index)
     expected = gdf.copy()
-    with cudf.option_context("copy_on_write", True):
-        gdf["a"].replace(1, 500, inplace=True)
+    gdf["a"].replace(1, 500, inplace=True)
 
     assert_eq(expected, gdf)
 
@@ -124,7 +119,7 @@ def test_listcol_setitem_retain_dtype():
     df1["b"] = df1["c"]
     # Performing a copy to trigger a copy dtype which is obtained by accessing
     # `ListColumn.children` that would have been corrupted in previous call
-    # prior to this fix: https://github.com/rapidsai/cudf/pull/10151/
+    # prior to this fix: https://github.com/NVIDIA/cudf/pull/10151/
     df2 = df1.copy()
     assert df2["a"].dtype == df["a"].dtype
 
@@ -191,33 +186,28 @@ def test_string_set_scalar(scalar):
 
 
 def test_dataframe_cow_slice_setitem():
-    with cudf.option_context("copy_on_write", True):
-        df = cudf.DataFrame(
-            {"a": [10, 11, 12, 13, 14], "b": [20, 30, 40, 50, 60]}
-        )
-        slice_df = df[1:4]
+    df = cudf.DataFrame({"a": [10, 11, 12, 13, 14], "b": [20, 30, 40, 50, 60]})
+    slice_df = df[1:4]
 
-        assert_eq(
-            slice_df,
-            cudf.DataFrame(
-                {"a": [11, 12, 13], "b": [30, 40, 50]}, index=[1, 2, 3]
-            ),
-        )
+    assert_eq(
+        slice_df,
+        cudf.DataFrame(
+            {"a": [11, 12, 13], "b": [30, 40, 50]}, index=[1, 2, 3]
+        ),
+    )
 
-        slice_df["a"][2] = 1111
+    slice_df["a"][2] = 1111
 
-        assert_eq(
-            slice_df,
-            cudf.DataFrame(
-                {"a": [11, 1111, 13], "b": [30, 40, 50]}, index=[1, 2, 3]
-            ),
-        )
-        assert_eq(
-            df,
-            cudf.DataFrame(
-                {"a": [10, 11, 12, 13, 14], "b": [20, 30, 40, 50, 60]}
-            ),
-        )
+    assert_eq(
+        slice_df,
+        cudf.DataFrame(
+            {"a": [11, 1111, 13], "b": [30, 40, 50]}, index=[1, 2, 3]
+        ),
+    )
+    assert_eq(
+        df,
+        cudf.DataFrame({"a": [10, 11, 12, 13, 14], "b": [20, 30, 40, 50, 60]}),
+    )
 
 
 def test_multiindex_row_shape():
@@ -517,6 +507,7 @@ def test_dataframe_append_to_empty():
 
     gdf = cudf.DataFrame()
     gdf["a"] = []
+    gdf["a"] = gdf["a"].astype("str")
     gdf["b"] = [1, 2, 3]
 
     assert_eq(gdf, pdf)
@@ -689,18 +680,7 @@ def test_tupleize_cols_False_set():
         None,
     ],
 )
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
-)
-def test_dataframe_assign_scalar(request, col_data, assign_val):
-    request.applymarker(
-        pytest.mark.xfail(
-            condition=PANDAS_VERSION >= PANDAS_CURRENT_SUPPORTED_VERSION
-            and len(col_data) == 0,
-            reason="https://github.com/pandas-dev/pandas/issues/56679",
-        )
-    )
+def test_dataframe_assign_scalar(col_data, assign_val):
     pdf = pd.DataFrame({"a": col_data})
     gdf = cudf.DataFrame({"a": col_data})
 
@@ -710,7 +690,10 @@ def test_dataframe_assign_scalar(request, col_data, assign_val):
         else assign_val
     )
     gdf["b"] = assign_val
-
+    # Assigning None in pandas creates an object column
+    # which cuDF doesn't support
+    if assign_val is None:
+        pdf["b"] = pdf["b"].astype(gdf["b"].dtype)
     assert_eq(pdf, gdf)
 
 
@@ -765,5 +748,106 @@ def test_dataframe_assign_scalar_with_scalar_cols(col_data, assign_val):
         else assign_val
     )
     gdf["b"] = assign_val
+    # Assigning None in pandas creates an object column
+    # which cuDF doesn't support
+    if col_data is None:
+        pdf["a"] = pdf["a"].astype(gdf["a"].dtype)
+    if assign_val is None:
+        pdf["b"] = pdf["b"].astype(gdf["b"].dtype)
+    assert_eq(pdf, gdf)
 
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        np.datetime64("NaT", "ns"),
+        np.timedelta64("NaT", "ns"),
+        np.datetime64("2020-01-01", "ns"),
+        pd.Timestamp("2020-01-01"),
+        pd.Timedelta("1 days"),
+    ],
+)
+@pytest.mark.parametrize("key", [(0, 0), ([0], 0), (slice(0, 2), 0)])
+def test_iloc_setitem_temporal_scalar_into_numeric_raises(invalid, key):
+    # A datetime64/timedelta64 scalar (including NaT) cannot be assigned
+    # into a numeric column; cudf must raise like pandas instead of
+    # silently reinterpreting the value's integer representation.
+    pdf = pd.DataFrame({"a": [1, 2, 3]}, dtype="int64")
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        lfunc=operator.setitem,
+        rfunc=operator.setitem,
+        lfunc_args_and_kwargs=([pdf.iloc, key, invalid],),
+        rfunc_args_and_kwargs=([gdf.iloc, key, invalid],),
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid", [np.datetime64("NaT", "ns"), np.timedelta64("NaT", "ns")]
+)
+def test_loc_setitem_temporal_scalar_into_numeric_raises(invalid):
+    pdf = pd.DataFrame({"a": [1, 2, 3]}, dtype="int64")
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        lfunc=operator.setitem,
+        rfunc=operator.setitem,
+        lfunc_args_and_kwargs=([pdf.loc, (0, "a"), invalid],),
+        rfunc_args_and_kwargs=([gdf.loc, (0, "a"), invalid],),
+    )
+
+
+@pytest.mark.parametrize("key", [{1}, {1: 1}, ({1}, "a"), (1, {"a"})])
+def test_loc_setitem_dict_or_set_indexer_disallowed(key):
+    # A set/dict (or a tuple nesting one) is not a valid indexer.
+    pdf = pd.DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        lfunc=operator.setitem,
+        rfunc=operator.setitem,
+        lfunc_args_and_kwargs=([pdf.loc, key, 1],),
+        rfunc_args_and_kwargs=([gdf.loc, key, 1],),
+    )
+
+
+def test_setitem_boolean_series_mask_label_aligned():
+    # A boolean Series mask is aligned to the frame's index by label, not
+    # applied positionally.
+    pdf = pd.DataFrame({"a": [1, 4, 2, 3], "b": [5, 6, 7, 8]})
+    gdf = cudf.from_pandas(pdf)
+    pmask = (pdf["a"] == 4).reindex(pdf.index[::-1])
+    gmask = (gdf["a"] == 4).reindex(gdf.index[::-1])
+    pdf[pmask] = 0
+    gdf[gmask] = 0
+    assert_eq(pdf, gdf)
+
+
+def test_setitem_boolean_dataframe_mask_label_aligned():
+    # A reordered boolean DataFrame mask is aligned by label before
+    # scattering.
+    pdf = pd.DataFrame({"a": [-1, 2, -3, 4], "b": [1, -2, 3, -4]})
+    gdf = cudf.from_pandas(pdf)
+    pdf[pdf[::-1] < 0] = 0
+    gdf[gdf[::-1] < 0] = 0
+    assert_eq(pdf, gdf)
+
+
+def test_loc_setitem_series_rhs_label_aligned():
+    # A Series RHS in a list-column loc setitem is aligned to the target
+    # rows by label rather than picked positionally per column.
+    pdf = pd.DataFrame({"a": [10, 20]})
+    gdf = cudf.from_pandas(pdf)
+    pdf.loc[[0, 1], ["a"]] = pd.Series([200, 100], index=[1, 0])
+    gdf.loc[[0, 1], ["a"]] = cudf.Series([200, 100], index=[1, 0])
+    assert_eq(pdf, gdf)
+
+
+def test_loc_setitem_bool_mask_dataframe_rhs_label_aligned():
+    # A DataFrame RHS assigned through a boolean row mask is aligned by
+    # label, so a reordered RHS leaves the frame unchanged.
+    pdf = pd.DataFrame({"x": list(range(5)), "y": list(range(5))})
+    gdf = cudf.from_pandas(pdf)
+    pval = pdf[["x", "y"]].sort_values("x", ascending=False)
+    gval = gdf[["x", "y"]].sort_values("x", ascending=False)
+    pdf.loc[[True] * 5, ["x", "y"]] = pval
+    gdf.loc[[True] * 5, ["x", "y"]] = gval
     assert_eq(pdf, gdf)

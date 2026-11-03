@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -39,16 +39,16 @@ def test_datetime_like_compaibility(rdata, check_datetimelike_compat):
 
     sr1 = cudf.from_pandas(psr1)
     sr2 = cudf.from_pandas(psr2)
-
-    assert_asserters_equal(
-        pd.testing.assert_series_equal,
-        assert_series_equal,
-        psr1,
-        psr2,
-        sr1,
-        sr2,
-        check_datetimelike_compat=check_datetimelike_compat,
-    )
+    with pytest.warns(pd.errors.Pandas4Warning):
+        assert_asserters_equal(
+            pd.testing.assert_series_equal,
+            assert_series_equal,
+            psr1,
+            psr2,
+            sr1,
+            sr2,
+            check_datetimelike_compat=check_datetimelike_compat,
+        )
 
 
 @pytest.mark.parametrize("rdata", [[1, 2, 5], [1, 2, 6], [1, 2, 5, 6]])

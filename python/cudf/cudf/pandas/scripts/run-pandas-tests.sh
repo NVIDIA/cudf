@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Run Pandas unit tests with cudf.pandas.
@@ -15,7 +15,6 @@
 #
 # This script creates a `pandas-testing` directory if it doesn't exist
 #
-# If running locally, it's recommended to pass '-m "not slow and not single_cpu and not db"'
 
 set -euo pipefail
 
@@ -41,6 +40,12 @@ if [ ! -d "pandas-tests" ]; then
     # imports fail if we don't do this:
     mkdir -p pandas-tests
     cp -r pandas/pandas/tests pandas-tests/
+    # Some tests navigate up from tests/ and reference data files in sibling
+    # directories (e.g. tests/io/formats/style/test_html.py looks for
+    # io/formats/templates/ five levels above the test file).  Copy those
+    # non-test data directories so that the expected relative paths resolve.
+    mkdir -p pandas-tests/io/formats
+    cp -r pandas/pandas/io/formats/templates pandas-tests/io/formats/templates
     # directory layout requirement
     # conftest.py
     # pyproject.toml
@@ -68,132 +73,36 @@ EOF
     for hit in $(find pandas-tests -iname '*.py' -print0 | xargs -0 grep "pandas.tests" | cut -d ":" -f 1 | sort | uniq); do
         # Get the relative path to the test module
         test_module=$(echo "$hit" | cut -d "/" -f 2-)
-        # Get the number of directories to go up
+        # Count directory separators to find how many levels to go up.
+        # The sed pattern replaces "pandas.tests." (including the trailing dot)
+        # with N dots, where N equals the number of path components in test_module.
+        # E.g. tests/test_col.py (1 slash) -> 1 dot, tests/frame/f.py (2 slashes) -> 2 dots.
         num_dirs="${test_module//[^\/]/}"
         num_dirs="${#num_dirs}"
-        num_dots=$((num_dirs - 1))
-        # Construct the relative import
-        relative_import=$(printf "%0.s." $(seq 1 $num_dots))
-        # Replace the import
-        sed -i "s/pandas.tests/${relative_import}/g" "$hit"
+        # Build exactly num_dirs dots (0 dots is valid for num_dirs=0).
+        relative_import=""
+        for _i in $(seq 1 $num_dirs); do
+            relative_import="${relative_import}."
+        done
+        # Replace "pandas.tests." (including trailing dot) so the replacement
+        # dots are not combined with an extra dot left by the old pattern.
+        sed -i "s/pandas\.tests\./${relative_import}/g" "$hit"
     done
 fi
-
-# append the contents of patch-confest.py to conftest.py
-cat ../python/cudf/cudf/pandas/scripts/conftest-patch.py >> pandas-tests/conftest.py
-
-# apply copy-on-write patches that won't be fixed until pandas 3
-PATCH_FILE_1="../python/cudf/cudf/pandas/scripts/pandas-2-cow-1.patch"
-PATCH_FILE_2="../python/cudf/cudf/pandas/scripts/pandas-2-cow-2.patch"
-PANDAS_PATH=$(python -c "import pandas, os; print(os.path.dirname(pandas.__file__))")
-patch -d "$PANDAS_PATH" -p2 < "$PATCH_FILE_1"
-patch -d "$PANDAS_PATH" -p2 < "$PATCH_FILE_2"
 
 # Run the tests
 cd pandas-tests/
 
 
-# TODO: Needs motoserver/moto container running on http://localhost:5000
-TEST_THAT_NEED_MOTO_SERVER="not test_styler_to_s3 \
-and not test_with_s3_url[None] \
-and not test_with_s3_url[gzip] \
-and not test_with_s3_url[bz2] \
-and not test_with_s3_url[zip] \
-and not test_with_s3_url[xz] \
-and not test_with_s3_url[tar] \
-and not test_s3_permission_output[etree] \
-and not test_read_s3_jsonl \
-and not test_s3_parser_consistency \
-and not test_to_s3 \
-and not test_parse_public_s3a_bucket \
-and not test_parse_public_s3_bucket_nrows \
-and not test_parse_public_s3_bucket_chunked \
-and not test_parse_public_s3_bucket_chunked_python \
-and not test_parse_public_s3_bucket_python \
-and not test_infer_s3_compression \
-and not test_parse_public_s3_bucket_nrows_python \
-and not test_read_s3_fails_private \
-and not test_read_csv_handles_boto_s3_object \
-and not test_read_csv_chunked_download \
-and not test_read_s3_with_hash_in_key \
-and not test_read_feather_s3_file_path \
-and not test_parse_public_s3_bucket \
-and not test_parse_private_s3_bucket \
-and not test_parse_public_s3n_bucket \
-and not test_read_with_creds_from_pub_bucket \
-and not test_read_without_creds_from_pub_bucket \
-and not test_from_s3_csv \
-and not test_s3_protocols[s3] \
-and not test_s3_protocols[s3a] \
-and not test_s3_protocols[s3n] \
-and not test_s3_parquet \
-and not test_s3_roundtrip_explicit_fs \
-and not test_s3_roundtrip \
-and not test_s3_roundtrip_for_dir[partition_col0] \
-and not test_s3_roundtrip_for_dir[partition_col1] \
-and not test_s3_roundtrip"
-
-TEST_THAT_CRASH_PYTEST_WORKERS="not test_bitmasks_pyarrow \
-and not test_large_string_pyarrow \
-and not test_interchange_from_corrected_buffer_dtypes \
-and not test_eof_states \
-and not test_array_tz \
-and not test_resample_empty_dataframe"
-
-# these weakref tests are flaky, since they rely on the timing of the cyclic GC
-# We skip them always
-TEST_THAT_USE_WEAKREFS="not test_no_reference_cycle"
-TEST_THAT_USE_STRING_DTYPE_GROUPBY="not test_string_dtype_all_na"
-
-# TODO: Add reason to skip these tests
-TEST_THAT_NEED_REASON_TO_SKIP="not test_groupby_raises_category_on_category \
-and not test_constructor_no_pandas_array \
-and not test_is_monotonic_na \
-and not test_index_contains \
-and not test_frame_op_subclass_nonclass_constructor \
-and not test_round_trip_current \
-and not test_pickle_frame_v124_unpickle_130"
-
-IGNORE_TESTS_THAT_CRASH_PYTEST_COLLECTION=("--ignore=tests/io/parser/common/test_read_errors.py"
-                                           "--ignore=tests/io/test_clipboard.py"
-)
-
-IGNORE_TESTS_THAT_TEST_PRIVATE_FUNTIONALITY=("--ignore=tests/test_nanops.py"
-                                             "--ignore=tests/test_optional_dependency.py"
-                                             "--ignore=tests/util/test_assert_produces_warning.py"
-                                             "--ignore=tests/util/test_shares_memory.py"
-                                             "--ignore=tests/util/test_validate_args.py"
-                                             "--ignore=tests/util/test_validate_args_and_kwargs.py"
-                                             "--ignore=tests/util/test_validate_inclusive.py"
-                                             "--ignore=tests/util/test_validate_kwargs.py"
-                                             "--ignore=tests/util/test_util.py"
-                                             "--ignore=tests/util/test_rewrite_warning.py"
-                                             "--ignore=tests/util/test_deprecate_nonkeyword_arguments.py"
-                                             "--ignore=tests/util/test_deprecate_kwarg.py"
-                                             "--ignore=tests/util/test_deprecate.py"
-                                             "--ignore=tests/util/test_doc.py"
-                                             "--ignore=tests/frame/methods/test_to_dict_of_blocks.py"
-                                             "--ignore=tests/tslibs/"
-                                             "--ignore=tests/libs/"
-                                             "--ignore=tests/internals/"
-                                             "--ignore=tests/groupby/test_libgroupby.py"
-                                             "--ignore=tests/frame/test_block_internals.py"
-                                             "--ignore=tests/arrays/sparse/test_libsparse.py"
-                                             "--ignore=tests/copy_view/test_internals.py"
-                                             "--ignore=tests/indexing/test_chaining_and_caching.py"
-                                             "--ignore=tests/indexing/multiindex/test_chaining_and_caching.py"
-)
-
-
-PANDAS_CI="1" python -m pytest -p cudf.pandas \
+PANDAS_CI="1" python -m pytest \
+    -p cudf.pandas \
+    -p cudf.pandas.scripts.pandas-testing-plugin \
     --import-mode=importlib \
-    -k "$TEST_THAT_NEED_MOTO_SERVER and $TEST_THAT_CRASH_PYTEST_WORKERS and $TEST_THAT_NEED_REASON_TO_SKIP and $TEST_THAT_USE_STRING_DTYPE_GROUPBY and $TEST_THAT_USE_WEAKREFS" \
-    "${IGNORE_TESTS_THAT_CRASH_PYTEST_COLLECTION[@]}" \
-    "${IGNORE_TESTS_THAT_TEST_PRIVATE_FUNTIONALITY[@]}" \
+    -m "not slow and not single_cpu and not db and not network" \
+    --disable-warnings \
     "$@"
 
 mv ./*.json ..
 cd ..
-rm -rf pandas-tests/
-rapids-logger "Test script exiting with value: $EXITCODE"
+echo "Test script exiting with value: $EXITCODE"
 exit ${EXITCODE}

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -13,7 +13,8 @@ def test_series_add_prefix():
     got = cd_s.add_prefix("item_")
     expected = pd_s.add_prefix("item_")
 
-    assert_eq(got, expected)
+    # Pandas still returns "object" dtype for the index, while cuDF returns "string" dtype. Ignore index type for this test.
+    assert_eq(got, expected, check_index_type=False)
 
 
 def test_series_add_suffix():
@@ -23,4 +24,5 @@ def test_series_add_suffix():
     got = cd_s.add_suffix("_item")
     expected = pd_s.add_suffix("_item")
 
-    assert_eq(got, expected)
+    # Pandas still returns "object" dtype for the index, while cuDF returns "string" dtype. Ignore index type for this test.
+    assert_eq(got, expected, check_index_type=False)

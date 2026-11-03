@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -12,6 +12,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
+
+#include <cstddef>
 #include <functional>
 #include <numeric>
 #include <optional>
@@ -98,12 +101,15 @@ class expression_parser {
    * @param expr The expression to create an evaluable expression_parser for.
    * @param left The left table used for evaluating the abstract syntax tree.
    * @param right The right table used for evaluating the abstract syntax tree.
+   * @param has_nulls Whether any of the input columns contain nulls
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned device memory
    */
   expression_parser(expression const& expr,
                     cudf::table_view const& left,
                     std::optional<std::reference_wrapper<cudf::table_view const>> right,
                     bool has_nulls,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr);
 
   /**
@@ -111,11 +117,14 @@ class expression_parser {
    *
    * @param expr The expression to create an evaluable expression_parser for.
    * @param table The table used for evaluating the abstract syntax tree.
+   * @param has_nulls Whether any of the input columns contain nulls
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned device memory
    */
   expression_parser(expression const& expr,
                     cudf::table_view const& table,
                     bool has_nulls,
-                    rmm::cuda_stream_view stream,
+                    cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr);
 
   /**
@@ -234,7 +243,7 @@ class expression_parser {
     alignment = std::max(alignment, static_cast<cudf::size_type>(alignof(T)));
   }
 
-  void move_to_device(rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+  void move_to_device(cuda::stream_ref stream, rmm::device_async_resource_ref mr);
 
   /**
    * @brief Helper function for recursive traversal of expressions.
@@ -261,7 +270,7 @@ class expression_parser {
    */
   cudf::size_type add_data_reference(detail::device_data_reference data_ref);
 
-  rmm::device_buffer
+  cuda::device_buffer<std::byte>
     _device_data_buffer;  ///< The device-side data buffer containing the plan information, which is
                           ///< owned by this class and persists until it is destroyed.
 

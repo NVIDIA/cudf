@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,10 +17,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/sequence.h>
+#include <cuda/stream>
 #include <thrust/tabulate.h>
 
 namespace cudf {
@@ -56,7 +55,7 @@ struct sequence_functor {
   std::unique_ptr<column> operator()(size_type size,
                                      scalar const& init,
                                      scalar const& step,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_numeric<T>() and not cudf::is_boolean<T>())
   {
@@ -71,7 +70,7 @@ struct sequence_functor {
     // not using thrust::sequence because it requires init and step to be passed as
     // constants, not iterators. to do that we would have to retrieve the scalar values off the gpu,
     // which is undesirable from a performance perspective.
-    thrust::tabulate(rmm::exec_policy_nosync(stream),
+    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      result_device_view->begin<T>(),
                      result_device_view->end<T>(),
                      tabulator<T>{n_init, n_step});
@@ -82,7 +81,7 @@ struct sequence_functor {
   template <typename T>
   std::unique_ptr<column> operator()(size_type size,
                                      scalar const& init,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
     requires(cudf::is_numeric<T>() and not cudf::is_boolean<T>())
   {
@@ -95,7 +94,7 @@ struct sequence_functor {
     // not using thrust::sequence because it requires init and step to be passed as
     // constants, not iterators. to do that we would have to retrieve the scalar values off the gpu,
     // which is undesirable from a performance perspective.
-    thrust::tabulate(rmm::exec_policy_nosync(stream),
+    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      result_device_view->begin<T>(),
                      result_device_view->end<T>(),
                      const_tabulator<T>{n_init});
@@ -116,7 +115,7 @@ struct sequence_functor {
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  scalar const& step,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(init, step),
@@ -133,7 +132,7 @@ std::unique_ptr<column> sequence(size_type size,
 
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(size >= 0, "size must be >= 0", std::invalid_argument);
@@ -148,7 +147,7 @@ std::unique_ptr<column> sequence(size_type size,
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  scalar const& step,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
@@ -157,7 +156,7 @@ std::unique_ptr<column> sequence(size_type size,
 
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
-                                 rmm::cuda_stream_view stream,
+                                 cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

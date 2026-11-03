@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -17,7 +17,7 @@ from cudf.testing import assert_eq
     [
         ([10, 11, 12], pd.Int64Dtype()),
         ([0.1, 10.2, 12.3], pd.Float64Dtype()),
-        (["abc", None, "def"], pd.StringDtype()),
+        (["abc", None, "def"], pd.StringDtype(na_value=np.nan)),
     ],
 )
 def test_index_to_pandas_nullable(data, expected_dtype):

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -69,6 +69,21 @@ class table_view_base {
    * @param cols The vector of columns to construct the table from
    */
   explicit table_view_base(std::vector<ColumnView> const& cols);
+
+  /**
+   * @brief Construct a table from a vector of column views with an explicit row count.
+   *
+   * This is primarily intended for zero-column tables, which cannot otherwise carry
+   * a non-zero row count (the row count is normally derived from the columns). When
+   * `cols` is non-empty, `num_rows` must equal the size of every column.
+   *
+   * @throws std::invalid_argument If `cols` is non-empty and any view's size does not equal
+   * `num_rows`
+   *
+   * @param cols The vector of columns to construct the table from
+   * @param num_rows The number of rows in the table
+   */
+  table_view_base(std::vector<ColumnView> const& cols, size_type num_rows);
 
   /**
    * @brief Returns an iterator to the first view in the `table`.
@@ -181,6 +196,8 @@ bool has_nested_columns(table_view const& table);
 /**
  * @brief A set of cudf::column_view's of the same size.
  *
+ * If the set of columns is empty, the view's row count may still be non-zero.
+ *
  * @ingroup table_classes
  *
  * All public member functions and constructors are inherited from
@@ -230,7 +247,7 @@ class table_view : public detail::table_view_base<column_view> {
   {
     std::vector<column_view> columns(std::distance(begin, end));
     std::transform(begin, end, columns.begin(), [this](auto index) { return this->column(index); });
-    return table_view{columns};
+    return table_view{columns, num_rows()};
   }
 
   /**

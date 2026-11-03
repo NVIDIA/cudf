@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,9 +8,10 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/rolling.hpp>
 #include <cudf/scalar/scalar.hpp>
+
+#include <cuda/std/type_traits>
 
 namespace {
 // Helper functions to construct rolling window operators.
@@ -39,12 +40,6 @@ auto lag() { return cudf::make_lag_aggregation<cudf::rolling_aggregation>(3); }
 auto row_number() { return cudf::make_row_number_aggregation<cudf::rolling_aggregation>(); }
 
 auto collect_list() { return cudf::make_collect_list_aggregation<cudf::rolling_aggregation>(); }
-
-auto udf()
-{
-  return cudf::make_udf_aggregation<cudf::rolling_aggregation>(
-    cudf::udf_type::CUDA, "", cudf::data_type{cudf::type_id::INT32});
-}
 
 // Constants for rolling_window.
 auto constexpr min_periods = 1;
@@ -161,19 +156,18 @@ TYPED_TEST(TypedRollingEmptyInputTest, EmptyFixedWidthInputs)
     aggs.emplace_back(max());
     aggs.emplace_back(lead());
     aggs.emplace_back(lag());
-    aggs.emplace_back(udf());
 
     rolling_output_type_matches(empty_input, aggs, cudf::type_to_id<InputType>());
   }
 
-  /// `SUM` returns 64-bit promoted types for integral/decimal input.
+  /// `SUM` returns 64-bit promoted types for integral.
   /// For other fixed-width input types, the same type is returned.
   /// Timestamp types are not supported.
   {
     auto aggs = agg_vector_t{};
     aggs.emplace_back(sum());
-
-    using expected_type = cudf::detail::target_type_t<InputType, cudf::aggregation::SUM>;
+    using expected_type =
+      std::conditional_t<cuda::std::is_integral_v<InputType>, int64_t, InputType>;
     if constexpr (cudf::is_timestamp<InputType>()) {
       EXPECT_THROW(
         rolling_output_type_matches(empty_input, aggs, cudf::type_to_id<expected_type>()),
@@ -190,7 +184,10 @@ TYPED_TEST(TypedRollingEmptyInputTest, EmptyFixedWidthInputs)
     auto aggs = agg_vector_t{};
     aggs.emplace_back(mean());
 
-    using expected_type = cudf::detail::target_type_t<InputType, cudf::aggregation::MEAN>;
+    using expected_type =
+      std::conditional_t<cudf::is_duration<InputType>() or cudf::is_fixed_point<InputType>(),
+                         InputType,
+                         double>;
     if constexpr (cudf::is_timestamp<InputType>()) {
       EXPECT_THROW(
         rolling_output_type_matches(empty_input, aggs, cudf::type_to_id<expected_type>()),
@@ -232,7 +229,6 @@ TEST_F(RollingEmptyInputTest, Strings)
     aggs.emplace_back(max());
     aggs.emplace_back(lead());
     aggs.emplace_back(lag());
-    aggs.emplace_back(udf());
 
     rolling_output_type_matches(empty_input, aggs, cudf::type_id::STRING);
   }
@@ -278,7 +274,6 @@ TEST_F(RollingEmptyInputTest, Dictionaries)
     aggs.emplace_back(max());
     aggs.emplace_back(lead());
     aggs.emplace_back(lag());
-    aggs.emplace_back(udf());
 
     rolling_output_type_matches(empty_input, aggs, cudf::type_id::DICTIONARY32);
   }
@@ -326,7 +321,6 @@ TYPED_TEST(TypedRollingEmptyInputTest, Lists)
     aggs.emplace_back(max());
     aggs.emplace_back(lead());
     aggs.emplace_back(lag());
-    aggs.emplace_back(udf());
 
     rolling_output_type_matches(empty_input, aggs, cudf::type_id::LIST, cudf::type_to_id<T>());
   }
@@ -374,7 +368,6 @@ TYPED_TEST(TypedRollingEmptyInputTest, Structs)
     aggs.emplace_back(max());
     aggs.emplace_back(lead());
     aggs.emplace_back(lag());
-    aggs.emplace_back(udf());
 
     rolling_output_type_matches(empty_input, aggs, cudf::type_id::STRUCT, cudf::type_to_id<T>());
   }

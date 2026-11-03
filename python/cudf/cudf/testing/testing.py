@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -13,24 +13,18 @@ import pyarrow as pa
 from pandas import testing as tm
 
 import cudf
-from cudf.core.dtype.validators import is_dtype_obj_numeric
+from cudf.core.dtype.validators import (
+    is_dtype_obj_numeric,
+    is_dtype_obj_string,
+)
 from cudf.core.missing import NA, NaT
-from cudf.utils.dtypes import CUDF_STRING_DTYPE
-
-pa_types = pa.types
-
-
-def _is_string_view(dtype: pa.DataType) -> bool:
-    return hasattr(pa_types, "is_string_view") and pa_types.is_string_view(
-        dtype
-    )
 
 
 def _map_string_view_to_string(dtype: pa.DataType) -> pa.DataType:
     """Convert string_view -> string"""
-    if _is_string_view(dtype):
+    if pa.types.is_string_view(dtype):
         return pa.string()
-    if pa_types.is_list(dtype):
+    if pa.types.is_list(dtype):
         return pa.list_(_map_string_view_to_string(dtype.value_type))
     return dtype
 
@@ -48,7 +42,9 @@ def _string_view_to_string_schema(schema: pa.Schema) -> pa.Schema:
         ],
         # Cast needed because schema.metadata is dict[bytes, bytes] but
         # pa.schema expects dict[bytes | str, bytes | str] | None
-        metadata=cast(dict[bytes | str, bytes | str] | None, schema.metadata),
+        metadata=cast(
+            "dict[bytes | str, bytes | str] | None", schema.metadata
+        ),
     )
 
 
@@ -66,7 +62,7 @@ def dtype_can_compare_equal_to_other(dtype):
     # return True if values of this dtype can compare
     # as equal to equal values of a different dtype
     return not (
-        dtype == CUDF_STRING_DTYPE
+        is_dtype_obj_string(dtype)
         or isinstance(
             dtype,
             (
@@ -321,10 +317,10 @@ def assert_column_equal(
             ):
                 # non-null values must be the same
                 columns_equal = cp.allclose(
-                    left.apply_boolean_mask(
+                    left.apply_retention_mask(
                         left.isnull().unary_operator("not")
                     ).values,
-                    right.apply_boolean_mask(
+                    right.apply_retention_mask(
                         right.isnull().unary_operator("not")
                     ).values,
                 )
@@ -797,6 +793,24 @@ def assert_frame_equal(
             atol=atol,
             obj=f'Column name="{col}"',
         )
+
+
+def _object_array_equal_nan(x, y):
+    if x.shape != y.shape:
+        assert False
+    for xe, ye in zip(x.flat, y.flat, strict=True):
+        if xe is ye:
+            continue
+        if (
+            isinstance(xe, float)
+            and isinstance(ye, float)
+            and np.isnan(xe)
+            and np.isnan(ye)
+        ):
+            continue
+        if xe != ye:
+            assert False
+    return True
 
 
 def assert_eq(left, right, **kwargs):

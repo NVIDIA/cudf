@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,8 +7,6 @@
 
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
-
-#include <rmm/cuda_stream_view.hpp>
 
 #include <filesystem>
 #include <iostream>
@@ -74,8 +72,8 @@ int main(int argc, char const** argv)
 
   auto const stream           = cudf::get_default_stream();
   auto constexpr is_pool_used = false;
-  auto const mr               = create_memory_resource(is_pool_used);
-  cudf::set_current_device_resource(mr.get());
+  auto mr                     = create_memory_resource(is_pool_used);
+  cudf::set_current_device_resource(mr);
 
   // Read parquet footer metadata
   auto [metadata, has_page_index] = read_parquet_file_metadata(input_filepath);
@@ -90,7 +88,7 @@ int main(int argc, char const** argv)
     write_page_metadata(metadata, output_filepath, stream);
   }
 
-  stream.synchronize();
+  stream.sync();
 
   return 0;
 }

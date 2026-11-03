@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 /**
  * @file
@@ -85,7 +85,7 @@ class structs_column_view : public column_view {
    * @return The child column sliced relative to the parent's offset and size
    */
   [[nodiscard]] column_view get_sliced_child(
-    int index, rmm::cuda_stream_view stream = cudf::get_default_stream()) const;
+    int index, cuda::stream_ref stream = cudf::get_default_stream()) const;
 };  // class structs_column_view;
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

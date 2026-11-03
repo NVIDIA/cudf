@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,9 +7,9 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/algorithm.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/detail/replace.hpp>
@@ -19,21 +19,23 @@
 #include <cudf/strings/replace.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/table/table_view.hpp>
+#include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/copy.h>
-#include <thrust/count.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -259,7 +261,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    string_view const& d_target,
                                                    string_view const& d_replacement,
                                                    cudf::size_type maxrepl,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
@@ -277,30 +279,35 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
 
   // Count the number of targets in the entire column.
   // Note this may over-count in the case where a target spans adjacent strings.
-  cudf::detail::device_scalar<int64_t> d_target_count(0, stream);
+  cudf::detail::device_scalar<int64_t> d_target_count(
+    0, stream, cudf::get_current_device_resource_ref());
   constexpr int64_t block_size         = 512;
   constexpr size_type bytes_per_thread = 4;
-  auto const num_blocks                = util::div_rounding_up_safe(
-    util::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)), block_size);
+  auto const num_blocks                = cudf::detail::div_rounding_up_safe(
+    cudf::detail::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)),
+    block_size);
   count_targets_kernel<block_size, bytes_per_thread>
-    <<<num_blocks, block_size, 0, stream.value()>>>(fn, chars_bytes, d_target_count.data());
+    <<<num_blocks, block_size, 0, stream.get()>>>(fn, chars_bytes, d_target_count.data());
+  CUDF_CUDA_TRY(cudaGetLastError());
   auto target_count = d_target_count.value(stream);
 
   // Create a vector of every target position in the chars column.
   // These may also include overlapping targets which will be resolved later.
-  auto targets_positions = rmm::device_uvector<int64_t>(target_count, stream);
-  auto const copy_itr    = thrust::counting_iterator<int64_t>(chars_offset);
-  auto const copy_end    = cudf::detail::copy_if(
+  auto targets_positions_storage = cuda::device_buffer<int64_t>(
+    stream, cudf::get_current_device_resource_ref(), target_count, cuda::no_init);
+  auto const copy_itr = cuda::counting_iterator<int64_t>{chars_offset};
+  auto const copy_end = cudf::detail::copy_if(
     copy_itr,
-    copy_itr + chars_bytes + chars_offset,
-    targets_positions.begin(),
-    [fn] __device__(int64_t idx) { return fn.is_target_within_row(idx); },
+    copy_itr + chars_bytes,
+    targets_positions_storage.begin(),
+    [fn] __device__(int64_t idx) -> bool { return fn.is_target_within_row(idx); },
     stream);
 
   // adjust target count since the copy-if may have eliminated some invalid targets
-  target_count = std::min(std::distance(targets_positions.begin(), copy_end), target_count);
-  targets_positions.resize(target_count, stream);
-  auto d_positions = targets_positions.data();
+  target_count = std::min(std::distance(targets_positions_storage.begin(), copy_end), target_count);
+  auto targets_positions = cudf::device_span<int64_t>{targets_positions_storage.data(),
+                                                      static_cast<std::size_t>(target_count)};
+  auto d_positions       = targets_positions.data();
 
   // create a vector of offsets to each string's set of target positions
   auto const targets_offsets = create_offsets_from_positions(
@@ -309,10 +316,11 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cudf::detail::offsetalator_factory::make_input_iterator(targets_offsets->view());
 
   // compute the number of string segments produced by replace in each string
-  auto counts = rmm::device_uvector<size_type>(strings_count, stream);
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::counting_iterator<size_type>(0),
-                    thrust::counting_iterator<size_type>(strings_count),
+  auto counts = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<size_type>{0},
+                    cuda::counting_iterator<size_type>{strings_count},
                     counts.begin(),
                     cuda::proclaim_return_type<size_type>(
                       [fn, d_positions, d_targets_offsets] __device__(size_type idx) -> size_type {
@@ -326,12 +334,13 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // build a vector of all the positions for all the strings
-  auto indices   = rmm::device_uvector<string_index_pair>(total_strings, stream);
+  auto indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
   auto d_indices = indices.data();
   auto d_sizes   = counts.data();  // reusing this vector to hold output sizes now
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator<size_type>(0),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
     strings_count,
     [fn, d_strings_offsets, d_positions, d_targets_offsets, d_indices, d_sizes] __device__(
       size_type idx) {
@@ -340,12 +349,11 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     });
 
   // use this utility to gather the string parts into a contiguous chars column
-  auto chars      = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto chars      = cudf::make_strings_column(indices, stream, mr);
   auto chars_data = chars->release().data;
 
   // create offsets from the sizes
-  offsets = std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(counts.begin(), counts.end(), stream, mr));
+  offsets = std::get<0>(cudf::strings::detail::make_offsets_child_column(counts, stream, mr));
 
   // build the strings columns from the chars and offsets
   return make_strings_column(strings_count,
@@ -360,24 +368,46 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
  *
  * Performs the multi-replace operation with a thread per string.
  * This performs best on smaller strings. @see AVG_CHAR_BYTES_THRESHOLD
+ *
+ * @tparam TargetIter Random-access iterator whose `operator[](size_type)` returns a `string_view`
+ * @tparam ReplIter   Random-access iterator whose `operator[](size_type)` returns a `string_view`
  */
+template <typename TargetIter, typename ReplIter>
 struct replace_fn {
   column_device_view const d_strings;
-  string_view d_target;
-  string_view d_replacement;
+  TargetIter target_iter;
+  ReplIter repl_iter;
   cudf::size_type maxrepl;
+  bitmask_type const* d_valid_mask;
   cudf::size_type* d_sizes{};
   char* d_chars{};
   cudf::detail::input_offsetalator d_offsets;
 
   __device__ void operator()(size_type idx)
   {
-    if (d_strings.is_null(idx)) {
+    // A row is null when the pre-computed combined validity mask marks it invalid,
+    // or (when no combined mask is provided) when the input row itself is null.
+    // Null rows produce zero-size output so the column never has non-empty nulls.
+    bool const is_null = d_valid_mask ? !bit_is_set(d_valid_mask, idx) : d_strings.is_null(idx);
+    if (is_null) {
       if (!d_chars) { d_sizes[idx] = 0; }
       return;
     }
     auto const d_str   = d_strings.element<string_view>(idx);
+    auto const d_tgt   = target_iter[idx];
+    auto const d_repl  = repl_iter[idx];
     char const* in_ptr = d_str.data();
+
+    // Empty target: copy input unchanged (no replacement).
+    // This handles per-row empty targets gracefully for the column variant.
+    if (d_tgt.empty()) {
+      if (!d_chars) {
+        d_sizes[idx] = d_str.size_bytes();
+      } else {
+        memcpy(d_chars + d_offsets[idx], in_ptr, d_str.size_bytes());
+      }
+      return;
+    }
 
     size_type bytes = d_str.size_bytes();
     size_type spos  = 0;
@@ -385,13 +415,11 @@ struct replace_fn {
     char* out_ptr   = d_chars ? d_chars + d_offsets[idx] : nullptr;
     auto max_n      = (maxrepl < 0) ? d_str.length() : maxrepl;
 
-    // check each character against each target
+    // check each character against the target
     while (spos < d_str.size_bytes() && (max_n > 0)) {
-      auto const d_tgt = d_target;
       if ((d_tgt.size_bytes() <= (d_str.size_bytes() - spos)) &&    // check fit
           (d_tgt.compare(in_ptr + spos, d_tgt.size_bytes()) == 0))  // and match
       {
-        auto const d_repl = d_replacement;
         bytes += d_repl.size_bytes() - d_tgt.size_bytes();
         if (out_ptr) {
           out_ptr = copy_and_increment(out_ptr, in_ptr + lpos, spos - lpos);
@@ -411,23 +439,39 @@ struct replace_fn {
   }
 };
 
+/**
+ * @brief Perform string-parallel replace using per-row target/replacement getters.
+ *
+ * @param d_valid_mask Pre-computed combined validity mask (bitwise AND of input,
+ *   targets, and repls null masks). Null rows produce zero-size output so the
+ *   result never contains non-empty nulls. Pass `nullptr` when no combined mask
+ *   is needed (e.g. scalar target/repl with no per-row nullability).
+ *
+ * @warning The returned column has `null_count == 0` and no null mask. Callers
+ * must call `set_null_mask()` afterwards when any nulls are present.
+ */
+template <typename TargetIter, typename ReplIter>
 std::unique_ptr<column> replace_string_parallel(strings_column_view const& input,
-                                                string_view const& d_target,
-                                                string_view const& d_replacement,
+                                                TargetIter target_iter,
+                                                ReplIter repl_iter,
                                                 cudf::size_type maxrepl,
-                                                rmm::cuda_stream_view stream,
+                                                bitmask_type const* d_valid_mask,
+                                                cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
   auto [offsets_column, chars] = make_strings_children(
-    replace_fn{*d_strings, d_target, d_replacement, maxrepl}, input.size(), stream, mr);
+    replace_fn<TargetIter, ReplIter>{*d_strings, target_iter, repl_iter, maxrepl, d_valid_mask},
+    input.size(),
+    stream,
+    mr);
 
   return make_strings_column(input.size(),
                              std::move(offsets_column),
                              chars.release(),
-                             input.null_count(),
-                             cudf::detail::copy_bitmask(input.parent(), stream, mr));
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace
@@ -436,7 +480,7 @@ std::unique_ptr<column> replace(strings_column_view const& input,
                                 string_scalar const& target,
                                 string_scalar const& repl,
                                 cudf::size_type maxrepl,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -448,11 +492,66 @@ std::unique_ptr<column> replace(strings_column_view const& input,
   string_view d_target(target.data(), target.size());
   string_view d_repl(repl.data(), repl.size());
 
-  return (input.size() == input.null_count() ||
-          ((input.chars_size(stream) / (input.size() - input.null_count())) <
-           AVG_CHAR_BYTES_THRESHOLD))
-           ? replace_string_parallel(input, d_target, d_repl, maxrepl, stream, mr)
-           : replace_character_parallel(input, d_target, d_repl, maxrepl, stream, mr);
+  if (input.size() == input.null_count() ||
+      ((input.chars_size(stream) / (input.size() - input.null_count())) <
+       AVG_CHAR_BYTES_THRESHOLD)) {
+    auto result = replace_string_parallel(input,
+                                          cuda::constant_iterator(d_target),
+                                          cuda::constant_iterator(d_repl),
+                                          maxrepl,
+                                          nullptr,
+                                          stream,
+                                          mr);
+    if (input.parent().nullable()) {
+      result->set_null_mask(cudf::detail::copy_bitmask(input.parent(), stream, mr),
+                            input.null_count());
+    }
+    return result;
+  }
+  return replace_character_parallel(input, d_target, d_repl, maxrepl, stream, mr);
+}
+
+std::unique_ptr<column> replace(strings_column_view const& input,
+                                strings_column_view const& targets,
+                                strings_column_view const& repls,
+                                cuda::stream_ref stream,
+                                rmm::device_async_resource_ref mr)
+{
+  CUDF_EXPECTS(targets.size() == input.size(),
+               "targets column must have the same number of rows as input",
+               std::invalid_argument);
+  CUDF_EXPECTS(repls.size() == input.size(),
+               "repls column must have the same number of rows as input",
+               std::invalid_argument);
+  if (input.is_empty()) { return make_empty_column(type_id::STRING); }
+
+  // Compute the combined null mask up-front so the kernel produces zero-size
+  // output for null rows, preventing non-empty nulls in the result.
+  bool const has_any_nulls =
+    input.null_count() > 0 || targets.null_count() > 0 || repls.null_count() > 0;
+  auto [null_mask, null_count] = [&] {
+    if (has_any_nulls) {
+      auto const views = std::vector<column_view>{input.parent(), targets.parent(), repls.parent()};
+      return cudf::detail::bitmask_and(table_view{views}, stream, mr);
+    } else {
+      return std::pair{cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
+    }
+  }();
+  auto const d_valid_mask = has_any_nulls ? null_mask.data() : nullptr;
+
+  auto d_targets = column_device_view::create(targets.parent(), stream);
+  auto d_repls   = column_device_view::create(repls.parent(), stream);
+
+  auto result = replace_string_parallel(input,
+                                        d_targets->begin<string_view>(),
+                                        d_repls->begin<string_view>(),
+                                        -1,
+                                        d_valid_mask,
+                                        stream,
+                                        mr);
+
+  if (has_any_nulls) { result->set_null_mask(std::move(null_mask), null_count); }
+  return result;
 }
 
 }  // namespace detail
@@ -463,11 +562,21 @@ std::unique_ptr<column> replace(strings_column_view const& strings,
                                 string_scalar const& target,
                                 string_scalar const& repl,
                                 cudf::size_type maxrepl,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace(strings, target, repl, maxrepl, stream, mr);
+}
+
+std::unique_ptr<column> replace(strings_column_view const& strings,
+                                strings_column_view const& targets,
+                                strings_column_view const& repls,
+                                cuda::stream_ref stream,
+                                rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::replace(strings, targets, repls, stream, mr);
 }
 
 }  // namespace strings

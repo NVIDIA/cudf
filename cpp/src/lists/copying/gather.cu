@@ -1,19 +1,17 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/detail/gather.cuh>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/lists/detail/gather.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace lists {
@@ -51,20 +49,20 @@ struct list_gatherer {
   using result_type   = size_type;
 
   size_t offset_count;
-  size_type const* base_offsets;
-  size_type const* offsets;
+  int32_t const* base_offsets;
+  int32_t const* offsets;
 
   list_gatherer(gather_data const& gd)
     : offset_count{gd.base_offsets.size()},
       base_offsets{gd.base_offsets.data()},
-      offsets{gd.offsets->mutable_view().data<size_type>()}
+      offsets{gd.offsets->mutable_view().data<int32_t>()}
   {
   }
 
   __device__ result_type operator()(argument_type index)
   {
     // the "upper bound" of the span for a given offset is always offsets+1;
-    size_type const* upper_bound_start = offsets + 1;
+    int32_t const* upper_bound_start = offsets + 1;
     // "step 1" from above
     auto const bound =
       thrust::upper_bound(thrust::seq, upper_bound_start, upper_bound_start + offset_count, index);
@@ -81,12 +79,12 @@ struct list_gatherer {
  */
 std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                          gather_data const& gd,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   // gather map iterator for this level (N)
-  auto gather_map_begin = thrust::make_transform_iterator(
-    thrust::make_counting_iterator<size_type>(0), list_gatherer{gd});
+  auto gather_map_begin =
+    cudf::detail::make_counting_transform_iterator(size_type{0}, list_gatherer{gd});
   size_type gather_map_size = gd.gather_map_size;
 
   // call the normal gather
@@ -100,7 +98,9 @@ std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                            mr);
   auto leaf_column  = std::move(gather_table->release().front());
 
-  if (column.null_count() == 0) { leaf_column->set_null_mask(rmm::device_buffer{}, 0); }
+  if (column.null_count() == 0) {
+    leaf_column->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+  }
 
   return leaf_column;
 }
@@ -110,19 +110,19 @@ std::unique_ptr<column> gather_list_leaf(column_view const& column,
  */
 std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
                                            gather_data& gd,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   // gather map iterator for this level (N)
-  auto gather_map_begin = thrust::make_transform_iterator(
-    thrust::make_counting_iterator<size_type>(0), list_gatherer{gd});
+  auto gather_map_begin =
+    cudf::detail::make_counting_transform_iterator(size_type{0}, list_gatherer{gd});
   size_type gather_map_size = gd.gather_map_size;
 
   // if the gather map is empty, return an empty column
   if (gather_map_size == 0) { return empty_like(list.parent()); }
 
   // gather the bitmask, if relevant
-  rmm::device_buffer null_mask{0, stream, mr};
+  auto null_mask       = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
   size_type null_count = list.null_count();
   if (null_count > 0) {
     auto list_cdv = column_device_view::create(list.parent(), stream);
@@ -151,9 +151,7 @@ std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
                              std::move(child_gd.offsets),
                              std::move(child),
                              null_count,
-                             std::move(null_mask),
-                             stream,
-                             mr);
+                             std::move(null_mask));
   }
 
   // it's a leaf.  do a regular gather
@@ -164,9 +162,7 @@ std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
                            std::move(child_gd.offsets),
                            std::move(child),
                            null_count,
-                           std::move(null_mask),
-                           stream,
-                           mr);
+                           std::move(null_mask));
 }
 
 }  // namespace detail

@@ -1,6 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import datetime
+import decimal
 import itertools
 import math
 import operator
@@ -11,6 +13,7 @@ import zoneinfo
 import cupy as cp
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import rmm  # noqa: F401
@@ -63,17 +66,6 @@ def default_float_bitwidth(request):
         yield request.param
 
 
-@pytest.fixture(autouse=True)
-def set_copy_on_write_option(request):
-    if os.environ.get(
-        "CUDF_TEST_COPY_ON_WRITE"
-    ) == "1" and not request.node.get_closest_marker("no_copy_on_write"):
-        with cudf.option_context("copy_on_write", True):
-            yield
-    else:
-        yield
-
-
 @pytest.hookimpl(tryfirst=True, hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """Hook to make result information available in fixtures
@@ -106,10 +98,55 @@ def _get_all_zones():
     return sorted(zones)
 
 
+def _get_transition_zones(timestamps, always_include):
+    zones = set(always_include)
+    for zone in _get_all_zones():
+        timezone = zoneinfo.ZoneInfo(zone)
+        if any(
+            timestamp.replace(tzinfo=timezone, fold=0).utcoffset()
+            != timestamp.replace(tzinfo=timezone, fold=1).utcoffset()
+            for timestamp in timestamps
+        ):
+            zones.add(zone)
+    return sorted(zones)
+
+
 # NOTE: _get_all_zones is a very large list; we likely do NOT want to
 # use it for more than a handful of tests
 @pytest.fixture(params=_get_all_zones())
 def all_timezones(request):
+    return request.param
+
+
+@pytest.fixture(
+    params=_get_transition_zones(
+        [
+            datetime.datetime(2018, 11, 4, 0, 30),
+            datetime.datetime(2018, 11, 4, 1),
+            datetime.datetime(2018, 11, 4, 1, 30),
+            datetime.datetime(2018, 11, 4, 2),
+            datetime.datetime(2018, 11, 4, 2, 30),
+        ],
+        {"America/Metlakatla", "UTC"},
+    )
+)
+def ambiguous_timezones(request):
+    return request.param
+
+
+@pytest.fixture(
+    params=_get_transition_zones(
+        [
+            datetime.datetime(2018, 3, 11, 1, 30),
+            datetime.datetime(2018, 3, 11, 2),
+            datetime.datetime(2018, 3, 11, 2, 30),
+            datetime.datetime(2018, 3, 11, 3),
+            datetime.datetime(2018, 3, 11, 3, 30),
+        ],
+        {"America/Grand_Turk", "UTC"},
+    )
+)
+def nonexistent_timezones(request):
     return request.param
 
 
@@ -342,7 +379,8 @@ def float_types_as_str(request):
 
 
 @pytest.fixture(
-    params=signed_integer_types + unsigned_integer_types + float_types
+    scope="session",
+    params=signed_integer_types + unsigned_integer_types + float_types,
 )
 def numeric_types_as_str(request):
     """
@@ -453,6 +491,82 @@ def all_supported_types_as_str(request):
     - "category"
     - "bool"
     """
+    return request.param
+
+
+@pytest.fixture(
+    params=[
+        (1, pd.Int8Dtype()),
+        (1, pd.Int16Dtype()),
+        (1, pd.Int32Dtype()),
+        (1, pd.Int64Dtype()),
+        (1, pd.UInt8Dtype()),
+        (1, pd.UInt16Dtype()),
+        (1, pd.UInt32Dtype()),
+        (1, pd.UInt64Dtype()),
+        (1.5, pd.Float32Dtype()),
+        (1.5, pd.Float64Dtype()),
+        (True, pd.BooleanDtype()),
+        ("a", pd.StringDtype(na_value=np.nan, storage="python")),
+        ("a", pd.StringDtype(na_value=pd.NA, storage="python")),
+        ("a", pd.StringDtype(na_value=np.nan, storage="pyarrow")),
+        ("a", pd.StringDtype(na_value=pd.NA, storage="pyarrow")),
+    ],
+    ids=lambda x: repr(x[1]),
+)
+def all_supported_pandas_nullable_extension_dtypes(request):
+    """All supported pandas nullable extension dtypes with a representative scalar."""
+    return request.param
+
+
+@pytest.fixture(
+    params=[
+        (1, pd.ArrowDtype(pa.int8())),
+        (1, pd.ArrowDtype(pa.int16())),
+        (1, pd.ArrowDtype(pa.int32())),
+        (1, pd.ArrowDtype(pa.int64())),
+        (1, pd.ArrowDtype(pa.uint8())),
+        (1, pd.ArrowDtype(pa.uint16())),
+        (1, pd.ArrowDtype(pa.uint32())),
+        (1, pd.ArrowDtype(pa.uint64())),
+        (1.5, pd.ArrowDtype(pa.float32())),
+        (1.5, pd.ArrowDtype(pa.float64())),
+        (True, pd.ArrowDtype(pa.bool_())),
+        ("a", pd.ArrowDtype(pa.string())),
+        (datetime.datetime(2020, 1, 1), pd.ArrowDtype(pa.timestamp("ns"))),
+        (datetime.datetime(2020, 1, 1), pd.ArrowDtype(pa.timestamp("us"))),
+        (datetime.datetime(2020, 1, 1), pd.ArrowDtype(pa.timestamp("ms"))),
+        (datetime.datetime(2020, 1, 1), pd.ArrowDtype(pa.timestamp("s"))),
+        (
+            datetime.datetime(2020, 1, 1, tzinfo=zoneinfo.ZoneInfo("UTC")),
+            pd.ArrowDtype(pa.timestamp("ns", tz="UTC")),
+        ),
+        (
+            datetime.datetime(2020, 1, 1, tzinfo=zoneinfo.ZoneInfo("UTC")),
+            pd.ArrowDtype(pa.timestamp("us", tz="UTC")),
+        ),
+        (
+            datetime.datetime(2020, 1, 1, tzinfo=zoneinfo.ZoneInfo("UTC")),
+            pd.ArrowDtype(pa.timestamp("ms", tz="UTC")),
+        ),
+        (
+            datetime.datetime(2020, 1, 1, tzinfo=zoneinfo.ZoneInfo("UTC")),
+            pd.ArrowDtype(pa.timestamp("s", tz="UTC")),
+        ),
+        (datetime.timedelta(1), pd.ArrowDtype(pa.duration("ns"))),
+        (datetime.timedelta(1), pd.ArrowDtype(pa.duration("us"))),
+        (datetime.timedelta(1), pd.ArrowDtype(pa.duration("ms"))),
+        (datetime.timedelta(1), pd.ArrowDtype(pa.duration("s"))),
+        (decimal.Decimal("1.5"), pd.ArrowDtype(pa.decimal128(8, 2))),
+        (decimal.Decimal("1.5"), pd.ArrowDtype(pa.decimal64(8, 2))),
+        (decimal.Decimal("1.5"), pd.ArrowDtype(pa.decimal32(8, 2))),
+        ([1], pd.ArrowDtype(pa.list_(pa.int64()))),
+        ({"a": 1}, pd.ArrowDtype(pa.struct([pa.field("a", pa.int64())]))),
+    ],
+    ids=lambda x: repr(x[1]),
+)
+def all_supported_pandas_arrowdtypes(request):
+    """All supported pandas arrow dtypes with a representative scalar."""
     return request.param
 
 
@@ -614,4 +728,41 @@ def interval_closed(request):
 @pytest.fixture(params=["all", "any"])
 def dropna_how(request):
     """Param for `how` argument"""
+    return request.param
+
+
+@pytest.fixture(params=[True, False])
+def pandas_compatible(request):
+    """Param for `pandas_compatible` option"""
+    with cudf.option_context("mode.pandas_compatible", request.param):
+        yield request.param
+
+
+@pytest.fixture(params=[True, False])
+def infer_objects(request):
+    """Param for `infer_objects` argument"""
+    return request.param
+
+
+@pytest.fixture(params=[True, False])
+def convert_string(request):
+    """Param for `convert_string` argument"""
+    return request.param
+
+
+@pytest.fixture(params=[True, False])
+def convert_integer(request):
+    """Param for `convert_integer` argument"""
+    return request.param
+
+
+@pytest.fixture(params=[True, False])
+def convert_boolean(request):
+    """Param for `convert_boolean` argument"""
+    return request.param
+
+
+@pytest.fixture(params=[True, False])
+def convert_floating(request):
+    """Param for `convert_floating` argument"""
     return request.param

@@ -1,37 +1,18 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
-#include <cudf/detail/utilities/algorithm.cuh>
+#include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/stream_compaction.hpp>
-#include <cudf/utilities/bit.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/exec_policy.hpp>
-
+#include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
-
-/**
-￼ * @brief Device functor to determine if a row is valid.
-￼ */
-class row_validity {
- public:
-  row_validity(bitmask_type const* row_bitmask) : _row_bitmask{row_bitmask} {}
-
-  __device__ inline bool operator()(size_type const& i) const noexcept
-  {
-    return cudf::bit_is_set(_row_bitmask, i);
-  }
-
- private:
-  bitmask_type const* _row_bitmask;
-};
 
 template <typename InputIterator, typename BinaryPredicate>
 struct unique_copy_fn {
@@ -86,13 +67,13 @@ OutputIterator unique_copy(InputIterator first,
                            OutputIterator output,
                            BinaryPredicate comp,
                            duplicate_keep_option const keep,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   size_type const last_index = cuda::std::distance(first, last) - 1;
   return cudf::detail::copy_if(
     first,
     last,
-    thrust::counting_iterator<size_type>(0),
+    cuda::counting_iterator<size_type>{0},
     output,
     unique_copy_fn<InputIterator, BinaryPredicate>{first, keep, comp, last_index},
     stream);

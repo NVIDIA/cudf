@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -125,6 +125,25 @@ def test_shallow_copy():
     assert copy.column_map["a"].is_sorted == plc.types.Sorted.NO
 
 
+def test_with_columns_preserves_zero_column_row_count():
+    stream = get_cuda_stream()
+    dtype = DataType(pl.Int8())
+    column = Column(
+        plc.column_factories.make_numeric_column(
+            dtype.plc_type, 5, plc.MaskState.ALL_VALID, stream=stream
+        ),
+        dtype=dtype,
+        name="a",
+    )
+    zero_col = DataFrame([column], stream=stream).discard_columns({"a"})
+    assert zero_col.num_columns == 0
+    assert zero_col.num_rows == 5
+    # Adding no columns to a zero-column frame must keep the row count.
+    result = zero_col.with_columns([], stream=stream)
+    assert result.num_columns == 0
+    assert result.num_rows == 5
+
+
 def test_sorted_flags_preserved_empty():
     stream = get_cuda_stream()
     df = pl.DataFrame({"a": pl.Series([], dtype=pl.Int8())})
@@ -176,14 +195,14 @@ def test_sorted_flags_preserved(with_nulls, nulls_last):
     assert df.flags == gf.to_polars().flags
 
 
-def test_empty_name_roundtrips_overlap():
+def test_empty_name_roundtrips_overlap(engine: pl.GPUEngine):
     df = pl.LazyFrame({"": [1, 2, 3], "column_0": [4, 5, 6]})
-    assert_gpu_result_equal(df)
+    assert_gpu_result_equal(df, engine=engine)
 
 
-def test_empty_name_roundtrips_no_overlap():
+def test_empty_name_roundtrips_no_overlap(engine: pl.GPUEngine):
     df = pl.LazyFrame({"": [1, 2, 3], "b": [4, 5, 6]})
-    assert_gpu_result_equal(df)
+    assert_gpu_result_equal(df, engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -205,3 +224,53 @@ def test_serialization_roundtrip(polars_tbl):
     res = DataFrame.deserialize(header, frames, stream=stream)
 
     assert_frame_equal(df.to_polars(), res.to_polars())
+
+
+def test_size_bytes():
+    stream = get_cuda_stream()
+    df = pl.DataFrame(
+        {
+            "a": pl.Series([1, 2, 3], dtype=pl.Int64()),
+        }
+    )
+    df = DataFrame.from_polars(df, stream=stream)
+    assert df._size_bytes == 24
+
+
+def test_to_polars_time():
+    stream = get_cuda_stream()
+    values = pl.Series(
+        "t", [0, 3_723_000_000_123, 86_400_000_000_000 - 1, None], dtype=pl.Int64
+    )
+    time_column = plc.unary.bit_cast(
+        plc.Column.from_arrow(values, stream=stream),
+        plc.DataType(plc.TypeId.TIMESTAMP_NANOSECONDS),
+        stream=stream,
+    )
+    other = pl.Series("a", [4, 3, 2, 1], dtype=pl.Int64)
+    df = DataFrame(
+        [
+            Column(
+                time_column,
+                dtype=DataType(pl.Time()),
+                name="t",
+                is_sorted=plc.types.Sorted.YES,
+                order=plc.types.Order.ASCENDING,
+                null_order=plc.types.NullOrder.AFTER,
+            ),
+            Column(
+                plc.Column.from_arrow(other, stream=stream),
+                dtype=DataType(pl.Int64()),
+                name="a",
+            ),
+        ],
+        stream=stream,
+    )
+
+    result = df.to_polars()
+
+    expected = pl.DataFrame([values.cast(pl.Time), other]).with_columns(
+        pl.col("t").set_sorted()
+    )
+    assert_frame_equal(result, expected)
+    assert result.flags == expected.flags

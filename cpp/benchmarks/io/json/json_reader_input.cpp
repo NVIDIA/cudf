@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -29,10 +29,10 @@ void json_read_common(cudf::io::source_info const& source,
     cudf::io::json_reader_options::builder(source).compression(comptype).lines(true);
 
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
-      try_drop_l3_cache();
+      drop_page_cache_if_enabled(read_opts.get_source().filepaths());
 
       timer.start();
       auto const result = cudf::io::read_json(read_opts);
@@ -160,6 +160,6 @@ NVBENCH_BENCH_TYPES(BM_json_read_io, NVBENCH_TYPE_AXES(io_list))
 NVBENCH_BENCH_TYPES(BM_json_read_compressed_io, NVBENCH_TYPE_AXES(compression_list))
   .set_name("json_read_compressed_io")
   .set_type_axes_names({"compression_type"})
-  .add_int64_power_of_two_axis("data_size", nvbench::range(20, 29, 1))
+  .add_int64_power_of_two_axis("data_size", nvbench::range(20, 25, 1))
   .add_int64_axis("num_sources", nvbench::range(1, 5, 1))
   .set_min_samples(4);

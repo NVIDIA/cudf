@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_GE_230
 
 
 @pytest.mark.parametrize("period", [1.5, 0.5, "string", "1", "1.0"])
@@ -67,9 +66,6 @@ def test_dateoffset_instance_subclass_check():
     assert not isinstance(pd.DateOffset(), cudf.DateOffset)
 
 
-@pytest.mark.skipif(
-    not PANDAS_GE_230, reason="freqstr not supported in pandas < 2.3.0"
-)
 @pytest.mark.parametrize("freqstr", ["ME", "YE-DEC"])
 def test_dateoffset_freq_edgecases(freqstr):
     expect = pd.tseries.frequencies.to_offset(freqstr)

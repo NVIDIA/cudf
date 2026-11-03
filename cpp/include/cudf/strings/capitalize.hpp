@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,12 +10,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for capitalizing strings and detecting title case.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_case
  * @{
- * @file
  */
 
 /**
@@ -49,7 +53,7 @@ namespace strings {
 std::unique_ptr<column> capitalize(
   strings_column_view const& input,
   string_scalar const& delimiters   = string_scalar("", true, cudf::get_default_stream()),
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -82,7 +86,7 @@ std::unique_ptr<column> capitalize(
 std::unique_ptr<column> title(
   strings_column_view const& input,
   string_character_types sequence_type = string_character_types::ALPHA,
-  rmm::cuda_stream_view stream         = cudf::get_default_stream(),
+  cuda::stream_ref stream              = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
 
 /**
@@ -111,7 +115,7 @@ std::unique_ptr<column> title(
  */
 std::unique_ptr<column> is_title(
   strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group

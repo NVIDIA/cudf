@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -18,6 +18,9 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReductionTest extends CudfTestBase {
   public static final double DELTAD = 0.00001;
@@ -637,6 +640,106 @@ class ReductionTest extends CudfTestBase {
          ColumnVector cv = ColumnVector.fromBytes(new byte[]{1, 2, 3, 4});
          Scalar result = cv.standardDeviation(DType.FLOAT32)) {
       assertEquals(expected, result);
+    }
+  }
+
+  // Decoded struct scalar produced by SUM_OVERFLOW reduction.
+  // sumValid=false models the cudf "no valid input" case (null sum child).
+  private static final class SumOverflowResult {
+    final boolean sumValid;
+    final long sumValue;
+    final boolean overflow;
+
+    SumOverflowResult(boolean sumValid, long sumValue, boolean overflow) {
+      this.sumValid = sumValid;
+      this.sumValue = sumValue;
+      this.overflow = overflow;
+    }
+  }
+
+  // SUM_OVERFLOW reduction returns a struct scalar with children
+  // {sum: INT64, overflow: BOOL8}. Helper closes the temporary children views.
+  private static SumOverflowResult readSumOverflow(Scalar result) {
+    assertEquals(DType.STRUCT, result.getType());
+    assertTrue(result.isValid());
+    ColumnView[] children = result.getChildrenFromStructScalar();
+    try {
+      assertEquals(2, children.length);
+      assertEquals(DType.INT64, children[0].getType());
+      assertEquals(DType.BOOL8, children[1].getType());
+      try (ColumnVector sumCol = children[0].copyToColumnVector();
+           ColumnVector ovfCol = children[1].copyToColumnVector();
+           HostColumnVector sumHost = sumCol.copyToHost();
+           HostColumnVector ovfHost = ovfCol.copyToHost()) {
+        boolean sumValid = !sumHost.isNull(0);
+        long sumValue = sumValid ? sumHost.getLong(0) : 0L;
+        boolean overflow = ovfHost.getBoolean(0);
+        return new SumOverflowResult(sumValid, sumValue, overflow);
+      }
+    } finally {
+      for (ColumnView c : children) c.close();
+    }
+  }
+
+  @Test
+  void testSumOverflowNoOverflow() {
+    try (ColumnVector cv = ColumnVector.fromLongs(1L, 2L, 3L, 4L, 5L);
+         Scalar result = cv.reduce(ReductionAggregation.sumOverflow(), DType.STRUCT)) {
+      SumOverflowResult r = readSumOverflow(result);
+      assertTrue(r.sumValid);
+      assertEquals(15L, r.sumValue);  // 1+2+3+4+5
+      assertFalse(r.overflow);
+    }
+  }
+
+  @Test
+  void testSumOverflowPositiveOverflow() {
+    // On overflow the sum value is unspecified; the overflow flag is the source of truth.
+    try (ColumnVector cv = ColumnVector.fromLongs(Long.MAX_VALUE, 1L);
+         Scalar result = cv.reduce(ReductionAggregation.sumOverflow(), DType.STRUCT)) {
+      SumOverflowResult r = readSumOverflow(result);
+      assertTrue(r.sumValid);
+      assertTrue(r.overflow);
+    }
+  }
+
+  @Test
+  void testSumOverflowNegativeOverflow() {
+    // On overflow the sum value is unspecified; the overflow flag is the source of truth.
+    try (ColumnVector cv = ColumnVector.fromLongs(Long.MIN_VALUE, -1L);
+         Scalar result = cv.reduce(ReductionAggregation.sumOverflow(), DType.STRUCT)) {
+      SumOverflowResult r = readSumOverflow(result);
+      assertTrue(r.sumValid);
+      assertTrue(r.overflow);
+    }
+  }
+
+  @Test
+  void testSumOverflowEmptyColumn() {
+    try (ColumnVector cv = ColumnVector.fromLongs();
+         Scalar result = cv.reduce(ReductionAggregation.sumOverflow(), DType.STRUCT)) {
+      SumOverflowResult r = readSumOverflow(result);
+      assertFalse(r.sumValid);  // empty input -> null sum
+      assertFalse(r.overflow);
+    }
+  }
+
+  @Test
+  void testSumOverflowAllNullColumn() {
+    try (ColumnVector cv = ColumnVector.fromBoxedLongs(null, null, null);
+         Scalar result = cv.reduce(ReductionAggregation.sumOverflow(), DType.STRUCT)) {
+      SumOverflowResult r = readSumOverflow(result);
+      assertFalse(r.sumValid);  // all-null input -> null sum
+      assertFalse(r.overflow);
+    }
+  }
+
+  @Test
+  void testSumOverflowRejectsUnsupportedTypes() {
+    // SUM_OVERFLOW supports signed integers and decimals; float remains unsupported.
+    try (ColumnVector cv = ColumnVector.fromFloats(1.0f, 2.0f, 3.0f)) {
+      assertThrows(CudfException.class, () ->
+          cv.reduce(ReductionAggregation.sumOverflow(), DType.STRUCT).close());
     }
   }
 }

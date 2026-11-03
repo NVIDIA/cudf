@@ -1,19 +1,35 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
+#include <cudf/aggregation.hpp>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <nvbench/nvbench.cuh>
 
 #include <memory>
+
+template <typename T>
+struct representation_type {
+  using type = T;
+};
+
+template <cudf::concepts::chrono T>
+struct representation_type<T> {
+  using type = typename T::rep;
+};
+
+template <typename T>
+using representation_type_t = typename representation_type<T>::type;
 
 template <cudf::reduce_aggregation::Kind kind>
 static std::unique_ptr<cudf::reduce_aggregation> make_reduce_aggregation()
@@ -42,14 +58,22 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
 {
   if (cudf::is_chrono<DataType>() && kind != cudf::aggregation::MIN) {
     state.skip("Skip chrono types for some aggregations");
+    return;
   }
 
   auto const size      = static_cast<cudf::size_type>(state.get_int64("size"));
   auto const max_value = static_cast<cudf::size_type>(state.get_int64("max_value"));
 
-  auto const input_type      = cudf::type_to_id<DataType>();
+  auto const input_type = cudf::type_to_id<DataType>();
+  using RepType         = representation_type_t<DataType>;
+  // Cast to the rep type is needed for the data profile builder otherwise the integral
+  // bounds select the wrong overload and thence ignore the request for UNIFORM
+  // distribution for float types.
   data_profile const profile = data_profile_builder().no_validity().distribution(
-    input_type, distribution_id::UNIFORM, 0, max_value > 0 ? max_value : 100);
+    input_type,
+    distribution_id::UNIFORM,
+    static_cast<RepType>(0),
+    static_cast<RepType>(max_value > 0 ? max_value : 100));
   auto const input_column = create_random_column(input_type, row_count{size}, profile);
 
   auto const output_type = [&] {
@@ -62,15 +86,18 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
   }();
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_element_count(size);
   state.add_global_memory_reads<DataType>(size);
   state.add_global_memory_writes<DataType>(1);
 
-  auto agg = make_reduce_aggregation<kind>();
+  auto agg                    = make_reduce_aggregation<kind>();
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&input_column, output_type, &agg](nvbench::launch&) {
     cudf::reduce(*input_column, *agg, output_type);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   set_throughputs(state);
 }

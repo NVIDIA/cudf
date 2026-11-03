@@ -1,17 +1,20 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from libc.stdint cimport uint32_t
+from libc.stdint cimport uint8_t, uint32_t
 from libcpp.memory cimport unique_ptr
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
-from rmm.librmm.memory_resource cimport device_memory_resource
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
 cdef extern from "cudf/strings/char_types/char_types.hpp" \
         namespace "cudf::strings" nogil:
+
+    cdef const uint8_t* get_character_flags_table(cudaStream_t stream) \
+        except +libcudf_exception_handler
 
     cpdef enum class string_character_types(uint32_t):
         DECIMAL
@@ -29,13 +32,13 @@ cdef extern from "cudf/strings/char_types/char_types.hpp" \
         column_view source_strings,
         string_character_types types,
         string_character_types verify_types,
-        cuda_stream_view stream,
-        device_memory_resource* mr) except +libcudf_exception_handler
+        cudaStream_t stream,
+        device_async_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] filter_characters_of_type(
         column_view source_strings,
         string_character_types types_to_remove,
         string_scalar replacement,
         string_character_types types_to_keep,
-        cuda_stream_view stream,
-        device_memory_resource* mr) except +libcudf_exception_handler
+        cudaStream_t stream,
+        device_async_resource_ref mr) except +libcudf_exception_handler

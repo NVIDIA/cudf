@@ -1,10 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include "group_argminmax.hpp"
+#include "groupby/common/value_accessor.cuh"
 #include "reductions/nested_types_extrema_utils.cuh"
 
 #include <cudf/column/column.hpp>
@@ -12,54 +14,24 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.cuh>
 #include <cudf/detail/iterator.cuh>
-#include <cudf/detail/utilities/element_argminmax.cuh>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
 #include <cuda/std/functional>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/discard_iterator.h>
+#include <cuda/stream>
 #include <thrust/reduce.h>
 
 namespace cudf {
 namespace groupby {
 namespace detail {
-
-/**
- * @brief Value accessor for column which supports dictionary column too.
- *
- * This is similar to `value_accessor` in `column_device_view.cuh` but with support of dictionary
- * type.
- *
- * @tparam T Type of the underlying column. For dictionary column, type of the key column.
- */
-template <typename T>
-struct value_accessor {
-  column_device_view const col;
-  bool const is_dict;
-
-  value_accessor(column_device_view const& col) : col(col), is_dict(cudf::is_dictionary(col.type()))
-  {
-  }
-
-  __device__ T value(size_type i) const
-  {
-    if (is_dict) {
-      auto keys = col.child(dictionary_column_view::keys_column_index);
-      return keys.element<T>(static_cast<size_type>(col.element<dictionary32>(i)));
-    } else {
-      return col.element<T>(i);
-    }
-  }
-
-  __device__ auto operator()(size_type i) const { return value(i); }
-};
 
 /**
  * @brief Null replaced value accessor for column which supports dictionary column too.
@@ -91,7 +63,7 @@ struct null_replaced_value_accessor : value_accessor<SourceType> {
 };
 
 // Error case when no other overload or specialization is available
-template <aggregation::Kind K, typename T, typename Enable = void>
+template <aggregation::Kind K, typename T>
 struct group_reduction_functor {
   template <typename... Args>
   static std::unique_ptr<column> invoke(Args&&...)
@@ -106,7 +78,7 @@ struct group_reduction_dispatcher {
   std::unique_ptr<column> operator()(column_view const& values,
                                      size_type num_groups,
                                      cudf::device_span<cudf::size_type const> group_labels,
-                                     rmm::cuda_stream_view stream,
+                                     cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
   {
     return group_reduction_functor<K, T>::invoke(values, num_groups, group_labels, stream, mr);
@@ -132,14 +104,12 @@ static constexpr bool is_group_reduction_supported()
 }
 
 template <aggregation::Kind K, typename T>
-struct group_reduction_functor<
-  K,
-  T,
-  std::enable_if_t<is_group_reduction_supported<K, T>() && !cudf::is_nested<T>()>> {
+  requires(is_group_reduction_supported<K, T>() and not cudf::concepts::nested<T>)
+struct group_reduction_functor<K, T> {
   static std::unique_ptr<column> invoke(column_view const& values,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     using SourceDType = device_storage_type_t<T>;
@@ -157,24 +127,28 @@ struct group_reduction_functor<
 
     // Perform segmented reduction.
     auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
-      thrust::reduce_by_key(rmm::exec_policy_nosync(stream),
-                            group_labels.data(),
-                            group_labels.data() + group_labels.size(),
-                            inp_iter,
-                            thrust::make_discard_iterator(),
-                            out_iter,
-                            cuda::std::equal_to{},
-                            binop);
+      thrust::reduce_by_key(
+        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        group_labels.data(),
+        group_labels.data() + group_labels.size(),
+        inp_iter,
+        cuda::make_discard_iterator(),
+        out_iter,
+        cuda::std::equal_to{},
+        binop);
     };
 
     auto const d_values_ptr = column_device_view::create(values, stream);
     auto const result_begin = result->mutable_view().template begin<ResultDType>();
 
     if constexpr (K == aggregation::ARGMAX || K == aggregation::ARGMIN) {
-      auto const count_iter = thrust::make_counting_iterator<ResultType>(0);
-      auto const binop      = cudf::detail::element_argminmax_fn<T>{
-        *d_values_ptr, values.has_nulls(), K == aggregation::ARGMIN};
-      do_reduction(count_iter, result_begin, binop);
+      launch_argminmax_reduction(group_labels,
+                                 data_type{type_to_id<T>()},
+                                 *d_values_ptr,
+                                 values.has_nulls(),
+                                 K == aggregation::ARGMIN,
+                                 result_begin,
+                                 stream);
     } else {
       using OpType    = cudf::detail::corresponding_operator_t<K>;
       auto init       = OpType::template identity<ResultDType>();
@@ -186,7 +160,8 @@ struct group_reduction_functor<
     }
 
     if (values.has_nulls()) {
-      rmm::device_uvector<bool> validity(num_groups, stream);
+      cuda::device_buffer<bool> validity(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});
@@ -199,15 +174,13 @@ struct group_reduction_functor<
   }
 };
 
-template <aggregation::Kind K, typename T>
-struct group_reduction_functor<
-  K,
-  T,
-  std::enable_if_t<is_group_reduction_supported<K, T>() && cudf::is_nested<T>()>> {
+template <aggregation::Kind K, cudf::concepts::nested T>
+  requires(is_group_reduction_supported<K, T>())
+struct group_reduction_functor<K, T> {
   static std::unique_ptr<column> invoke(column_view const& values,
                                         size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
-                                        rmm::cuda_stream_view stream,
+                                        cuda::stream_ref stream,
                                         rmm::device_async_resource_ref mr)
   {
     // This is be expected to be size_type.
@@ -220,26 +193,27 @@ struct group_reduction_functor<
 
     // Perform segmented reduction to find ARGMIN/ARGMAX.
     auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
-      thrust::reduce_by_key(rmm::exec_policy_nosync(stream),
-                            group_labels.data(),
-                            group_labels.data() + group_labels.size(),
-                            inp_iter,
-                            thrust::make_discard_iterator(),
-                            out_iter,
-                            cuda::std::equal_to{},
-                            binop);
+      thrust::reduce_by_key(
+        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        group_labels.data(),
+        group_labels.data() + group_labels.size(),
+        inp_iter,
+        cuda::make_discard_iterator(),
+        out_iter,
+        cuda::std::equal_to{},
+        binop);
     };
 
-    auto const count_iter   = thrust::make_counting_iterator<ResultType>(0);
     auto const result_begin = result->mutable_view().template begin<ResultType>();
     auto const binop_generator =
       cudf::reduction::detail::arg_minmax_binop_generator::create<K>(values, stream);
-    do_reduction(count_iter, result_begin, binop_generator.binop());
+    launch_argminmax_reduction(group_labels, binop_generator.binop(), result_begin, stream);
 
     if (values.has_nulls()) {
       // Generate bitmask for the output by segmented reduction of the input bitmask.
       auto const d_values_ptr = column_device_view::create(values, stream);
-      auto validity           = rmm::device_uvector<bool>(num_groups, stream);
+      auto validity           = cuda::device_buffer<bool>(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});

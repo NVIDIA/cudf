@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 
-cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 include(../set_cuda_architecture.cmake)
 
@@ -26,27 +26,30 @@ rapids_cmake_build_type("Release")
 # gcc>=14. We can remove this once we upgrade to a newer sccache version.
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-add_library(hybrid_scan_io_utils OBJECT common_utils.cpp io_source.cpp)
-target_compile_features(hybrid_scan_io_utils PRIVATE cxx_std_20)
-target_link_libraries(hybrid_scan_io_utils PRIVATE cudf::cudf)
-
-# Build and install hybrid_scan
-add_executable(hybrid_scan_io hybrid_scan_io.cpp)
-target_link_libraries(
-  hybrid_scan_io PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>
-                         $<TARGET_OBJECTS:hybrid_scan_io_utils>
+add_library(
+  hybrid_scan_utils OBJECT common_utils.cpp io_source.cpp io_utils.cpp hybrid_scan_composer.cpp
 )
-target_compile_features(hybrid_scan_io PRIVATE cxx_std_20)
-install(TARGETS hybrid_scan_io DESTINATION bin/examples/libcudf/hybrid_scan_io)
+target_compile_features(hybrid_scan_utils PRIVATE cxx_std_20)
+target_link_libraries(hybrid_scan_utils PRIVATE cudf::cudf)
 
-# Build and install hybrid_scan_pipeline
-add_executable(hybrid_scan_pipeline hybrid_scan_pipeline.cpp)
-target_link_libraries(
-  hybrid_scan_pipeline PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>
-                               $<TARGET_OBJECTS:hybrid_scan_io_utils>
-)
-target_compile_features(hybrid_scan_pipeline PRIVATE cxx_std_20)
-install(TARGETS hybrid_scan_pipeline DESTINATION bin/examples/libcudf/hybrid_scan_io)
+# Creates a hybrid scan example executable and installs it.
+#
+# Arguments: target_name  - Name of the CMake target and resulting executable source_file  - Source
+# file to compile for the example
+function(add_hybrid_scan_example target_name source_file)
+  add_executable(${target_name} ${source_file})
+  target_link_libraries(
+    ${target_name} PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>
+                           $<TARGET_OBJECTS:hybrid_scan_utils>
+  )
+  target_compile_features(${target_name} PRIVATE cxx_std_20)
+  install(TARGETS ${target_name} DESTINATION bin/examples/libcudf/hybrid_scan_io)
+endfunction()
+
+add_hybrid_scan_example(hybrid_scan_io hybrid_scan_io.cpp)
+add_hybrid_scan_example(hybrid_scan_pipeline hybrid_scan_pipeline.cpp)
+add_hybrid_scan_example(hybrid_scan_multifile_single_step hybrid_scan_multifile_single_step.cpp)
+add_hybrid_scan_example(hybrid_scan_multifile_two_step hybrid_scan_multifile_two_step.cpp)
 
 # Install the example.parquet file
 install(FILES ${CMAKE_CURRENT_LIST_DIR}/example.parquet

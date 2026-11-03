@@ -1,0 +1,1521 @@
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Multi-partition IO Logic."""
+
+from __future__ import annotations
+
+import dataclasses
+import functools
+import itertools
+import math
+import statistics
+from collections import defaultdict
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, overload
+
+import polars as pl
+
+import pylibcudf as plc
+
+from cudf_polars.containers import Column, DataFrame
+from cudf_polars.dsl.expr import NamedExpr
+from cudf_polars.dsl.ir import (
+    IR,
+    CallbackSink,
+    DataFrameScan,
+    Empty,
+    PythonScan,
+    Scan,
+    Sink,
+    _prepare_parquet_predicate,
+    apply_predicate,
+)
+from cudf_polars.dsl.to_ast import to_parquet_filter
+from cudf_polars.dsl.tracing import nvtx_annotate_cudf_polars
+from cudf_polars.streaming.base import (
+    IOPartitionFlavor,
+    IOPartitionPlan,
+    PartitionInfo,
+    SerializedDataSourceInfo,
+)
+from cudf_polars.streaming.dispatch import lower_ir_node
+from cudf_polars.streaming.utils import partition_range
+from cudf_polars.utils.config import Cluster
+from cudf_polars.utils.cuda_stream import get_cuda_stream
+from cudf_polars.utils.dtypes import make_empty_column
+
+if TYPE_CHECKING:
+    from collections.abc import Hashable, Mapping, MutableMapping, Sequence
+
+    import pylibcudf.expressions as plc_expr
+    from rmm.pylibrmm.stream import Stream
+
+    from cudf_polars.containers import DataType
+    from cudf_polars.dsl.ir import CachedParquetInfo, IRExecutionContext
+    from cudf_polars.dsl.utils.lake import LakehouseScanOptions
+    from cudf_polars.dsl.utils.per_path import PerPathValues
+    from cudf_polars.streaming.base import (
+        DataSourceInfo,
+        SerializedDataSourceInfo,
+        StatsCollector,
+    )
+    from cudf_polars.streaming.dispatch import LowerIRTransformer
+    from cudf_polars.typing import Schema
+    from cudf_polars.utils.config import (
+        ConfigOptions,
+        ParquetOptions,
+        StreamingExecutor,
+    )
+
+
+@lower_ir_node.register(DataFrameScan)
+def _(
+    ir: DataFrameScan, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    config_options = rec.state["config_options"]
+
+    # NOTE: We calculate the expected partition count
+    # to help trigger fallback warnings in lower_ir_graph.
+    # The generate_ir_sub_network logic is NOT required
+    # to obey this partition count. However, the count
+    # WILL match after an IO operation (for now).
+    rows_per_partition = config_options.executor.max_rows_per_partition
+    nrows = max(ir.df.shape()[0], 1)
+    count = math.ceil(nrows / rows_per_partition)
+
+    return ir, {ir: PartitionInfo(count=count)}
+
+
+def scan_partition_plan(
+    ir: Scan, stats: StatsCollector, config_options: ConfigOptions[StreamingExecutor]
+) -> IOPartitionPlan:
+    """Extract the partitioning plan of a Scan operation."""
+    if ir.typ == "parquet":
+        blocksize: int = config_options.executor.target_partition_size
+        single_file = len(ir.paths) == 1
+        # A single file always uses a split parquet task when hybrid scan is enabled,
+        # so the hybrid reader can be used even when the file would otherwise not split.
+        # The split factor is still size-based, so a large file is split into many.
+        hybrid_single_file = (
+            single_file
+            and config_options.parquet_options.use_hybrid_scan
+            and ir.lake_options is None
+        )
+        whole_files = ir.lake_options is not None
+        if source := stats.scan_stats.get(ir):
+            column_sizes = [
+                sz
+                for col in ir.schema
+                if (sz := source.column_storage_size(col)) is not None
+            ]
+            if (file_size := sum(column_sizes)) > 0:
+                if whole_files:
+                    factor = (
+                        1
+                        if file_size >= blocksize
+                        else min(blocksize // int(file_size), len(ir.paths))
+                    )
+                    return IOPartitionPlan(
+                        max(factor, 1),
+                        IOPartitionFlavor.FUSED_FILES,
+                        estimated_chunk_bytes=file_size * max(factor, 1),
+                    )
+                if file_size > blocksize:
+                    k_lo = file_size // blocksize
+                    k_hi = k_lo + 1
+                    factor = (
+                        k_lo
+                        if abs(file_size / k_lo - blocksize)
+                        <= abs(file_size / k_hi - blocksize)
+                        else k_hi
+                    )
+                    if factor >= 2 or hybrid_single_file:
+                        return IOPartitionPlan(
+                            factor,
+                            IOPartitionFlavor.SPLIT_FILES,
+                            estimated_chunk_bytes=file_size // factor,
+                        )
+                elif hybrid_single_file:
+                    return IOPartitionPlan(
+                        1,
+                        IOPartitionFlavor.SPLIT_FILES,
+                        estimated_chunk_bytes=file_size,
+                    )
+                else:
+                    k_lo = min(blocksize // int(file_size), len(ir.paths))
+                    k_hi = k_lo + 1
+                    factor = (
+                        k_hi
+                        if k_hi <= len(ir.paths)
+                        and abs(k_hi * file_size - blocksize)
+                        <= abs(k_lo * file_size - blocksize)
+                        else k_lo
+                    )
+                return IOPartitionPlan(
+                    factor,
+                    IOPartitionFlavor.FUSED_FILES,
+                    estimated_chunk_bytes=file_size * factor,
+                )
+
+        if hybrid_single_file:
+            return IOPartitionPlan(1, IOPartitionFlavor.SPLIT_FILES)
+
+    # TODO: Use file sizes for csv and json
+    return IOPartitionPlan(1, IOPartitionFlavor.SINGLE_FILE)
+
+
+def _rank_slice(total: int, rank: int, nranks: int) -> tuple[int, int]:
+    """Return the partition range owned by this rank."""
+    start, stop = partition_range(rank, nranks, total)
+    return start, stop - start
+
+
+def expand_scan_for_rank(
+    ir: Scan,
+    plan: IOPartitionPlan,
+    partition_count: int,
+    *,
+    rank: int,
+    nranks: int,
+    parquet_options: ParquetOptions,
+) -> StreamingScan:
+    """
+    Expand a Scan node into a rank-local StreamingScan.
+
+    Parameters
+    ----------
+    ir
+        The Scan node to expand.
+    plan
+        The IO partitioning plan for the scan.
+    partition_count
+        Total number of partitions across all ranks.
+    rank
+        Rank of the current worker.
+    nranks
+        Number of workers.
+    parquet_options
+        Parquet reader options.
+
+    Returns
+    -------
+    StreamingScan
+        Rank-local streaming scan.
+    """
+    local_offset, local_count = _rank_slice(partition_count, rank, nranks)
+    if plan.flavor == IOPartitionFlavor.SPLIT_FILES:
+        assert ir.typ == "parquet"
+        path_offset = local_offset // plan.factor
+        path_end = math.ceil((local_offset + local_count) / plan.factor)
+        local_paths = ir.paths[path_offset:path_end]
+        sindex = local_offset % plan.factor
+        tasks: list[ScanTask] = []
+        splits_created = 0
+        for path_index, path in enumerate(local_paths, start=path_offset):
+            hive_parts = ir.slice_hive_parts(path_index, path_index + 1)
+            lake_options = ir.slice_lake_options(path_index, path_index + 1)
+            while sindex < plan.factor and splits_created < local_count:
+                tasks.append(
+                    ParquetScanTask(
+                        ir,
+                        [path],
+                        sindex,
+                        plan.factor,
+                        parquet_options,
+                        hive_parts,
+                        lake_options,
+                    )
+                )
+                sindex += 1
+                splits_created += 1
+            sindex = 0
+    else:
+        paths_start = local_offset * plan.factor
+        paths_end = paths_start + plan.factor * local_count
+        tasks = []
+        for offset in range(paths_start, paths_end, plan.factor):
+            paths = ir.paths[offset : offset + plan.factor]
+            if not paths:
+                continue
+            if ir.typ == "parquet":
+                tasks.append(
+                    ParquetScanTask(
+                        ir,
+                        paths,
+                        0,
+                        1,
+                        parquet_options,
+                        ir.slice_hive_parts(offset, offset + plan.factor),
+                        ir.slice_lake_options(offset, offset + plan.factor),
+                    )
+                )
+            else:
+                tasks.append(ScanTask(ir, paths, 0, 1))
+    return StreamingScan(tasks, ir)
+
+
+def hybrid_scan_eligible(
+    parquet_options: ParquetOptions,
+    *,
+    row_index: tuple[str, int] | None,
+    include_file_paths: str | None,
+    predicate: NamedExpr | None,
+    lake_options: LakehouseScanOptions | None = None,
+) -> bool:
+    """Whether scan options allow hybrid scan if metadata is available."""
+    return (
+        parquet_options.use_hybrid_scan
+        and row_index is None
+        and include_file_paths is None
+        and predicate is not None
+        # TODO: Support reading by Iceberg field ID
+        and lake_options is None
+    )
+
+
+def _read_with_hybrid_scan(
+    schema: Schema,
+    paths: list[str],
+    with_columns: list[str] | None,
+    plc_filter: plc_expr.Expression,
+    row_group_indices: list[int],
+    stream: Stream,
+    cached_info: CachedParquetInfo,
+    *,
+    split_index: int = 0,
+    total_splits: int = 1,
+    stats_pruning: bool = True,
+) -> DataFrame:
+    """Two-pass parquet read via HybridScanReader for a row-group-aligned task."""
+    assert len(paths) == 1, "hybrid scan only supports tasks with one physical file"
+    with nvtx_annotate_cudf_polars(
+        message="HybridScan", payload=(split_index + 1, total_splits)
+    ):
+        source_info = plc.io.SourceInfo(
+            [plc.io.types.FilepathSource(cached_info.path, cached_info.size)]
+        )
+        options = cached_info.default_reader_options()
+        if with_columns is not None:
+            options.set_column_names(with_columns)
+        options.set_filter(plc_filter)
+
+        reader = cached_info.hybrid_scan_reader(options)
+
+        if stats_pruning:
+            row_group_indices = reader.filter_row_groups_with_stats(
+                row_group_indices, options, stream=stream
+            )
+
+            if row_group_indices:
+                bloom_ranges = reader.bloom_filters_byte_ranges(
+                    row_group_indices, options
+                )
+                if bloom_ranges:
+                    bloom_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+                        source_info,
+                        bloom_ranges,
+                        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+                        stream=stream,
+                    )
+                    row_group_indices = reader.filter_row_groups_with_bloom_filters(
+                        bloom_chunks, row_group_indices, options, stream=stream
+                    )
+
+        if not row_group_indices:
+            col_names = with_columns if with_columns is not None else list(schema)
+            return DataFrame(
+                [
+                    Column(
+                        make_empty_column(schema[name], stream),
+                        dtype=schema[name],
+                        name=name,
+                    )
+                    for name in col_names
+                ],
+                stream=stream,
+            )
+
+        # TODO: Consider implementing page-index stats pruning. For split tasks, we
+        # can reuse the same page index for all splits of the same file, so the
+        # overhead of reading the page index can be amortized. For fused tasks, we
+        # would need to read the page index for all files, which may be too expensive.
+        row_mask = reader.build_all_true_row_mask(row_group_indices, stream=stream)
+
+        filter_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+            source_info,
+            reader.filter_column_chunks_byte_ranges(row_group_indices, options),
+            plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+            stream=stream,
+        )
+        filter_tbl_w_meta = reader.materialize_filter_columns(
+            row_group_indices,
+            filter_chunks,
+            row_mask,
+            plc.io.experimental.UseDataPageMask.YES,
+            options,
+            stream=stream,
+        )
+
+        filter_names = filter_tbl_w_meta.column_names(include_children=False)
+        filter_df = DataFrame.from_table(
+            filter_tbl_w_meta.tbl,
+            filter_names,
+            [schema[n] for n in filter_names],
+            stream=stream,
+        )
+
+        requested_columns = with_columns if with_columns is not None else list(schema)
+        columns = filter_df.columns
+        if set(requested_columns) - set(filter_names):
+            payload_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+                source_info,
+                reader.payload_column_chunks_byte_ranges(row_group_indices, options),
+                plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+                stream=stream,
+            )
+            payload_tbl_w_meta = reader.materialize_payload_columns(
+                row_group_indices,
+                payload_chunks,
+                row_mask,
+                plc.io.experimental.UseDataPageMask.YES,
+                options,
+                stream=stream,
+            )
+            payload_names = payload_tbl_w_meta.column_names(include_children=False)
+            payload_df = DataFrame.from_table(
+                payload_tbl_w_meta.tbl,
+                payload_names,
+                [schema[n] for n in payload_names],
+                stream=stream,
+            )
+            columns = [*columns, *payload_df.columns]
+
+        return DataFrame(columns, stream=stream).select(list(schema.keys()))
+
+
+class ParquetScanTaskBounds(NamedTuple):
+    """
+    Read bounds for a parquet scan task.
+
+    ``row_groups=None`` means all row groups in the task paths are
+    available to the reader. ``skip_rows`` and ``n_rows`` may still
+    restrict the rows to read.
+    """
+
+    row_groups: list[list[int]] | None
+    skip_rows: int
+    n_rows: int
+
+
+class ScanTask(IR):
+    """Generic streaming scan task."""
+
+    is_io_node: bool = True
+
+    __slots__ = (
+        "base_scan",
+        "paths",
+        "schema",
+        "split_index",
+        "total_splits",
+    )
+    _non_child: ClassVar[tuple[str, ...]] = (
+        "base_scan",
+        "paths",
+        "split_index",
+        "total_splits",
+    )
+    _n_non_child_args = 4
+    base_scan: Scan
+    """Scan operation this task is based on."""
+    paths: list[str]
+    """File paths assigned to this task."""
+    split_index: int
+    """Index of the current split, or 0 for non-split tasks."""
+    total_splits: int
+    """Total number of splits for a split file, or 1 for non-split tasks."""
+
+    def __init__(
+        self,
+        base_scan: Scan,
+        paths: list[str],
+        split_index: int,
+        total_splits: int,
+    ):
+        if total_splits < 1:
+            raise ValueError(f"Expected at least one split, got: {total_splits}")
+        if not 0 <= split_index < total_splits:
+            raise ValueError(
+                f"Expected split_index in [0, {total_splits}), got: {split_index}"
+            )
+        self.schema = base_scan.schema
+        self.base_scan = base_scan
+        self.paths = paths
+        self.split_index = split_index
+        self.total_splits = total_splits
+        self._non_child_args = (
+            base_scan,
+            paths,
+            split_index,
+            total_splits,
+        )
+        self.children = ()
+
+    def get_hashable(self) -> Hashable:
+        """Hashable representation of the node."""
+        return (
+            type(self),
+            tuple(self.schema.items()),
+            self.base_scan.get_hashable(),
+            tuple(self.paths),
+            self.split_index,
+            self.total_splits,
+        )
+
+    @classmethod
+    def do_evaluate(
+        cls,
+        base_scan: Scan,
+        paths: list[str],
+        split_index: int,
+        total_splits: int,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """Evaluate and return a dataframe."""
+        if total_splits > 1:  # pragma: no cover
+            raise NotImplementedError(
+                f"File splitting is not implemented for {base_scan.typ} scans."
+            )
+        with nvtx_annotate_cudf_polars(message=f"ScanTask: {', '.join(paths)}"):
+            return Scan.do_evaluate(
+                base_scan.schema,
+                base_scan.typ,
+                base_scan.reader_options,
+                paths,
+                base_scan.with_columns,
+                base_scan.skip_rows,
+                base_scan.n_rows,
+                base_scan.row_index,
+                base_scan.include_file_paths,
+                base_scan.predicate,
+                base_scan.parquet_options,
+                hive_parts=None,
+                cached_parquet_info=None,
+                lake_options=None,
+                context=context,
+            )
+
+
+class ParquetScanTask(ScanTask):
+    """Parquet-specific streaming scan task."""
+
+    is_io_node: bool = True
+
+    __slots__ = ("hive_parts", "lake_options", "parquet_options")
+    _non_child: ClassVar[tuple[str, ...]] = (
+        *ScanTask._non_child,
+        "parquet_options",
+        "hive_parts",
+        "lake_options",
+    )
+    _n_non_child_args = 7
+    parquet_options: ParquetOptions
+    """Parquet-specific options."""
+    hive_parts: PerPathValues | None
+    """Hive partition values for this task's paths."""
+    lake_options: LakehouseScanOptions | None
+    """Iceberg and Delta Lake options for this task's paths."""
+
+    def __init__(
+        self,
+        base_scan: Scan,
+        paths: list[str],
+        split_index: int,
+        total_splits: int,
+        parquet_options: ParquetOptions,
+        hive_parts: PerPathValues | None = None,
+        lake_options: LakehouseScanOptions | None = None,
+    ):
+        if base_scan.typ != "parquet":
+            raise ValueError(f"Expected a parquet scan, got: {base_scan.typ}")
+        if total_splits > 1 and len(paths) > 1:
+            raise ValueError(f"Expected a single path for a split task, got: {paths}")
+        Scan._validate_hive_parts_info(paths, hive_parts)
+        super().__init__(base_scan, paths, split_index, total_splits)
+        self.parquet_options = parquet_options
+        self.hive_parts = hive_parts
+        self.lake_options = lake_options
+        self._non_child_args = (
+            *self._non_child_args,
+            parquet_options,
+            hive_parts,
+            lake_options,
+        )
+
+    def get_hashable(self) -> Hashable:
+        """Hashable representation of the node."""
+        return (
+            type(self),
+            tuple(self.schema.items()),
+            self.base_scan.get_hashable(),
+            tuple(self.paths),
+            self.split_index,
+            self.total_splits,
+            self.parquet_options,
+            self.hive_parts,
+            self.lake_options,
+        )
+
+    def get_task_bounds(self) -> ParquetScanTaskBounds:
+        """Return parquet read bounds for this task."""
+        return self._get_task_bounds(self._get_task_parquet_info_from_cache())
+
+    def _get_task_parquet_info_from_cache(self) -> list[CachedParquetInfo] | None:
+        """Return cached parquet metadata matching this task's paths."""
+        cached_parquet_info = self.base_scan.cached_parquet_info
+        if cached_parquet_info is None or cached_parquet_info == []:
+            return None
+        if self.paths == [info.path for info in cached_parquet_info]:
+            return cached_parquet_info
+
+        cached_parquet_info_map = {info.path: info for info in cached_parquet_info}
+        if not all(path in cached_parquet_info_map for path in self.paths):
+            return None
+        return [cached_parquet_info_map[path] for path in self.paths]
+
+    def _fetch_parquet_info_for_hybrid_scan(self) -> list[CachedParquetInfo]:
+        """Fetch parquet metadata for hybrid scan."""
+        from cudf_polars.dsl.utils.io import _prefetch_parquet_footers_for_paths
+
+        return _prefetch_parquet_footers_for_paths(
+            self.paths,
+            parse_hybrid_metadata=True,
+        )
+
+    def _split_task_bounds_from_row_group_counts(
+        self, row_group_num_rows: list[int]
+    ) -> ParquetScanTaskBounds:
+        """Return parquet read bounds for a split task."""
+        total_row_groups = len(row_group_num_rows)
+        if self.total_splits <= total_row_groups:
+            row_group_stride = total_row_groups // self.total_splits
+            row_group_start = row_group_stride * self.split_index
+            row_group_stop = (
+                total_row_groups
+                if self.split_index == self.total_splits - 1
+                else row_group_start + row_group_stride
+            )
+            skip_rows = sum(row_group_num_rows[:row_group_start])
+            n_rows = sum(row_group_num_rows[row_group_start:row_group_stop])
+            row_groups = [list(range(row_group_start, row_group_stop))]
+        else:
+            row_groups = None
+            total_rows = sum(row_group_num_rows)
+            n_rows = total_rows // self.total_splits
+            skip_rows = n_rows * self.split_index
+
+        if self.split_index == self.total_splits - 1:
+            n_rows = -1
+        return ParquetScanTaskBounds(row_groups, skip_rows, n_rows)
+
+    def _split_task_bounds_from_row_group_metadata(self) -> ParquetScanTaskBounds:
+        """Return split bounds using parquet row-group metadata."""
+        row_group_num_rows = [
+            rg["num_rows"]
+            for rg in plc.io.parquet_metadata.read_parquet_metadata(
+                plc.io.SourceInfo(self.paths)
+            ).rowgroup_metadata()
+        ]
+        return self._split_task_bounds_from_row_group_counts(row_group_num_rows)
+
+    def _get_task_bounds(
+        self,
+        task_parquet_info: list[CachedParquetInfo] | None,
+    ) -> ParquetScanTaskBounds:
+        """Return bounds using cached metadata when available."""
+        base_scan = self.base_scan
+        if self.total_splits > 1:
+            # Logical scan slicing currently lowers to SINGLE_READ
+            assert base_scan.skip_rows == 0, "Unexpected skip_rows in split-file task."
+            assert base_scan.n_rows == -1, "Unexpected n_rows in split-file task."
+            if task_parquet_info is None:
+                return self._split_task_bounds_from_row_group_metadata()
+            return self._split_task_bounds_from_row_group_counts(
+                task_parquet_info[0].file_metadata.row_group_num_rows
+            )
+
+        row_groups: list[list[int]] | None = None
+        if (
+            task_parquet_info is not None
+            and base_scan.skip_rows == 0
+            and base_scan.n_rows == -1
+            and base_scan.row_index is None
+        ):
+            row_groups = [
+                list(range(len(info.file_metadata.row_group_num_rows)))
+                for info in task_parquet_info
+            ]
+        return ParquetScanTaskBounds(row_groups, base_scan.skip_rows, base_scan.n_rows)
+
+    def absolute_row_group_indices(
+        self,
+        rank_parquet_info_map: Mapping[str, CachedParquetInfo],
+        rank_row_group_offset_map: Mapping[str, int],
+    ) -> list[int] | None:
+        """
+        Return selected row-group indices in rank-local scan order.
+
+        Task bounds store row-group indices relative to each path. Convert them
+        to indices in the flattened rank-local metadata. Return ``None`` when
+        the task is not row-group aligned.
+        """
+        task_parquet_info = [rank_parquet_info_map[path] for path in self.paths]
+        row_groups = self._get_task_bounds(task_parquet_info).row_groups
+        if row_groups is None:
+            return None
+        assert len(row_groups) == len(task_parquet_info), (
+            "Task row-group bounds must match task parquet metadata."
+        )
+
+        indices: list[int] = []
+        for path, groups, info in zip(
+            self.paths, row_groups, task_parquet_info, strict=True
+        ):
+            row_group_count = len(info.file_metadata.row_group_num_rows)
+            for group in groups:
+                assert 0 <= group < row_group_count, (
+                    f"Invalid row-group index {group} for file with "
+                    f"{row_group_count} row groups."
+                )
+            indices.extend(rank_row_group_offset_map[path] + group for group in groups)
+        return indices or None
+
+    @classmethod
+    def do_evaluate(  # type: ignore[override]
+        cls,
+        base_scan: Scan,
+        paths: list[str],
+        split_index: int,
+        total_splits: int,
+        parquet_options: ParquetOptions,
+        hive_parts: PerPathValues | None,
+        lake_options: LakehouseScanOptions | None,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """Evaluate a parquet scan task."""
+        task = cls(
+            base_scan,
+            paths,
+            split_index,
+            total_splits,
+            parquet_options,
+            hive_parts,
+            lake_options,
+        )
+        base_scan = task.base_scan
+        paths = task.paths
+        task_parquet_info = task._get_task_parquet_info_from_cache()
+        should_try_hybrid_scan = (
+            len(paths) == 1
+            and base_scan.skip_rows == 0
+            and base_scan.n_rows == -1
+            and hybrid_scan_eligible(
+                parquet_options,
+                row_index=base_scan.row_index,
+                include_file_paths=base_scan.include_file_paths,
+                predicate=base_scan.predicate,
+                lake_options=lake_options,
+            )
+        )
+        if task_parquet_info is None and should_try_hybrid_scan:
+            # read_parquet_metadata is faster (for now),
+            # but hybrid scan needs FileMetaData.
+            task_parquet_info = task._fetch_parquet_info_for_hybrid_scan()
+        bounds = task._get_task_bounds(task_parquet_info)
+        # Hybrid scan reads through cached parquet metadata, so it is only used
+        # when the metadata is available to this task.
+        # TODO: Investigate re-enabling for some of the excluded paths
+        # (row_index / include_file_paths). Needs performance investigation.
+        if (
+            should_try_hybrid_scan
+            and bounds.row_groups is not None
+            and len(bounds.row_groups) == 1
+            and task_parquet_info is not None
+        ):
+            assert base_scan.predicate is not None
+            assert task_parquet_info is not None
+            stream = context.get_cuda_stream()
+            hive_names = (
+                frozenset(hive_parts.names) if hive_parts is not None else frozenset()
+            )
+            file_schema = {
+                name: dtype
+                for name, dtype in base_scan.schema.items()
+                if name not in hive_names
+            }
+            file_columns = (
+                None
+                if base_scan.with_columns is None
+                else [name for name in base_scan.with_columns if name not in hive_names]
+            )
+            plc_filter, residual = to_parquet_filter(
+                _prepare_parquet_predicate(
+                    base_scan.predicate.value,
+                    paths,
+                    base_scan.schema,
+                    file_columns,
+                ),
+                stream=stream,
+                unreadable_columns=hive_names,
+            )
+            if plc_filter is not None:
+                df = _read_with_hybrid_scan(
+                    file_schema,
+                    paths,
+                    file_columns,
+                    plc_filter,
+                    bounds.row_groups[0],
+                    stream,
+                    task_parquet_info[0],
+                    split_index=split_index,
+                    total_splits=total_splits,
+                    stats_pruning=parquet_options._hybrid_scan_stats_pruning,
+                )
+                if hive_parts is not None:
+                    df = df.with_columns(
+                        hive_parts.broadcast(df.num_rows, stream=stream),
+                        stream=stream,
+                    ).select(list(base_scan.schema))
+                # TODO: Evaluate conjuncts that only reference hive columns once
+                # per file, skipping the read when they are false.
+                return apply_predicate(
+                    df,
+                    NamedExpr(base_scan.predicate.name, residual)
+                    if residual is not None
+                    else None,
+                )
+
+        nvtx_message = (
+            f"{type(task).__name__}: {', '.join(paths)} "
+            f"[{split_index + 1}/{total_splits}]"
+        )
+        with nvtx_annotate_cudf_polars(message=nvtx_message):
+            return Scan.do_evaluate(
+                base_scan.schema,
+                base_scan.typ,
+                base_scan.reader_options,
+                paths,
+                base_scan.with_columns,
+                bounds.skip_rows,
+                bounds.n_rows,
+                base_scan.row_index,
+                base_scan.include_file_paths,
+                base_scan.predicate,
+                parquet_options,
+                hive_parts=hive_parts,
+                cached_parquet_info=task_parquet_info,
+                lake_options=lake_options,
+                context=context,
+            )
+
+
+@lower_ir_node.register(Empty)
+def _(
+    ir: Empty, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    return ir, {ir: PartitionInfo(count=1)}  # pragma: no cover
+
+
+@lower_ir_node.register(PythonScan)
+def _(
+    ir: PythonScan, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    # A PythonScan can emit multiple chunks and the count is unknown at lowering,
+    # so it always lowers as multi-partition (count > 1) regardless of world size.
+    # This forces downstream global operators to insert the required reduction
+    # instead of evaluating chunkwise.
+    #
+    # TODO: Remove this workaround once dynamic planning is mandatory. Under
+    # dynamic planning the runtime adapts to the real chunk count, so this
+    # lowering estimate no longer gates correctness.
+    return ir, {ir: PartitionInfo(count=2)}
+
+
+@lower_ir_node.register(Scan)
+def _(
+    ir: Scan, rec: LowerIRTransformer
+) -> tuple[StreamingScan, MutableMapping[IR, PartitionInfo]]:
+    config_options = rec.state["config_options"]
+    parquet_options = config_options.parquet_options
+    if (
+        ir.typ in ("csv", "parquet", "ndjson")
+        and ir.n_rows == -1
+        and ir.skip_rows == 0
+        and ir.row_index is None
+    ):
+        # NOTE: We calculate the expected partition count
+        # to help trigger fallback warnings in lower_ir_graph.
+        # The generate_ir_sub_network logic is NOT required
+        # to obey this partition count. However, the count
+        # WILL match after an IO operation (for now).
+        plan = scan_partition_plan(ir, rec.state["stats"], config_options)
+        paths = list(ir.paths)
+        if plan.flavor == IOPartitionFlavor.SPLIT_FILES:
+            count = plan.factor * len(paths)
+        else:
+            count = math.ceil(len(paths) / plan.factor)
+    else:
+        plan = IOPartitionPlan(
+            flavor=IOPartitionFlavor.SINGLE_READ, factor=len(ir.paths)
+        )
+        count = 1
+
+    parquet_options = dataclasses.replace(parquet_options, chunked=False)
+
+    new_ir = expand_scan_for_rank(
+        ir,
+        plan,
+        count,
+        rank=rec.state["rank"],
+        nranks=rec.state["nranks"],
+        parquet_options=parquet_options,
+    )
+    return new_ir, {new_ir: PartitionInfo(count=count, io_plan=plan)}
+
+
+class StreamingScan(IR):
+    """A streaming scan node."""
+
+    is_io_node: bool = True
+
+    __slots__ = (
+        "base_scan",
+        "schema",
+        "tasks",
+    )
+    _non_child = (
+        "tasks",
+        "base_scan",
+    )
+    _n_non_child_args = 2
+    base_scan: Scan
+    tasks: Sequence[ScanTask]
+
+    def __init__(
+        self,
+        tasks: Sequence[ScanTask],
+        base_scan: Scan,
+    ):
+        self.base_scan = base_scan
+        self.schema = base_scan.schema
+        self.tasks = tasks
+        self._non_child_args = (tasks, base_scan)
+        self.children = ()
+
+    def get_hashable(self) -> Hashable:
+        """Hashable representation of the node."""
+        # We don't need to include base_scan / schema, since it's in all the scan tasks.
+        return (type(self), *tuple(task.get_hashable() for task in self.tasks))
+
+    @classmethod
+    def do_evaluate(
+        cls,
+        tasks: Sequence[ScanTask],
+        base_scan: Scan,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """Raises NotImplementedError for StreamingScan nodes."""
+        raise NotImplementedError(
+            "StreamingScan.do_evaluate should not be called directly. Call Scan.do_evaluate on each scan task instead."
+        )
+
+
+class StreamingSink(IR):
+    """Sink a dataframe in streaming mode."""
+
+    __slots__ = ("sink", "sink_to_directory")
+    _non_child = ("schema", "sink", "sink_to_directory")
+    _n_non_child_args = 0
+
+    sink: Sink
+    sink_to_directory: bool
+
+    def __init__(
+        self,
+        schema: Schema,
+        sink: Sink,
+        sink_to_directory: bool,  # noqa: FBT001
+        df: IR,
+    ) -> None:
+        # Order must match ``_non_child`` + ``children`` so :meth:`Node.__reduce__`
+        # / ``reconstruct`` round-trip over pickling (e.g. Dask workers).
+        self.schema = schema
+        self.sink = sink
+        self.sink_to_directory = sink_to_directory
+        self._non_child_args = ()
+        self.children = (df,)
+
+    def get_hashable(self) -> Hashable:
+        """Hashable representation of the node."""
+        return (type(self), self.sink, *self.children)
+
+
+@lower_ir_node.register(CallbackSink)
+def _(
+    ir: CallbackSink, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    child, partition_info = rec(ir.children[0])
+    result = ir.reconstruct([child])
+    partition_info[result] = PartitionInfo(count=1)
+    return result, partition_info
+
+
+@lower_ir_node.register(Sink)
+def _(
+    ir: Sink, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    child, partition_info = rec(ir.children[0])
+    executor_options = rec.state["config_options"].executor
+
+    assert executor_options.name == "streaming", (
+        "'in-memory' executor not supported in 'lower_ir_node'"
+    )
+
+    # TODO: Support cloud storage
+    if (
+        Path(ir.path).exists()
+        and executor_options.sink_to_directory
+        and executor_options.cluster == Cluster.DEFAULT_SINGLETON
+    ):
+        # This lowering-time check can't be performed with the spmd / ray / dask
+        # clusters, which lower on each worker independently. There's a race condition
+        # between each worker performing this check that the path doesn't yet exist,
+        # and the sink operation creating the directory at the start of execution.
+        raise NotImplementedError(
+            f"Trying to sink to an existing directory: {ir.path}. "
+            "Writing to an existing path is not supported when sinking "
+            "to a directory. Please remove the target directory before "
+            "calling 'collect'."
+        )
+
+    sink_to_directory = executor_options.sink_to_directory
+    assert sink_to_directory is not None  # set in StreamingExecutor.__post_init__
+    new_node = StreamingSink(
+        ir.schema,
+        ir.reconstruct([child]),
+        sink_to_directory,
+        child,
+    )
+    partition_info[new_node] = partition_info[child]
+    return new_node, partition_info
+
+
+def _prepare_sink_directory(path: str) -> None:
+    """Prepare for a multi-partition sink."""
+    # TODO: Support cloud storage
+    Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def _sink_to_parquet_file(
+    path: str,
+    options: dict[str, Any],
+    writer: plc.io.parquet.ChunkedParquetWriter | None,
+    df: DataFrame,
+) -> plc.io.parquet.ChunkedParquetWriter:
+    """Sink a partition to an open Parquet file."""
+    # Set up a new chunked Parquet writer if necessary.
+    if writer is None:
+        metadata = Sink._make_parquet_metadata(df)
+        sink = plc.io.types.SinkInfo([path])
+        builder = Sink._apply_parquet_writer_options(
+            plc.io.parquet.ChunkedParquetWriterOptions.builder(sink), options
+        )
+        writer_options = builder.metadata(metadata).build()
+        writer = plc.io.parquet.ChunkedParquetWriter.from_options(
+            writer_options, stream=df.stream
+        )
+
+    # Append to the open Parquet file.
+    assert isinstance(writer, plc.io.parquet.ChunkedParquetWriter), (
+        "ChunkedParquetWriter is required."
+    )
+    writer.write(df.table)
+
+    return writer
+
+
+@overload
+def _sink_to_file(
+    kind: Literal["Parquet"],
+    path: str,
+    options: dict[str, Any],
+    writer_state: plc.io.parquet.ChunkedParquetWriter,
+    df: DataFrame,
+) -> plc.io.parquet.ChunkedParquetWriter: ...
+
+
+@overload
+def _sink_to_file(
+    kind: str,
+    path: str,
+    options: dict[str, Any],
+    writer_state: None,
+    df: DataFrame,
+) -> Literal[True]: ...
+
+
+def _sink_to_file(
+    kind: str,
+    path: str,
+    options: dict[str, Any],
+    writer_state: Any,
+    df: DataFrame,
+) -> Literal[True] | plc.io.parquet.ChunkedParquetWriter:
+    """Sink a partition to an open file."""
+    if kind == "Parquet":
+        # Parquet writer will pass along a
+        # ChunkedParquetWriter "writer state".
+        return _sink_to_parquet_file(
+            path,
+            options,
+            writer_state,
+            df,
+        )
+    elif kind == "Csv":
+        use_options = options.copy()
+        if writer_state is None:
+            mode = "wb"
+        else:
+            mode = "ab"
+            use_options["include_header"] = False
+        with Path.open(Path(path), mode) as f:
+            # Path.open returns IO[Any] but SinkInfo needs more specific IO types
+            sink = plc.io.types.SinkInfo([f])  # type: ignore[arg-type]
+            Sink._write_csv(sink, use_options, df)
+    elif kind == "NDJson":
+        mode = "wb" if writer_state is None else "ab"
+        with Path.open(Path(path), mode) as f:
+            # Path.open returns IO[Any] but SinkInfo needs more specific IO types
+            sink = plc.io.types.SinkInfo([f])  # type: ignore[arg-type]
+            Sink._write_json(sink, df)
+    else:  # pragma: no cover; Shouldn't get here.
+        raise NotImplementedError(f"{kind} not yet supported in _sink_to_file")
+
+    return True
+
+
+def _columnchunk_metadata_from_footers(
+    footers: list[plc.io.parquet_metadata.FileMetaData],
+) -> dict[str, list[int]]:
+    columnchunk_metadata: dict[str, list[int]] = {}
+    for fmd in footers:
+        for name, uncompressed_sizes in fmd.columnchunk_metadata.items():
+            columnchunk_metadata.setdefault(name, []).extend(uncompressed_sizes)
+    return columnchunk_metadata
+
+
+class ParquetMetadata:
+    """
+    Parquet metadata container.
+
+    Parameters
+    ----------
+    paths
+        Parquet-dataset paths.
+    max_footer_samples
+        Maximum number of file footers to sample metadata from.
+    parse_hybrid_metadata
+        Whether to eagerly parse ``HybridScanMetadata`` for sampled paths.
+        Only useful when ``ParquetOptions.use_hybrid_scan`` is enabled.
+    """
+
+    __slots__ = (
+        "cached_parquet_info",
+        "column_names",
+        "max_footer_samples",
+        "mean_size_per_file",
+        "num_row_groups_per_file",
+        "paths",
+        "row_count",
+        "sample_paths",
+        "sampled_file_count",
+        "total_file_count",
+    )
+
+    paths: tuple[str, ...]
+    """Parquet-dataset paths."""
+    max_footer_samples: int
+    """Maximum number of file footers to sample metadata from."""
+    row_count: int | None
+    """Total row-count estimate."""
+    num_row_groups_per_file: tuple[int, ...]
+    """Number of row groups in each sampled file."""
+    mean_size_per_file: dict[str, int]
+    """Average column storage size in a single file."""
+    column_names: tuple[str, ...]
+    """All column names found it the dataset."""
+    sample_paths: tuple[str, ...]
+    """Sampled file paths."""
+    cached_parquet_info: list[CachedParquetInfo] | None
+    """Cached parquet info for the sampled paths."""
+
+    @nvtx_annotate_cudf_polars(message="ParquetMetadata")
+    def __init__(
+        self,
+        paths: tuple[str, ...],
+        max_footer_samples: int,
+        *,
+        parse_hybrid_metadata: bool = False,
+    ):
+        from cudf_polars.dsl.utils.io import _prefetch_parquet_footers_for_paths
+
+        self.paths = paths
+        self.max_footer_samples = max_footer_samples
+        self.row_count = None
+        self.num_row_groups_per_file = ()
+        self.mean_size_per_file = {}
+        self.column_names = ()
+        self.cached_parquet_info = None
+        self.total_file_count = len(self.paths)
+        self.sampled_file_count = 0
+        if max_footer_samples <= 0:
+            self.sample_paths = ()
+            return
+
+        stride = max(1, int(len(paths) / max_footer_samples))
+        self.sample_paths = paths[: stride * max_footer_samples : stride]
+
+        if not self.sample_paths:
+            # No paths to sample from
+            # TODO: This requires row_count to be nullable. Why do we allow empty paths?
+            return
+
+        sampled_file_count = len(self.sample_paths)
+
+        sample_parquet_info = _prefetch_parquet_footers_for_paths(
+            list(self.sample_paths),
+            parse_hybrid_metadata=parse_hybrid_metadata,
+        )
+        sample_footers = [info.file_metadata for info in sample_parquet_info]
+
+        self.cached_parquet_info = sample_parquet_info
+        sampled_row_count = sum(fmd.num_rows for fmd in sample_footers)
+        if self.total_file_count == sampled_file_count:
+            row_count = sampled_row_count
+        else:
+            num_rows_per_sampled_file = int(sampled_row_count / sampled_file_count)
+            row_count = num_rows_per_sampled_file * self.total_file_count
+
+        num_row_groups_per_sampled_file = [
+            len(fmd.row_group_num_rows) for fmd in sample_footers
+        ]
+        rowgroup_offsets_per_file = list(
+            itertools.accumulate(num_row_groups_per_sampled_file, initial=0)
+        )
+
+        column_sizes_per_file = {
+            name: [
+                sum(uncompressed_sizes[start:end])
+                for (start, end) in itertools.pairwise(rowgroup_offsets_per_file)
+            ]
+            for name, uncompressed_sizes in _columnchunk_metadata_from_footers(
+                sample_footers
+            ).items()
+        }
+
+        self.column_names = tuple(column_sizes_per_file)
+        self.mean_size_per_file = {
+            name: int(statistics.mean(sizes))
+            for name, sizes in column_sizes_per_file.items()
+        }
+        self.num_row_groups_per_file = tuple(num_row_groups_per_sampled_file)
+        self.row_count = row_count
+        self.sampled_file_count = sampled_file_count
+
+
+@nvtx_annotate_cudf_polars(message="_sample_rg_sizes")
+def _sample_rg_sizes(
+    metadata: ParquetMetadata,
+    target_cols: list[str],
+    max_row_group_samples: int,
+) -> dict[str, int]:
+    """Return mean uncompressed bytes per row-group for each column in target_cols."""
+    sample_paths = metadata.sample_paths
+    num_row_groups_per_file = metadata.num_row_groups_per_file
+    if not sample_paths or len(num_row_groups_per_file) != len(sample_paths):
+        return {}  # pragma: no cover
+
+    n_sampled = 0
+    samples: defaultdict[str, list[int]] = defaultdict(list)
+    for path, num_rgs in zip(sample_paths, num_row_groups_per_file, strict=True):
+        for rg_id in range(num_rgs):
+            n_sampled += 1
+            samples[path].append(rg_id)
+            if n_sampled == max_row_group_samples:
+                break
+        if n_sampled == max_row_group_samples:
+            break
+
+    if not n_sampled:
+        return {}  # pragma: no cover
+
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo(list(samples))
+    ).build()
+    options.set_column_names(target_cols)
+    options.set_row_groups(list(samples.values()))
+    stream = get_cuda_stream()
+    tbl_w_meta = plc.io.parquet.read_parquet(options, stream=stream)
+    result = {
+        name: column.device_buffer_size() // n_sampled
+        for name, column in zip(
+            tbl_w_meta.column_names(include_children=False),
+            tbl_w_meta.columns,
+            strict=True,
+        )
+    }
+    stream.synchronize()
+    return result
+
+
+def _is_fixed_width(dtype: DataType) -> bool:
+    """Return whether dtype is a concrete fixed-width type."""
+    return dtype.id() not in (plc.TypeId.EMPTY, plc.TypeId.NUM_TYPE_IDS) and (
+        plc.traits.is_fixed_width(dtype.plc_type)
+    )
+
+
+def _decoded_size_floor(dtype: DataType, nrows: int) -> int:
+    """Return a conservative decoded-column byte floor for scan planning."""
+    nullmask = (nrows + 7) // 8
+    plc_dtype = dtype.plc_type
+    if dtype.id() == plc.TypeId.STRING:
+        # Decoded strings always have int32 offsets (4 bytes)
+        return (nrows + 1) * 4 + nullmask
+    if _is_fixed_width(dtype):
+        return nrows * plc.types.size_of(plc_dtype) + nullmask
+    return max(1, nrows)
+
+
+class ParquetSourceInfo:
+    """Parquet datasource information, fully computed at construction time."""
+
+    type: Literal["parquet"] = "parquet"
+
+    def __init__(
+        self,
+        row_count: int | None,
+        per_file_means: dict[str, int] | None = None,
+        *,
+        cached_parquet_info: list[CachedParquetInfo] | None = None,
+    ):
+        if per_file_means is None:
+            per_file_means = {}
+
+        self.row_count = row_count
+        self.per_file_means = per_file_means
+        self.cached_parquet_info = cached_parquet_info
+
+    @classmethod
+    def from_paths(
+        cls,
+        paths: tuple[str, ...],
+        needed_cols: frozenset[str],
+        schema: tuple[tuple[str, DataType], ...],
+        max_footer_samples: int,
+        max_row_group_samples: int,
+        *,
+        parse_hybrid_metadata: bool = False,
+    ) -> ParquetSourceInfo:
+        """Build a ParquetSourceInfo from a list of paths."""
+        metadata = ParquetMetadata(
+            paths,
+            max_footer_samples,
+            parse_hybrid_metadata=parse_hybrid_metadata,
+        )
+        row_count = metadata.row_count
+
+        file_count = len(paths)
+        per_file_means: dict[str, int] = {}
+        sample_parquet_info = (
+            list(metadata.cached_parquet_info)
+            if metadata.cached_parquet_info is not None
+            else None
+        )
+
+        if not (file_count and row_count and needed_cols):
+            return cls(row_count, {}, cached_parquet_info=sample_parquet_info)
+
+        rows_per_file = max(1, row_count // file_count)
+        schema_map = dict(schema)
+        sample_cols: list[str] = []
+
+        for col in needed_cols:
+            footer_mean = metadata.mean_size_per_file.get(col)
+            if footer_mean is None:
+                continue
+            dtype = schema_map[col]
+            decoded_floor = _decoded_size_floor(dtype, rows_per_file)
+            # This is conservative for all-null columns; footer null counts could
+            # refine the floor later if the extra partitioning becomes costly.
+            if (
+                footer_mean < decoded_floor
+                and max_row_group_samples > 0
+                and not _is_fixed_width(dtype)
+            ):
+                sample_cols.append(col)
+            else:
+                per_file_means[col] = max(footer_mean, decoded_floor)
+
+        if sample_cols:
+            rg_sizes = _sample_rg_sizes(metadata, sample_cols, max_row_group_samples)
+            mean_rg_count = (
+                statistics.mean(metadata.num_row_groups_per_file)
+                if metadata.num_row_groups_per_file
+                else 1
+            )
+            for col in sample_cols:
+                rg_size = rg_sizes.get(col)
+                decoded_floor = _decoded_size_floor(schema_map[col], rows_per_file)
+                footer_mean = metadata.mean_size_per_file[col]
+                per_file_means[col] = (
+                    max(footer_mean, decoded_floor, int(rg_size * mean_rg_count))
+                    if rg_size
+                    else max(footer_mean, decoded_floor)
+                )
+
+        return cls(row_count, per_file_means, cached_parquet_info=sample_parquet_info)
+
+    def column_storage_size(self, column: str) -> int | None:
+        """Return the average storage size for a single column in one file."""
+        return self.per_file_means.get(column)
+
+    def serialize(self) -> SerializedDataSourceInfo:
+        """Return JSON-serializable representation of the data source info."""
+        return {
+            "type": self.type,
+            "row_count": self.row_count,
+            "per_file_means": self.per_file_means,
+        }
+
+    @classmethod
+    def deserialize(cls, data: SerializedDataSourceInfo) -> ParquetSourceInfo:
+        """Deserialize a ParquetSourceInfo from a dictionary."""
+        if data["type"] != "parquet":
+            raise ValueError(f"Expected ParquetSourceInfo, got {data['type']}")
+        return cls(data["row_count"], data["per_file_means"])
+
+
+class DataFrameSourceInfo:
+    """
+    In-memory DataFrame source information.
+
+    Parameters
+    ----------
+    row_count
+        Exact row-count for the polars dataframe.
+    """
+
+    type: Literal["dataframe"] = "dataframe"
+
+    def __init__(self, row_count: int):
+        self.row_count = row_count
+
+    @classmethod
+    def from_polars(cls, df: pl.DataFrame) -> DataFrameSourceInfo:
+        """Build a DataFrameSourceInfo from a polars dataframe."""
+        return cls(df.height)
+
+    def column_storage_size(self, column: str) -> int | None:
+        """Return the average storage size for a single column in one file."""
+        return None
+
+    def serialize(self) -> SerializedDataSourceInfo:
+        """Return JSON-serializable representation of the data source info."""
+        return {
+            "type": self.type,
+            "row_count": self.row_count,
+            "per_file_means": None,
+        }
+
+    @classmethod
+    def deserialize(cls, data: SerializedDataSourceInfo) -> DataFrameSourceInfo:
+        """Deserialize a DataFrameSourceInfo from a dictionary."""
+        if data["type"] != "dataframe":
+            raise ValueError(f"Expected DataFrameSourceInfo, got {data['type']}")
+        if data["row_count"] is None:
+            raise ValueError("Row count is required for DataFrameSourceInfo")
+        return cls(data["row_count"])
+
+
+@functools.cache
+def _build_parquet_source(
+    paths: tuple[str, ...],
+    needed_cols: frozenset[str],
+    schema: tuple[tuple[str, DataType], ...],
+    max_footer_samples: int,
+    max_row_group_samples: int,
+    *,
+    parse_hybrid_metadata: bool = False,
+) -> ParquetSourceInfo:
+    """Return cached, fully-computed Parquet datasource information."""
+    return ParquetSourceInfo.from_paths(
+        paths,
+        needed_cols,
+        schema,
+        max_footer_samples,
+        max_row_group_samples,
+        parse_hybrid_metadata=parse_hybrid_metadata,
+    )
+
+
+def _resolve_max_footer_samples(
+    paths: tuple[str, ...], max_footer_samples: int | None
+) -> int:
+    """Resolve automatic footer sampling from the scan paths."""
+    if max_footer_samples is not None:
+        return max_footer_samples
+    if any(plc.io.SourceInfo._is_remote_uri(path) for path in paths):
+        return 0
+    return 3
+
+
+def _build_source_info(
+    ir: Scan | DataFrameScan,
+    config_options: ConfigOptions[StreamingExecutor],
+    *,
+    needed_cols: frozenset[str] | None = None,
+    schema: tuple[tuple[str, DataType], ...] | None = None,
+) -> DataSourceInfo:
+    """Return DataSourceInfo for a Scan or DataFrameScan node."""
+    if isinstance(ir, DataFrameScan):
+        return DataFrameSourceInfo.from_polars(pl.DataFrame._from_pydf(ir.df))
+    elif isinstance(ir, Scan) and ir.typ == "parquet":
+        paths = tuple(ir.paths)
+        max_footer = _resolve_max_footer_samples(
+            paths, config_options.parquet_options.max_footer_samples
+        )
+        max_rg = config_options.parquet_options.max_row_group_samples
+        needed_cols = frozenset(ir.schema) if needed_cols is None else needed_cols
+        schema = tuple(ir.schema.items()) if schema is None else schema
+        use_hybrid_scan = config_options.parquet_options.use_hybrid_scan
+        return _build_parquet_source(
+            paths,
+            needed_cols,
+            schema,
+            max_footer,
+            max_rg,
+            parse_hybrid_metadata=use_hybrid_scan,
+        )
+    else:  # pragma: no cover
+        raise ValueError(f"Unsupported Scan type: {ir.typ}")
+
+
+def _clear_source_info_cache() -> None:
+    """Clear DataSourceInfo caches."""
+    # TODO: Avoid clearing the cache if we can
+    # check that the underlying data hasn't changed.
+    _build_parquet_source.cache_clear()

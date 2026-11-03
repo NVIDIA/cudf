@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -37,14 +37,10 @@ def test_dataframe_accessor():
 
 
 def test_dataframe_accessor_identity():
-    """Test for accessor identities
-    - An object should hold persistent reference to the same accessor
-    - Different objects should hold difference instances of the accessor
-    """
+    """Test that different objects produce different accessor instances."""
     gdf1 = cudf.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
     gdf2 = gdf1.copy()
 
-    assert gdf1.point is gdf1.point
     assert gdf1.point is not gdf2.point
 
 

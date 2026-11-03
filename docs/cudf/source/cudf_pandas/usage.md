@@ -6,6 +6,7 @@ these methods:
 1. With Jupyter/IPython magics: `%load_ext cudf.pandas`
 2. When executing a Python script from the command line: `python -m cudf.pandas script.py`
 3. From a script or from the Python interpreter: `import cudf.pandas; cudf.pandas.install()`
+4. In JupyterLab, with the **GPU Accel** toolbar toggle from `jupyterlab-nvdashboard` (no `%load_ext` needed)
 
 See the instructions below for more information about each method.
 
@@ -31,6 +32,26 @@ If you have already imported or used pandas in your current kernel session,
 you will need to restart your kernel and run `%load_ext cudf.pandas` as the
 first command before any pandas imports or usage.
 ```
+
+(cudf-pandas-jupyterlab-toggle)=
+
+## JupyterLab Usage with jupyterlab-nvdashboard
+
+In JupyterLab, you can enable `cudf.pandas` from the GPU accelerator toggle
+provided by the
+[jupyterlab-nvdashboard](https://github.com/rapidsai/jupyterlab-nvdashboard#installation)
+extension. **No `%load_ext cudf.pandas` is needed**: you do not have to change
+your notebook at all.
+
+1. Install `jupyterlab-nvdashboard` in the same environment as cuDF.
+2. Open the **GPU Accel** menu in the notebook toolbar.
+3. Select **cuDF pandas**. This option is shown only when cuDF is installed in
+   the notebook's environment.
+4. Restart the kernel when prompted, then `import pandas` as usual.
+
+See the
+[GPU Accelerators documentation](https://github.com/rapidsai/jupyterlab-nvdashboard#gpu-accelerators)
+for a demo and details.
 
 ## Command Line Usage
 
@@ -146,6 +167,47 @@ To profile a script being run from the command line, pass the
 
 ```bash
 python -m cudf.pandas --profile script.py
+```
+
+To perform line-by-line profiling from the command line, pass the
+`--line-profile` argument:
+
+```bash
+python -m cudf.pandas --line-profile script.py
+```
+
+### Using the Profiler in Python Scripts
+
+Profiling can also be performed programmatically in Python scripts using the
+`Profiler` class. This is useful when running scripts outside of Jupyter or
+when more control over profiling is needed.
+
+```python
+import cudf.pandas
+cudf.pandas.install()
+
+from cudf.pandas.profiler import Profiler
+import pandas as pd
+
+with Profiler() as profiler:
+    df = pd.DataFrame({"a": [1, 2, 3]})
+    df.sum()
+
+profiler.print_per_function_stats()
+```
+
+Example output:
+
+```text
+          Total time elapsed: 0.052 seconds
+          1 GPU function calls in 0.050 seconds
+          0 CPU function calls in 0.000 seconds
+
+┌────────────────┬────────────┬─────────────┬─────────────┬────────────┬─────────────┬─────────────┐
+│ Function       │ GPU ncalls │ GPU cumtime │ GPU percall │ CPU ncalls │ CPU cumtime │ CPU percall │
+├────────────────┼────────────┼─────────────┼─────────────┼────────────┼─────────────┼─────────────┤
+│ DataFrame.sum  │ 1          │ 0.050       │ 0.050       │ 0          │ 0.000       │ 0.000       │
+└────────────────┴────────────┴─────────────┴─────────────┴────────────┴─────────────┴─────────────┘
 ```
 
 ### cudf.pandas CLI Features

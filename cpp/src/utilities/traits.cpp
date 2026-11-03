@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -317,6 +317,18 @@ struct is_dictionary_impl {
  * @return false `type` is not a dictionary type
  */
 bool is_dictionary(data_type type) { return cudf::type_dispatcher(type, is_dictionary_impl{}); }
+
+/**
+ * @brief Indicates whether `type` is a valid dictionary key type
+ *
+ * @param type The `data_type` to verify
+ * @return true `type` can be a dictionary type
+ * @return false `type` cannot be a dictionary type
+ */
+bool is_dictionary_key(data_type type)
+{
+  return not is_dictionary(type) && is_relationally_comparable(type);
+}
 
 struct is_fixed_width_impl {
   template <typename T>

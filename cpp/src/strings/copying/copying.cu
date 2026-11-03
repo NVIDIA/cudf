@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,11 +12,11 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -26,7 +26,7 @@ namespace detail {
 std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
                                          size_type start,
                                          size_type end,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -49,7 +49,7 @@ std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
       cudf::detail::offsetalator_factory::make_output_iterator(offsets_column->mutable_view());
     auto input_offsets =
       cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), offsets_offset);
-    thrust::transform(rmm::exec_policy_nosync(stream),
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       input_offsets,
                       input_offsets + offsets_column->size(),
                       d_offsets,
@@ -67,8 +67,7 @@ std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
   auto null_mask = cudf::detail::copy_bitmask(
     input.null_mask(), offsets_offset, offsets_offset + strings_count, stream, mr);
 
-  auto null_count = cudf::detail::null_count(
-    static_cast<bitmask_type const*>(null_mask.data()), 0, strings_count, stream);
+  auto null_count = cudf::detail::null_count(null_mask.data(), 0, strings_count, stream);
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),

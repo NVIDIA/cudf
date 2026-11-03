@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 
 #include <limits>
@@ -26,7 +26,7 @@ TYPED_TEST_SUITE(groupby_min_test, cudf::test::FixedWidthTypesWithoutFixedPoint)
 TYPED_TEST(groupby_min_test, basic)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MIN>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -44,7 +44,7 @@ TYPED_TEST(groupby_min_test, basic)
 TYPED_TEST(groupby_min_test, empty_cols)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MIN>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> vals{};
@@ -62,7 +62,7 @@ TYPED_TEST(groupby_min_test, empty_cols)
 TYPED_TEST(groupby_min_test, zero_valid_keys)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MIN>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys({1, 2, 3}, all_nulls());
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5});
@@ -80,7 +80,7 @@ TYPED_TEST(groupby_min_test, zero_valid_keys)
 TYPED_TEST(groupby_min_test, zero_valid_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MIN>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({3, 4, 5}, all_nulls());
@@ -98,7 +98,7 @@ TYPED_TEST(groupby_min_test, zero_valid_values)
 TYPED_TEST(groupby_min_test, null_keys_and_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::MIN>;
+  using R = V;
 
   cudf::test::fixed_width_column_wrapper<K> keys(
     {1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
@@ -139,7 +139,7 @@ TEST_F(groupby_min_string_test, basic)
 TEST_F(groupby_min_string_test, zero_valid_values)
 {
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
-  cudf::test::strings_column_wrapper vals({"año", "bit", "₹1"}, all_nulls());
+  cudf::test::strings_column_wrapper vals({"", "", ""}, all_nulls());
 
   cudf::test::fixed_width_column_wrapper<K> expect_keys{1};
   cudf::test::strings_column_wrapper expect_vals({""}, all_nulls());
@@ -474,13 +474,8 @@ TEST_F(groupby_min_list_test, null_keys_and_values)
 
   // Null child element.
   {
-    auto const vals        = lists{lists{{0, null}, null_at(1)},
-                            lists{1, 2},
-                            lists{3, 4},
-                            lists{5, 6, 7},
-                            lists{0, 8},
-                            lists{9, 10}};
-    auto const expect_vals = lists{lists{{0, null}, null_at(1)}, {1, 2}, {3, 4}};
+    auto const vals = lists{{{0, null}, null_at(1)}, {1, 2}, {3, 4}, {5, 6, 7}, {0, 8}, {9, 10}};
+    auto const expect_vals = lists{{{0, null}, null_at(1)}, {1, 2}, {3, 4}};
     test_single_agg(keys,
                     vals,
                     expect_keys,
@@ -508,7 +503,7 @@ TYPED_TEST(groupby_min_floating_point_test, values_with_infinity)
   auto const expected_keys = int32s_col{1, 2};
   auto const expected_vals = floats_col{-inf, static_cast<T>(1)};
 
-  // Related issue: https://github.com/rapidsai/cudf/issues/11352
+  // Related issue: https://github.com/NVIDIA/cudf/issues/11352
   // The issue only occurs in sort-based aggregation.
   auto agg = cudf::make_min_aggregation<cudf::groupby_aggregation>();
   test_single_agg(

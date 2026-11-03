@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -88,9 +88,9 @@ TEST_F(EncodeStringTest, SimpleNoNulls)
 
 TEST_F(EncodeStringTest, SimpleWithNulls)
 {
-  cudf::test::strings_column_wrapper input{{"a", "b", "c", "d", "a"}, {1, 0, 1, 1, 0}};
+  cudf::test::strings_column_wrapper input{{"a", "", "c", "d", ""}, {1, 0, 1, 1, 0}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expect{0, 3, 1, 2, 3};
-  cudf::test::strings_column_wrapper expect_keys{{"a", "c", "d", "0"}, {1, 1, 1, 0}};
+  cudf::test::strings_column_wrapper expect_keys{{"a", "c", "d", ""}, {1, 1, 1, 0}};
   auto const result = cudf::encode(cudf::table_view({input}));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.first->view().column(0), expect_keys);
@@ -99,9 +99,9 @@ TEST_F(EncodeStringTest, SimpleWithNulls)
 
 TEST_F(EncodeStringTest, UnorderedWithNulls)
 {
-  cudf::test::strings_column_wrapper input{{"ef", "a", "c", "d", "ef", "a"}, {1, 0, 1, 1, 0, 1}};
+  cudf::test::strings_column_wrapper input{{"ef", "", "c", "d", "", "a"}, {1, 0, 1, 1, 0, 1}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expect{3, 4, 1, 2, 4, 0};
-  cudf::test::strings_column_wrapper expect_keys{{"a", "c", "d", "ef", "0"}, {1, 1, 1, 1, 0}};
+  cudf::test::strings_column_wrapper expect_keys{{"a", "c", "d", "ef", ""}, {1, 1, 1, 1, 0}};
   auto const result = cudf::encode(cudf::table_view({input}));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.first->view().column(0), expect_keys);

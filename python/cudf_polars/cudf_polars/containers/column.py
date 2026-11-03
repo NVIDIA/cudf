@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """A column, with some properties."""
@@ -39,6 +39,13 @@ if TYPE_CHECKING:
     )
 
 __all__: list[str] = ["Column"]
+
+
+# Float64 has 53-bit significand precision (52 fraction bits + 1 implicit leading bit),
+# giving 15-17 significant decimal digits. Use 17 as upper bound when casting to
+# intermediate decimal to preserve all float64 precision before rounding.
+# https://en.wikipedia.org/wiki/Double-precision_floating-point_format
+_FLOAT64_DECIMAL_PRECISION = 17
 
 
 class Column:
@@ -127,7 +134,7 @@ class Column:
 
         To enable dask support, dask serializers must be registered
 
-            >>> from cudf_polars.experimental.dask_serialize import register
+            >>> from cudf_polars.streaming.dask_serialize import register
             >>> register()
 
         Returns
@@ -259,9 +266,11 @@ class Column:
         if plc.sorting.is_sorted(
             plc.Table([self.obj]), [order], [null_order], stream=stream
         ):
-            self.sorted = plc.types.Sorted.YES
-            self.order = order
-            self.null_order = null_order
+            self.set_sorted(
+                is_sorted=plc.types.Sorted.YES,
+                order=order,
+                null_order=null_order,
+            )
             return True
         return False
 
@@ -305,12 +314,21 @@ class Column:
             return Column(
                 self._handle_string_cast(plc_dtype, stream=stream, strict=strict),
                 dtype=dtype,
+                name=self.name,
             )
         elif plc.traits.is_integral_not_bool(
             self.obj.type()
         ) and plc.traits.is_timestamp(plc_dtype):
+            # The target's physical type: TIMESTAMP_DAYS is stored as int32,
+            # every other timestamp as int64.
             upcasted = plc.unary.cast(
-                self.obj, plc.DataType(plc.TypeId.INT64), stream=stream
+                self.obj,
+                plc.DataType(
+                    plc.TypeId.INT32
+                    if plc_dtype.id() == plc.TypeId.TIMESTAMP_DAYS
+                    else plc.TypeId.INT64
+                ),
+                stream=stream,
             )
             plc_col = plc.column.Column(
                 plc_dtype,
@@ -321,12 +339,16 @@ class Column:
                 upcasted.offset(),
                 upcasted.children(),
             )
-            return Column(plc_col, dtype=dtype).sorted_like(self)
+            return Column(plc_col, dtype=dtype, name=self.name).sorted_like(self)
         elif plc.traits.is_integral_not_bool(plc_dtype) and plc.traits.is_timestamp(
             self.obj.type()
         ):
             plc_col = plc.column.Column(
-                plc.DataType(plc.TypeId.INT64),
+                plc.DataType(
+                    plc.TypeId.INT32
+                    if self.obj.type().id() == plc.TypeId.TIMESTAMP_DAYS
+                    else plc.TypeId.INT64
+                ),
                 self.obj.size(),
                 self.obj.data(),
                 self.obj.null_mask(),
@@ -335,11 +357,88 @@ class Column:
                 self.obj.children(),
             )
             return Column(
-                plc.unary.cast(plc_col, plc_dtype, stream=stream), dtype=dtype
+                plc.unary.cast(plc_col, plc_dtype, stream=stream),
+                dtype=dtype,
+                name=self.name,
             ).sorted_like(self)
+        elif plc.traits.is_integral_not_bool(plc_dtype) and plc.traits.is_duration(
+            self.obj.type()
+        ):
+            # A duration is stored as an integer tick count, so casting to that
+            # integer type is a no-op reinterpret of the same bytes. Relabel the
+            # column instead of launching a cast kernel.
+            rep = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id() == plc.TypeId.DURATION_DAYS
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                rep,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            if rep.id() != plc_dtype.id():
+                plc_col = plc.unary.cast(plc_col, plc_dtype, stream=stream)
+            return Column(plc_col, dtype=dtype, name=self.name).sorted_like(self)
+        elif plc.traits.is_floating_point(plc_dtype) and (
+            plc.traits.is_timestamp(self.obj.type())
+            or plc.traits.is_duration(self.obj.type())
+        ):
+            phys = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id()
+                in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                phys,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            return Column(
+                plc.unary.cast(plc_col, plc_dtype, stream=stream),
+                dtype=dtype,
+                name=self.name,
+            ).sorted_like(self)
+        elif plc.traits.is_floating_point(
+            self.obj.type()
+        ) and plc.traits.is_fixed_point(plc_dtype):
+            # cudf::cast from float to decimal truncates instead of rounding.
+            # Polars expects rounding, so cast to higher precision decimal first to
+            # preserve float64's significant digits, then round_decimal to target scale.
+            target_scale = -plc_dtype.scale()
+            return Column(
+                plc.round.round_decimal(
+                    plc.unary.cast(
+                        self.obj,
+                        plc.DataType(
+                            plc.TypeId.DECIMAL128,
+                            scale=-max(target_scale, _FLOAT64_DECIMAL_PRECISION),
+                        ),
+                        stream=stream,
+                    ),
+                    decimal_places=target_scale,
+                    # Note polars uses banker's rounding
+                    # See crates/polars-ops/src/series/ops/round.rs (RoundMethod::HalfEven)
+                    round_method=plc.round.RoundingMethod.HALF_EVEN,
+                    stream=stream,
+                ),
+                dtype=dtype,
+                name=self.name,
+            )
         else:
             result = Column(
-                plc.unary.cast(self.obj, plc_dtype, stream=stream), dtype=dtype
+                plc.unary.cast(self.obj, plc_dtype, stream=stream),
+                dtype=dtype,
+                name=self.name,
             )
             if is_order_preserving_cast(self.obj.type(), plc_dtype):
                 return result.sorted_like(self)
@@ -486,12 +585,12 @@ class Column:
         )
 
     def mask_nans(self, stream: Stream) -> Self:
-        """Return a shallow copy of self with nans masked out."""
+        """Return a copy of self with nans masked out."""
         if plc.traits.is_floating_point(self.obj.type()):
             old_count = self.null_count
-            mask, new_count = plc.transform.nans_to_nulls(self.obj, stream=stream)
-            result = type(self)(self.obj.with_mask(mask, new_count), self.dtype)
-            if old_count == new_count:
+            obj = plc.transform.column_nans_to_nulls(self.obj, stream=stream)
+            result = type(self)(obj, self.dtype)
+            if old_count == obj.null_count():
                 return result.sorted_like(self)
             return result
         return self.copy()
@@ -513,7 +612,7 @@ class Column:
         """
         result: int
         if self.size > 0 and plc.traits.is_floating_point(self.obj.type()):
-            # See https://github.com/rapidsai/cudf/issues/20202 for we type ignore
+            # See https://github.com/NVIDIA/cudf/issues/20202 for we type ignore
             result = plc.reduce.reduce(  # type: ignore[assignment]
                 plc.unary.is_nan(self.obj, stream=stream),
                 plc.aggregation.sum(),

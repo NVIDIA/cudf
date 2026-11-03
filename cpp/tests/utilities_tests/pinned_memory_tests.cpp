@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,16 +7,18 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/io/config_utils.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/mr/pinned_host_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
+#include <cuda/iterator>
 
 using cudf::host_span;
 using cudf::detail::host_2dspan;
@@ -48,9 +50,7 @@ TEST_F(PinnedMemoryTest, MemoryResourceGetAndSet)
     ::testing::AddGlobalTestEnvironment(new cudf::test::TempDirTestEnvironment));
 
   // pinned/pooled host memory resource
-  using host_pooled_mr = rmm::mr::pool_memory_resource<rmm::mr::pinned_host_memory_resource>;
-  auto pinned_mr       = std::make_shared<rmm::mr::pinned_host_memory_resource>();
-  host_pooled_mr mr{pinned_mr.get(), 4 * 1024 * 1024};
+  cudf::test::pinned_pool mr{4 * 1024 * 1024};
 
   // set new resource
   auto last_mr = cudf::get_pinned_memory_resource();
@@ -59,7 +59,7 @@ TEST_F(PinnedMemoryTest, MemoryResourceGetAndSet)
   constexpr int num_rows = 32 * 1024;
   auto valids =
     cudf::detail::make_counting_transform_iterator(0, [&](int index) { return index % 2; });
-  auto values = thrust::make_counting_iterator(0);
+  auto values = cuda::counting_iterator<int>{0};
 
   cudf::test::fixed_width_column_wrapper<int> col(values, values + num_rows, valids);
 
@@ -147,13 +147,13 @@ TEST_F(PinnedMemoryTest, HostSpan)
   // hostdevice vectors use pinned memory for the host side; test that host_span can be constructed
   // from a hostdevice_vector with correct device accessibility
 
-  hostdevice_vector<int16_t> hd_vec(10, stream);
+  hostdevice_vector<int16_t> hd_vec(10, stream, cudf::get_current_device_resource_ref());
   auto const span = host_span<int16_t>{hd_vec};
   EXPECT_TRUE(span.is_device_accessible());
 
   // test host_view and operator[]
   {
-    hostdevice_2dvector<int16_t> hd_2dvec(10, 10, stream);
+    hostdevice_2dvector<int16_t> hd_2dvec(10, 10, stream, cudf::get_current_device_resource_ref());
     auto const span2d = hd_2dvec.host_view().flat_view();
     EXPECT_TRUE(span2d.is_device_accessible());
 
@@ -166,7 +166,8 @@ TEST_F(PinnedMemoryTest, HostSpan)
 
   // test const versions of host_view and operator[]
   {
-    hostdevice_2dvector<int16_t> const const_hd_2dvec(10, 10, stream);
+    hostdevice_2dvector<int16_t> const const_hd_2dvec(
+      10, 10, stream, cudf::get_current_device_resource_ref());
     auto const const_span2d = const_hd_2dvec.host_view().flat_view();
     EXPECT_TRUE(const_span2d.is_device_accessible());
 
@@ -181,5 +182,39 @@ TEST_F(PinnedMemoryTest, HostSpan)
   {
     hostdevice_span<int16_t> hd_span(hd_vec);
     EXPECT_TRUE(host_span<int16_t>{hd_span}.is_device_accessible());
+  }
+}
+
+TEST_F(PinnedMemoryTest, HostDeviceVectorMemoryResources)
+{
+  auto const stream = cudf::test::get_default_stream();
+  // With the integrated memory optimization, the device side aliases the pinned host buffer
+  auto const device_bytes = [](std::size_t bytes) {
+    return cudf::io::integrated_memory_optimization::is_enabled() ? 0 : bytes;
+  };
+
+  {
+    auto harness = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      harness,
+      [&](cudf::memory_resources mr) { return hostdevice_vector<int16_t>(10, stream, mr); },
+      [&](auto const& result) { return device_bytes(result.size_bytes()); },
+      [](auto const& result) { EXPECT_EQ(result.size(), 10); },
+      {},
+      stream);
+  }
+
+  {
+    auto harness = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      harness,
+      [&](cudf::memory_resources mr) { return hostdevice_2dvector<int16_t>(4, 5, stream, mr); },
+      [&](auto const& result) { return device_bytes(result.size_bytes()); },
+      [](auto const& result) {
+        EXPECT_EQ(result.size().first, 4);
+        EXPECT_EQ(result.size().second, 5);
+      },
+      {},
+      stream);
   }
 }

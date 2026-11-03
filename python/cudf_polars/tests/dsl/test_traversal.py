@@ -1,10 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
 from functools import singledispatch
-from typing import TypeAlias, TypedDict
+from typing import TypedDict
 
 import polars as pl
 from polars.testing import assert_frame_equal
@@ -30,7 +30,7 @@ class State(TypedDict):
     expr_mapper: ExprTransformer
 
 
-IRTransformer: TypeAlias = GenericTransformer[ir.IR, ir.IR, State]
+type IRTransformer = GenericTransformer[ir.IR, ir.IR, State]
 
 
 def make_expr(dt, n1, n2):
@@ -175,8 +175,7 @@ def test_rewrite_ir_node():
 
     result = new.evaluate(
         cache={},
-        timer=None,
-        context=IRExecutionContext.from_config_options(t.config_options),
+        context=IRExecutionContext(),
     ).to_polars()
 
     expect = pl.DataFrame({"a": [2, 1], "b": [-4, -3]})
@@ -211,8 +210,7 @@ def test_rewrite_scan_node(tmp_path):
 
     result = new.evaluate(
         cache={},
-        timer=None,
-        context=IRExecutionContext.from_config_options(t.config_options),
+        context=IRExecutionContext(),
     ).to_polars()
 
     expect = q.collect()
@@ -288,8 +286,7 @@ def test_rewrite_names_and_ops():
 
     got = new_ir.evaluate(
         cache={},
-        timer=None,
-        context=IRExecutionContext.from_config_options(t.config_options),
+        context=IRExecutionContext(),
     ).to_polars()
 
     assert_frame_equal(expect, got)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,11 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/device_buffer.hpp>
 
+/**
+ * @file
+ * @brief Interfaces for providing stream-ordered chunks of device data to text-based readers.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace io {
 namespace text {
@@ -18,7 +23,6 @@ namespace text {
 /**
  * @addtogroup io_readers
  * @{
- * @file
  */
 
 /**
@@ -87,7 +91,7 @@ class data_chunk_reader {
    * relative to the specified @p stream
    */
   virtual std::unique_ptr<device_data_chunk> get_next_chunk(std::size_t size,
-                                                            rmm::cuda_stream_view stream) = 0;
+                                                            cuda::stream_ref stream) = 0;
 };
 
 /**

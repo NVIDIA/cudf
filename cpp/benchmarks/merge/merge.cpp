@@ -1,7 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
@@ -11,7 +13,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <thrust/iterator/constant_iterator.h>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
@@ -25,7 +27,7 @@ void bench_merge(nvbench::state& state)
   int const num_tables           = static_cast<int>(state.get_int64("num_tables"));
 
   // Content is irrelevant for the benchmark
-  auto data_sequence = thrust::make_constant_iterator(0);
+  auto data_sequence = cuda::make_constant_iterator(0);
 
   // Using 0 seed to ensure consistent pseudo-numbers on each run
   std::mt19937 rand_gen(0);
@@ -59,15 +61,20 @@ void bench_merge(nvbench::state& state)
   std::vector<cudf::null_order> const null_precedence{};
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = total_rows * 2 * sizeof(int32_t);
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     auto result = cudf::merge(tables, key_cols, column_order, null_precedence);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_merge)

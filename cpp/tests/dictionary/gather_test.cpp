@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,8 +9,8 @@
 
 #include <cudf/copying.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/encode.hpp>
-#include <cudf/sorting.hpp>
 
 #include <vector>
 
@@ -32,6 +32,21 @@ TEST_F(DictionaryGatherTest, Gather)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
 }
 
+TEST_F(DictionaryGatherTest, EmptyGatherMap)
+{
+  cudf::test::strings_column_wrapper strings{"eee", "aaa", "ddd"};
+  auto dictionary = cudf::dictionary::encode(strings);
+
+  cudf::test::fixed_width_column_wrapper<int32_t> gather_map{};
+  auto table_result = cudf::gather(cudf::table_view{{dictionary->view()}}, gather_map)->release();
+  auto result       = cudf::dictionary_column_view(table_result.front()->view());
+
+  EXPECT_EQ(result.size(), 0);
+  ASSERT_EQ(result.parent().num_children(), 2);
+  EXPECT_EQ(result.keys().type().id(), cudf::type_id::STRING);
+  EXPECT_EQ(result.keys_type().id(), cudf::type_id::STRING);
+}
+
 TEST_F(DictionaryGatherTest, GatherWithNulls)
 {
   cudf::test::fixed_width_column_wrapper<int64_t> data{{1, 5, 5, 3, 7, 1},
@@ -49,38 +64,58 @@ TEST_F(DictionaryGatherTest, GatherWithNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result_decoded->view());
 }
 
-TEST_F(DictionaryGatherTest, SortStrings)
+TEST_F(DictionaryGatherTest, DuplicateKeys)
 {
-  std::vector<std::string> h_strings{"eee", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "eee", "aaa"};
-  cudf::test::strings_column_wrapper strings(h_strings.begin(), h_strings.end());
+  auto keys   = cudf::test::strings_column_wrapper({"pear", "apple", "fruit", "pear"});
+  auto values = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2, 3, 1, 2, 3, 0});
 
-  auto dictionary = cudf::dictionary::encode(strings);
-  cudf::dictionary_column_view view(dictionary->view());
+  auto dictionary = cudf::make_dictionary_column(
+    keys.release(), values.release(), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+  auto view = cudf::dictionary_column_view(dictionary->view());
 
-  auto result = cudf::sort(cudf::table_view{{dictionary->view()}},
-                           std::vector<cudf::order>{cudf::order::ASCENDING})
-                  ->release();
+  // decoded values are: {apple, fruit, pear, apple, fruit, pear, pear}
+  // where row 6 is the first 'pear' key and rows 2 and 5 are the second 'pear' key
+  {
+    // gather_map avoids any 'pear' rows
+    auto gather_map   = cudf::test::fixed_width_column_wrapper<int32_t>({0, 4, 3, 1});
+    auto table_result = cudf::gather(cudf::table_view{{view.parent()}}, gather_map)->release();
+    auto result       = cudf::dictionary_column_view(table_result.front()->view());
 
-  std::sort(h_strings.begin(), h_strings.end());
-  auto result_decoded = cudf::dictionary::decode(result.front()->view());
-  cudf::test::strings_column_wrapper expected(h_strings.begin(), h_strings.end());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result_decoded->view());
-}
+    auto expected = cudf::test::strings_column_wrapper({"apple", "fruit", "apple", "fruit"});
+    auto decoded  = cudf::dictionary::decode(result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
+  }
 
-TEST_F(DictionaryGatherTest, SortFloat)
-{
-  std::vector<double> h_data{1.25, -5.75, 8.125, 1e9, 9.7};
-  cudf::test::fixed_width_column_wrapper<double> data(h_data.begin(), h_data.end());
+  {
+    // gather_map includes the first 'pear' row (index 6)
+    auto gather_map   = cudf::test::fixed_width_column_wrapper<int32_t>({0, 6, 3, 1});
+    auto table_result = cudf::gather(cudf::table_view{{view.parent()}}, gather_map)->release();
+    auto result       = cudf::dictionary_column_view(table_result.front()->view());
 
-  auto dictionary = cudf::dictionary::encode(data);
-  cudf::dictionary_column_view view(dictionary->view());
+    auto expected = cudf::test::strings_column_wrapper({"apple", "pear", "apple", "fruit"});
+    auto decoded  = cudf::dictionary::decode(result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
+  }
 
-  auto result = cudf::sort(cudf::table_view{{dictionary->view()}},
-                           std::vector<cudf::order>{cudf::order::ASCENDING})
-                  ->release();
+  {
+    // gather_map includes the second 'pear' row (index 2)
+    auto gather_map   = cudf::test::fixed_width_column_wrapper<int32_t>({0, 2, 4, 3});
+    auto table_result = cudf::gather(cudf::table_view{{view.parent()}}, gather_map)->release();
+    auto result       = cudf::dictionary_column_view(table_result.front()->view());
 
-  std::sort(h_data.begin(), h_data.end());
-  auto result_decoded = cudf::dictionary::decode(result.front()->view());
-  cudf::test::fixed_width_column_wrapper<double> expected(h_data.begin(), h_data.end());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result_decoded->view());
+    auto expected = cudf::test::strings_column_wrapper({"apple", "pear", "fruit", "apple"});
+    auto decoded  = cudf::dictionary::decode(result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
+  }
+
+  {
+    // gather_map includes both the first and second 'pear' rows (indices 6 and 2)
+    auto gather_map   = cudf::test::fixed_width_column_wrapper<int32_t>({6, 0, 2, 1});
+    auto table_result = cudf::gather(cudf::table_view{{view.parent()}}, gather_map)->release();
+    auto result       = cudf::dictionary_column_view(table_result.front()->view());
+
+    auto expected = cudf::test::strings_column_wrapper({"pear", "apple", "pear", "fruit"});
+    auto decoded  = cudf::dictionary::decode(result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
+  }
 }

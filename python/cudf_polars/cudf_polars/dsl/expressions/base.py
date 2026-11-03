@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -8,23 +8,20 @@ from __future__ import annotations
 
 import enum
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import pylibcudf as plc
 
 from cudf_polars.containers import Column
 from cudf_polars.dsl.nodebase import Node
+from cudf_polars.dsl.traversal import traversal
 
 if TYPE_CHECKING:
     from typing import Self
 
     from cudf_polars.containers import Column, DataFrame, DataType
 
-__all__ = ["AggInfo", "Col", "ColRef", "ExecutionContext", "Expr", "NamedExpr"]
-
-
-class AggInfo(NamedTuple):
-    requests: list[tuple[Expr | None, plc.aggregation.Aggregation, Expr]]
+__all__ = ["Col", "ColRef", "ExecutionContext", "Expr", "NamedExpr"]
 
 
 class ExecutionContext(IntEnum):
@@ -112,6 +109,10 @@ class Expr(Node["Expr"]):
             are not perfect.
         """
         return self.do_evaluate(df, context=context)
+
+    def all_pointwise(self) -> bool:
+        """Return True when this expression and all descendants are pointwise."""
+        return all(e.is_pointwise for e in traversal([self]))
 
     @property
     def agg_request(self) -> plc.aggregation.Aggregation:
@@ -202,6 +203,10 @@ class NamedExpr:
         name to a column produced from an expression.
         """
         return self.value.evaluate(df, context=context).rename(self.name)
+
+    def all_pointwise(self) -> bool:
+        """Return True when the underlying expression tree is pointwise."""
+        return self.value.all_pointwise()
 
     def reconstruct(self, expr: Expr) -> Self:
         """

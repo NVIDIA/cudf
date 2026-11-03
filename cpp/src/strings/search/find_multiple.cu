@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,10 +15,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -26,7 +26,7 @@ namespace strings {
 namespace detail {
 std::unique_ptr<column> find_multiple(strings_column_view const& input,
                                       strings_column_view const& targets,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   auto const strings_count = input.size();
@@ -50,13 +50,18 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
   auto const total_count = static_cast<size_type>(total_elements);
 
   // create output column
-  auto results = make_numeric_column(
-    data_type{type_id::INT32}, total_count, rmm::device_buffer{0, stream, mr}, 0, stream, mr);
+  auto results =
+    make_numeric_column(data_type{type_id::INT32},
+                        total_count,
+                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                        0,
+                        stream,
+                        mr);
 
   // fill output column with position values
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::make_counting_iterator<size_type>(0),
-                    thrust::make_counting_iterator<size_type>(total_count),
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<size_type>{0},
+                    cuda::counting_iterator<size_type>{total_count},
                     results->mutable_view().begin<int32_t>(),
                     [d_strings, d_targets, targets_count] __device__(size_type idx) {
                       size_type str_idx = idx / targets_count;
@@ -67,18 +72,17 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
                     });
   results->set_null_count(0);
 
-  auto offsets = cudf::detail::sequence(strings_count + 1,
-                                        numeric_scalar<size_type>(0, true, stream),
-                                        numeric_scalar<size_type>(targets_count, true, stream),
-                                        stream,
-                                        mr);
+  auto offsets = cudf::detail::sequence(
+    strings_count + 1,
+    numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
+    numeric_scalar<int32_t>(targets_count, true, stream, cudf::get_current_device_resource_ref()),
+    stream,
+    mr);
   return make_lists_column(strings_count,
                            std::move(offsets),
                            std::move(results),
                            0,
-                           rmm::device_buffer{0, stream, mr},
-                           stream,
-                           mr);
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }
 
 }  // namespace detail
@@ -86,7 +90,7 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
 // external API
 std::unique_ptr<column> find_multiple(strings_column_view const& input,
                                       strings_column_view const& targets,
-                                      rmm::cuda_stream_view stream,
+                                      cuda::stream_ref stream,
                                       rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

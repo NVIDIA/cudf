@@ -1,23 +1,22 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/detail/utilities/stream_pool.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <cuda_runtime.h>
 
 #include <dlfcn.h>
+#include <generated_cuda_runtime_api_meta.h>
+#include <sanitizer.h>
 
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
-#include <string>
-#include <unordered_map>
 
 // This file is compiled into a separate library that is dynamically loaded with LD_PRELOAD at
 // runtime to libcudf to override some stream-related symbols in libcudf. The goal of such a library
@@ -48,10 +47,14 @@ namespace cudf {
 namespace test {
 #endif
 
-rmm::cuda_stream_view const get_default_stream()
+cuda::stream_ref const get_default_stream()
 {
-  static rmm::cuda_stream stream{};
-  return {stream};
+  static auto* stream = new cuda::stream{[] {
+    int device{};
+    CUDF_CUDA_TRY(cudaGetDevice(&device));
+    return cuda::device_ref{device};
+  }()};
+  return *stream;
 }
 
 #ifdef STREAM_MODE_TESTING
@@ -67,21 +70,15 @@ namespace detail {
  */
 class test_cuda_stream_pool : public cuda_stream_pool {
  public:
-  rmm::cuda_stream_view get_stream() override { return cudf::test::get_default_stream(); }
-  [[maybe_unused]] rmm::cuda_stream_view get_stream(stream_id_type stream_id) override
-  {
-    return cudf::test::get_default_stream();
-  }
+  cuda::stream_ref get_stream() override { return cudf::test::get_default_stream(); }
 
-  std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) override
+  std::vector<cuda::stream_ref> get_streams(std::size_t count) override
   {
-    return std::vector<rmm::cuda_stream_view>(count, cudf::test::get_default_stream());
+    return std::vector<cuda::stream_ref>(count, cudf::test::get_default_stream());
   }
-
-  [[nodiscard]] std::size_t get_stream_pool_size() const override { return 1UL; }
 };
 
-cuda_stream_pool* create_global_cuda_stream_pool() { return new test_cuda_stream_pool(); }
+cuda_stream_pool* create_cuda_stream_pool() { return new test_cuda_stream_pool(); }
 
 }  // namespace detail
 #endif
@@ -92,12 +89,12 @@ bool stream_is_invalid(cudaStream_t stream)
 {
 #ifdef STREAM_MODE_TESTING
   // In this mode the _only_ valid stream is the one returned by cudf::test::get_default_stream.
-  return (stream != cudf::test::get_default_stream().value());
+  return (stream != cudf::test::get_default_stream().get());
 #else
   // We explicitly list the possibilities rather than using
-  // `cudf::get_default_stream().value()` because there is no guarantee that
+  // `cudf::get_default_stream().get()` because there is no guarantee that
   // `thrust::device` and the default value of
-  // `cudf::get_default_stream().value()` are actually the same. At present, the
+  // `cudf::get_default_stream().get()` are actually the same. At present, the
   // former is `cudaStreamLegacy` while the latter is 0.
   return (stream == cudaStreamDefault) || (stream == cudaStreamLegacy) ||
          (stream == cudaStreamPerThread);
@@ -119,234 +116,132 @@ void check_stream_and_error(cudaStream_t stream)
   }
 }
 
-/**
- * @brief Container for CUDA APIs that have been overloaded using DEFINE_OVERLOAD.
- *
- * This variable must be initialized before everything else.
- *
- * @see find_originals for a description of the priorities
- */
-__attribute__((init_priority(1001))) std::unordered_map<std::string, void*> originals;
+class sanitizer_subscriber {
+ public:
+  sanitizer_subscriber();
+  ~sanitizer_subscriber();
 
-/**
- * @brief Macro for generating functions to override existing CUDA functions.
- *
- * Define a new function with the provided signature that checks the used
- * stream and raises an exception if it is one of CUDA's default streams. If
- * not, the new function forwards all arguments to the original function.
- *
- * Note that since this only defines the function, we do not need default
- * parameter values since those will be provided by the original declarations
- * in CUDA itself.
- *
- * @see find_originals for a description of the priorities
- *
- * @param function The function to overload.
- * @param signature The function signature (must include names, not just types).
- * @parameter arguments The function arguments (names only, no types).
- */
-#define DEFINE_OVERLOAD(function, signature, arguments)     \
-  using function##_t = cudaError_t (*)(signature);          \
-                                                            \
-  cudaError_t function(signature)                           \
-  {                                                         \
-    check_stream_and_error(stream);                         \
-    return ((function##_t)originals[#function])(arguments); \
-  }                                                         \
-  __attribute__((constructor(1002))) void queue_##function() { originals[#function] = nullptr; }
+ private:
+  Sanitizer_SubscriberHandle handle;
 
-/**
- * @brief Helper macro to define macro arguments that contain a comma.
- */
-#define ARG(...) __VA_ARGS__
+  static void check_result(SanitizerResult result);
 
-// clang-format off
-/*
-   We need to overload all the functions from the runtime API (assuming that we
-   don't use the driver API) that accept streams. The main webpage for APIs is
-   https://docs.nvidia.com/cuda/cuda-runtime-api/modules.html#modules. Here are
-   the modules containing any APIs using streams as of 9/20/2022:
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EVENT.html#group__CUDART__EVENT - Done
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EXTRES__INTEROP.html#group__CUDART__EXTRES__INTEROP
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EXECUTION.html#group__CUDART__EXECUTION - Done
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html#group__CUDART__MEMORY - Done
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY__POOLS.html#group__CUDART__MEMORY__POOLS - Done
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__OPENGL__DEPRECATED.html#group__CUDART__OPENGL__DEPRECATED
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EGL.html#group__CUDART__EGL
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__INTEROP.html#group__CUDART__INTEROP
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__GRAPH.html#group__CUDART__GRAPH
-   - https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__HIGHLEVEL.html#group__CUDART__HIGHLEVEL
- */
-// clang-format on
+  template <typename Args, cudaStream_t Args::* Field>
+  static void check_stream_arg(Sanitizer_CallbackData const* cbdata);
 
-// Event APIS:
-// https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EVENT.html#group__CUDART__EVENT
-DEFINE_OVERLOAD(cudaEventRecord, ARG(cudaEvent_t event, cudaStream_t stream), ARG(event, stream));
+  void callback(Sanitizer_CallbackDomain domain, Sanitizer_CallbackId cbid, void const* cbdata);
+};
 
-DEFINE_OVERLOAD(cudaEventRecordWithFlags,
-                ARG(cudaEvent_t event, cudaStream_t stream, unsigned int flags),
-                ARG(event, stream, flags));
-
-// Execution APIS:
-// https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EXECUTION.html#group__CUDART__EXECUTION
-DEFINE_OVERLOAD(cudaLaunchKernel,
-                ARG(void const* func,
-                    dim3 gridDim,
-                    dim3 blockDim,
-                    void** args,
-                    size_t sharedMem,
-                    cudaStream_t stream),
-                ARG(func, gridDim, blockDim, args, sharedMem, stream));
-
-#if CUDART_VERSION >= 13000
-// We need to define the __cudaLaunchKernel ABI as
-// it isn't part of cuda_runtime.h when compiling as a C++ source
-extern "C" cudaError_t CUDARTAPI __cudaLaunchKernel(cudaKernel_t kernel,
-                                                    dim3 gridDim,
-                                                    dim3 blockDim,
-                                                    void** args,
-                                                    size_t sharedMem,
-                                                    cudaStream_t stream);
-extern "C" cudaError_t CUDARTAPI __cudaLaunchKernel_ptsz(cudaKernel_t kernel,
-                                                         dim3 gridDim,
-                                                         dim3 blockDim,
-                                                         void** args,
-                                                         size_t sharedMem,
-                                                         cudaStream_t stream);
-DEFINE_OVERLOAD(__cudaLaunchKernel,
-                ARG(cudaKernel_t kernel,
-                    dim3 gridDim,
-                    dim3 blockDim,
-                    void** args,
-                    size_t sharedMem,
-                    cudaStream_t stream),
-                ARG(kernel, gridDim, blockDim, args, sharedMem, stream));
-DEFINE_OVERLOAD(__cudaLaunchKernel_ptsz,
-                ARG(cudaKernel_t kernel,
-                    dim3 gridDim,
-                    dim3 blockDim,
-                    void** args,
-                    size_t sharedMem,
-                    cudaStream_t stream),
-                ARG(kernel, gridDim, blockDim, args, sharedMem, stream));
-#endif
-
-DEFINE_OVERLOAD(cudaLaunchCooperativeKernel,
-                ARG(void const* func,
-                    dim3 gridDim,
-                    dim3 blockDim,
-                    void** args,
-                    size_t sharedMem,
-                    cudaStream_t stream),
-                ARG(func, gridDim, blockDim, args, sharedMem, stream));
-DEFINE_OVERLOAD(cudaLaunchHostFunc,
-                ARG(cudaStream_t stream, cudaHostFn_t fn, void* userData),
-                ARG(stream, fn, userData));
-
-// Memory transfer APIS:
-// https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html#group__CUDART__MEMORY
-#if CUDART_VERSION >= 13000
-DEFINE_OVERLOAD(
-  cudaMemPrefetchAsync,
-  ARG(void const* devPtr, size_t count, cudaMemLocation loc, int flags, cudaStream_t stream),
-  ARG(devPtr, count, loc, flags, stream));
-#else
-DEFINE_OVERLOAD(cudaMemPrefetchAsync,
-                ARG(void const* devPtr, size_t count, int dstDevice, cudaStream_t stream),
-                ARG(devPtr, count, dstDevice, stream));
-#endif
-DEFINE_OVERLOAD(cudaMemcpy2DAsync,
-                ARG(void* dst,
-                    size_t dpitch,
-                    void const* src,
-                    size_t spitch,
-                    size_t width,
-                    size_t height,
-                    cudaMemcpyKind kind,
-                    cudaStream_t stream),
-                ARG(dst, dpitch, src, spitch, width, height, kind, stream));
-DEFINE_OVERLOAD(cudaMemcpy2DFromArrayAsync,
-                ARG(void* dst,
-                    size_t dpitch,
-                    cudaArray_const_t src,
-                    size_t wOffset,
-                    size_t hOffset,
-                    size_t width,
-                    size_t height,
-                    cudaMemcpyKind kind,
-                    cudaStream_t stream),
-                ARG(dst, dpitch, src, wOffset, hOffset, width, height, kind, stream));
-DEFINE_OVERLOAD(cudaMemcpy2DToArrayAsync,
-                ARG(cudaArray_t dst,
-                    size_t wOffset,
-                    size_t hOffset,
-                    void const* src,
-                    size_t spitch,
-                    size_t width,
-                    size_t height,
-                    cudaMemcpyKind kind,
-                    cudaStream_t stream),
-                ARG(dst, wOffset, hOffset, src, spitch, width, height, kind, stream));
-DEFINE_OVERLOAD(cudaMemcpy3DAsync,
-                ARG(cudaMemcpy3DParms const* p, cudaStream_t stream),
-                ARG(p, stream));
-DEFINE_OVERLOAD(cudaMemcpy3DPeerAsync,
-                ARG(cudaMemcpy3DPeerParms const* p, cudaStream_t stream),
-                ARG(p, stream));
-DEFINE_OVERLOAD(
-  cudaMemcpyAsync,
-  ARG(void* dst, void const* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream),
-  ARG(dst, src, count, kind, stream));
-DEFINE_OVERLOAD(cudaMemcpyFromSymbolAsync,
-                ARG(void* dst,
-                    void const* symbol,
-                    size_t count,
-                    size_t offset,
-                    cudaMemcpyKind kind,
-                    cudaStream_t stream),
-                ARG(dst, symbol, count, offset, kind, stream));
-DEFINE_OVERLOAD(cudaMemcpyToSymbolAsync,
-                ARG(void const* symbol,
-                    void const* src,
-                    size_t count,
-                    size_t offset,
-                    cudaMemcpyKind kind,
-                    cudaStream_t stream),
-                ARG(symbol, src, count, offset, kind, stream));
-DEFINE_OVERLOAD(
-  cudaMemset2DAsync,
-  ARG(void* devPtr, size_t pitch, int value, size_t width, size_t height, cudaStream_t stream),
-  ARG(devPtr, pitch, value, width, height, stream));
-DEFINE_OVERLOAD(
-  cudaMemset3DAsync,
-  ARG(cudaPitchedPtr pitchedDevPtr, int value, cudaExtent extent, cudaStream_t stream),
-  ARG(pitchedDevPtr, value, extent, stream));
-DEFINE_OVERLOAD(cudaMemsetAsync,
-                ARG(void* devPtr, int value, size_t count, cudaStream_t stream),
-                ARG(devPtr, value, count, stream));
-
-// Memory allocation APIS:
-// https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY__POOLS.html#group__CUDART__MEMORY__POOLS
-DEFINE_OVERLOAD(cudaFreeAsync, ARG(void* devPtr, cudaStream_t stream), ARG(devPtr, stream));
-DEFINE_OVERLOAD(cudaMallocAsync,
-                ARG(void** devPtr, size_t size, cudaStream_t stream),
-                ARG(devPtr, size, stream));
-DEFINE_OVERLOAD(cudaMallocFromPoolAsync,
-                ARG(void** ptr, size_t size, cudaMemPool_t memPool, cudaStream_t stream),
-                ARG(ptr, size, memPool, stream));
-
-/**
- * @brief Function to collect all the original CUDA symbols corresponding to overloaded functions.
- *
- * Note on priorities:
- * - `originals` must be initialized first, so it is 1001.
- * - The function names must be added to originals next in the macro, so those are 1002.
- * - Finally, this function actually finds the original symbols so it is 1003.
- */
-__attribute__((constructor(1003))) void find_originals()
+sanitizer_subscriber::sanitizer_subscriber()
 {
-  for (auto it : originals) {
-    originals[it.first] = dlsym(RTLD_NEXT, it.first.data());
+  auto const cb = [](void* userdata,
+                     Sanitizer_CallbackDomain domain,
+                     Sanitizer_CallbackId cbid,
+                     void const* cbdata) {
+    auto* subscriber = static_cast<sanitizer_subscriber*>(userdata);
+    subscriber->callback(domain, cbid, cbdata);
+  };
+  check_result(sanitizerSubscribe(&this->handle, cb, this));
+
+  check_result(sanitizerEnableDomain(1, this->handle, SANITIZER_CB_DOMAIN_RUNTIME_API));
+}
+
+sanitizer_subscriber::~sanitizer_subscriber() { check_result(sanitizerUnsubscribe(this->handle)); }
+
+void sanitizer_subscriber::check_result(SanitizerResult result)
+{
+  if (result != SANITIZER_SUCCESS) {
+    char const* str;
+    sanitizerGetResultString(result, &str);
+    throw std::runtime_error(std::string("Sanitizer error: ") + str);
   }
 }
+
+template <typename Args, cudaStream_t Args::* Field>
+void sanitizer_subscriber::check_stream_arg(Sanitizer_CallbackData const* cbdata)
+{
+  auto const* args = static_cast<Args const*>(cbdata->functionParams);
+  check_stream_and_error(args->*Field);
+}
+
+// `generated_cuda_runtime_api_meta.h` is provided by the CUDA Toolkit/Compute Sanitizer.
+// It defines versioned callback parameter structs named like
+// `cudaMemcpyAsync_v3020_params`, where the numeric suffix identifies the CUDA runtime
+// API version associated with that parameter layout.
+#define CHECK_STREAM_ARG(call, version, field)                \
+  case SANITIZER_CBID_RUNTIME_API_##call: {                   \
+    using args_t = call##_v##version##_params;                \
+    check_stream_arg<args_t, &args_t::field>(runtime_cbdata); \
+  } break
+
+void sanitizer_subscriber::callback(Sanitizer_CallbackDomain domain,
+                                    Sanitizer_CallbackId cbid,
+                                    const void* cbdata)
+{
+  switch (domain) {
+    case SANITIZER_CB_DOMAIN_RUNTIME_API: {
+      auto const* runtime_cbdata = static_cast<Sanitizer_CallbackData const*>(cbdata);
+
+      if (runtime_cbdata->callbackSite == SANITIZER_API_ENTER) {
+        switch (cbid) {
+          CHECK_STREAM_ARG(cudaEventRecord, 3020, stream);
+          CHECK_STREAM_ARG(cudaEventRecord_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaEventRecordWithFlags, 11010, stream);
+          CHECK_STREAM_ARG(cudaEventRecordWithFlags_ptsz, 11010, stream);
+          CHECK_STREAM_ARG(cudaLaunchKernel, 7000, stream);
+          CHECK_STREAM_ARG(cudaLaunchKernel_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaLaunchCooperativeKernel, 9000, stream);
+          CHECK_STREAM_ARG(cudaLaunchCooperativeKernel_ptsz, 9000, stream);
+          CHECK_STREAM_ARG(cudaLaunchHostFunc, 10000, stream);
+          CHECK_STREAM_ARG(cudaLaunchHostFunc_ptsz, 10000, stream);
+#if CUDART_VERSION >= 13000
+          CHECK_STREAM_ARG(cudaMemPrefetchAsync, 12020, stream);
+          CHECK_STREAM_ARG(cudaMemPrefetchAsync_ptsz, 12020, stream);
+#else
+          CHECK_STREAM_ARG(cudaMemPrefetchAsync, 8000, stream);
+          CHECK_STREAM_ARG(cudaMemPrefetchAsync_ptsz, 8000, stream);
+          CHECK_STREAM_ARG(cudaMemPrefetchAsync_v2, 12020, stream);
+          CHECK_STREAM_ARG(cudaMemPrefetchAsync_v2_ptsz, 12020, stream);
+#endif
+          CHECK_STREAM_ARG(cudaMemcpy2DAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemcpy2DAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemcpy2DFromArrayAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemcpy2DFromArrayAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemcpy2DToArrayAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemcpy2DToArrayAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemcpy3DAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemcpy3DAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemcpy3DPeerAsync, 4000, stream);
+          CHECK_STREAM_ARG(cudaMemcpy3DPeerAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemcpyAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemcpyAsync_ptsz, 7000, stream);
+#if CUDART_VERSION >= 13000
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync, 13000, stream);
+          CHECK_STREAM_ARG(cudaMemcpyBatchAsync_ptsz, 13000, stream);
+#endif
+          CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemcpyFromSymbolAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemcpyToSymbolAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemcpyToSymbolAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemset2DAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemset2DAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemset3DAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemset3DAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaMemsetAsync, 3020, stream);
+          CHECK_STREAM_ARG(cudaMemsetAsync_ptsz, 7000, stream);
+          CHECK_STREAM_ARG(cudaFreeAsync, 11020, hStream);
+          CHECK_STREAM_ARG(cudaFreeAsync_ptsz, 11020, hStream);
+          CHECK_STREAM_ARG(cudaMallocAsync, 11020, hStream);
+          CHECK_STREAM_ARG(cudaMallocAsync_ptsz, 11020, hStream);
+          CHECK_STREAM_ARG(cudaMallocFromPoolAsync, 11020, stream);
+          CHECK_STREAM_ARG(cudaMallocFromPoolAsync_ptsz, 11020, stream);
+        }
+      }
+    } break;
+    default: break;
+  }
+}
+
+#undef CHECK_STREAM_ARG
+
+sanitizer_subscriber subscriber;

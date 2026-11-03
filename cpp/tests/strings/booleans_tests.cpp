@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf/strings/convert/convert_booleans.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -20,9 +20,9 @@ TEST_F(StringsConvertTest, ToBooleans)
 {
   std::vector<char const*> h_strings{"false", nullptr, "", "true", "True", "False"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto true_scalar  = cudf::string_scalar("true");
@@ -30,9 +30,9 @@ TEST_F(StringsConvertTest, ToBooleans)
 
   std::vector<bool> h_expected{false, false, false, true, false, false};
   cudf::test::fixed_width_column_wrapper<bool> expected(
-    h_expected.begin(),
-    h_expected.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_expected.begin(), h_expected.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -40,15 +40,15 @@ TEST_F(StringsConvertTest, FromBooleans)
 {
   std::vector<char const*> h_strings{"true", nullptr, "false", "true", "true", "false"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   std::vector<bool> h_column{true, false, false, true, true, false};
   cudf::test::fixed_width_column_wrapper<bool> column(
-    h_column.begin(),
-    h_column.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_column.begin(), h_column.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto true_scalar  = cudf::string_scalar("true");
   auto false_scalar = cudf::string_scalar("false");

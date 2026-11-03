@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,13 +8,16 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
+
+#include <array>
+#include <utility>
 
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)
 {
-  auto stream = rmm::cuda_stream_default;
+  auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
   /// Convert a phone number to E.164 international phone format
@@ -101,9 +104,9 @@ __device__ void e164_format(void* scratch,
   constexpr cudf::size_type maximum_size = 20;
   auto const num_rows                    = table.num_rows();
 
-  rmm::device_uvector<char> scratch(maximum_size * static_cast<std::size_t>(num_rows), stream, mr);
+  cuda::device_buffer<char> scratch(
+    stream, mr, maximum_size * static_cast<std::size_t>(num_rows), cuda::no_init);
 
-  // a column with size 1 is considered a scalar
   auto size = cudf::make_column_from_scalar(
     cudf::numeric_scalar<int32_t>(maximum_size, true, stream, mr), 1, stream, mr);
 
@@ -114,17 +117,27 @@ __device__ void e164_format(void* scratch,
   auto transformed     = std::vector<int32_t>{2, 3, 4, 5};
   auto min_visible_age = cudf::make_column_from_scalar(
     cudf::numeric_scalar<int32_t>(21, true, stream, mr), 1, stream, mr);
+  cudf::transform_input inputs[] = {country_code,
+                                    area_code,
+                                    phone_code,
+                                    age,
+                                    cudf::scalar_column_view(*min_visible_age),
+                                    cudf::scalar_column_view(*size)};
 
-  auto formatted =
-    cudf::transform({country_code, area_code, phone_code, age, *min_visible_age, *size},
-                    udf,
-                    cudf::data_type{cudf::type_id::STRING},
-                    false,
-                    scratch.data(),
+  auto formatted = std::move(
+    cudf::transform(udf,
+                    cudf::udf_source_type::CUDA,
                     cudf::null_aware::NO,
-                    cudf::output_nullability::PRESERVE,
+                    scratch.data(),
+                    inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_id::STRING},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    std::nullopt,
                     stream,
-                    mr);
+                    mr)
+      ->release()
+      .front());
 
   return std::make_tuple(std::move(formatted), transformed);
 }

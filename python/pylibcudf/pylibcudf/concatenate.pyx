@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from collections.abc import Sequence
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -16,16 +17,25 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
+from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["concatenate"]
 
-cpdef concatenate(list objects, Stream stream=None, DeviceMemoryResource mr=None):
+cpdef concatenate(
+    objects: Sequence[Column] | Sequence[Table],
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Concatenate columns or tables.
 
     Parameters
     ----------
-    objects : Union[List[Column], List[Table]]
-        The list of Columns or Tables to concatenate.
+    objects : Sequence[Column] | Sequence[Table]
+        The Columns or Tables to concatenate.
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -41,7 +51,8 @@ cpdef concatenate(list objects, Stream stream=None, DeviceMemoryResource mr=None
 
     cdef vector[column_view] c_columns
     cdef vector[table_view] c_tables
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef unique_ptr[column] c_col_result
@@ -53,17 +64,17 @@ cpdef concatenate(list objects, Stream stream=None, DeviceMemoryResource mr=None
 
         with nogil:
             c_tbl_result = cpp_concatenate.concatenate(
-                c_tables, stream.view(), mr.get_mr()
+                c_tables, _cs, mr.get_mr()
             )
-        return Table.from_libcudf(move(c_tbl_result), stream, mr)
+        return Table.from_libcudf(move(c_tbl_result), _stream, mr)
     elif isinstance(objects[0], Column):
         for column in objects:
             c_columns.push_back((<Column?>column).view())
 
         with nogil:
             c_col_result = cpp_concatenate.concatenate(
-                c_columns, stream.view(), mr.get_mr()
+                c_columns, _cs, mr.get_mr()
             )
-        return Column.from_libcudf(move(c_col_result), stream, mr)
+        return Column.from_libcudf(move(c_col_result), _stream, mr)
     else:
         raise ValueError("input must be a list of Columns or Tables")

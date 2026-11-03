@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
@@ -13,6 +14,8 @@
 #include <cudf/utilities/default_stream.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+#include <vector>
 
 enum replace_type { scalar, slice, multi };
 
@@ -30,7 +33,7 @@ static void bench_replace(nvbench::state& state)
   cudf::strings_column_view input(column->view());
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
@@ -38,19 +41,41 @@ static void bench_replace(nvbench::state& state)
   if (api == "scalar") {
     cudf::string_scalar target("+");
     cudf::string_scalar repl("-");
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::replace(input, target, repl); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else if (api == "multi") {
+    cudf::test::strings_column_wrapper targets({"+", " "});
+    cudf::test::strings_column_wrapper repls({"-", "_"});
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      cudf::test::strings_column_wrapper targets({"+", " "});
-      cudf::test::strings_column_wrapper repls({"-", "_"});
       cudf::strings::replace_multiple(
         input, cudf::strings_column_view(targets), cudf::strings_column_view(repls));
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else if (api == "slice") {
     cudf::string_scalar repl("0123456789");
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::replace_slice(input, repl, 1, 10); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+  } else if (api == "column") {
+    // Per-row targets and replacements — same length as input
+    std::vector<std::string> t_vals(num_rows, "+");
+    std::vector<std::string> r_vals(num_rows, "-");
+    cudf::test::strings_column_wrapper targets_col(t_vals.begin(), t_vals.end());
+    cudf::test::strings_column_wrapper repls_col(r_vals.begin(), r_vals.end());
+    cudf::strings_column_view targets(targets_col);
+    cudf::strings_column_view repls(repls_col);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::replace(input, targets, repls); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 
@@ -59,4 +84,4 @@ NVBENCH_BENCH(bench_replace)
   .add_int64_axis("min_width", {0})
   .add_int64_axis("max_width", {32, 64, 128, 256})
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
-  .add_string_axis("api", {"scalar", "multi", "slice"});
+  .add_string_axis("api", {"scalar", "multi", "slice", "column"});

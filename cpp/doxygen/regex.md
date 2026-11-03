@@ -1,4 +1,4 @@
-# Regex Features
+# Regex Features {#md_regex}
 
 This page specifies which regular expression (regex) features are currently supported by libcudf strings column APIs that accept regex patterns:
 
@@ -24,11 +24,12 @@ By default, only the `\n` character is recognized as a line break. The [cudf::st
 - Next line (Unicode: `0085`, UTF-8: `C285`)
 - Carriage return (Unicode: `000D`, UTF-8: `0D`)
 
+With `EXT_NEWLINE`, a carriage-return/line-feed pair (`\r\n`) is treated as a single line terminator: the `^` and `$` anchors match before the `\r` and after the `\n`, and never between them.
+
 **Invalid regex patterns will result in undefined behavior**. This includes but is not limited to the following:
 - Unescaped special characters (listed in the third row of the Characters table below) when they are intended to match as literals.
 - Unmatched paired special characters like `()`, `[]`, and `{}`.
 - Empty groups, classes, or quantifiers. That is, `()` and `[]` without an enclosing expression and `{}` without a valid integer.
-- Incomplete ranges in character classes like `[-z]`, `[a-]`, and `[-]`.
 - Unqualified quantifiers. That is, a quantifier with no preceding item to match like `*a`, `a⎮?`, `(+)`, `{2}a`, etc.
 
 ## Features Supported
@@ -122,6 +123,21 @@ By default, only the `\n` character is recognized as a line break. The [cudf::st
 | Capturing group | `(regex)` | Parentheses group the regex between them. They capture the text matched by the regex inside them into a numbered group. They allow you to apply regex operators to the entire grouped regex. | `(abc⎮def)ghi` matches `abcghi` or `defghi` |
 | Non-capturing group | `(?:regex)` | Non-capturing parentheses group the regex so you can apply regex operators, but do not capture anything. | `(?:abc⎮def)ghi` matches `abcghi` or `defghi` |
 
+### Mode Modifiers
+
+| Feature  | Syntax | Description | Example |
+| ---------- | ------------- | ------------- | ------------- |
+| Ignore case | `(?i)` | Turns on [cudf::strings::regex_flags::IGNORECASE](@ref cudf::strings::regex_flags) for the remainder of the enclosing group | `(?i)abc` matches `abc`, `ABC`, and `aBc` |
+| Multiline | `(?m)` | Turns on [cudf::strings::regex_flags::MULTILINE](@ref cudf::strings::regex_flags) for the remainder of the enclosing group | `(?m)^.` matches `a` and `d` in `abc\ndef` |
+| Dot all | `(?s)` | Turns on [cudf::strings::regex_flags::DOTALL](@ref cudf::strings::regex_flags) for the remainder of the enclosing group | `(?s)a.c` matches `a\nc` |
+| Combined | `(?ims)` | Any combination of `i`, `m`, and `s` turns on each corresponding flag | `(?is)a.c` matches `A\nC` |
+| Modifier span | `(?ims:regex)` | Turns on the specified flags only for the regex inside the non-capturing group | `(?i:a)bc` matches `abc` and `Abc` but not `aBc` |
+
+Mode modifiers may appear anywhere in the pattern. A modifier appearing inside a group applies only
+from that point to the end of the enclosing group. For example, `(a(?i)b)c` matches `abc` and `aBc`
+but not `abC`. The flags can only be turned on using modifiers. Turning off flags (e.g. `(?-i)`)
+and other modifiers (e.g. `(?x)`) are not supported.
+
 ### Replacement Backreferences
 
 | Feature  | Syntax | Description | Example |
@@ -129,3 +145,16 @@ By default, only the `\n` character is recognized as a line break. The [cudf::st
 | Backreference | `\1` through `\99` | Insert the text matched by capturing groups 1 through 99 | Replacing `(a)(b)(c)` with `\3\3\1` in `abc` yields `cca` |
 | Backreference | `${1}` through `${99}` | Insert the text matched by capturing groups 1 through 99 | Replacing `(a)(b)(c)` with `${2}.${2}:{$3}` in `abc` yields `b.b:c` |
 | Whole match | `${0}` | Insert the whole regex match | Replacing `(\d)(a)` with `[${0}]:-${2}_${1};` in `123abc` yields `12[3a]:-a_3;bc`
+
+### Ignore case
+
+The [cudf::strings::regex_flags::IGNORECASE](@ref cudf::strings::regex_flags) can be used to match literal characters and characters within a character class
+to a limited extent. Only those characters supported by the C++ STL [`std::tolower`](https://en.cppreference.com/cpp/locale/tolower)
+and [`std::toupper`](https://en.cppreference.com/cpp/locale/toupper)
+when used with [`std::locale`](https://en.cppreference.com/cpp/locale/locale) with locale name`C.UTF-8` are supported.
+For example, this feature does not include matching characters which have multiple character counterparts.
+
+Character classes (defined by `[]`) have the further restriction that any range of characters are expected to map appropriately between
+lower case and upper case ranges. For example the range `[a-z]` would also try to match characters in `[A-Z]` when the `IGNORECASE` is specified.
+
+The inline `(?i)` and `(?i:regex)` mode modifiers can also be used to specify ignore case within the pattern.

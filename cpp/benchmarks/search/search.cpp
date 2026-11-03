@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
 #include <cudf/filling.hpp>
@@ -39,7 +40,7 @@ static void bench_upper_bound_column(nvbench::state& state)
   auto data_table = cudf::sort(cudf::table_view({*column}));
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Add memory bandwidth tracking
   state.add_element_count(column_size);
@@ -51,12 +52,15 @@ static void bench_upper_bound_column(nvbench::state& state)
       2L * cudf::bitmask_allocation_size_bytes(column_size));
   }
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     auto result = cudf::upper_bound(data_table->view(),
                                     cudf::table_view({*values}),
                                     {cudf::order::ASCENDING},
                                     {cudf::null_order::BEFORE});
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_upper_bound_column)
@@ -84,7 +88,7 @@ static void bench_lower_bound_table(nvbench::state& state)
   auto sorted = cudf::sort(*data_table);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Add memory bandwidth tracking
   state.add_element_count(column_size * num_columns);
@@ -95,9 +99,12 @@ static void bench_lower_bound_table(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(2L * num_columns *
                                                  cudf::bitmask_allocation_size_bytes(column_size));
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     auto result = cudf::lower_bound(sorted->view(), *values_table, orders, null_orders);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_lower_bound_table)
@@ -127,7 +134,7 @@ static void bench_contains(nvbench::state& state)
   }
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Add memory bandwidth tracking
   state.add_element_count(column_size);
@@ -139,8 +146,11 @@ static void bench_contains(nvbench::state& state)
       2L * cudf::bitmask_allocation_size_bytes(column_size));
   }
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { auto result = cudf::contains(*column, *values); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_contains)

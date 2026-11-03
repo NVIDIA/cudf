@@ -1,13 +1,26 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "parquet_common.hpp"
 
+#include <cudf_test/iterator_utilities.hpp>
+
+#include <cudf/concatenate.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/io/parquet_io_utils.hpp>
+#include <cudf/io/parquet_metadata.hpp>
+#include <cudf/utilities/concepts.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <cuda/std/type_traits>
+
+#include <src/io/parquet/compact_protocol_reader.hpp>
 
 #include <format>
+#include <numeric>
 #include <string>
 
 // Global environment for temporary files
@@ -15,14 +28,33 @@ cudf::test::TempDirTestEnvironment* const temp_env =
   static_cast<cudf::test::TempDirTestEnvironment*>(
     ::testing::AddGlobalTestEnvironment(new cudf::test::TempDirTestEnvironment));
 
+std::string write_parquet_temp_file(cudf::table_view const& tbl,
+                                    std::string_view const filename,
+                                    std::vector<std::string> column_names,
+                                    std::vector<int> field_ids)
+{
+  cudf::io::table_input_metadata md{tbl};
+  for (std::size_t i = 0; i < column_names.size(); ++i) {
+    md.column_metadata[i].set_name(column_names[i]);
+  }
+  for (std::size_t i = 0; i < field_ids.size(); ++i) {
+    md.column_metadata[i].set_parquet_field_id(field_ids[i]);
+  }
+  auto const path = temp_env->get_temp_filepath(std::string{filename});
+  cudf::io::parquet_writer_options opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{path}, tbl)
+      .metadata(std::move(md));
+  cudf::io::write_parquet(opts);
+  return path;
+}
+
 template <typename T, typename Elements>
 std::unique_ptr<cudf::table> create_fixed_table(cudf::size_type num_columns,
                                                 cudf::size_type num_rows,
                                                 bool include_validity,
                                                 Elements elements)
 {
-  auto valids =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2 == 0; });
+  auto valids = cudf::test::iterators::valids_at_multiples_of(2);
   std::vector<cudf::test::fixed_width_column_wrapper<T>> src_cols(num_columns);
   for (int idx = 0; idx < num_columns; idx++) {
     if (include_validity) {
@@ -91,8 +123,7 @@ template <typename T>
 std::unique_ptr<cudf::column> make_parquet_list_list_col(
   int skip_rows, int num_rows, int lists_per_row, int list_size, bool include_validity)
 {
-  auto valids =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2 == 0 ? 1 : 0; });
+  auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   // root list
   std::vector<int> row_offsets(num_rows + 1);
@@ -153,16 +184,22 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
                           child_values.begin(), child_values.begin() + child_value_count);
 
   int child_offsets_size = static_cast<cudf::column_view>(child_offsets).size() - 1;
-  auto child             = cudf::make_lists_column(
-    child_offsets_size, child_offsets.release(), child_data.release(), 0, rmm::device_buffer{});
+  auto child             = cudf::make_lists_column(child_offsets_size,
+                                       child_offsets.release(),
+                                       child_data.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   int offsets_size             = static_cast<cudf::column_view>(offsets).size() - 1;
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(valids, valids + offsets_size);
   return include_validity
            ? cudf::make_lists_column(
                offsets_size, offsets.release(), std::move(child), null_count, std::move(null_mask))
-           : cudf::make_lists_column(
-               offsets_size, offsets.release(), std::move(child), 0, rmm::device_buffer{});
+           : cudf::make_lists_column(offsets_size,
+                                     offsets.release(),
+                                     std::move(child),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 template std::unique_ptr<cudf::column> make_parquet_list_list_col<int>(
@@ -209,28 +246,11 @@ template std::vector<uint64_t> random_values<uint64_t>(size_t size);
 void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
                  cudf::io::parquet::FileMetaData* file_meta_data)
 {
-  using namespace cudf::io::parquet;
-  constexpr auto header_len = sizeof(file_header_s);
-  constexpr auto ender_len  = sizeof(file_ender_s);
-
-  auto const len           = source->size();
-  auto const header_buffer = source->host_read(0, header_len);
-  auto const header        = reinterpret_cast<file_header_s const*>(header_buffer->data());
-  auto const ender_buffer  = source->host_read(len - ender_len, ender_len);
-  auto const ender         = reinterpret_cast<file_ender_s const*>(ender_buffer->data());
-
-  // checks for valid header, footer, and file length
-  ASSERT_GT(len, header_len + ender_len);
-  ASSERT_TRUE(header->magic == detail::parquet_magic && ender->magic == detail::parquet_magic);
-  ASSERT_TRUE(ender->footer_len != 0 && ender->footer_len <= (len - header_len - ender_len));
-
   // parquet files end with 4-byte footer_length and 4-byte magic == "PAR1"
   // seek backwards from the end of the file (footer_length + 8 bytes of ender)
-  auto const footer_buffer =
-    source->host_read(len - ender->footer_len - ender_len, ender->footer_len);
-  detail::CompactProtocolReader cp(footer_buffer->data(), ender->footer_len);
-
-  cp.read(file_meta_data);
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*source);
+  cudf::io::parquet::detail::decode_footer_bytes({footer_buffer->data(), footer_buffer->size()},
+                                                 file_meta_data);
 }
 
 // returns the number of bits used for dictionary encoding data at the given page location.
@@ -313,23 +333,19 @@ cudf::io::parquet::PageHeader read_page_header(std::unique_ptr<cudf::io::datasou
 namespace testdata {
 // ----- most numerics. scale by 100 so all values fit in a single byte
 
-template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-ascending()
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
-  int start = std::is_signed_v<T> ? -num_ordered_rows / 2 : 0;
+  int start = cuda::std::is_signed_v<T> ? -num_ordered_rows / 2 : 0;
   auto elements =
     cudf::detail::make_counting_transform_iterator(start, [](auto i) { return i / 100; });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-descending()
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
-  if (std::is_signed_v<T>) {
+  if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(-num_ordered_rows / 2,
                                                                    [](auto i) { return -i / 100; });
     return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
@@ -340,12 +356,10 @@ descending()
   }
 }
 
-template <typename T>
-std::enable_if_t<std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-unordered()
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
-  if (std::is_signed_v<T>) {
+  if (cuda::std::is_signed_v<T>) {
     auto elements = cudf::detail::make_counting_transform_iterator(
       -num_ordered_rows / 2, [](auto i) { return (i % 2 ? i : -i) / 100; });
     return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
@@ -358,24 +372,24 @@ unordered()
 
 // ----- bool
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> ascending()
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return i >= num_ordered_rows / 2; });
   return cudf::test::fixed_width_column_wrapper<bool>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> descending()
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return i < num_ordered_rows / 2; });
   return cudf::test::fixed_width_column_wrapper<bool>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> unordered()
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
     switch (i / page_size_for_ordered_tests) {
@@ -390,24 +404,24 @@ std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper
 
 // ----- fixed point types
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending()
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     -num_ordered_rows / 2, [](auto i) { return T(i, numeric::scale_type{0}); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> descending()
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     -num_ordered_rows / 2, [](auto i) { return T(-i, numeric::scale_type{0}); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered()
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     -num_ordered_rows / 2, [](auto i) { return T(i % 2 ? i : -i, numeric::scale_type{0}); });
@@ -417,24 +431,24 @@ std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapp
 // ----- chrono types
 // ----- timstamp
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending()
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration(i)); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> descending()
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration(num_ordered_rows - i)); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered()
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(typename T::duration(i % 2 ? i : num_ordered_rows - i)); });
@@ -443,23 +457,23 @@ std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper
 
 // ----- duration
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending()
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return T(i); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> descending()
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(num_ordered_rows - i); });
   return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered()
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return T(i % 2 ? i : num_ordered_rows - i); });
@@ -468,27 +482,24 @@ std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<
 
 // ----- string_view
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-ascending()
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper ascending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return std::format("{:09d}", i); });
   return cudf::test::strings_column_wrapper(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-descending()
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper descending()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return std::format("{:09d}", static_cast<short>(num_ordered_rows - i)); });
   return cudf::test::strings_column_wrapper(elements, elements + num_ordered_rows);
 }
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-unordered()
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper unordered()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return std::format("{:09d}", (i % 2 == 0) ? i : (num_ordered_rows - i)); });
@@ -663,7 +674,7 @@ std::pair<cudf::table, std::string> create_parquet_typed_with_stats(std::string 
     expected_metadata.column_metadata[1].set_name("col1");
     expected_metadata.column_metadata[2].set_name("col2");
 
-    const cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options const out_opts =
       cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written_table)
         .metadata(std::move(expected_metadata))
         .row_group_size_rows(8000);
@@ -707,6 +718,66 @@ TYPED_WITH_STATS(cudf::timestamp_ns);
 TYPED_WITH_STATS(numeric::decimal32);
 TYPED_WITH_STATS(numeric::decimal64);
 TYPED_WITH_STATS(numeric::decimal128);
+
+// helpers for row-group output ordering tests
+
+ordered_rg_source make_ordered_rg_source(int file_id,
+                                         cudf::size_type num_row_groups,
+                                         cudf::size_type rows_per_row_group)
+{
+  auto const num_rows = num_row_groups * rows_per_row_group;
+  std::vector<int32_t> values(num_rows);
+  for (cudf::size_type rg = 0; rg < num_row_groups; ++rg) {
+    auto const base = file_id * 10000 + rg * rows_per_row_group;
+    std::iota(values.begin() + rg * rows_per_row_group,
+              values.begin() + (rg + 1) * rows_per_row_group,
+              base);
+  }
+
+  cudf::test::fixed_width_column_wrapper<int32_t> col(values.begin(), values.end());
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(col.release());
+  auto in_memory = std::make_unique<cudf::table>(std::move(columns));
+
+  auto const filename = std::format("ordered_rg_source_f{}_rg{}.parquet", file_id, num_row_groups);
+  auto const filepath = temp_env->get_temp_filepath(filename);
+
+  // Setting `max_page_fragment_size` equal to `rows_per_row_group` makes the `row_group_size_rows`
+  // limit actually honored at the requested granularity.
+  cudf::io::parquet_writer_options const out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, in_memory->view())
+      .row_group_size_rows(rows_per_row_group)
+      .max_page_size_rows(rows_per_row_group)
+      .max_page_fragment_size(rows_per_row_group)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP);
+  cudf::io::write_parquet(out_opts);
+
+  auto const written_meta = cudf::io::read_parquet_metadata(cudf::io::source_info{filepath});
+  CUDF_EXPECTS(written_meta.num_rowgroups() == num_row_groups,
+               "Parquet writer produced an unexpected number of row groups");
+
+  return ordered_rg_source{std::move(in_memory), filepath, num_row_groups, rows_per_row_group};
+}
+
+cudf::table_view get_row_group_slice(ordered_rg_source const& src, cudf::size_type rg_idx)
+{
+  auto const start = rg_idx * src.rows_per_row_group;
+  auto const end   = start + src.rows_per_row_group;
+  return cudf::slice(src.table->view(), {start, end}).front();
+}
+
+std::unique_ptr<cudf::table> build_expected_ordered_table(
+  cudf::host_span<ordered_rg_source const* const> sources,
+  cudf::host_span<std::vector<cudf::size_type> const> rg_selection)
+{
+  std::vector<cudf::table_view> slices;
+  for (size_t src_idx = 0; src_idx < rg_selection.size(); ++src_idx) {
+    for (auto const rg_idx : rg_selection[src_idx]) {
+      slices.push_back(get_row_group_slice(*sources[src_idx], rg_idx));
+    }
+  }
+  return cudf::concatenate(slices);
+}
 
 // utility functions for column index tests
 

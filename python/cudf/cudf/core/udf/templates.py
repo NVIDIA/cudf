@@ -12,12 +12,12 @@ masked_input_initializer_template = """\
 """
 
 row_initializer_template = """\
-        row["{name}"] = masked_{idx}
+        row[_col_names[{idx}]] = masked_{idx}
 """
 
 group_initializer_template = """\
         arr_{idx} = input_col_{idx}[offset[block_id]:offset[block_id+1]]
-        dataframe_group["{name}"] = Group(arr_{idx}, size, arr_index)
+        dataframe_group[_col_names[{idx}]] = Group(arr_{idx}, size, arr_index)
 """
 
 row_kernel_template = """\

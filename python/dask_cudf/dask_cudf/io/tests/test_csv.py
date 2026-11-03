@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import gzip
@@ -88,7 +88,9 @@ def test_csv_roundtrip_filepath(tmp_path):
 
 def test_read_csv(tmp_path):
     df = dask.datasets.timeseries(
-        dtypes={"x": int, "y": int}, freq="120s"
+        dtypes={"x": int, "y": int},
+        freq="120s",
+        seed=1,
     ).reset_index(drop=True)
 
     csv_path = str(tmp_path / "data-*.csv")
@@ -117,7 +119,9 @@ def test_raises_FileNotFoundError():
 
 def test_read_csv_w_bytes(tmp_path):
     df = dask.datasets.timeseries(
-        dtypes={"x": int, "y": int}, freq="120s"
+        dtypes={"x": int, "y": int},
+        freq="120s",
+        seed=1,
     ).reset_index(drop=True)
     df = pd.DataFrame(dict(x=np.arange(20), y=np.arange(20)))
     df.to_csv(tmp_path / "data-*.csv", index=False)
@@ -224,10 +228,13 @@ def test_read_csv_skiprows_error(csv_begin_bad_lines):
 
 def test_read_csv_skipfooter(csv_end_bad_lines):
     # Repro from Issue#13552
+    # Use pd.read_csv as the reference: dd.read_csv has a meta-inference
+    # issue where it reads the first few rows without skipfooter (exposing
+    # the bad footer rows), causing column-A dtype to be inferred as string
+    # rather than int. pd.read_csv and dask_cudf.read_csv both produce the
+    # correct result.
     with dask.config.set({"dataframe.convert-string": False}):
-        ddf_cpu = dd.read_csv(
-            csv_end_bad_lines, skipfooter=3, engine="python"
-        ).compute()
+        ddf_cpu = pd.read_csv(csv_end_bad_lines, skipfooter=3, engine="python")
         ddf_gpu = dask_cudf.read_csv(csv_end_bad_lines, skipfooter=3).compute()
 
         dd.assert_eq(ddf_cpu, ddf_gpu, check_dtype=False)
@@ -236,7 +243,7 @@ def test_read_csv_skipfooter(csv_end_bad_lines):
 def test_read_csv_skipfooter_arrow_string_fail(request, csv_end_bad_lines):
     request.applymarker(
         pytest.mark.xfail(
-            reason="https://github.com/rapidsai/cudf/issues/14915",
+            reason="https://github.com/NVIDIA/cudf/issues/14915",
         )
     )
     ddf_cpu = dd.read_csv(

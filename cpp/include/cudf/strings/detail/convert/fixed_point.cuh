@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -22,11 +22,12 @@ namespace detail {
  * The return includes the integer digits and any exponent offset.
  *
  * @tparam UnsignedDecimalType The unsigned version of the desired decimal type.
- *                             Use the `std::make_unsigned_t` to create the
+ *                             Use the `cuda::std::make_unsigned_t` to create the
  *                             unsigned type from the storage type.
  *
  * @param[in,out] iter Start of characters to parse
- * @param[in] end End of characters to parse
+ * @param[in] iter_end End of characters to parse
+ * @param[in] decimal_pt_char The character used as the decimal point
  * @return Integer component and exponent offset.
  */
 template <typename UnsignedDecimalType>
@@ -74,7 +75,7 @@ __device__ inline cuda::std::pair<UnsignedDecimalType, int32_t> parse_integer(
  *         exponent value in the decimal string does not overflow int32
  * @param[in,out] iter Start of characters to parse
  *                     (points to the character after the 'E' or 'e')
- * @param[in] end End of characters to parse
+ * @param[in] iter_end End of characters to parse
  * @return Integer value of the exponent
  */
 template <bool check_only = false>

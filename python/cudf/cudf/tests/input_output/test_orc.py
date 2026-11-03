@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -16,7 +16,6 @@ from packaging import version
 from pyarrow import orc
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.io.orc import (
     ORCWriter,
     is_supported_read_orc,
@@ -32,7 +31,7 @@ from cudf.testing._utils import (
 # Removal of these deprecated features is no longer imminent. They will not be
 # removed until a suitable alternative has been implemented. As a result, we
 # also do not want to stop testing them yet.
-# https://github.com/rapidsai/cudf/issues/11519
+# https://github.com/NVIDIA/cudf/issues/11519
 pytestmark = pytest.mark.filterwarnings(
     "ignore:(num_rows|skiprows) is deprecated and will be removed."
 )
@@ -103,15 +102,19 @@ def engine(request):
         ("TestOrcFile.demo-12-zlib.orc", ["_col2", "_col3", "_col4", "_col5"]),
     ],
 )
-def test_orc_reader_basic(datadir, inputfile, columns, use_index, engine):
+def test_orc_reader_basic(datadir, inputfile, columns):
     path = datadir / inputfile
 
-    expect = pd.read_orc(path, columns=columns)
-    got = cudf.read_orc(
-        path, engine=engine, columns=columns, use_index=use_index
-    )
-
-    assert_frame_equal(cudf.from_pandas(expect), got, check_categorical=False)
+    expect = cudf.from_pandas(pd.read_orc(path, columns=columns))
+    for engine in ("pyarrow", "cudf"):
+        for use_index in (True, False):
+            got = cudf.read_orc(
+                path,
+                engine=engine,
+                columns=columns,
+                use_index=use_index,
+            )
+            assert_frame_equal(expect, got, check_categorical=False)
 
 
 def test_orc_reader_filenotfound(tmpdir):
@@ -142,16 +145,30 @@ def test_orc_reader_filepath_or_buffer(path_or_buf, src):
     assert_eq(expect, got)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Bug in older version of pandas",
-)
 def test_orc_reader_trailing_nulls(datadir):
     path = datadir / "TestOrcFile.nulls-at-end-snappy.orc"
     expect = pd.read_orc(path)
     got = cudf.read_orc(path)
 
     assert_eq(expect, got, check_categorical=True)
+
+
+@pytest.mark.parametrize(
+    "orc_file",
+    [
+        "TestOrcFile.nulls-at-end-snappy.orc",
+        "TestOrcFile.boolean_corruption_PR_6636.orc",
+        "TestOrcFile.boolean_corruption_PR_6702.orc",
+    ],
+)
+def test_orc_reader_null_decode_mid_run_positions(datadir, orc_file):
+    path = datadir / orc_file
+
+    indexed = cudf.read_orc(path)
+    unindexed = cudf.read_orc(path, use_index=False)
+
+    assert_eq(pd.read_orc(path), indexed)
+    assert_eq(unindexed, indexed)
 
 
 @pytest.mark.parametrize(
@@ -258,7 +275,7 @@ def test_orc_read_stripes(datadir, engine):
     except pa.ArrowIOError as e:
         pytest.skip(".orc file is not found: %s" % e)
 
-    num_rows, stripes, col_names = cudf.io.read_orc_metadata(path)
+    _num_rows, stripes, _col_names = cudf.io.read_orc_metadata(path)
 
     # Read stripes one at a time
     gdf = [
@@ -567,6 +584,38 @@ def test_orc_reader_boolean_type(datadir, orc_file):
     assert_eq(pdf, df)
 
 
+def test_orc_read_decompress_overflow(datadir):
+    # PostScript declares compressionBlockSize over reader maximum (1 GiB).
+    path = datadir / "decompress_overflow.orc"
+    with pytest.raises(IndexError):
+        cudf.read_orc(path)
+
+
+def test_orc_read_footer_underflow(datadir):
+    # Crafted ORC with huge footerLength that used to underflow host_read offsets.
+    path = datadir / "footer_underflow.orc"
+    with pytest.raises(IndexError):
+        cudf.read_orc(path)
+
+
+def test_orc_read_incorrect_ps_length():
+    # File is only 10 bytes, but the last byte claims a 255-byte PostScript.
+    # Bounds check should catch this and raise an IndexError.
+    buf = BytesIO(b"\x00" * 9 + b"\xff")
+    with pytest.raises(IndexError):
+        cudf.read_orc(buf)
+
+
+def test_orc_read_stripe_footer_no_encodings(datadir):
+    # Crafted ORC whose stripe footer's ColumnEncoding list is empty even though
+    # the file footer declares one data column. The reader used to index the
+    # encoding list out of bounds and segfault; it now raises IndexError from
+    # the early stripe-footer validation in aggregate_orc_metadata.
+    path = datadir / "stripe_footer_no_encodings.orc"
+    with pytest.raises(IndexError):
+        cudf.read_orc(path)
+
+
 def test_orc_reader_tzif_timestamps(datadir):
     # Contains timstamps in the range covered by the TZif file
     # Other timedate tests only cover "future" times
@@ -607,31 +656,16 @@ def normalized_equals(value1, value2):
     if isinstance(value1, float) or isinstance(value2, float):
         return np.isclose(value1, value2)
 
-    return value1 == value2
+    try:
+        assert_eq(value1, value2)
+        return True
+    except AssertionError:
+        return False
 
 
-@pytest.mark.parametrize("stats_freq", ["STRIPE", "ROWGROUP"])
-@pytest.mark.parametrize("nrows", [1, 100, 100000])
-def test_orc_write_statistics(tmp_path, datadir, nrows, stats_freq):
-    supported_stat_types = [*supported_numpy_dtypes, "str"]
-    # Writing bool columns to multiple row groups is disabled
-    # until #6763 is fixed
-    if nrows == 100000:
-        supported_stat_types.remove("bool")
-
-    # Make a dataframe
-    gdf = cudf.DataFrame(
-        {
-            "col_" + str(dtype): gen_rand_series(dtype, nrows, has_nulls=True)
-            for dtype in supported_stat_types
-        }
-    )
-    fname = tmp_path / "gdf.orc"
-
-    # Write said dataframe to ORC with cuDF
+def _assert_orc_write_statistics(gdf, fname, stats_freq):
     gdf.to_orc(fname, statistics=stats_freq, stripe_size_rows=30000)
 
-    # Read back written ORC's statistics
     orc_file = orc.ORCFile(fname)
     (
         file_stats,
@@ -681,6 +715,26 @@ def test_orc_write_statistics(tmp_path, datadir, nrows, stats_freq):
                 if stats_num_vals is not None:
                     actual_num_vals = stripe_df[col].count()
                     assert stats_num_vals == actual_num_vals
+
+
+@pytest.mark.parametrize("nrows", [1, 100, 100000])
+def test_orc_write_statistics(tmp_path, nrows):
+    supported_stat_types = [*supported_numpy_dtypes, "str"]
+    # Writing bool columns to multiple row groups is disabled
+    # until #6763 is fixed
+    if nrows == 100000:
+        supported_stat_types.remove("bool")
+
+    gdf = cudf.DataFrame(
+        {
+            "col_" + str(dtype): gen_rand_series(dtype, nrows, has_nulls=True)
+            for dtype in supported_stat_types
+        }
+    )
+    for stats_freq in ("STRIPE", "ROWGROUP"):
+        _assert_orc_write_statistics(
+            gdf, tmp_path / f"gdf-{stats_freq}.orc", stats_freq
+        )
 
 
 @pytest.mark.parametrize("stats_freq", ["STRIPE", "ROWGROUP"])
@@ -837,7 +891,12 @@ def test_orc_write_bool_statistics(tmp_path, datadir, nrows):
             assert normalized_equals(actual_valid_count, stats_valid_count)
 
 
+@pytest.mark.skipif(
+    version.parse(pa.__version__) >= version.parse("24"),
+    reason="PyArrow 24 cannot read legacy out-of-range ORC timestamps",
+)
 def test_orc_reader_gmt_timestamps(datadir):
+
     path = datadir / "TestOrcFile.gmt.orc"
 
     pdf = pd.read_orc(path)
@@ -1137,7 +1196,7 @@ def test_pyspark_struct(datadir):
     assert_eq(pdf, gdf)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def map_buff():
     size = 100
     rd = random.Random(1)
@@ -1313,11 +1372,9 @@ def dec(num):
     return decimal.Decimal(str(num))
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
-        # basic + nested strings
-        {
+def _make_orc_list_data(case):
+    if case == "nested":
+        return {
             "lls": [[["a"], ["bb"]] * 5 for i in range(12345)],
             "lls2": [[["ccc", "dddd"]] * 6 for i in range(12345)],
             "ls_dict": [["X"] * 7 for i in range(12345)],
@@ -1325,9 +1382,9 @@ def dec(num):
             "li": [[i] * 11 for i in range(12345)],
             "lf": [[i * 0.5] * 13 for i in range(12345)],
             "ld": [[dec(i / 2)] * 15 for i in range(12345)],
-        },
-        # with nulls
-        {
+        }
+    elif case == "nulls":
+        return {
             "ls": [
                 [str(i) if i % 5 else None, str(2 * i)] if i % 2 else None
                 for i in range(12345)
@@ -1337,9 +1394,9 @@ def dec(num):
                 [dec(i), dec(i / 2) if i % 7 else None] if i % 5 else None
                 for i in range(12345)
             ],
-        },
-        # with empty elements
-        {
+        }
+    elif case == "empty":
+        return {
             "ls": [
                 [str(i), str(2 * i)] if i % 2 else [] for i in range(12345)
             ],
@@ -1355,18 +1412,24 @@ def dec(num):
             "ld": [
                 [dec(i), dec(i / 2)] if i % 5 else [] for i in range(12345)
             ],
-        },
-        # variable list lengths
-        {
+        }
+    elif case == "variable-lengths":
+        return {
             "ls": [[str(i)] * i for i in range(123)],
             "li": [[i, i * i] * i for i in range(123)],
             "ld": [[dec(i), dec(i / 2)] * i for i in range(123)],
-        },
-        # many child elements (more that max_stripe_rows)
-        {"li": [[i] * 1100 for i in range(11000)]},
-    ],
+        }
+    elif case == "many-child-elements":
+        # More child elements than max_stripe_rows.
+        return {"li": [[i] * 1100 for i in range(11000)]}
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["nested", "nulls", "empty", "variable-lengths", "many-child-elements"],
 )
-def test_orc_writer_lists(data):
+def test_orc_writer_lists(case):
+    data = _make_orc_list_data(case)
     buffer = BytesIO()
     cudf.DataFrame(data).to_orc(
         buffer, stripe_size_rows=2048, row_index_stride=512
@@ -1399,7 +1462,12 @@ def test_chunked_orc_writer_lists():
     assert_eq(expect, got)
 
 
+@pytest.mark.skipif(
+    version.parse(pa.__version__) >= version.parse("24"),
+    reason="PyArrow 24 cannot read legacy out-of-range ORC timestamps",
+)
 def test_writer_timestamp_stream_size(datadir, tmp_path):
+
     pdf_fname = datadir / "TestOrcFile.largeTimestamps.orc"
     gdf_fname = tmp_path / "gdf.orc"
 
@@ -1473,8 +1541,10 @@ def test_orc_writer_lists_empty_rg():
     df = cudf.read_orc(buffer)
     assert_eq(df, cudf_in)
 
-    pdf_out = pd.read_orc(buffer)
-    assert_eq(pdf_in, pdf_out)
+    # Compare via pyarrow since pd.read_orc converts nullable integer
+    # lists to float arrays ([None] -> [nan]), losing the original types.
+    pa_out = orc.ORCFile(buffer).read()
+    assert pa_out.equals(cudf_in.to_arrow())
 
 
 def test_statistics_sum_overflow():
@@ -1647,24 +1717,18 @@ def run_orc_columns_and_index_param(index_obj, index, columns):
     expected = pd.read_orc(buffer, columns=columns)
     got = cudf.read_orc(buffer, columns=columns)
 
-    assert_eq(expected, got, check_index_type=True)
+    # When columns is an empty list, pandas uses dtype='object' for
+    # the empty column Index while cudf uses dtype='str'. Avoid
+    # checking the column index type in that case.
+    check_col_type = columns is None or len(columns) > 0
+    assert_eq(
+        expected, got, check_index_type=True, check_column_type=check_col_type
+    )
 
 
 @pytest.mark.parametrize("index_obj", [None, [10, 11, 12], ["x", "y", "z"]])
 @pytest.mark.parametrize("index", [True, False, None])
-@pytest.mark.parametrize(
-    "columns",
-    [
-        None,
-        pytest.param(
-            [],
-            marks=pytest.mark.skipif(
-                PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-                reason="Bug in older version of pandas",
-            ),
-        ),
-    ],
-)
+@pytest.mark.parametrize("columns", [None, []])
 def test_orc_columns_and_index_param(index_obj, index, columns):
     run_orc_columns_and_index_param(index_obj, index, columns)
 
@@ -1699,7 +1763,7 @@ def test_orc_columns_and_index_param(index_obj, index, columns):
         ),
     ],
 )
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/12026")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/12026")
 def test_orc_columns_and_index_param_read_index(index_obj, index, columns):
     run_orc_columns_and_index_param(index_obj, index, columns)
 
@@ -1771,7 +1835,7 @@ def test_orc_writer_cols_as_map_type_error():
     )
     buffer = BytesIO()
     with pytest.raises(
-        TypeError, match="cols_as_map_type must be a list of column names."
+        TypeError, match=r"cols_as_map_type must be a list of column names."
     ):
         df.to_orc(buffer, cols_as_map_type=1)
 
@@ -1819,7 +1883,7 @@ def test_orc_writer_negative_timestamp():
 
 
 @pytest.mark.skip(
-    reason="Bug specific to rockylinux8: https://github.com/rapidsai/cudf/issues/15802",
+    reason="Bug specific to rockylinux8: https://github.com/NVIDIA/cudf/issues/15802",
 )
 def test_orc_reader_apache_negative_timestamp(datadir):
     path = datadir / "TestOrcFile.apache_timestamp.orc"
@@ -1830,13 +1894,32 @@ def test_orc_reader_apache_negative_timestamp(datadir):
     assert_eq(pdf, gdf)
 
 
+def test_orc_reader_epoch_boundary_with_timezone(datadir):
+    # A Spark-written ORC file with writer timezone Asia/Shanghai and a
+    # timestamp near the Unix epoch.
+    path = datadir / "TestOrcFile.Spark.EpochTimestamp.Shanghai.orc"
+
+    # Expected value matches the Apache Java reference reader.
+    # Note: pyarrow/pandas use the Apache C++ reader which
+    # applies the compensation after the timezone conversion and
+    # therefore returns a value that is 1 second too high for this file
+    # (see Apache ORC-763 and ORC-1287). Comparing against pyarrow here
+    # would incorrectly propagate that upstream bug.
+    expected = cudf.DataFrame(
+        {"ts": [pd.Timestamp("1970-01-01 05:51:26.883873")]}
+    )
+    gdf = cudf.read_orc(path)
+
+    assert_eq(expected, gdf, check_dtype=False)
+
+
 def test_statistics_string_sum():
     strings = ["a string", "another string!"]
     buff = BytesIO()
     df = cudf.DataFrame({"str": strings})
     df.to_orc(buff)
 
-    file_stats, stripe_stats = cudf.io.orc.read_orc_statistics([buff])
+    file_stats, _stripe_stats = cudf.io.orc.read_orc_statistics([buff])
     assert_eq(file_stats[0]["str"].get("sum"), sum(len(s) for s in strings))
 
 
@@ -1862,7 +1945,7 @@ def test_reader_empty_stripe(datadir, fname):
 # needs enough data for multiple row groups
 @pytest.mark.parametrize("data", [["*"] * 10001, ["**", None] * 5001])
 def test_reader_row_index_order(data):
-    expected = cudf.DataFrame({"str": data}, dtype="string")
+    expected = cudf.DataFrame({"str": data})
 
     buffer = BytesIO()
     expected.to_pandas().to_orc(buffer)
@@ -1872,7 +1955,7 @@ def test_reader_row_index_order(data):
 
 # Test the corner case where empty blocks are compressed
 # Decompressed data size is zero, even though compressed data size is non-zero
-# For more information see https://github.com/rapidsai/cudf/issues/13608
+# For more information see https://github.com/NVIDIA/cudf/issues/13608
 def test_orc_reader_empty_decomp_data(datadir):
     path = datadir / "TestOrcFile.Spark.EmptyDecompData.orc"
 
@@ -1971,7 +2054,7 @@ def test_orc_reader_desynced_timestamp(datadir, inputfile):
     # is progressed faster than the SECONDARY stream (nanosecond) at the start of a row
     # group. In this case, the "run cache manager" in the decoder kernel is used to
     # orchestrate the dual-stream processing.
-    # For more information, see https://github.com/rapidsai/cudf/issues/17155.
+    # For more information, see https://github.com/NVIDIA/cudf/issues/17155.
 
     path = datadir / inputfile
 

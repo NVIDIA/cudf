@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-This issue template is intended to be used primarily for requests related to pandas accelerator mode. If you'd like to file a general cuDF feature request, please [click here](https://github.com/rapidsai/cudf/issues/new?assignees=&labels=%3F+-+Needs+Triage%2C+feature+request&projects=&template=feature_request.md&title=%5BFEA%5D).
+This issue template is intended to be used primarily for requests related to pandas accelerator mode. If you'd like to file a general cuDF feature request, please [click here](https://github.com/NVIDIA/cudf/issues/new?assignees=&labels=%3F+-+Needs+Triage%2C+feature+request&projects=&template=feature_request.md&title=%5BFEA%5D).
 
 
 **Missing Pandas Feature Request**

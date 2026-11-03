@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
 import cudf
-from cudf.utils.dtypes import CUDF_STRING_DTYPE
 
 if TYPE_CHECKING:
     from cudf._typing import DtypeObj
@@ -28,13 +28,14 @@ def is_dtype_obj_string(obj: DtypeObj) -> bool:
         Whether or not the dtype object is a cuDF string type.
     """
     return (
-        obj == CUDF_STRING_DTYPE
+        obj == np.dtype("object")
         or isinstance(obj, pd.StringDtype)
         or (
             isinstance(obj, pd.ArrowDtype)
             and (
                 pa.types.is_string(obj.pyarrow_dtype)
                 or pa.types.is_large_string(obj.pyarrow_dtype)
+                or pa.types.is_null(obj.pyarrow_dtype)
             )
         )
     )
@@ -191,8 +192,49 @@ def is_dtype_obj_numeric(
     bool
         Whether or not the dtype object is a numeric type.
     """
-    is_non_decimal = dtype.kind in set("iufb")
+    valid_kinds = set("iufb")
+    is_non_decimal = (
+        (isinstance(dtype, np.dtype) and dtype.kind in valid_kinds)
+        or (isinstance(dtype, pd.ArrowDtype) and dtype.kind in valid_kinds)
+        or (
+            isinstance(
+                dtype,
+                (
+                    pd.Int8Dtype,
+                    pd.Int16Dtype,
+                    pd.Int32Dtype,
+                    pd.Int64Dtype,
+                    pd.UInt8Dtype,
+                    pd.UInt16Dtype,
+                    pd.UInt32Dtype,
+                    pd.UInt64Dtype,
+                    pd.Float32Dtype,
+                    pd.Float64Dtype,
+                    pd.BooleanDtype,
+                ),
+            )
+        )
+    )
     if include_decimal:
         return is_non_decimal or is_dtype_obj_decimal(dtype)
     else:
         return is_non_decimal
+
+
+def is_dtype_obj_datetime_tz(obj: DtypeObj) -> bool:
+    """Check whether the provided dtype object is a datetime with timezone type.
+
+    Parameters
+    ----------
+    obj : DtypeObj
+        The dtype object to check.
+
+    Returns
+    -------
+    bool
+    """
+    return isinstance(obj, pd.DatetimeTZDtype) or (
+        isinstance(obj, pd.ArrowDtype)
+        and pa.types.is_timestamp(obj.pyarrow_dtype)
+        and obj.pyarrow_dtype.tz is not None
+    )

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,9 +9,9 @@
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/column/column.hpp>
-#include <cudf/detail/iterator.cuh>
 #include <cudf/transform.hpp>
 
+#include <cuda/iterator>
 #include <thrust/host_vector.h>
 
 struct MaskToNullTest : public cudf::test::BaseFixture {
@@ -21,7 +21,7 @@ struct MaskToNullTest : public cudf::test::BaseFixture {
       input.begin(), input.end(), val.begin());
     std::transform(val.begin(), val.end(), input.begin(), input.begin(), std::logical_and<>());
 
-    auto sample = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+    auto sample = cuda::counting_iterator{0};
 
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       sample, sample + input.size(), input.begin());
@@ -37,7 +37,7 @@ struct MaskToNullTest : public cudf::test::BaseFixture {
   {
     cudf::test::fixed_width_column_wrapper<bool> input_column(input.begin(), input.end());
 
-    auto sample = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+    auto sample = cuda::counting_iterator{0};
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       sample, sample + input.size(), input.begin());
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,13 +9,13 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/optional>
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -48,7 +48,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                                            StringIterLeft lhs_end,
                                            StringIterRight rhs_begin,
                                            Filter filter_fn,
-                                           rmm::cuda_stream_view stream,
+                                           cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   auto strings_count = std::distance(lhs_begin, lhs_end);
@@ -56,20 +56,21 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
 
   // create null mask
   auto [null_mask, null_count] = cudf::detail::valid_if(
-    thrust::make_counting_iterator<size_type>(0),
-    thrust::make_counting_iterator<size_type>(strings_count),
+    cuda::counting_iterator<size_type>{0},
+    cuda::counting_iterator{static_cast<size_type>(strings_count)},
     [lhs_begin, rhs_begin, filter_fn] __device__(size_type idx) {
       return filter_fn(idx) ? lhs_begin[idx].has_value() : rhs_begin[idx].has_value();
     },
     stream,
     mr);
-  if (null_count == 0) { null_mask = rmm::device_buffer{}; }
+  if (null_count == 0) { null_mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED); }
 
   // build vector of strings
-  rmm::device_uvector<string_index_pair> indices(strings_count, stream);
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::make_counting_iterator<size_type>(0),
-                    thrust::make_counting_iterator<size_type>(strings_count),
+  cuda::device_buffer<string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<size_type>{0},
+                    cuda::counting_iterator{static_cast<size_type>(strings_count)},
                     indices.begin(),
                     [lhs_begin, rhs_begin, filter_fn] __device__(size_type idx) {
                       auto const result = filter_fn(idx) ? lhs_begin[idx] : rhs_begin[idx];
@@ -78,7 +79,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                     });
 
   // convert vector into strings column
-  auto result = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto result = cudf::make_strings_column(indices, stream, mr);
   result->set_null_mask(std::move(null_mask), null_count);
   return result;
 }

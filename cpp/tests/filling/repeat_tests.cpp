@@ -1,12 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/random.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/iterator.cuh>
@@ -14,13 +16,69 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <thrust/iterator/constant_iterator.h>
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 #include <numeric>
 
 constexpr cudf::test::debug_output_level verbosity{cudf::test::debug_output_level::ALL_ERRORS};
+
+class RepeatMemoryResourcesTest : public cudf::test::BaseFixture {};
+
+TEST_F(RepeatMemoryResourcesTest, ScalarCount)
+{
+  auto harness = cudf::test::memory_resource_test_harness{};
+  auto stream  = cudf::test::get_default_stream();
+  auto setup   = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{
+    {1, 2, 3}, {true, false, true}, stream, setup};
+  cudf::test::strings_column_wrapper strings{
+    {"one", "two", "three"}, {true, false, true}, stream, setup};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_values{
+    {1, 1, 2, 2, 3, 3}, {true, true, false, false, true, true}, stream, setup};
+  cudf::test::strings_column_wrapper expected_strings{{"one", "one", "", "", "three", "three"},
+                                                      {true, true, false, false, true, true},
+                                                      stream,
+                                                      setup};
+  cudf::table_view input{{values, strings}};
+  cudf::table_view expected{{expected_values, expected_strings}};
+
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) { return cudf::repeat(input, 2, stream, mr); },
+    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view()); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+}
+
+TEST_F(RepeatMemoryResourcesTest, ColumnCount)
+{
+  auto harness = cudf::test::memory_resource_test_harness{};
+  auto stream  = cudf::test::get_default_stream();
+  auto setup   = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{
+    {1, 2, 3, 4}, {true, false, true, true}, stream, setup};
+  cudf::test::strings_column_wrapper strings{
+    {"one", "two", "three", "four"}, {true, false, true, true}, stream, setup};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> counts{{2, 1, 0, 1}, stream, setup};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_values{
+    {1, 1, 2, 4}, {true, true, false, true}, stream, setup};
+  cudf::test::strings_column_wrapper expected_strings{
+    {"one", "one", "", "four"}, {true, true, false, true}, stream, setup};
+  cudf::table_view input{{values, strings}};
+  cudf::table_view expected{{expected_values, expected_strings}};
+
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) { return cudf::repeat(input, counts, stream, mr); },
+    [](auto const& result) { return result->alloc_size(); },
+    [&](auto const& result) { CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view()); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+}
 
 template <typename T>
 class RepeatTypedTestFixture : public cudf::test::BaseFixture,
@@ -42,7 +100,7 @@ TYPED_TEST(RepeatTypedTestFixture, RepeatScalarCount)
   constexpr cudf::size_type repeat_count{10};
 
   auto input = cudf::test::fixed_width_column_wrapper<T, int32_t>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + num_values);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + num_values);
 
   static_assert(repeat_count > 0, "repeat_count should be larger than 0.");
   auto expected_elements = cudf::detail::make_counting_transform_iterator(
@@ -144,14 +202,14 @@ TYPED_TEST(RepeatTypedTestFixture, ZeroSizeInput)
   using T = TypeParam;
   static_assert(cudf::is_fixed_width<T>(), "this code assumes fixed-width types.");
 
-  cudf::test::fixed_width_column_wrapper<T, int32_t> input(thrust::make_counting_iterator(0),
-                                                           thrust::make_counting_iterator(0));
+  cudf::test::fixed_width_column_wrapper<T, int32_t> input(cuda::counting_iterator<int32_t>{0},
+                                                           cuda::counting_iterator<int32_t>{0});
 
   auto count = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0));
+    cuda::counting_iterator<cudf::size_type>{0}, cuda::counting_iterator<cudf::size_type>{0});
 
-  cudf::test::fixed_width_column_wrapper<T, int32_t> expected(thrust::make_counting_iterator(0),
-                                                              thrust::make_counting_iterator(0));
+  cudf::test::fixed_width_column_wrapper<T, int32_t> expected(cuda::counting_iterator<int32_t>{0},
+                                                              cuda::counting_iterator<int32_t>{0});
 
   cudf::table_view input_table{{input}};
   auto p_ret = cudf::repeat(input_table, count);
@@ -163,8 +221,8 @@ TYPED_TEST(RepeatTypedTestFixture, ZeroSizeInput)
 TYPED_TEST(RepeatTypedTestFixture, ZeroCount)
 {
   using T = TypeParam;
-  cudf::test::fixed_width_column_wrapper<T, int32_t> input(thrust::make_counting_iterator(0),
-                                                           thrust::make_counting_iterator(10));
+  cudf::test::fixed_width_column_wrapper<T, int32_t> input(cuda::counting_iterator<int32_t>{0},
+                                                           cuda::counting_iterator<int32_t>{10});
 
   auto expected = cudf::make_empty_column(cudf::type_to_id<T>());
 
@@ -230,7 +288,7 @@ TEST_F(RepeatStringTestFixture, ZeroSizeInput)
   auto input = cudf::test::strings_column_wrapper(input_values.begin(), input_values.end());
 
   auto count = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0));
+    cuda::counting_iterator<cudf::size_type>{0}, cuda::counting_iterator<cudf::size_type>{0});
 
   auto expected = cudf::test::strings_column_wrapper(input_values.begin(), input_values.end());
 
@@ -246,10 +304,10 @@ class RepeatErrorTestFixture : public cudf::test::BaseFixture {};
 TEST_F(RepeatErrorTestFixture, LengthMismatch)
 {
   auto input = cudf::test::fixed_width_column_wrapper<int32_t>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + 100);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + 100);
 
   auto count = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + 200);
+    cuda::counting_iterator<cudf::size_type>{0}, cuda::counting_iterator<cudf::size_type>{0} + 200);
 
   cudf::table_view input_table{{input}};
 
@@ -260,12 +318,12 @@ TEST_F(RepeatErrorTestFixture, LengthMismatch)
 TEST_F(RepeatErrorTestFixture, CountHasNulls)
 {
   auto input = cudf::test::fixed_width_column_wrapper<int32_t>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + 100);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + 100);
 
-  auto count =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>(thrust::make_counting_iterator(0),
-                                                            thrust::make_counting_iterator(0) + 100,
-                                                            thrust::make_constant_iterator(false));
+  auto count = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator<cudf::size_type>{0} + 100,
+    cuda::make_constant_iterator(false));
 
   cudf::table_view input_table{{input}};
 
@@ -276,7 +334,7 @@ TEST_F(RepeatErrorTestFixture, CountHasNulls)
 TEST_F(RepeatErrorTestFixture, Overflow)
 {
   auto input = cudf::test::fixed_width_column_wrapper<int32_t>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + 100);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + 100);
   cudf::table_view input_table{{input}};
   // set the count such that (count * num_rows) > max(size_type);
   // the extra divide by 2 ensures the max is exceeded despite truncation in integer division
@@ -287,7 +345,7 @@ TEST_F(RepeatErrorTestFixture, Overflow)
 TEST_F(RepeatErrorTestFixture, NegativeCount)
 {
   auto input = cudf::test::fixed_width_column_wrapper<int32_t>(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(0) + 100);
+    cuda::counting_iterator<int32_t>{0}, cuda::counting_iterator<int32_t>{0} + 100);
   cudf::table_view input_table{{input}};
   EXPECT_THROW(cudf::repeat(input_table, -1), cudf::logic_error);
 }

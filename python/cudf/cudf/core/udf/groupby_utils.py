@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -7,11 +7,13 @@ from functools import cache
 import cupy as cp
 import numpy as np
 from numba import cuda, types
-from numba.core.errors import TypingError
+from numba.core.errors import TypingError as CoreTypingError
+from numba.cuda.core.errors import TypingError as CudaTypingError
 from numba.cuda.cudadrv.devices import get_context
 from numba.np import numpy_support
 
 from cudf.core.column import as_column, column_empty
+from cudf.core.column.column import ColumnBase
 from cudf.core.udf.groupby_typing import (
     SUPPORTED_GROUPBY_NUMPY_TYPES,
     Group,
@@ -24,6 +26,7 @@ from cudf.core.udf.templates import (
 )
 from cudf.core.udf.udf_kernel_base import ApplyKernelBase
 from cudf.core.udf.utils import (
+    UDF_SHIM_FILE,
     UDFError,
     _all_dtypes_from_frame,
     _get_extensionty_size,
@@ -79,32 +82,6 @@ def _get_frame_groupby_type(dtype, index_dtype):
     return GroupByJITDataFrame(fields, offset, _is_aligned_struct)
 
 
-def _groupby_apply_kernel_string_from_template(frame, args):
-    """
-    Function to write numba kernels for `Groupby.apply` as a string.
-    Workaround until numba supports functions that use `*args`
-    """
-    # Create argument list for kernel
-    frame = _supported_cols_from_frame(
-        frame, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES
-    )
-    input_columns = ", ".join([f"input_col_{i}" for i in range(len(frame))])
-    extra_args = ", ".join([f"extra_arg_{i}" for i in range(len(args))])
-
-    # Generate the initializers for each device function argument
-    initializers = []
-    for i, colname in enumerate(frame.keys()):
-        initializers.append(
-            group_initializer_template.format(idx=i, name=colname)
-        )
-
-    return groupby_apply_kernel_template.format(
-        input_columns=input_columns,
-        extra_args=extra_args,
-        group_initializers="\n".join(initializers),
-    )
-
-
 @_performance_tracking
 def jit_groupby_apply(offsets, grouped_values, function, *args):
     """
@@ -141,6 +118,19 @@ def jit_groupby_apply(offsets, grouped_values, function, *args):
     )
     launch_args += list(args)
 
+    # The JIT kernel does not consult null masks, and numba-cuda's argument
+    # marshalling rejects ``__cuda_array_interface__`` dicts that include a
+    # ``mask`` entry. Strip masks from any nullable column args so the kernel
+    # sees only the underlying data buffer. The user is responsible for
+    # ensuring that null values do not affect correctness when explicitly
+    # requesting ``engine="jit"``.
+    launch_args = [
+        arg.set_mask(None, 0)
+        if isinstance(arg, ColumnBase) and arg.nullable
+        else arg
+        for arg in launch_args
+    ]
+
     max_group_size = cp.diff(offsets).max()
 
     if max_group_size >= 256:
@@ -158,7 +148,7 @@ def jit_groupby_apply(offsets, grouped_values, function, *args):
     # Dispatcher is specialized, so there's only one definition - get
     # it so we can get the cufunc from the code library
     (kern_def,) = specialized.overloads.values()
-    grid, tpb = ctx.get_max_potential_block_size(
+    _grid, tpb = ctx.get_max_potential_block_size(
         func=kern_def._codelibrary.get_cufunc(),
         b2d_func=0,
         memsize=0,
@@ -189,7 +179,7 @@ def _can_be_jitted(frame, func, args):
     try:
         kr._get_udf_return_type()
         return True
-    except (UDFError, TypingError):
+    except (UDFError, CoreTypingError, CudaTypingError):
         return False
 
 
@@ -219,19 +209,13 @@ class GroupByApplyKernel(ApplyKernelBase):
         frame = _supported_cols_from_frame(
             self.frame, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES
         )
-        input_columns = ", ".join(
-            [f"input_col_{i}" for i in range(len(frame))]
-        )
-        extra_args = ", ".join(
-            [f"extra_arg_{i}" for i in range(len(self.args))]
-        )
+        input_columns = self._format_arg_list("input_col", len(frame))
+        extra_args = self._format_arg_list("extra_arg", len(self.args))
 
         # Generate the initializers for each device function argument
         initializers = []
         for i, colname in enumerate(frame.keys()):
-            initializers.append(
-                group_initializer_template.format(idx=i, name=colname)
-            )
+            initializers.append(group_initializer_template.format(idx=i))
 
         return groupby_apply_kernel_template.format(
             input_columns=input_columns,
@@ -242,13 +226,23 @@ class GroupByApplyKernel(ApplyKernelBase):
     @cache
     def _get_kernel_string_exec_context(self):
         dataframe_group_type = self._get_frame_type()
+        col_names = tuple(
+            _supported_cols_from_frame(
+                self.frame, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES
+            ).keys()
+        )
         global_exec_context = {
             "cuda": cuda,
             "Group": Group,
             "dataframe_group_type": dataframe_group_type,
             "types": types,
+            "_col_names": col_names,
         }
         return global_exec_context
 
     def _construct_signature(self, return_type):
         return None
+
+    def _get_link_files(self, nrt):
+        """GroupBy JIT reductions are implemented in ``shim.fatbin``."""
+        return [UDF_SHIM_FILE]

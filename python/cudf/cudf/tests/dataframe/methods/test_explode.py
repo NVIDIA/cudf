@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -69,10 +69,11 @@ def test_explode_preserve_categorical():
     ],
 )
 def test_explode(data, labels, ignore_index, p_index, label_to_explode):
-    pdf = pd.DataFrame(data, index=p_index, columns=labels)
+    gdf = cudf.DataFrame(data, index=p_index, columns=labels)
+    pdf = gdf.to_pandas(arrow_type=True)
     gdf = cudf.from_pandas(pdf)
 
     expect = pdf.explode(label_to_explode, ignore_index)
     got = gdf.explode(label_to_explode, ignore_index)
 
-    assert_eq(expect, got, check_dtype=False)
+    assert_eq(expect, got)

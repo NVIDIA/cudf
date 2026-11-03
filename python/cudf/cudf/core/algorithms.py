@@ -58,7 +58,7 @@ def factorize(
     >>> codes
     array([0, 1, 1])
     >>> uniques
-    Index(['a' 'c'], dtype='object')
+    Index(['a', 'c'], dtype='str')
 
     When ``use_na_sentinel=True`` (the default), missing values are indicated
     in the `codes` with the sentinel value ``-1`` and missing values are not
@@ -66,9 +66,9 @@ def factorize(
 
     >>> codes, uniques = cudf.factorize(['b', None, 'a', 'c', 'b'])
     >>> codes
-    array([ 1, -1,  0,  2,  1])
+    array([ 0, -1,  1,  2,  0])
     >>> uniques
-    Index(['a', 'b', 'c'], dtype='object')
+    Index(['b', 'a', 'c'], dtype='str')
 
     If NA is in the values, and we want to include NA in the uniques of the
     values, it can be achieved by setting ``use_na_sentinel=False``.
@@ -78,14 +78,31 @@ def factorize(
     >>> codes
     array([ 0,  1,  0, -1])
     >>> uniques
-    Index([1.0, 2.0], dtype='float64')
+    array([1., 2.])
     >>> codes, uniques = cudf.factorize(values, use_na_sentinel=False)
     >>> codes
-    array([1, 2, 1, 0])
+    array([0, 1, 0, 2])
     >>> uniques
-    Index([<NA>, 1.0, 2.0], dtype='float64')
+    array([ 1.,  2., nan])
     """
-    return_cupy_array = isinstance(values, cp.ndarray)
+    if size_hint:
+        warnings.warn("size_hint is not applicable for cudf.factorize")
+
+    # cupy/numpy arrays: run column logic directly and return an array
+    # for ``cats`` so the call is closed under array inputs (mirrors
+    # ``pd.factorize(np.ndarray)``).
+    if isinstance(values, cp.ndarray):
+        labels, cats = as_column(values).factorize(sort, use_na_sentinel)
+        return labels, cats.values
+    if isinstance(values, np.ndarray):
+        labels, cats = as_column(values).factorize(sort, use_na_sentinel)
+        return labels.get(), cats.to_pandas().to_numpy()
+
+    # cudf objects: delegate to the type's ``_factorize`` so subclasses
+    # (e.g. ``RangeIndex``) can specialize while sharing the common
+    # column-level ``Column.factorize`` path by default.
+    if isinstance(values, (cudf.Series, cudf.Index, cudf.MultiIndex)):
+        return values._factorize(sort=sort, use_na_sentinel=use_na_sentinel)
 
     if not can_convert_to_column(values):
         raise TypeError(
@@ -93,31 +110,9 @@ def factorize(
             f"got {type(values)}"
         )
 
-    values = as_column(values)
-
-    if size_hint:
-        warnings.warn("size_hint is not applicable for cudf.factorize")
-
-    if use_na_sentinel:
-        cats = values.dropna()
-    else:
-        cats = values
-
-    cats = cats.unique().astype(values.dtype)
-
-    if sort:
-        cats = cats.sort_values()
-
-    labels = values._label_encoding(
-        cats=cats,
-        dtype=np.dtype("int64"),
-    ).values
-
+    labels, cats = as_column(values).factorize(sort, use_na_sentinel)
     # TODO: Avoid accessing Index from the top level namespace
-    return (
-        labels,
-        cats.values if return_cupy_array else cudf.Index._from_column(cats),
-    )
+    return labels, cudf.Index._from_column(cats)
 
 
 def unique(values):
@@ -158,9 +153,10 @@ def unique(values):
     1    1
     dtype: int64
 
+    >>> import pandas as pd
     >>> cudf.unique(cudf.Series([pd.Timestamp("20160101"), pd.Timestamp("20160101")]))
     0   2016-01-01
-    dtype: datetime64[ns]
+    dtype: datetime64[us]
 
     >>> cudf.unique(
     ...     cudf.Series(
@@ -173,7 +169,7 @@ def unique(values):
     ... )
     0   2016-01-01 00:00:00-05:00
     1   2016-01-03 00:00:00-05:00
-    dtype: datetime64[ns, US/Eastern]
+    dtype: datetime64[us, US/Eastern]
 
     >>> cudf.unique(
     ...     cudf.Index(
@@ -184,7 +180,7 @@ def unique(values):
     ...         ]
     ...     )
     ... )
-    DatetimeIndex(['2016-01-01 00:00:00-05:00', '2016-01-03 00:00:00-05:00'],dtype='datetime64[ns, US/Eastern]')
+    DatetimeIndex(['2016-01-01 00:00:00-05:00', '2016-01-03 00:00:00-05:00'], dtype='datetime64[us, US/Eastern]')
 
     An unordered Categorical will return categories in the
     order of appearance.
@@ -194,19 +190,19 @@ def unique(values):
     1    a
     2    c
     dtype: category
-    Categories (3, object): ['a', 'b', 'c']
+    Categories (3, str): ['a', 'b', 'c']
 
     >>> cudf.unique(cudf.Series(pd.Categorical(list("baabc"), categories=list("abc"))))
     0    b
     1    a
     2    c
     dtype: category
-    Categories (3, object): ['a', 'b', 'c']
+    Categories (3, str): ['a', 'b', 'c']
 
     An ordered Categorical preserves the category ordering.
 
-    >>> pd.unique(
-    ...     pd.Series(
+    >>> cudf.unique(
+    ...     cudf.Series(
     ...         pd.Categorical(list("baabc"), categories=list("abc"), ordered=True)
     ...     )
     ... )
@@ -214,12 +210,7 @@ def unique(values):
     1    a
     2    c
     dtype: category
-    Categories (3, object): ['a' < 'b' < 'c']
-
-    An array of tuples
-
-    >>> pd.unique(pd.Series([("a", "b"), ("b", "a"), ("a", "c"), ("b", "a")]).values)
-    array([('a', 'b'), ('b', 'a'), ('a', 'c')], dtype=object)
+    Categories (3, str): ['a' < 'b' < 'c']
     """
     # TODO: Avoid accessing Index and Series from the top level namespace
     if not isinstance(values, (cudf.Series, cudf.Index, cp.ndarray)):

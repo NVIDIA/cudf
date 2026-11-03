@@ -1,26 +1,29 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
-from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.types cimport size_type
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
-cdef class Table:
-    # List[pylibcudf.Column]
-    cdef public list _columns
+from .column cimport Column
 
-    cdef table_view view(self) nogil
+cdef class Table:
+    # Tuple[pylibcudf.Column]
+    cdef tuple _columns
+    cdef size_type _num_rows
+
+    cdef table_view view(self)
 
     cpdef int num_columns(self)
     cpdef int num_rows(self)
-    cpdef tuple shape(self)
+    cpdef tuple[int, int] shape(self)
 
     @staticmethod
     cdef Table from_libcudf(
         unique_ptr[table] libcudf_tbl,
-        Stream stream,
+        object stream,
         DeviceMemoryResource mr
     )
 
@@ -31,8 +34,9 @@ cdef class Table:
     cdef Table from_table_view_of_arbitrary(
         const table_view& tv,
         object owner,
-        Stream stream,
+        object stream,
     )
 
-    cpdef list columns(self)
-    cpdef Table copy(self, Stream stream=*, DeviceMemoryResource mr=*)
+    cpdef tuple columns(self)
+    cpdef list[Column] release(self)
+    cpdef Table copy(self, object stream = *, DeviceMemoryResource mr=*)

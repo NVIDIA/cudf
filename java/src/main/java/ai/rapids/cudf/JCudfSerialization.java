@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -893,24 +893,34 @@ public class JCudfSerialization {
 
   private static ColumnBufferProvider[] providersFrom(ColumnVector[] columns) {
     HostColumnVector[] onHost = new HostColumnVector[columns.length];
-    boolean success = false;
     try {
       for (int i = 0; i < columns.length; i++) {
         onHost[i] = columns[i].copyToHostAsync(Cuda.DEFAULT_STREAM);
       }
       Cuda.DEFAULT_STREAM.sync();
-      ColumnBufferProvider[] ret = providersFrom(onHost, true);
-      success = true;
-      return ret;
-    } finally {
-      if (!success) {
+      return providersFrom(onHost, true);
+    } catch (Throwable t) {
+      // Async D->H copies may still be in flight into these host buffers;
+      // sync before closing to avoid a use-after-free on pinned memory.
+      // Preserve the original cause; record secondary failures as suppressed.
+      boolean drained = false;
+      try {
+        Cuda.DEFAULT_STREAM.sync();
+        drained = true;
+      } catch (Throwable syncFailure) {
+        t.addSuppressed(syncFailure);
+      }
+      // If the recovery sync threw, the CUDA stream is in an error state
+      // and pending DMA writes into the host buffers may not have completed.
+      // Closing them now risks the DMA engine writing into freed memory.
+      // Leak instead — the process is already in a broken state (sticky CUDA
+      // error usually requires a restart), and a leak beats silent corruption.
+      if (drained) {
         for (int i = 0; i < onHost.length; i++) {
-          if (onHost[i] != null) {
-            onHost[i].close();
-            onHost[i] = null;
-          }
+          CleanupHelpers.closeAndSuppress(onHost[i], t);
         }
       }
+      throw t;
     }
   }
 

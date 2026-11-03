@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <thrust/iterator/constant_iterator.h>
+#include <cuda/buffer>
+#include <cuda/iterator>
 #include <thrust/scatter.h>
 #include <thrust/uninitialized_fill.h>
 
@@ -23,7 +24,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        duplicate_keep_option keep,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0 or keys.empty()) {
@@ -45,20 +46,24 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
   // the need to sort the distinct indices, which is slower.
 
   auto const output_markers = [&] {
-    auto markers = rmm::device_uvector<bool>(input.num_rows(), stream);
+    auto markers = cuda::device_buffer<bool>(
+      stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
     thrust::uninitialized_fill(
-      rmm::exec_policy_nosync(stream), markers.begin(), markers.end(), false);
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      markers.begin(),
+      markers.end(),
+      false);
     thrust::scatter(
-      rmm::exec_policy_nosync(stream),
-      thrust::constant_iterator<bool>(true, 0),
-      thrust::constant_iterator<bool>(true, static_cast<size_type>(distinct_indices.size())),
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::constant_iterator<bool>(true, 0),
+      cuda::constant_iterator<bool>(true, static_cast<size_type>(distinct_indices.size())),
       distinct_indices.begin(),
       markers.begin());
     return markers;
   }();
 
-  return cudf::detail::apply_boolean_mask(
-    input, cudf::device_span<bool const>(output_markers), stream, mr);
+  return cudf::detail::apply_mask(
+    input, cudf::device_span<bool const>(output_markers), mask_type::RETENTION, stream, mr);
 }
 
 }  // namespace detail
@@ -68,7 +73,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        duplicate_keep_option keep,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
-                                       rmm::cuda_stream_view stream,
+                                       cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

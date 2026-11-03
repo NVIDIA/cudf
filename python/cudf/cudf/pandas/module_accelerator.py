@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ import threading
 import warnings
 from abc import abstractmethod
 from collections import defaultdict
-from importlib._bootstrap import _ImportLockContext as ImportLock
+from importlib._bootstrap import (  # type: ignore[attr-defined]  # (private importlib lock exists at runtime)
+    _ImportLockContext as ImportLock,
+)
 from types import ModuleType
 from typing import Any, ContextManager, NamedTuple, Self  # noqa: UP035
 

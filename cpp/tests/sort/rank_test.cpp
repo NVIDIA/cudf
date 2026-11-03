@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <tuple>
 #include <vector>
@@ -430,8 +430,8 @@ struct RankLarge : public cudf::test::BaseFixture {};
 
 TEST_F(RankLarge, average_large)
 {
-  // testcase of https://github.com/rapidsai/cudf/issues/9703
-  auto iter = thrust::counting_iterator<int64_t>(0);
+  // testcase of https://github.com/NVIDIA/cudf/issues/9703
+  auto iter = cuda::counting_iterator<int64_t>{0};
   cudf::test::fixed_width_column_wrapper<int64_t> col1(iter, iter + 10558);
   auto result = cudf::rank(col1,
                            cudf::rank_method::AVERAGE,
@@ -441,6 +441,35 @@ TEST_F(RankLarge, average_large)
                            false);
   cudf::test::fixed_width_column_wrapper<double, int> expected(iter + 1, iter + 10559);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view(), expected);
+}
+
+struct RankMemoryResourceTest : public cudf::test::BaseFixtureWithHarness {};
+
+TEST_F(RankMemoryResourceTest, Resources)
+{
+  auto const stream = this->stream();
+  auto const mr     = this->resources();
+  auto& harness     = this->harness();
+
+  cudf::test::fixed_width_column_wrapper<int32_t> input(
+    {30, 10, 20, 10}, stream, harness.setup_mr());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(
+    {4, 1, 3, 1}, stream, harness.setup_mr());
+
+  auto result = cudf::rank(input,
+                           cudf::rank_method::MIN,
+                           cudf::order::ASCENDING,
+                           cudf::null_policy::INCLUDE,
+                           cudf::null_order::BEFORE,
+                           false,
+                           stream,
+                           mr);
+  harness.synchronize(stream);
+  harness.expect_output_allocations_live(stream);
+  harness.expect_temporary_allocation_activity(stream);
+  harness.expect_temporary_allocations_released(stream);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected, result->view(), cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
 
 template <typename T>

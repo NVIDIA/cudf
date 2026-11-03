@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,6 +25,7 @@
  *   @defgroup column_classes Column
  *   @{
  *      @defgroup column_factories Factories
+ *      @defgroup column_stream Column stream
  *      @defgroup strings_classes Strings
  *      @defgroup dictionary_classes Dictionary
  *      @defgroup timestamp_classes Timestamp
@@ -72,6 +73,7 @@
  *   @defgroup column_merge Merging
  *   @defgroup column_join Joining
  *   @defgroup column_quantiles Quantiles
+ *   @defgroup column_reduction Reduction
  *   @defgroup column_aggregation Aggregation
  *   @{
  *     @defgroup aggregation_factories Aggregation Factories
@@ -137,6 +139,7 @@
  *   @defgroup io_datasources Data Sources
  *   @defgroup io_datasinks Data Sinks
  *   @defgroup io_configuration IO Configuration
+ *   @defgroup io_utils IO Utilities
  * @}
  * @defgroup json_apis JSON
  * @{
@@ -174,6 +177,7 @@
  *   @defgroup utility_bitmask Bitmask
  *   @defgroup utility_error Exception
  *   @defgroup utility_span Exception
+ *   @defgroup utility_roaring_bitmap Roaring Bitmap
  * @}
  * @defgroup labeling_apis Labeling
  * @{

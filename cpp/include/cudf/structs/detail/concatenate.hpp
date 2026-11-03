@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -7,11 +7,10 @@
 #include <cudf/column/column.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table_view.hpp>
-#include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace structs::detail {
 
 /**
@@ -39,8 +38,8 @@ namespace structs::detail {
  * @return        New column with concatenated results.
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr);
 
 }  // namespace structs::detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -32,6 +32,7 @@ TEST_F(StringsFindTest, Find)
   cudf::strings::ends_with(view, target, cudf::test::get_default_stream());
   cudf::strings::ends_with(view, view, cudf::test::get_default_stream());
   cudf::strings::find_instance(view, target, 0, cudf::test::get_default_stream());
+  cudf::strings::count(view, target, cudf::test::get_default_stream());
 
   auto const pattern = std::string("[a-z]");
   auto const prog    = cudf::strings::regex_program::create(pattern);

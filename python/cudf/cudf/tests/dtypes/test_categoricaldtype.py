@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -32,18 +32,21 @@ def test_cdt_eq(data, categorical_ordered):
     "data", [None, [], ["a"], [1], [1.0], ["a", "b", "c"]]
 )
 def test_cdf_to_pandas(data, categorical_ordered):
-    assert (
-        pd.CategoricalDtype(data, categorical_ordered)
-        == cudf.CategoricalDtype(
-            categories=data, ordered=categorical_ordered
-        ).to_pandas()
+    cudf_cat = cudf.CategoricalDtype(
+        categories=data, ordered=categorical_ordered
     )
+    if data == []:
+        # As of pandas 3.0, empty default type of object isn't
+        # necessarily equivalent to cuDF's empty default type of
+        # pandas.StringDtype
+        data = pd.Index([], dtype=cudf_cat.categories.dtype)
+    pd_cat = pd.CategoricalDtype(data, categorical_ordered)
+    assert cudf_cat.to_pandas() == pd_cat
 
 
 @pytest.mark.parametrize(
     "categories",
     [
-        [],
         [1, 2, 3],
         pd.Series(["a", "c", "b"], dtype="category"),
         pd.Series([1, 2, 3, 4, -100], dtype="category"),

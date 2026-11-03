@@ -112,7 +112,12 @@ def test_review_pairs_need_shared_behavior_and_remain_candidates() -> None:
     )
     assert pairs[0]["shared_line_count"] == 4
     assert pairs[0]["local_only_line_count"] == 1
-    assert pairs[0]["shared_lines"][0] == {"source_file": source, "line": 10}
+    assert pairs[0]["shared_lines"][0] == {
+        "source_file": source,
+        "line": 10,
+        "local_context": "tests/test_join.py::test_join|run",
+        "upstream_context": "tests/unit/operations/test_join.py::test_join|run",
+    }
     assert pairs[0]["status"] == "review_candidate"
 
 

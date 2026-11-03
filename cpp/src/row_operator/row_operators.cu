@@ -14,15 +14,16 @@
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/linked_column.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <functional>
@@ -310,7 +311,7 @@ auto list_lex_preprocess(table_view const& table, cuda::stream_ref stream)
       dremel_device_views.push_back(dremel_data.back());
     }
   }
-  auto d_dremel_device_views = detail::make_device_uvector(
+  auto d_dremel_device_views = detail::make_device_buffer(
     dremel_device_views, stream, cudf::get_current_device_resource_ref());
   return std::make_tuple(std::move(dremel_data), std::move(d_dremel_device_views));
 }
@@ -642,12 +643,12 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(
 {
   check_lex_compatibility(preprocessed_input);
 
-  auto d_table        = table_device_view::create(preprocessed_input, stream);
-  auto d_column_order = detail::make_device_uvector_async(
-    column_order, stream, cudf::get_current_device_resource_ref());
-  auto d_null_precedence = detail::make_device_uvector_async(
+  auto d_table = table_device_view::create(preprocessed_input, stream);
+  auto d_column_order =
+    detail::make_device_buffer_async(column_order, stream, cudf::get_current_device_resource_ref());
+  auto d_null_precedence = detail::make_device_buffer_async(
     null_precedence, stream, cudf::get_current_device_resource_ref());
-  auto d_depths = detail::make_device_uvector_async(
+  auto d_depths = detail::make_device_buffer_async(
     verticalized_col_depths, stream, cudf::get_current_device_resource_ref());
   cudf::detail::sync_stream(stream);
 
@@ -795,11 +796,11 @@ preprocessed_table::create(table_view const& lhs,
 
 preprocessed_table::preprocessed_table(
   table_device_view_owner&& table,
-  rmm::device_uvector<order>&& column_order,
-  rmm::device_uvector<null_order>&& null_precedence,
-  rmm::device_uvector<size_type>&& depths,
+  cuda::device_buffer<order>&& column_order,
+  cuda::device_buffer<null_order>&& null_precedence,
+  cuda::device_buffer<size_type>&& depths,
   std::vector<detail::dremel_data>&& dremel_data,
-  rmm::device_uvector<detail::dremel_device_view>&& dremel_device_views,
+  cuda::device_buffer<detail::dremel_device_view>&& dremel_device_views,
   std::vector<std::unique_ptr<column>>&& transformed_columns,
   bool has_ranked_children)
   : _t(std::move(table)),
@@ -814,9 +815,9 @@ preprocessed_table::preprocessed_table(
 }
 
 preprocessed_table::preprocessed_table(table_device_view_owner&& table,
-                                       rmm::device_uvector<order>&& column_order,
-                                       rmm::device_uvector<null_order>&& null_precedence,
-                                       rmm::device_uvector<size_type>&& depths,
+                                       cuda::device_buffer<order>&& column_order,
+                                       cuda::device_buffer<null_order>&& null_precedence,
+                                       cuda::device_buffer<size_type>&& depths,
                                        std::vector<std::unique_ptr<column>>&& transformed_columns,
                                        bool has_ranked_children)
   : _t(std::move(table)),

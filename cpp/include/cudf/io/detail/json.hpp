@@ -10,6 +10,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
@@ -100,7 +101,7 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
  * of each row
  */
 std::
-  tuple<rmm::device_uvector<char>, rmm::device_uvector<size_type>, rmm::device_uvector<size_type>>
+  tuple<cuda::device_buffer<char>, cuda::device_buffer<size_type>, cuda::device_buffer<size_type>>
   normalize_whitespace(device_span<char const> d_input,
                        device_span<size_type const> col_offsets,
                        device_span<size_type const> col_lengths,

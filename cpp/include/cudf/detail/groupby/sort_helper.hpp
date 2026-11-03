@@ -13,6 +13,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf {
@@ -29,7 +30,7 @@ namespace groupby::detail::sort {
  *   value column
  */
 struct sort_groupby_helper {
-  using index_vector       = rmm::device_uvector<size_type>;
+  using index_vector       = cuda::device_buffer<size_type>;
   using bitmask_vector     = rmm::device_uvector<bitmask_type>;
   using column_ptr         = std::unique_ptr<column>;
   using index_vector_ptr   = std::unique_ptr<index_vector>;
@@ -155,7 +156,7 @@ struct sort_groupby_helper {
    * @return vector of offsets of the starting point of each group in the sorted
    * key table
    */
-  index_vector const& group_offsets(cuda::stream_ref stream);
+  device_span<size_type const> const& group_offsets(cuda::stream_ref stream);
 
   /**
    * @brief Get the group labels corresponding to the sorted order of `keys`.
@@ -210,6 +211,7 @@ struct sort_groupby_helper {
 
   index_vector_ptr
     _group_offsets;  ///< Indices into sorted _keys indicating starting index of each groups
+  device_span<size_type const> _group_offsets_view;
   index_vector_ptr _group_labels;  ///< Group labels for sorted _keys
 
   size_type _num_keys;      ///< Number of effective rows in _keys (adjusted for _include_null_keys)

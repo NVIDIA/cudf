@@ -104,7 +104,7 @@ std::unique_ptr<column> make_empty_histogram_like(column_view const& values)
                                   std::move(struct_children));
 }
 
-std::pair<std::unique_ptr<rmm::device_uvector<size_type>>, std::unique_ptr<column>>
+std::pair<std::unique_ptr<cuda::device_buffer<size_type>>, std::unique_ptr<column>>
 compute_row_frequencies(table_view const& input,
                         std::optional<column_view> const& partial_counts,
                         cuda::stream_ref stream,
@@ -181,7 +181,8 @@ compute_row_frequencies(table_view const& input,
   auto const set_size = row_set.size(stream);
 
   // Vector of distinct indices
-  auto distinct_indices = std::make_unique<rmm::device_uvector<size_type>>(set_size, stream, mr);
+  auto distinct_indices =
+    std::make_unique<cuda::device_buffer<size_type>>(stream, mr, set_size, cuda::no_init);
   // Column of distinct counts
   auto distinct_counts = make_numeric_column(
     data_type{type_to_id<histogram_count_type>()}, set_size, mask_state::UNALLOCATED, stream, mr);

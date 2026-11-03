@@ -5,12 +5,14 @@
 
 #include "sort_helper_group_offsets.cuh"
 
+#include <cuda/buffer>
+
 namespace cudf::groupby::detail::sort {
 
 size_type compute_nested_group_offsets(table_view const& keys,
                                        size_type const* sorted_order,
                                        size_type size,
-                                       rmm::device_uvector<size_type>& group_offsets,
+                                       cuda::device_buffer<size_type>& group_offsets,
                                        cuda::stream_ref stream)
 {
   return compute_group_offsets<true>(keys, sorted_order, size, group_offsets, stream);

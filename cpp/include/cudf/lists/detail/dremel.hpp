@@ -7,7 +7,7 @@
 
 #include <cudf/column/column.hpp>
 
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
 
 namespace cudf {
 namespace detail {
@@ -31,9 +31,9 @@ struct dremel_device_view {
  * @see get_dremel_data() for more info.
  */
 struct dremel_data {
-  rmm::device_uvector<size_type> dremel_offsets;
-  rmm::device_uvector<uint8_t> rep_level;
-  rmm::device_uvector<uint8_t> def_level;
+  cuda::device_buffer<size_type> dremel_offsets;
+  cuda::device_buffer<uint8_t> rep_level;
+  cuda::device_buffer<uint8_t> def_level;
 
   size_type leaf_data_size;
   uint8_t max_def_level;

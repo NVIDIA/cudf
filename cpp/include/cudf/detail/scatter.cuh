@@ -26,6 +26,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/scatter.h>
@@ -66,7 +67,8 @@ auto scatter_to_gather(MapIterator scatter_map_begin,
   // value outside the range of the target column.
   // We'll use the `numeric_limits::lowest()` value for this since it should always be outside the
   // valid range.
-  auto gather_map = rmm::device_uvector<size_type>(gather_rows, stream);
+  auto gather_map = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), gather_rows, cuda::no_init);
   thrust::uninitialized_fill(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     gather_map.begin(),
@@ -102,7 +104,8 @@ auto scatter_to_gather_complement(MapIterator scatter_map_begin,
                                   size_type gather_rows,
                                   cuda::stream_ref stream)
 {
-  auto gather_map = rmm::device_uvector<size_type>(gather_rows, stream);
+  auto gather_map = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), gather_rows, cuda::no_init);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    gather_map.begin(),
                    gather_map.end(),

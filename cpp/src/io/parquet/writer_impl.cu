@@ -38,7 +38,6 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuda/buffer>
@@ -976,11 +975,11 @@ struct parquet_column_view {
 
   // List-related members
   bool _is_list;
-  rmm::device_uvector<size_type>
+  cuda::device_buffer<size_type>
     _dremel_offsets;  ///< For each row, the absolute offset into the repetition and definition
                       ///< level vectors. O(num rows)
-  rmm::device_uvector<uint8_t> _rep_level;
-  rmm::device_uvector<uint8_t> _def_level;
+  cuda::device_buffer<uint8_t> _rep_level;
+  cuda::device_buffer<uint8_t> _def_level;
   std::vector<uint8_t> _nullability;
   size_type _data_count = 0;
 };
@@ -990,9 +989,9 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
                                          cuda::stream_ref stream)
   : schema_node(schema_node),
     _d_nullability(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
-    _dremel_offsets(0, stream),
-    _rep_level(0, stream),
-    _def_level(0, stream)
+    _dremel_offsets(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+    _rep_level(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+    _def_level(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
 {
   // Construct single inheritance column_view from linked_column_view
   auto curr_col                           = schema_node.leaf_column.get();

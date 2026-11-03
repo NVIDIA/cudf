@@ -350,7 +350,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
         auto [normalized_d_input, col_offsets, col_lengths] =
           cudf::io::json::detail::normalize_whitespace(
             d_input, json_col.string_offsets, json_col.string_lengths, stream, mr);
-        auto offset_length_it = cuda::make_zip_iterator(col_offsets.begin(), col_lengths.begin());
+        auto offset_length_it = cuda::make_zip_iterator(col_offsets.data(), col_lengths.data());
         target_type           = data_type{type_id::STRING};
         // Convert strings to the inferred data type
         col = parse_data(normalized_d_input.data(),
@@ -364,7 +364,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
                          mr);
       } else {
         auto offset_length_it =
-          cuda::make_zip_iterator(json_col.string_offsets.begin(), json_col.string_lengths.begin());
+          cuda::make_zip_iterator(json_col.string_offsets.data(), json_col.string_lengths.data());
         if (schema.has_value()) {
 #ifdef NJP_DEBUG_PRINT
           std::cout << "-> explicit type: "

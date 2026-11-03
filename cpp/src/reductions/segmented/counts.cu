@@ -8,13 +8,14 @@
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <thrust/adjacent_difference.h>
 
 namespace cudf {
 namespace reduction {
 namespace detail {
 
-rmm::device_uvector<size_type> segmented_counts(bitmask_type const* null_mask,
+cuda::device_buffer<size_type> segmented_counts(bitmask_type const* null_mask,
                                                 bool has_nulls,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
@@ -33,7 +34,7 @@ rmm::device_uvector<size_type> segmented_counts(bitmask_type const* null_mask,
                                               mr);
   }
 
-  rmm::device_uvector<size_type> valid_counts(num_segments, stream, mr);
+  cuda::device_buffer<size_type> valid_counts(stream, mr, num_segments, cuda::no_init);
   thrust::adjacent_difference(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     offsets.begin() + 1,

@@ -16,12 +16,12 @@
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -133,14 +133,15 @@ column_view sort_groupby_helper::key_sort_order(cuda::stream_ref stream)
   return sliced_key_sorted_order();
 }
 
-sort_groupby_helper::index_vector const& sort_groupby_helper::group_offsets(cuda::stream_ref stream)
+device_span<size_type const> const& sort_groupby_helper::group_offsets(cuda::stream_ref stream)
 {
-  if (_group_offsets) return *_group_offsets;
+  if (_group_offsets) return _group_offsets_view;
 
   auto const size = num_keys(stream);
   // Create a temporary variable and only set _group_offsets right before the return.
   // This way, a 2nd (parallel) call to this will not be given a partially created object.
-  auto group_offsets = std::make_unique<index_vector>(size + 1, stream);
+  auto group_offsets = std::make_unique<index_vector>(
+    stream, cudf::get_current_device_resource_ref(), size + 1, cuda::no_init);
 
   auto const sorted_order = key_sort_order(stream).data<size_type>();
   size_type num_groups;
@@ -150,12 +151,16 @@ sort_groupby_helper::index_vector const& sort_groupby_helper::group_offsets(cuda
     num_groups = compute_group_offsets<false>(_keys, sorted_order, size, *group_offsets, stream);
   }
 
-  group_offsets->set_element_async(num_groups, size, stream);
-  group_offsets->resize(num_groups + 1, stream);
+  CUDF_CUDA_TRY(
+    cudf::detail::memcpy_async(group_offsets->data() + num_groups, &size, sizeof(size), stream));
+  // TODO: Restore resizing when https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+  // Keep the allocation and expose only the valid offsets through a view.
+  _group_offsets_view =
+    device_span<size_type const>{group_offsets->data(), static_cast<std::size_t>(num_groups + 1)};
   stream.sync();
 
   _group_offsets = std::move(group_offsets);
-  return *_group_offsets;
+  return _group_offsets_view;
 }
 
 sort_groupby_helper::index_vector const& sort_groupby_helper::group_labels(cuda::stream_ref stream)
@@ -164,7 +169,8 @@ sort_groupby_helper::index_vector const& sort_groupby_helper::group_labels(cuda:
 
   // Create a temporary variable and only set _group_labels right before the return.
   // This way, a 2nd (parallel) call to this will not be given a partially created object.
-  auto group_labels = std::make_unique<index_vector>(num_keys(stream), stream);
+  auto group_labels = std::make_unique<index_vector>(
+    stream, cudf::get_current_device_resource_ref(), num_keys(stream), cuda::no_init);
 
   if (num_keys(stream)) {
     auto const& offsets = group_offsets(stream);

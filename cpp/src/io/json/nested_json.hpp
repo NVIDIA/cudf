@@ -148,8 +148,8 @@ struct device_json_column {
   // The inferred type of this column (list, struct, or value/string column)
   json_col_t type = json_col_t::Unknown;
 
-  rmm::device_uvector<row_offset_t> string_offsets;
-  rmm::device_uvector<row_offset_t> string_lengths;
+  cuda::device_buffer<row_offset_t> string_offsets;
+  cuda::device_buffer<row_offset_t> string_lengths;
 
   // Row offsets (LIST offsets child data; always 32-bit)
   rmm::device_uvector<int32_t> child_offsets;
@@ -190,8 +190,8 @@ struct device_json_column {
    * @param mr Optional, resource with which to allocate
    */
   device_json_column(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-    : string_offsets(0, stream),
-      string_lengths(0, stream),
+    : string_offsets(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      string_lengths(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       child_offsets(0, stream, mr),
       validity(stream, mr)
   {

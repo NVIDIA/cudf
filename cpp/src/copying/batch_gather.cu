@@ -13,23 +13,28 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/assert.cuh>
+#include <cudf/detail/utilities/batched_memset.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/ptx>
@@ -39,40 +44,46 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace cudf {
 namespace detail {
 
 // Handle for an enqueued map-locality sample: the pinned staging plus its decode context. The
-// staging frees stream-ordered, so it may outlive the resolve without a use-after-free.
-// rmm_host_allocator has no default constructor, so empty handles come
-// from empty(stream) — an unallocated pinned vector, not a plain std::vector.
+// staging frees stream-ordered, so it may outlive the resolve without a use-after-free. A zero
+// count allocates nothing, so empty handles stay cheap.
 struct sampled_map_locality {
-  cudf::detail::host_vector<std::byte> staging;
+  cuda::host_buffer<std::byte> staging;
   cudf::type_id map_type{cudf::type_id::EMPTY};
   size_t elem_size{};
 
   static sampled_map_locality empty(cuda::stream_ref stream)
   {
     return sampled_map_locality{
-      cudf::detail::make_pinned_vector_async<std::byte>(0, stream), cudf::type_id::EMPTY, 0};
+      cudf::detail::make_pinned_buffer_async<std::byte>(0, stream), cudf::type_id::EMPTY, 0};
   }
 };
 
 namespace {
 
-// Block size of the fused kernel; matches the valid_if_n_kernel/concatenate precedent.
-constexpr size_type block_size{256};
+// Default block size of the fused kernel; matches the valid_if_n_kernel/concatenate precedent.
+// The explicit block_size overload may select 128/256/512: all are warp multiples, which keeps
+// the masked path's dst-mask-word exactly-once invariant and the per-warp valid-count staging
+// (BlockSize / warp_size rows) well-formed at every choice.
+constexpr size_type kDefaultBlockSize{256};
 
 // Default consecutive descriptors per blockIdx.y tile: each thread loads a row's gather-map
 // value once and reuses it across the tile's columns (per-column map re-reads dominated wide
-// cells). Measured variable — the driver accepts 1/2/4/8 via the tile_cols overload.
+// cells). Measured variable — the driver accepts 1/2/4/8 via the tile_cols parameter.
 constexpr size_type kDefaultTileCols{8};
+
 
 // Map-locality routing. Misrouting a random map to the wide tile costs up to ~51% while the
 // reverse only forfeits the ~17% coalesced win, so the classifier is strict: coalesced is
@@ -91,20 +102,21 @@ constexpr size_type kSampleWindowLen{8};
 /**
  * @brief Type-erased per-column parameters consumed by `batch_gather_kernel`.
  *
- * One descriptor per fixed-width source column. All pointers are element bases, not byte bases:
- * `src_data` comes from `column_view::data<T>()`, which has the slice offset pre-applied in
- * element units, and `dst_data`/`dst_mask` belong to a freshly allocated destination whose
- * offset is zero. Nothing downstream may re-add an offset to these pointers.
+ * One descriptor per NON-all-null fixed-width source column: a column whose every row is null
+ * has its destination pre-set ALL_NULL host-side and carries no descriptor at all, so the
+ * kernel never sees a column it would only skip. All pointers are element bases, not byte
+ * bases: `src_data` comes from `column_view::data<T>()`, which has the slice offset
+ * pre-applied in element units, and `dst_data`/`dst_mask` belong to a freshly allocated
+ * destination whose offset is zero. Nothing downstream may re-add an offset to these pointers.
  */
 struct alignas(16) column_descriptor {
-  void const* src_data;          // first source element; nullptr never (skip_data covers all-null)
-  void* dst_data;                // first destination element; fresh allocation, offset 0
+  void const* src_data;  // first source element; nullptr never (all-null columns: no descriptor)
+  void* dst_data;        // first destination element; fresh allocation, offset 0
   bitmask_type const* src_mask;  // source mask BASE pointer; nullptr when no bit can be clear
-                                 // (non-nullable, zero null count, or all-null skip)
+                                 // (non-nullable or zero null count)
   bitmask_type* dst_mask;        // destination mask; nullptr if dst non-nullable or fast-path
   int64_t mask_offset;           // bit offset into src_mask (== src.offset() for sliced sources)
   int32_t element_size;          // cudf::size_of(src.type()); one of {1, 2, 4, 8, 16}
-  bool skip_data;                // all-null fast path: dst mask pre-set ALL_NULL, data undefined
 };
 
 /**
@@ -124,18 +136,24 @@ struct descriptor_block {
   column_descriptor descs[kCap];
 };
 
-// The by-value tier's byte arithmetic rests on this layout: 4 pointers, one int64, one int32,
-// and one bool total 45 bytes, which the 16-byte alignment rounds to 48. `count` is padded up to
-// that alignment, so a capped block is 16 + 48 * 128 = 6'160 bytes.
+// The by-value tier's byte arithmetic rests on this layout: 4 pointers, one int64, and one
+// int32 total 44 bytes, which the 16-byte alignment rounds to 48. `count` is padded up to
+// that alignment, so the tier blocks are 16 + 48 * 16 = 784 and 16 + 48 * 512 = 24'592 bytes.
 static_assert(sizeof(column_descriptor) == 48,
               "Descriptor size changed: revisit the by-value tier capacity arithmetic");
-static_assert(sizeof(descriptor_block<batch_gather_max_by_value_descriptors>) == 6'160,
-              "By-value block size changed: update the tier's byte arithmetic");
+static_assert(sizeof(descriptor_block<batch_gather_small_by_value_descriptors>) == 784,
+              "Small-tier block size changed: update the tier's byte arithmetic");
+static_assert(sizeof(descriptor_block<batch_gather_wide_by_value_descriptors>) == 24'592,
+              "Wide-tier block size changed: update the tier's byte arithmetic");
 
 // The block shares the 32'764-byte kernel-parameter limit with the rest of the launch:
 // input_indexalator 32 B, two size_type 8 B, two bool 2 B, and one pointer 8 B total 50 B, which
-// the block's 16-byte alignment rounds up to 64 B.
-static_assert(sizeof(descriptor_block<batch_gather_max_by_value_descriptors>) + 64 <= 32'764,
+// the block's 16-byte alignment rounds up to 64 B. The block size rides the kernel's template
+// parameters, not the parameter block, so it adds nothing here; both tier blocks plus that
+// slack stay inside the budget (the wide tier leaves 8'108 B).
+static_assert(sizeof(descriptor_block<batch_gather_small_by_value_descriptors>) + 64 <= 32'764,
+              "By-value descriptor block exceeds the kernel-parameter size limit");
+static_assert(sizeof(descriptor_block<batch_gather_wide_by_value_descriptors>) + 64 <= 32'764,
               "By-value descriptor block exceeds the kernel-parameter size limit");
 
 // Evict-first cache policy (PTX ISA 74, SM_70+ via the generated cuda::ptx builtins), active
@@ -143,19 +161,31 @@ static_assert(sizeof(descriptor_block<batch_gather_max_by_value_descriptors>) + 
 // don't-cache so L2 keeps the reuse-critical gather map. Random/unsampled verdicts, test-forced
 // geometries, host compilation, and pre-sm_70 all take plain default-cached accesses.
 template <bool kStreaming, typename T>
-__device__ inline void streaming_copy(char* dst, char const* src)
+__device__ inline T streaming_load(char const* src)
 {
   if constexpr (kStreaming) {
 #if defined(__CUDA_ARCH__)
     if constexpr (__CUDA_ARCH__ >= 700) {
-      auto const value =
-        cuda::ptx::ld_L1_evict_first(cuda::ptx::space_global_t{}, reinterpret_cast<T const*>(src));
+      return cuda::ptx::ld_L1_evict_first(cuda::ptx::space_global_t{},
+                                          reinterpret_cast<T const*>(src));
+    }
+#endif
+  }
+  return *reinterpret_cast<T const*>(src);
+}
+
+template <bool kStreaming, typename T>
+__device__ inline void streaming_store(char* dst, T value)
+{
+  if constexpr (kStreaming) {
+#if defined(__CUDA_ARCH__)
+    if constexpr (__CUDA_ARCH__ >= 700) {
       cuda::ptx::st_L1_evict_first(cuda::ptx::space_global_t{}, reinterpret_cast<T*>(dst), value);
       return;
     }
 #endif
   }
-  *reinterpret_cast<T*>(dst) = *reinterpret_cast<T const*>(src);
+  *reinterpret_cast<T*>(dst) = value;
 }
 
 // INVARIANT: element_size * row is computed in 64-bit below; it can exceed 2^31 for DECIMAL128.
@@ -249,8 +279,10 @@ struct direct_map_reader {
  * INVARIANT (kMasked == true): each column's dst_mask word w is written exactly once, by lane 0
  * of the warp covering rows [32w, 32w + 32): this requires BlockSize to be a multiple of
  * warp_size (the row stride is then a multiple of 32), which the driver guarantees. Trailing
- * bits of the last word are 0. Per-column bookkeeping (warp_valid[k], per-column ballots)
- * keeps this true independently of the tile a column belongs to.
+ * bits of the last word are 0. Per-column bookkeeping keeps this true independently of the tile
+ * a column belongs to: a column with its own kernel-written mask takes its own ballot (a reused
+ * `inb_ballot` is bit-identical to the per-column ballot whenever `src_mask == nullptr`, because
+ * then `valid == in_bounds`), and its count accumulates into its own shared-memory slot.
  */
 template <size_type BlockSize,
           size_type kTileCols,
@@ -269,23 +301,57 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
 {
   // The masked instantiation tallies per-column valid bits and carries the row-loop predicate
   // in one active-lane ballot mask; the unmasked instantiation has neither.
-  [[maybe_unused]] size_type warp_valid[kTileCols]{};
-  auto const row_stride        = static_cast<int64_t>(blockDim.x) * gridDim.x;
-  auto row                     = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
+  // Lane 0 stages each mask-bearing column's count DIRECTLY into the warp's own shared-memory
+  // slot, at the word-store site inside the column loop where the per-column ballots are in
+  // scope. The zeroing below is load-bearing, not cosmetic: a warp whose row base already sits
+  // at or past num_rows never enters the row loop and never stages, so without it its slots
+  // hold garbage that the readback sums (observed as negative null counts). This replaces the
+  // per-thread kTileCols-entry register array that used to be staged at the end.
   [[maybe_unused]] auto active = 0xFFFF'FFFFu;
-  if constexpr (kMasked) { active = __ballot_sync(active, row < num_rows); }
+  [[maybe_unused]] size_type* warp_valid_smem{nullptr};
+  [[maybe_unused]] auto warp_id = static_cast<size_type>(-1);
+  [[maybe_unused]] auto lane_id = static_cast<size_type>(-1);
+  auto const row_stride = static_cast<int64_t>(blockDim.x) * gridDim.x;
+  auto row              = static_cast<int64_t>(blockIdx.x) * BlockSize + threadIdx.x;
+  if constexpr (kMasked) {
+    // Per-warp staging of the per-column valid counts: warps_per_block * kTileCols *
+    // sizeof(size_type) bytes, disjoint from tile_descs (distinct static __shared__ objects
+    // never overlap, and no dynamic shared memory is used).
+    __shared__ size_type warp_valid_smem_storage[BlockSize / warp_size][kTileCols];
+    warp_valid_smem = &warp_valid_smem_storage[0][0];
+    warp_id         = threadIdx.x / warp_size;
+    lane_id         = threadIdx.x % warp_size;
+    // Zero this warp's own slots BEFORE the row loop: a warp whose row never runs (or a
+    // dst_mask-free column in a partial tile) never stages its slot, and the readback sums
+    // every warp's slot for each mask-bearing column — an unstaged slot must read 0.
+    // Lane 0 alone zeroes: the same lane performs the in-loop staging, so program order
+    // orders the zero before the stage within this lane; an all-lanes zero loop would race
+    // the staged value (no intra-warp same-address ordering post-Volta — racecheck hazard).
+    // The staging site is lane-0-only, so the other lanes' zero-writes are unordered with it.
+    if (lane_id == 0) {
+      for (int32_t k = 0; k < kTileCols; ++k) {
+        warp_valid_smem[warp_id * kTileCols + k] = 0;
+      }
+    }
+    active = __ballot_sync(active, row < num_rows);
+  }
   while (row < num_rows) {
     // One map load (wrap + table-level bounds check) serves every column in the tile.
-    // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile
-    // win depends on its L2 residency (no eviction hint here).
+    // Deliberately default-cached: the map is the reuse-critical stream and the wide-tile win
+    // depends on its L2 residency (no eviction hint here).
     auto idx = gather_map(static_cast<size_type>(row));
     if (negative_allowed && idx < 0) { idx += num_source_rows; }
     bool const in_bounds = !check_bounds || (idx >= 0 && idx < num_source_rows);
+    // One ballot for the whole tile: every lane participates unconditionally (the mask
+    // `active` carries the warp's live rows), so the collective-participation contract is
+    // unchanged; when a column's `src_mask == nullptr` its per-row validity is exactly
+    // `in_bounds`, so the per-column ballots would all repeat this value.
+    [[maybe_unused]] auto const inb_ballot = __ballot_sync(active, in_bounds);
 #pragma unroll
     for (int32_t k = 0; k < kTileCols; ++k) {
       if (tile_begin + k < num_descriptors) {
         auto const d = tile_descs[k];
-        bool valid   = in_bounds;
+        bool valid = in_bounds;
         if constexpr (kMasked) {
           if (valid && d.src_mask != nullptr) {
             valid = bit_is_set(d.src_mask, static_cast<size_type>(d.mask_offset + idx));
@@ -301,10 +367,18 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
         }
         if constexpr (kMasked) {
           if (d.dst_mask != nullptr) {
-            auto const word = __ballot_sync(active, valid);
-            if (threadIdx.x % warp_size == 0) {
+            // The warp's count for THIS column: a source-masked column's ballot includes the
+            // src_mask check, a null-free-source column's ballot is bit-identical to
+            // `inb_ballot` (its validity equals the bounds predicate), so the shared value
+            // stands in — both are bit-exact tallies of the same valid rows the word store
+            // below wrote.
+            auto const word =
+              d.src_mask != nullptr ? __ballot_sync(active, valid) : inb_ballot;
+            if (lane_id == 0) {
+              // Staged straight into this warp's own smem slot (each warp owns its k slots),
+              // replacing the per-column block reduction the register-array form needed.
+              warp_valid_smem[warp_id * kTileCols + k] = cuda::std::popcount(word);
               d.dst_mask[word_index(static_cast<size_type>(row))] = word;
-              warp_valid[k] += cuda::std::popcount(word);
             }
           }
         }
@@ -315,24 +389,13 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
   }
   if constexpr (kMasked) {
     if (valid_counts != nullptr) {
-      // Per-warp staging of the per-column valid counts: warps_per_block * kTileCols *
-      // sizeof(size_type) bytes, disjoint from tile_descs (distinct static __shared__ objects
-      // never overlap, and no dynamic shared memory is used).
-      __shared__ size_type warp_valid_smem[BlockSize / warp_size][kTileCols];
       constexpr auto warps_per_block{BlockSize / warp_size};
-      auto const warp_id = threadIdx.x / warp_size;
-      auto const lane_id = threadIdx.x % warp_size;
-#pragma unroll
-      for (int32_t k = 0; k < kTileCols; ++k) {
-        auto const col = tile_begin + k;
-        if (col < num_descriptors && tile_descs[k].dst_mask != nullptr) {
-          // warp_valid[k] is accumulated only on lane 0, so only lane 0 stages it.
-          if (lane_id == 0) { warp_valid_smem[warp_id][k] = warp_valid[k]; }
-        }
-      }
-      // ONE barrier serves every column of the tile: the guards above gate only the stores,
-      // so every thread arrives — including threads of columns without an in-kernel mask and
-      // of a partial tile — and slots those guards skipped are never read below.
+      // ONE barrier makes every warp's in-loop staged count visible to all warps (the staging
+      // happened inside the column loop above, where the correct ballot is in scope; the
+      // entry zeroing covered the slots the stage never reaches — dead warps' rows and
+      // dst_mask-free columns). A null-free-source column's count comes from the shared
+      // `inb_ballot`; a source-masked column counts its own ballot; both are bit-exact
+      // tallies of the same valid rows the word stores wrote.
       __syncthreads();
 #pragma unroll
       for (int32_t k = 0; k < kTileCols; ++k) {
@@ -341,7 +404,7 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
             static_cast<size_type>(threadIdx.x) == k) {
           size_type block_valid{0};
           for (size_type w = 0; w < warps_per_block; ++w) {
-            block_valid += warp_valid_smem[w][k];
+            block_valid += warp_valid_smem[w * kTileCols + k];
           }
           if (block_valid > 0) {
             cuda::atomic_ref<size_type, cuda::thread_scope_device> ref{valid_counts[col]};
@@ -349,6 +412,12 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
           }
         }
       }
+      // The readback above consumes this tile's staged slots; the NEXT tile iteration's
+      // staging overwrites the same slots with no other barrier between, so a fast warp could
+      // restage while a slow thread is still reading here (a racecheck-visible WAR). This
+      // second barrier orders every thread's readback before any next-tile staging. Masked
+      // tiles now pay two barriers — still far below the per-column reductions this replaced.
+      __syncthreads();
     }
   }
 }
@@ -356,7 +425,8 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
 /**
  * @brief Gathers every column described by `descriptors` in one launch (device path).
  *
- * The grid is 2D: x covers row blocks (grid-stride over rows); each y block owns a tile of
+ * The grid is 2D: x covers the row chunks exactly once (one pass; a capped x would break the
+ * single-pass contract), each y block owns a tile of
  * `kTileCols` consecutive descriptors and y-strides over tiles past the 65535 gridDim.y cap. A
  * row's gather-map value is loaded once and reused across the tile's columns; the tile's
  * descriptors are staged in shared memory so the row loop pays no per-column global reads.
@@ -369,12 +439,25 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
  * valid-bit tallies entirely. The row and mask invariants are stated on `gather_tile_rows`.
  * `MapReader` selects the map source: `input_indexalator` or `direct_map_reader<MapType>`.
  *
- * The masked path reduces each tile's per-column valid counts with ONE block barrier: every
- * warp stages its per-column counts in shared memory, then thread `k` sums column `k` across
- * warps and updates `valid_counts` — two barriers per column would serialize eight separate
+ * The masked path reduces each tile's per-column valid counts with TWO block barriers: lane 0
+ * of every warp stages its counts directly in the warp's shared-memory slots at the word
+ * store (the slots are zeroed at the tile's entry — a warp whose chunk base sits past
+ * num_rows never stages, so an unzeroed slot would leak garbage into the readback), one
+ * barrier publishes them, and thread `k` sums column `k` across warps and updates
+ * `valid_counts`; a second barrier after the readback orders it before the next tile's
+ * staging (the slots are reused across tiles, so the readback-to-restage edge is a WAR the
+ * first barrier does not cover) — two barriers per column would serialize eight separate
  * block reductions. The end-of-tile barrier runs only when a later y iteration will restage
  * `tile_descs`; its predicate is exactly the y-stride loop-continuation condition, which is
  * block-uniform, so the block never splits across barrier instances.
+ *
+ * INVARIANT (kMasked == true): each column's dst_mask word w is written exactly once, by lane 0
+ * of the warp covering rows [32w, 32w + 32): this requires BlockSize to be a multiple of
+ * warp_size (the row stride is then a multiple of 32), which the driver guarantees. Trailing
+ * bits of the last word are 0. Per-column bookkeeping keeps this true independently of the tile
+ * a column belongs to: a column with its own kernel-written mask takes its own ballot (a reused
+ * `inb_ballot` is bit-identical to the per-column ballot whenever `src_mask == nullptr`, because
+ * then `valid == in_bounds`), and its count accumulates into its own shared-memory slot.
  */
 template <size_type BlockSize,
           size_type kTileCols,
@@ -404,14 +487,14 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
     }
     __syncthreads();
     gather_tile_rows<BlockSize, kTileCols, kStreaming, kMasked>(gather_map,
-                                                                tile_descs,
-                                                                tile_begin,
-                                                                num_descriptors,
-                                                                num_rows,
-                                                                num_source_rows,
-                                                                check_bounds,
-                                                                negative_allowed,
-                                                                valid_counts);
+                                                                                tile_descs,
+                                                                                tile_begin,
+                                                                                num_descriptors,
+                                                                                num_rows,
+                                                                                num_source_rows,
+                                                                                check_bounds,
+                                                                                negative_allowed,
+                                                                                valid_counts);
     // All threads are finished reading tile_descs; the next tile iteration rewrites it. The
     // predicate is exactly the y-stride loop-continuation condition (tile + gridDim.y <
     // num_tiles, rewritten to avoid the addition overflowing size_type), and tile, gridDim.y,
@@ -454,15 +537,16 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_block_kernel(
   // `gather_tile_rows` indexes tile-local positions, so it receives the block's descriptor array
   // offset to this block's tile; the y grid is exactly the tile count, hence no stride loop.
   auto const tile_begin = static_cast<size_type>(blockIdx.y) * kTileCols;
-  gather_tile_rows<BlockSize, kTileCols, kStreaming, kMasked>(gather_map,
-                                                              block.descs + tile_begin,
-                                                              tile_begin,
-                                                              block.count,
-                                                              num_rows,
-                                                              num_source_rows,
-                                                              check_bounds,
-                                                              negative_allowed,
-                                                              valid_counts);
+  gather_tile_rows<BlockSize, kTileCols, kStreaming, kMasked>(
+    gather_map,
+    block.descs + tile_begin,
+    tile_begin,
+    block.count,
+    num_rows,
+    num_source_rows,
+    check_bounds,
+    negative_allowed,
+    valid_counts);
 }
 
 /**
@@ -476,7 +560,11 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_block_kernel(
  * typed pointer is valid and the widening matches the indexalator's at every representational
  * extreme (see `direct_map_reader`).
  */
-template <size_type BlockSize, size_type kTileCols, bool kStreaming, bool kMasked, typename MapType>
+template <size_type BlockSize,
+          size_type kTileCols,
+          bool kStreaming,
+          bool kMasked,
+          typename MapType>
 CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_direct_map_kernel(
   MapType const* map_values,
   column_descriptor const* descriptors,
@@ -585,7 +673,10 @@ sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
   // heuristic — and the endpoint window keeps its own submission.
   auto const pitch_rows = last_start / static_cast<int64_t>(kSampleWindows - 1);
   bool const exact_grid = pitch_rows * static_cast<int64_t>(kSampleWindows - 1) == last_start;
-  auto staging          = cudf::detail::make_pinned_vector_async<std::byte>(
+  // Uninitialized pinned staging: every byte is supplied by the D2H copies below, so the
+  // zero-init + alloc sync of the initializing vector factory buys nothing here. Deallocation
+  // rides the buffer's stored stream (same stream), so it stays stream-ordered with no new sync.
+  auto staging = cudf::detail::make_pinned_buffer_async<std::byte>(
     static_cast<size_t>(kSampleWindows) * window_size, stream);
   CUDF_CUDA_TRY(
     cudaMemcpy2DAsync(staging.data(),           // contiguous rows: window-major
@@ -607,13 +698,11 @@ sampled_map_locality enqueue_map_locality_sample(column_view const& gather_map,
   return sampled_map_locality{std::move(staging), gather_map.type().id(), elem_size};
 }
 
-// Synchronizes the stream (the sample copies plus whatever was enqueued before them — never a
-// kernel of ours) and classifies the staged windows.
-size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
-                                         cuda::stream_ref stream)
+// Classifies the staged windows. Requires the stream to already be synchronized: the caller's
+// pre-launch synchronization doubles as the sample resolve.
+size_type classify_map_locality(sampled_map_locality const& sampled)
 {
   if (sampled.staging.empty()) { return kRandomTileCols; }
-  cudf::detail::sync_stream(stream);
   auto const elem_size    = sampled.elem_size;
   auto const read_element = [&](std::byte const* p) -> int64_t {
     switch (sampled.map_type) {
@@ -705,6 +794,16 @@ size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
   return kCoalescedTileCols;
 }
 
+// Standalone resolve for callers that need the tile width before the launch body: synchronize
+// the stream (the sample copies plus whatever was enqueued before them — never a kernel of
+// ours) and classify the staged windows.
+size_type resolve_map_locality_tile_cols(sampled_map_locality const& sampled,
+                                         cuda::stream_ref stream)
+{
+  cudf::detail::sync_stream(stream);
+  return classify_map_locality(sampled);
+}
+
 // Tile width for regimes where sampling is skipped; nullopt means "sample the map". Zero/one
 // fused columns keep K1; otherwise the unsampled choice is K2 while the two-column working set
 // plus the map fit half of L2 (a failed L2 query reports 0 bytes and takes the safe K1).
@@ -750,7 +849,10 @@ size_type select_gather_map_tile_cols(table_view const& source_table,
 }
 
 // Shared body of the routed and explicit entry points; the routed entry enqueues the sampler
-// before its allocation work and leaves the tile width unresolved until just before the launch.
+// before its allocation work and leaves the tile width unresolved until the body's pre-launch
+// synchronization.
+// `explicit_tile_cols` nullopt means "resolve from the sample"; block_size must be one of
+// {128, 256, 512} and applies to every kernel instantiation this body can launch.
 std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                          column_view const& gather_map,
                                          out_of_bounds_policy bounds_policy,
@@ -758,7 +860,8 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                          cuda::stream_ref stream,
                                          memory_resources mr,
                                          std::optional<size_type> explicit_tile_cols,
-                                         sampled_map_locality const& sampled);
+                                         sampled_map_locality const& sampled,
+                                         size_type block_size);
 
 std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     column_view const& gather_map,
@@ -768,8 +871,9 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     memory_resources mr)
 {
   // Routed entry: one host-side type pass gathers the fused-column count and the widest fused
-  // element for the gate; when sampling is warranted it is ENQUEUED here and RESOLVED inside
-  // the body just before the kernel launch, hiding its latency behind the allocation work.
+  // element for the gate; when sampling is warranted its copies are ENQUEUED here and RESOLVED
+  // inside the body after the destination allocations, so they hide behind that work and the
+  // body's single pre-launch synchronization.
   size_type num_fused_cols      = 0;
   size_type max_fused_elem_size = 0;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
@@ -782,8 +886,16 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
   }
   if (num_fused_cols == 0 or gather_map.has_nulls()) {
     // Nothing to fuse (or the delegate rejects the map): no sampler, no measurable tile width.
-    return batch_gather(
-      source_table, gather_map, bounds_policy, neg_indices, stream, mr, kDefaultTileCols);
+    return batch_gather_impl(source_table,
+                             gather_map,
+                             bounds_policy,
+                             neg_indices,
+                             stream,
+                             mr,
+                             std::optional<size_type>{kDefaultTileCols},
+                             sampled_map_locality::empty(stream),
+                             std::nullopt,
+                             kDefaultBlockSize);
   }
   auto const tile_cols =
     unsampled_tile_width(gather_map.size(),
@@ -792,12 +904,29 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                          max_fused_elem_size,
                          static_cast<size_type>(cudf::size_of(gather_map.type())));
   if (tile_cols.has_value()) {
-    return batch_gather(
-      source_table, gather_map, bounds_policy, neg_indices, stream, mr, *tile_cols);
+    return batch_gather_impl(source_table,
+                             gather_map,
+                             bounds_policy,
+                             neg_indices,
+                             stream,
+                             mr,
+                             std::optional<size_type>{*tile_cols},
+                             sampled_map_locality::empty(stream),
+                             std::nullopt,
+                             kDefaultBlockSize);
   }
   auto const sampled = enqueue_map_locality_sample(gather_map, stream);
-  return batch_gather_impl(
-    source_table, gather_map, bounds_policy, neg_indices, stream, mr, std::nullopt, sampled);
+  // The routed entry takes no block-size parameter: it always runs kDefaultBlockSize. The
+  // measurement axis exists only on the explicit (tile_cols, block_size) overload.
+  return batch_gather_impl(source_table,
+                           gather_map,
+                           bounds_policy,
+                           neg_indices,
+                           stream,
+                           mr,
+                           std::nullopt,
+                           sampled,
+                           kDefaultBlockSize);
 }
 
 std::unique_ptr<table> batch_gather(table_view const& source_table,
@@ -806,7 +935,8 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     negative_index_policy neg_indices,
                                     cuda::stream_ref stream,
                                     memory_resources mr,
-                                    size_type tile_cols)
+                                    size_type tile_cols,
+                                    size_type block_size)
 {
   return batch_gather_impl(source_table,
                            gather_map,
@@ -815,7 +945,8 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                            stream,
                            mr,
                            std::optional<size_type>{tile_cols},
-                           sampled_map_locality::empty(stream));
+                           sampled_map_locality::empty(stream),
+                           block_size);
 }
 
 std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
@@ -825,7 +956,8 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                          cuda::stream_ref stream,
                                          memory_resources mr,
                                          std::optional<size_type> explicit_tile_cols,
-                                         sampled_map_locality const& sampled)
+                                         sampled_map_locality const& sampled,
+                                         size_type block_size)
 {
   cudf::scoped_range rng{"batch_gather"};
 
@@ -904,9 +1036,45 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     }
   };
 
+  // A zero-output call produces no data and no per-row mask work, so the whole staging/launch/
+  // readback pipeline is skipped; the destination columns are built host-side in exactly the
+  // shapes stock gather produces for an empty map:
+  // - fixed-width: `allocate_like(src, 0, NEVER)` (unallocated mask), matching the stock
+  //   per-column gatherer plus its zero-range `thrust::gather`;
+  // - other types: their gatherers early-return the same thing (`empty_like` for list/struct,
+  //   `make_empty_column` for strings/dictionary), so delegating them reproduces stock exactly,
+  //   including the unsupported-type `CUDF_FAIL`.
+  // Every destination has zero rows and null count 0. A non-empty map is never routed here
+  // even when NULLIFY would nullify every gathered row: proving that needs the map values
+  // (device data), so those calls run the full path below. With a zero-size map the mask
+  // phase degenerates to nothing — `gather_bitmask` returns on its `mask_size == 0` guard
+  // and the 0-word masks it attaches make the columns non-nullable.
+  if (num_rows == 0) {
+    for (auto const idx : fused_indices) {
+      destination[idx] = cudf::detail::allocate_like(
+        source_table.column(idx), 0, cudf::mask_allocation_policy::NEVER, stream, output_mr);
+    }
+    // Built unconditionally, like stock's detail::gather does before any per-column work: a
+    // non-index map type must throw on a zero-row call the same way it does on a non-empty one.
+    auto const map_begin = indexalator_factory::make_input_iterator(gather_map);
+    if (not fallback_indices.empty()) { run_fallback(fallback_indices, map_begin, map_begin); }
+    return std::make_unique<table>(std::move(destination), num_rows);
+  }
+
   // Fused part: destination columns for the fixed-width subset, with per-column mask policy.
+  // Constant masks (ALL_VALID/ALL_NULL) are allocated UNINITIALIZED and filled by the two
+  // batched_memset calls after this loop — one cudaMemsetAsync per FILL VALUE instead of per
+  // column (~3 µs host per submission). The batched_memset API takes ONE value for the whole
+  // span batch, so the two states need two calls.
   std::vector<column_descriptor> descriptors;
-  std::vector<size_type> kernel_masked_positions;  // descriptor positions with in-kernel masks
+  // {descriptor position, fused-column position} pairs with an in-kernel destination mask: the
+  // descriptor position indexes the launch-side counts array, the fused position the
+  // destination column the count belongs to (they diverge once all-null columns are skipped).
+  std::vector<std::pair<size_type, size_type>> kernel_masked_positions;
+  std::vector<cudf::device_span<cudf::bitmask_type>> valid_fills;  // ALL_VALID constant masks
+  std::vector<cudf::device_span<cudf::bitmask_type>> null_fills;   // ALL_NULL constant masks
+  auto const mask_size_words =
+    static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows));
   if (not fused_indices.empty()) {
     descriptors.reserve(fused_indices.size());
     for (size_type pos = 0; pos < static_cast<size_type>(fused_indices.size()); ++pos) {
@@ -914,24 +1082,42 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       auto dst        = cudf::detail::allocate_like(
         src, num_rows, cudf::mask_allocation_policy::NEVER, stream, output_mr);
       bitmask_type* dst_mask = nullptr;
-      bool skip_data         = false;
-      bool const all_null    = src.size() > 0 and src.null_count() == src.size();
+      // Pre-declared so the all-null early-exit branch can move `dst` before the shared
+      // descriptor-path statements run; assigned with the real view below for every branch.
+      cudf::mutable_column_view dst_view{};
+      bool const all_null = src.size() > 0 and src.null_count() == src.size();
       if (all_null) {
-        // Every row is null regardless of the map: pre-set ALL_NULL and skip the data copy.
+        // Every row is null regardless of the map: pre-set ALL_NULL (the fill itself is batched
+        // below) and carry NO descriptor — the kernel would only skip this column, so it takes
+        // no tile slot and no per-tile work. The counts are already final here.
         dst->set_null_mask(
-          cudf::detail::create_null_mask(num_rows, cudf::mask_state::ALL_NULL, stream, output_mr),
+          cuda::device_buffer<cudf::bitmask_type>(
+            stream,
+            output_mr,
+            static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows)),
+            cuda::no_init),
           num_rows);
-        skip_data = true;
+        dst_view = dst->mutable_view();
+        null_fills.push_back(
+          cudf::device_span<cudf::bitmask_type>{dst_view.null_mask(), mask_size_words});
+        destination[fused_indices[pos]] = std::move(dst);
+        continue;
       } else if (bounds_policy == out_of_bounds_policy::NULLIFY or src.null_count() > 0) {
         auto mask = cudf::detail::create_null_mask(
           num_rows, cudf::mask_state::UNINITIALIZED, stream, output_mr);
         dst_mask = mask.data();
         dst->set_null_mask(std::move(mask), 0);
-        kernel_masked_positions.push_back(pos);
+        kernel_masked_positions.push_back(
+          {static_cast<size_type>(descriptors.size()), fused_indices[pos]});
       } else if (src.nullable()) {
-        // Nullable source with zero nulls: ALL_VALID fast path, no kernel mask work.
+        // Nullable source with zero nulls: ALL_VALID fast path, no kernel mask work — the
+        // all-ones fill is batched below.
         dst->set_null_mask(
-          cudf::detail::create_null_mask(num_rows, cudf::mask_state::ALL_VALID, stream, output_mr),
+          cuda::device_buffer<cudf::bitmask_type>(
+            stream,
+            output_mr,
+            static_cast<std::size_t>(cudf::bitmask_allocation_size_words(num_rows)),
+            cuda::no_init),
           0);
       }
       auto const src_data =
@@ -939,41 +1125,71 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       // A cached zero null count means no source bit is clear, so the mask cannot change any
       // row's validity: drop it here to keep the call eligible for the mask-free instantiation.
       // The destination mask policy above keys off `dst_mask` only and is unaffected.
-      bitmask_type const* src_mask = skip_data ? nullptr : src.null_mask();
+      bitmask_type const* src_mask = src.null_mask();
       if (src.null_count() == 0) { src_mask = nullptr; }
+      dst_view = dst->mutable_view();
+      if (src.nullable()) {
+        valid_fills.push_back(
+          cudf::device_span<cudf::bitmask_type>{dst_view.null_mask(), mask_size_words});
+      }
       descriptors.push_back(column_descriptor{src_data,
-                                              dst->mutable_view().data<std::byte>(),
+                                              dst_view.data<std::byte>(),
                                               src_mask,
                                               dst_mask,
                                               static_cast<int64_t>(src.offset()),
-                                              static_cast<int32_t>(cudf::size_of(src.type())),
-                                              skip_data});
+                                              static_cast<int32_t>(cudf::size_of(src.type()))});
       destination[fused_indices[pos]] = std::move(dst);
+    }
+  }
+
+  // The spans alias the destination columns' mask buffers: built AFTER the loop so no slot can
+  // dangle a moved-from unique_ptr, and valid through the memsets (the buffers live in the
+  // returned table). UNINITIALIZED means the padding words are also written by the memset —
+  // the same bytes create_null_mask's per-call cudaMemsetAsync would have initialized. Enqueued
+  // BEFORE the gather kernel: the kernel never writes these dst masks (dst_mask is nullptr for
+  // both fill classes), so the stream order keeps the race out regardless of scheduling.
+  // The span arrays stage in pinned memory (the parquet batched_memset precedent) so the
+  // batched H2D reads device-accessible source bytes: one staging vector, valid fills in the
+  // leading slots and null fills appended after.
+  if (not valid_fills.empty() or not null_fills.empty()) {
+    auto fill_staging =
+      cudf::detail::make_empty_pinned_vector<cudf::device_span<cudf::bitmask_type>>(
+        valid_fills.size() + null_fills.size(), stream);
+    std::copy(valid_fills.begin(), valid_fills.end(), std::back_inserter(fill_staging));
+    std::copy(null_fills.begin(), null_fills.end(), std::back_inserter(fill_staging));
+    auto const fill_spans =
+      cudf::host_span<cudf::device_span<cudf::bitmask_type> const>{fill_staging};
+    if (not valid_fills.empty()) {
+      cudf::detail::batched_memset<cudf::bitmask_type>(
+        fill_spans.first(valid_fills.size()),
+        std::numeric_limits<cudf::bitmask_type>::max(),
+        stream);
+    }
+    if (not null_fills.empty()) {
+      cudf::detail::batched_memset<cudf::bitmask_type>(
+        fill_spans.last(null_fills.size()), cudf::bitmask_type{0}, stream);
     }
   }
 
   if (not descriptors.empty() and num_rows > 0) {
     auto const num_descs = static_cast<size_type>(descriptors.size());
-    // Small tables ride in the kernel parameters instead of the device array. The by-value tier
-    // instantiates the tile widths the router can return (1, 2, 8) only, so the explicit-only
-    // geometry 4 keeps the device array — the same rule the launch switch below applies.
-    auto const by_value =
-      batch_gather_descriptors_by_value(num_descs) and explicit_tile_cols != size_type{4};
-
-    // Device path staging: pinned host staging (stream-ordered free, so the H2D needs no host
-    // sync and the copy's source stays valid past this scope) plus the device buffer the kernel
-    // reads. Built only for the device path.
-    std::optional<cudf::detail::host_vector<column_descriptor>> staging;
-    std::optional<rmm::device_uvector<column_descriptor>> d_descriptors;
-    if (not by_value) {
-      staging.emplace(
-        cudf::detail::make_pinned_vector_async<column_descriptor>(descriptors.size(), stream));
-      std::copy(descriptors.begin(), descriptors.end(), staging->begin());
-      d_descriptors.emplace(descriptors.size(), stream, temp_mr);
-      cudf::detail::cuda_memcpy_async(device_span<column_descriptor>{*d_descriptors},
-                                      host_span<column_descriptor const>{*staging},
-                                      stream);
-    }
+    // Small tables ride in the kernel parameters instead of the device array. The by-value
+    // tiers instantiate the tile widths the router can return (1, 2, 8) only, so the
+    // explicit-only geometry 4 keeps the device array — the same rule the launch switch below
+    // applies.
+    auto const by_value_tier =
+      explicit_tile_cols != size_type{4} ? batch_gather_descriptors_by_value_tier(num_descs) : 0;
+    // THE pre-launch synchronization, taken only where its work is owed: it resolves the enqueued
+    // locality sample (routed entry with a live sample) and drains the stream so the pinned
+    // staging below is safe to write from the host. A call with an explicit tile width AND a
+    // by-value tier has neither need — no sample to classify, no staging to write — and skips
+    // the wait, keeping the fill memsets and the launch prep overlapped with whatever the stream
+    // still holds (the pre-port ordering; the exposed wait was the measured short-cell cost).
+    auto const needs_pre_sync =
+      (not explicit_tile_cols.has_value() and not sampled.staging.empty()) or by_value_tier == 0;
+    if (needs_pre_sync) { cudf::detail::sync_stream(stream); }
+    auto const effective_tile_cols =
+      explicit_tile_cols.has_value() ? *explicit_tile_cols : classify_map_locality(sampled);
 
     // The mask-free instantiation is valid only when NO descriptor writes a destination mask or
     // reads a source mask. `kernel_masked_positions` covers the destination side only, so the
@@ -983,15 +1199,69 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       std::any_of(descriptors.begin(), descriptors.end(), [](column_descriptor const& d) {
         return d.src_mask != nullptr;
       });
+
+    // Device path staging: pinned host staging (stream-ordered free, so the H2D needs no host
+    // sync and the copy's source stays valid past this scope) plus the device buffer the kernel
+    // reads. Built only for the device path. The staging bytes — descriptors and, when folded,
+    // the zeroed counts tail — are written from the HOST before the launch, into pinned-pool
+    // memory handed out by the ASYNC factory: the pool can return a block whose previous
+    // stream-ordered copy is still in flight, so the host writes are safe only AFTER the
+    // pre-launch sync above. The receive-only buffers below and the sampler staging have no
+    // host writes at all: their writers are stream-ordered copies, and their readers wait on
+    // the stream.
+    std::optional<cuda::host_buffer<std::byte>> staging;
+    std::optional<rmm::device_uvector<std::byte>> d_descriptors;
+    // Masked device-array calls fold the kernel's per-descriptor valid counts into the staging
+    // tail: one allocation and one H2D carry descriptors + zeroed counts, replacing the
+    // separate zeroed `valid_counts` uvector and its `cudaMemsetAsync`. The buffer is BYTE-typed
+    // because the tail (4 B per count) is not a whole number of 48 B descriptors; the tail
+    // offset num_descs * 48 is a multiple of 4, so the size_type tail is aligned. The tail is
+    // zeroed HOST-side (the async factory hands out uninitialized memory, so the bytes must be
+    // written here), so the device counts arrive zeroed in the same H2D. The tier paths keep
+    // the separate buffer — their descriptors ride the read-only `__grid_constant__` kernel
+    // parameter, which cannot carry a mutable counts output.
+    size_type const counts_size  = any_kernel_masks ? num_descs : 0;
+    std::size_t const head_bytes = descriptors.size() * sizeof(column_descriptor);
+    std::size_t const total_bytes =
+      head_bytes + static_cast<std::size_t>(counts_size) * sizeof(size_type);
+    if (by_value_tier == 0) {
+      staging.emplace(cudf::detail::make_pinned_buffer_async<std::byte>(total_bytes, stream));
+      std::memcpy(staging->data(), descriptors.data(), head_bytes);
+      if (any_kernel_masks) {
+        // The kernel accumulates with relaxed device-scope atomics, so the counters start at
+        // zero.
+        std::memset(staging->data() + head_bytes,
+                    0,
+                    static_cast<std::size_t>(counts_size) * sizeof(size_type));
+      }
+      d_descriptors.emplace(total_bytes, stream, temp_mr);
+      // Ordered upload: the batched copy's overlap-with-compute hint lets the driver run it
+      // concurrently with the consumer kernel, which would read pre-staging descriptor bytes.
+      CUDF_CUDA_TRY(
+        cudf::detail::memcpy_async(d_descriptors->data(), staging->data(), total_bytes, stream));
+    }
+
     rmm::device_uvector<size_type> valid_counts(0, stream, temp_mr);
-    if (any_kernel_masks) {
+    if (by_value_tier != 0 and any_kernel_masks) {
+      // Tier path: descriptors ride the kernel parameter block, so the counts need their own
+      // zeroed device buffer (unchanged cost — no staging tail exists here to fold into).
       valid_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
         descriptors.size(), stream, temp_mr);
     }
+    // The counts the masked kernels accumulate into: the staging tail on the device path
+    // (zeroed bytes rode the H2D), the separate buffer on the tier path. Read only when the
+    // masked instantiation is launched (counts_ptr is nullptr otherwise).
+    size_type* device_counts_ptr =
+      by_value_tier == 0 ? reinterpret_cast<size_type*>(
+                             reinterpret_cast<std::byte*>(d_descriptors->data()) + head_bytes)
+                         : valid_counts.data();
 
-    // One launch per call; the tile width, descriptor tier, and map source pick the kernel
-    // instantiation. y dimension: one block per column tile (the device kernel's y-stride loop
-    // covers tiles past the 65535 cap; the by-value block always fits below it).
+    // One launch per call; the tile width, row coarsening, block size, descriptor tier, and map
+    // source pick the kernel instantiation. x dimension: the row blocks exactly cover the
+    // chunks, so the device row loop runs one pass — never cap it (e.g. at the y 65535 limit)
+    // or the single-pass guarantee breaks. y dimension: one block per column tile (the device
+    // kernel's y-stride loop covers tiles past the 65535 cap; the by-value block always fits
+    // below it).
     // Plain wide integer maps read the map through one typed load per row (the direct-load
     // fast path); every other map type keeps the indexalator. The direct selection is
     // consistent across tiers: by-value, device, and direct all receive the same reader.
@@ -1004,19 +1274,21 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     auto const map_reader  = indexalator_reader{map_begin};
     auto const launch_tile = [&](auto tile_constant,
                                  auto streaming_constant,
-                                 auto by_value_constant) {
-      constexpr size_type kTileCols = decltype(tile_constant)::value;
-      constexpr bool kStreaming     = decltype(streaming_constant)::value;
-      constexpr bool kByValue       = decltype(by_value_constant)::value;
-      dim3 const grid{static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
-                      static_cast<unsigned>(std::min<size_type>(
-                        cudf::util::div_rounding_up_safe(num_descs, kTileCols), 65535)),
-                      1};
+                                 auto block_constant,
+                                 int by_value_tier) {
+      constexpr size_type kTileCols  = decltype(tile_constant)::value;
+      constexpr bool kStreaming      = decltype(streaming_constant)::value;
+      constexpr size_type kBlockSize = decltype(block_constant)::value;
+      dim3 const grid{
+        static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, kBlockSize)),
+        static_cast<unsigned>(std::min<size_type>(
+          cudf::util::div_rounding_up_safe(num_descs, kTileCols), 65535)),
+        1};
       // The mask-free choice comes from host descriptor fields, so it selects the
       // instantiation directly; the unmasked one never receives a `valid_counts` buffer.
       auto const launch = [&](auto masked_constant) {
         constexpr bool kMasked = decltype(masked_constant)::value;
-        auto const counts_ptr  = kMasked ? valid_counts.data() : nullptr;
+        auto const counts_ptr  = kMasked ? device_counts_ptr : nullptr;
         // The map reader rides the kernel template: the direct-load fast path covers the
         // round-9 subset — tile 1 non-streaming and tile 8 streaming (the hot narrow-table
         // shape), each masked/mask-free — every other reachable geometry keeps the
@@ -1025,18 +1297,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
         // out of the non-covered shapes; the runtime `direct_map` guard is the routing
         // counterpart so a covered-but-narrow map still takes the indexalator.
         auto const launch_indexalator_shape = [&](size_type* counts_ptr) {
-          if constexpr (kByValue) {
+          if (by_value_tier != 0) {
             // Zero-initialized so every byte the launch copies is defined; the device reads
             // only the first `count` entries.
-            auto block  = descriptor_block<batch_gather_max_by_value_descriptors>{};
-            block.count = num_descs;
-            std::copy(descriptors.begin(), descriptors.end(), block.descs);
-            batch_gather_block_kernel<block_size,
-                                      kTileCols,
-                                      kStreaming,
-                                      kMasked,
-                                      batch_gather_max_by_value_descriptors>
-              <<<grid, block_size, 0, stream.get()>>>(
+            auto const fill_and_launch = [&](auto tier_cap) {
+              constexpr size_type kCap = decltype(tier_cap)::value;
+              auto block               = descriptor_block<kCap>{};
+              block.count              = num_descs;
+              std::copy(descriptors.begin(), descriptors.end(), block.descs);
+              batch_gather_block_kernel<kBlockSize,
+                                        kTileCols,
+                                        kStreaming,
+                                        kMasked,
+                                        kCap><<<grid, kBlockSize, 0, stream.get()>>>(
                 block,
                 map_reader,
                 num_rows,
@@ -1044,11 +1317,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                 bounds_policy == out_of_bounds_policy::NULLIFY,
                 neg_indices == negative_index_policy::ALLOWED,
                 counts_ptr);
+            };
+            if (by_value_tier == 1) {
+              fill_and_launch(
+                std::integral_constant<size_type, batch_gather_small_by_value_descriptors>{});
+            } else {
+              fill_and_launch(
+                std::integral_constant<size_type, batch_gather_wide_by_value_descriptors>{});
+            }
           } else {
-            batch_gather_kernel<block_size, kTileCols, kStreaming, kMasked>
-              <<<grid, block_size, 0, stream.get()>>>(
+            batch_gather_kernel<kBlockSize, kTileCols, kStreaming, kMasked>
+              <<<grid, kBlockSize, 0, stream.get()>>>(
                 map_reader,
-                d_descriptors->data(),
+                reinterpret_cast<column_descriptor const*>(d_descriptors->data()),
                 num_descs,
                 num_rows,
                 num_src_rows,
@@ -1062,18 +1343,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                       (kTileCols == kCoalescedTileCols and kStreaming)) {
           if (direct_map) {
             auto const launch_map = [&](auto map_reader) {
-              if constexpr (kByValue) {
+              if (by_value_tier != 0) {
                 // Zero-initialized so every byte the launch copies is defined; the device
                 // reads only the first `count` entries.
-                auto block  = descriptor_block<batch_gather_max_by_value_descriptors>{};
-                block.count = num_descs;
-                std::copy(descriptors.begin(), descriptors.end(), block.descs);
-                batch_gather_block_kernel<block_size,
-                                          kTileCols,
-                                          kStreaming,
-                                          kMasked,
-                                          batch_gather_max_by_value_descriptors>
-                  <<<grid, block_size, 0, stream.get()>>>(
+                auto const fill_and_launch = [&](auto tier_cap) {
+                  constexpr size_type kCap = decltype(tier_cap)::value;
+                  auto block               = descriptor_block<kCap>{};
+                  block.count              = num_descs;
+                  std::copy(descriptors.begin(), descriptors.end(), block.descs);
+                  batch_gather_block_kernel<kBlockSize,
+                                            kTileCols,
+                                            kStreaming,
+                                            kMasked,
+                                            kCap><<<grid, kBlockSize, 0, stream.get()>>>(
                     block,
                     map_reader,
                     num_rows,
@@ -1081,15 +1363,23 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                     bounds_policy == out_of_bounds_policy::NULLIFY,
                     neg_indices == negative_index_policy::ALLOWED,
                     counts_ptr);
+                };
+                if (by_value_tier == 1) {
+                  fill_and_launch(
+                    std::integral_constant<size_type, batch_gather_small_by_value_descriptors>{});
+                } else {
+                  fill_and_launch(
+                    std::integral_constant<size_type, batch_gather_wide_by_value_descriptors>{});
+                }
               } else {
-                batch_gather_direct_map_kernel<block_size,
+                batch_gather_direct_map_kernel<kBlockSize,
                                                kTileCols,
                                                kStreaming,
                                                kMasked,
                                                typename decltype(map_reader)::value_type>
-                  <<<grid, block_size, 0, stream.get()>>>(
+                  <<<grid, kBlockSize, 0, stream.get()>>>(
                     map_reader.base,
-                    d_descriptors->data(),
+                    reinterpret_cast<column_descriptor const*>(d_descriptors->data()),
                     num_descs,
                     num_rows,
                     num_src_rows,
@@ -1123,52 +1413,93 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
         launch(std::false_type{});
       }
     };
-    // Resolve the routed tile width only now: the sync waits for the enqueued sample copies
-    // AND for the allocation/descriptor work above, hiding the sampler latency behind it.
-    auto const effective_tile_cols = explicit_tile_cols.has_value()
-                                       ? *explicit_tile_cols
-                                       : resolve_map_locality_tile_cols(sampled, stream);
     // Evict-first streaming hints ride the classifier verdict only: the sampled coalesced
     // route (which resolves to kCoalescedTileCols and nothing else). Unsampled regimes,
     // random verdicts, and test-forced geometries keep the default-cached accesses.
     auto const streaming =
       not explicit_tile_cols.has_value() and effective_tile_cols == kCoalescedTileCols;
     // Tile 4 is explicit-only and has no by-value instantiation, so it always takes the device
-    // array. `by_value` already excludes the explicit 4 (see the tier comment above), which
-    // makes this arm unreachable from the by-value dispatch.
-    auto const dispatch = [&](auto by_value_constant) {
+    // array. `by_value_tier` already excludes the explicit 4 (see the tier comment above), which
+    // makes this arm unreachable from the by-value dispatch. Block size is a measurement axis,
+    // not a routing decision: the routed path always runs kDefaultBlockSize, and only the
+    // explicit entry can override it. Every supported size is a warp multiple, so the mask-word
+    // exactly-once invariant above holds for all of them.
+    auto const dispatch = [&](int by_value_tier) {
+      // The block-size switch feeds every tile geometry it can reach.
+      auto const launch_with_block = [&](auto tile_constant, auto streaming_constant) {
+        switch (block_size) {
+          case 128:
+            launch_tile(tile_constant,
+                        streaming_constant,
+                        std::integral_constant<size_type, 128>{},
+                        by_value_tier);
+            break;
+          case 256:
+            launch_tile(tile_constant,
+                        streaming_constant,
+                        std::integral_constant<size_type, 256>{},
+                        by_value_tier);
+            break;
+          case 512:
+            launch_tile(tile_constant,
+                        streaming_constant,
+                        std::integral_constant<size_type, 512>{},
+                        by_value_tier);
+            break;
+          default: CUDF_FAIL("Unsupported batch_gather block size", std::invalid_argument);
+        }
+      };
       if (streaming) {
-        launch_tile(std::integral_constant<size_type, kCoalescedTileCols>{},
-                    std::true_type{},
-                    by_value_constant);
-        return;
-      }
-      switch (effective_tile_cols) {
-        case 1:
-          launch_tile(std::integral_constant<size_type, 1>{}, std::false_type{}, by_value_constant);
-          break;
-        case 2:
-          launch_tile(std::integral_constant<size_type, 2>{}, std::false_type{}, by_value_constant);
-          break;
-        case 4:
-          launch_tile(std::integral_constant<size_type, 4>{}, std::false_type{}, std::false_type{});
-          break;
-        case 8:
-          launch_tile(std::integral_constant<size_type, 8>{}, std::false_type{}, by_value_constant);
-          break;
-        default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
+        launch_with_block(std::integral_constant<size_type, kCoalescedTileCols>{},
+                          std::true_type{});
+      } else {
+        switch (effective_tile_cols) {
+          case 1:
+            launch_with_block(std::integral_constant<size_type, 1>{}, std::false_type{});
+            break;
+          case 2:
+            launch_with_block(std::integral_constant<size_type, 2>{}, std::false_type{});
+            break;
+          case 4:
+            launch_with_block(std::integral_constant<size_type, 4>{}, std::false_type{});
+            break;
+          case 8:
+            launch_with_block(std::integral_constant<size_type, 8>{}, std::false_type{});
+            break;
+          default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
+        }
       }
     };
-    if (by_value) {
-      dispatch(std::true_type{});
-    } else {
-      dispatch(std::false_type{});
+
+    dispatch(by_value_tier);
+
+    // Receive owner for the kernel's per-column valid counts: the launch enqueues its D2H right
+    // after the kernel (the D2H reads a buffer the same stream's kernel finished writing), so
+    // the fallback work below runs while the copy is in flight instead of behind a drained
+    // stream. Uninitialized pinned memory: every byte arrives from the D2H, so no zero-init and
+    // no allocation sync; the free is stream-ordered on the same stream.
+    std::optional<cuda::host_buffer<size_type>> h_valid_counts_owner;
+    if (any_kernel_masks) {
+      h_valid_counts_owner.emplace(cudf::detail::make_pinned_buffer_async<size_type>(
+        static_cast<std::size_t>(descriptors.size()), stream));
+      cudf::detail::cuda_memcpy_async(
+        host_span<size_type>{
+          h_valid_counts_owner->data(), static_cast<std::size_t>(descriptors.size()), true},
+        device_span<size_type const>{device_counts_ptr,
+                                     static_cast<std::size_t>(descriptors.size())},
+        stream);
     }
 
+    // The one sync where the counts are needed: covers the kernel and this D2H (same stream).
+    // The fallback block AFTER this scope enqueues its kernels while the copy is still in
+    // flight — masked mixed calls no longer drain the GPU before submitting fallback kernels —
+    // and it sets its own null counts on its columns, so nothing further is owed here. The
+    // counts MUST be set before the function returns — the table contract reports them.
     if (any_kernel_masks) {
-      auto const h_valid_counts = cudf::detail::make_host_vector(valid_counts, stream);
-      for (auto const pos : kernel_masked_positions) {
-        destination[fused_indices[pos]]->set_null_count(num_rows - h_valid_counts[pos]);
+      cudf::detail::sync_stream(stream);
+      for (auto const [desc_pos, fused_pos] : kernel_masked_positions) {
+        destination[fused_pos]->set_null_count(
+          num_rows - h_valid_counts_owner->data()[static_cast<std::size_t>(desc_pos)]);
       }
     }
   }

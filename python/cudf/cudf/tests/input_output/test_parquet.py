@@ -5404,3 +5404,37 @@ def test_parquet_pyarrow_engine_native_filesystem(tmp_path):
     )
 
     assert_eq(cudf.read_parquet(tmp_path), df, check_index_type=False)
+
+
+def test_parquet_dataset_writer_max_file_size_releases_rotated_writers(
+    tmp_path,
+):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    for _ in range(4):
+        writer.write_table(df)
+
+    # Writers from earlier appends were closed once their files rotated out
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert len(open_writers) == 1
+
+    writer.close()
+    expect = cudf.concat([df] * 4).sort_values("x").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)

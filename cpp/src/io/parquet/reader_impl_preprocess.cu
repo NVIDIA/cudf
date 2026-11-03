@@ -1128,7 +1128,7 @@ void reader_impl::allocate_columns(read_mode mode,
                                  column_mr(mr, out_buf.type, l_idx == 0).get_output_mr());
         nullmask_bufs.emplace_back(
           out_buf.null_mask(),
-          cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
+          cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
             sizeof(cudf::bitmask_type));
         if (has_unwritten_slots and out_buf.data() != nullptr) {
           unwritten_bufs.push_back(
@@ -1264,7 +1264,7 @@ void reader_impl::allocate_columns(read_mode mode,
                                    column_mr(mr, out_buf.type, l_idx == 0).get_output_mr());
           nullmask_bufs.emplace_back(
             out_buf.null_mask(),
-            cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
+            cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
               sizeof(cudf::bitmask_type));
           if (has_unwritten_slots and out_buf.data() != nullptr) {
             unwritten_bufs.push_back(

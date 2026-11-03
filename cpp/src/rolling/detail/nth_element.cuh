@@ -14,6 +14,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -146,7 +147,8 @@ std::unique_ptr<column> nth_element(size_type n,
     gather_index_calculator<null_handling, PrecedingIter, FollowingIter>{
       n, input, preceding, following, min_periods, stream});
 
-  auto gather_map = rmm::device_uvector<size_type>(input.size(), stream);
+  auto gather_map = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                gather_iter,
                gather_iter + input.size(),

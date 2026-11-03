@@ -133,7 +133,7 @@ def test_review_pairs_need_shared_behavior_and_remain_candidates() -> None:
     assert pairs[0]["status"] == "review_candidate"
 
 
-def test_line_report_keeps_every_test_context() -> None:
+def test_line_report_marks_truncated_context_samples() -> None:
     analyzer = _load_analyzer()
     source = "/work/cudf_polars/dsl/translate.py"
     contexts = {f"tests/test_expr.py::test_case_{i}|run" for i in range(25)}
@@ -142,10 +142,10 @@ def test_line_report_keeps_every_test_context() -> None:
 
     report = analyzer.build_report(local, upstream)
 
-    assert (
-        set(report["files"][source]["local_only"][0]["local_contexts"])
-        == contexts
-    )
+    line = report["files"][source]["local_only"][0]
+    assert line["local_contexts"] == sorted(contexts)[:20]
+    assert line["local_context_count"] == 25
+    assert line["local_contexts_truncated"]
 
 
 def test_review_pairs_rank_by_overlap_fraction() -> None:
@@ -258,6 +258,10 @@ def test_main_writes_provenance_and_contexts(
         "cudf_sha": "cudf-sha",
         "polars_sha": "polars-sha",
         "polars_version": "2.1.0",
+    }
+    assert report["context_data"] == {
+        "local": ".coverage.local",
+        "upstream": ".coverage.upstream",
     }
     assert report["files"][source]["both"][0]["local_contexts"] == [
         "tests/test_join.py::test_join|run"

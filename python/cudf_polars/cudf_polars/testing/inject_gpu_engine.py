@@ -423,10 +423,6 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[False]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[False]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
     "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
     "tests/unit/io/test_iceberg_plugin_suite.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
@@ -522,6 +518,10 @@ EXPECTED_FAILURES: dict[str, str] = {
 
 
 TESTS_TO_SKIP: dict[str, str] = {
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[False]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[False]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
     "tests/unit/io/cloud/test_cloud.py::test_scan_http_same_host": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
     "tests/unit/io/cloud/test_cloud.py::test_scan_ndjson_http_prefix_metrics_retried_body": "Checks Polars CPU object-store request counts and metrics, which the GPU engine does not use",
     "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[0]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",

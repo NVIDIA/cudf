@@ -721,12 +721,14 @@ TEST_F(BatchGatherDegenerateTest, ZeroRowMap)
 // from the live cohort in the assemble step, so its kernel-written (UNINITIALIZED) plan
 // would otherwise never reach the kernel — the completion would build an uninitialized
 // mask with a placeholder 0 null count. The build must take the inline all-null path.
-// Also rides beside a live string column to pin the mixed-cohort shape.
+// The mixed cohort rides beside a zero-row fixed-width column: a non-empty string column
+// is structurally unrunnable here because table_view requires equal row counts across
+// columns; a 0-row fixed-width column keeps the size match while still pinning the
+// mixed-cohort shape.
 TEST_F(BatchGatherDegenerateTest, ZeroRowStringSourceNullifyParity)
 {
   auto empty_str = cudf::test::strings_column_wrapper{}.release();
-  auto strings   = periodic_strings(4, 3);
-  cudf::test::strings_column_wrapper col_str(strings.begin(), strings.end());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> empty_col{};
 
   cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map{{0, 1, 2, 3}};
 
@@ -736,7 +738,7 @@ TEST_F(BatchGatherDegenerateTest, ZeroRowStringSourceNullifyParity)
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference->view(), result->view());
   EXPECT_EQ(result->view().column(0).null_count(), 4);
 
-  cudf::table_view mixed({empty_str->view(), col_str});
+  cudf::table_view mixed({empty_str->view(), empty_col});
   auto result_mixed    = run_batch_gather(mixed, gather_map, cudf::out_of_bounds_policy::NULLIFY);
   auto reference_mixed = run_reference(mixed, gather_map, cudf::out_of_bounds_policy::NULLIFY);
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference_mixed->view(), result_mixed->view());

@@ -906,7 +906,7 @@ struct descriptor_path_builder {
         num_rows,
         std::move(offsets_col),
         rmm::device_buffer{},
-        plan.null_count,
+        src.size() == 0 ? num_rows : plan.null_count,
         cudf::detail::create_null_mask(num_rows, mask_state::ALL_NULL, stream, output_mr));
     }
     staged_string staged;

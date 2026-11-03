@@ -32,7 +32,7 @@ rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt
 #   * need to provide --constraint="${PIP_CONSTRAINT}" because that environment variable is
 #     ignored if any other --constraint are passed via the CLI
 #
-uv pip install --python "$(command -v python)" \
+rapids-uv-pip install \
     -v \
     --constraint ./constraints.txt \
     --constraint "${PIP_CONSTRAINT}" \
@@ -109,7 +109,7 @@ for version in "${versions[@]}"; do
     #   * need to provide --constraint="${PIP_CONSTRAINT}" because that environment variable is
     #     ignored if any other --constraint are passed via the CLI
     #
-    uv pip install --python "$(command -v python)" \
+    rapids-uv-pip install \
         -v \
         --constraint ./constraints.txt \
         --constraint "${PIP_CONSTRAINT}" \

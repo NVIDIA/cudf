@@ -30,7 +30,7 @@ RAPIDS_FULL_VERSION=$(<./VERSION)
 rapids-logger "Aggregating pandas-tests results from ${NUM_SHARDS} shards"
 
 # job-summary.py renders markdown tables with pandas; tabulate backs to_markdown.
-if ! uv pip install --python "$(command -v python)" pandas tabulate; then
+if ! rapids-uv-pip install pandas tabulate; then
     rapids-logger "Could not install summary dependencies; skipping summary."
     exit 0
 fi

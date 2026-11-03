@@ -73,7 +73,7 @@ for version in "${VERSIONS[@]}"; do
     #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
     #     that environment variable is ignored if any other --constraint are passed via the CLI
     #
-    uv pip install --python "$(command -v python)" \
+    rapids-uv-pip install \
         -v \
         --constraint "${PIP_CONSTRAINT}" \
         "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,dask,ray]" \

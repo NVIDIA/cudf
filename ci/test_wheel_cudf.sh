@@ -44,7 +44,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     uv venv --python "$(command -v python)" libcudf-env
     . libcudf-env/bin/activate
 
-    uv pip install --python "$(command -v python)" \
+    rapids-uv-pip install \
       -v \
       --constraint "${PIP_CONSTRAINT}" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
@@ -63,7 +63,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
     #     that environment variable is ignored if any other --constraint are passed via the CLI
     #
-    uv pip install --python "$(command -v python)" \
+    rapids-uv-pip install \
       -v \
       --constraint "${PIP_CONSTRAINT}" \
       "${CUPY_NIGHTLY_UV_ARGS[@]}" \
@@ -91,7 +91,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
 
     rapids-logger "Install cudf, pylibcudf, and test requirements"
 
-    uv pip install --python "$(command -v python)" \
+    rapids-uv-pip install \
       -v \
       --constraint "${PIP_CONSTRAINT}" \
       "${CUPY_NIGHTLY_UV_ARGS[@]}" \
@@ -134,7 +134,7 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
   uv venv --python "$(command -v python)" libcudf-streaming-env
   . libcudf-streaming-env/bin/activate
 
-  uv pip install --python "$(command -v python)" \
+  rapids-uv-pip install \
     -v \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
@@ -147,7 +147,7 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
   uv venv --python "$(command -v python)" cudf-streaming-env
   . cudf-streaming-env/bin/activate
 
-  uv pip install --python "$(command -v python)" \
+  rapids-uv-pip install \
     -v \
     --constraint "${PIP_CONSTRAINT}" \
     "${CUPY_NIGHTLY_UV_ARGS[@]}" \

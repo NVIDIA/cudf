@@ -26,7 +26,7 @@ rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}"
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-uv pip install --python "$(command -v python)" \
+rapids-uv-pip install \
   -v \
   --constraint "${PIP_CONSTRAINT}" \
   "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \

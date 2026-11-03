@@ -20,7 +20,7 @@ rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
 
 rapids-logger "Installing cudf_polars and TPC test dependencies"
 
-uv pip install --python "$(command -v python)" \
+rapids-uv-pip install \
     -v \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,tpch]" \

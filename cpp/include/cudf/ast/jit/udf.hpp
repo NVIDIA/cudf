@@ -52,16 +52,17 @@ namespace jit {
  * Supply the modules defining the function when evaluating the expression or constructing a
  * transform program. Modules may define any number of functions and reference other modules.
  * Their signatures must match this declaration; a mismatch has undefined behavior. All calls to
- * a given symbol in a JIT kernel must use a consistent ABI: the output pointer type and the
- * number, order, and device types of input arguments must match, including the optional wrapping
- * selected by `is_null_aware`.
+ * a given symbol in a JIT kernel must declare the same output type, input types, and
+ * `is_null_aware`, or evaluation throws `std::invalid_argument`. Decimal scales may differ,
+ * since the device types do not carry them.
  *
  * Functions must be row-local, without warp collectives, shared memory, or synchronization.
  *
  * Pure functions return equal results for equal arguments and have no required side effects.
  * Equal pure calls may share one evaluation. Set `is_pure` to false for functions that read a
- * clock, mutable state, or otherwise require separate evaluations. Calls of impure functions are
- * never merged, including repeated references to a call expression.
+ * clock, mutable state, or otherwise require separate evaluations: separate calls of impure
+ * functions are never merged. A call expression is evaluated once per row however often the
+ * tree refers to it, so all references to it see the same result.
  *
  * Functions return SUCCESS or an error code. Error codes below zero are ignored for error
  * reporting. Codes at or above `errc::USER_RESERVED` belong to the consumer and are preserved

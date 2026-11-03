@@ -590,6 +590,15 @@ node::node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique
   hash_ = compute_hash();
 }
 
+node::node(repeated_reference reference)
+  : op_{reference.first->op_},
+    error_policy_{reference.first->error_policy_},
+    hash_{reference.first->hash_},
+    udf_{reference.first->udf_},
+    alias_{reference.first}
+{
+}
+
 node::node(output_reference reference, std::unique_ptr<node> arg)
   : reference_{reference}, op_{opcode::SET_OUTPUT}
 {
@@ -607,6 +616,10 @@ size_t node::hash() const { return hash_; }
 
 bool node::is_equivalent(node const& other) const
 {
+  // A node that aliases another, such as a repeated reference to an AST call, has its value.
+  if (alias_ != nullptr) { return alias_->is_equivalent(other); }
+  if (other.alias_ != nullptr) { return is_equivalent(*other.alias_); }
+  if (this == &other) { return true; }
   if (udf_.has_value() || other.udf_.has_value()) {
     // Calls of impure functions never merge.
     if (!udf_.has_value() || !other.udf_.has_value() || !udf_->is_pure || *udf_ != *other.udf_) {
@@ -636,6 +649,7 @@ std::optional<ast::jit::udf> node::get_udf() const { return udf_; }
 
 bool node::is_null_aware() const
 {
+  if (alias_ != nullptr) { return alias_->is_null_aware(); }
   if (op_ == opcode::GET_INPUT) { return false; }
 
   // A NULLIFY call emits nulls for failing rows, so like an always-nullable operator it needs the
@@ -662,6 +676,7 @@ bool node::is_null_aware() const
 
 bool node::is_always_valid() const
 {
+  if (alias_ != nullptr) { return alias_->is_always_valid(); }
   if (op_ == opcode::GET_INPUT) { return false; }
 
   if (op_ == opcode::UDF_CALL) {
@@ -900,12 +915,20 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::opera
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_call const& expr)
 {
+  // A call that the tree refers to more than once is evaluated once per row, so its references
+  // agree even when the function is impure. A later reference becomes a node that merges with the
+  // first one, without converting the arguments again.
+  if (auto first = calls_.find(&expr); first != calls_.end()) {
+    return std::make_unique<row_ir::node>(row_ir::repeated_reference{first->second});
+  }
   std::vector<std::unique_ptr<row_ir::node>> args;
   for (auto& arg : expr.get_arguments()) {
     args.emplace_back(arg.get().accept(*this));
   }
-  return std::make_unique<row_ir::node>(
-    expr.get_function(), expr.get_error_policy(), std::move(args));
+  auto call =
+    std::make_unique<row_ir::node>(expr.get_function(), expr.get_error_policy(), std::move(args));
+  calls_.emplace(&expr, call.get());
+  return call;
 }
 
 namespace {
@@ -932,9 +955,12 @@ void declare_udfs(std::span<std::unique_ptr<node> const> output_irs, code_sink& 
       self(self, *arg);
     }
     if (auto udf = ir.get_udf()) {
+      // Only one declaration is emitted for each symbol. Decimal scales may differ between calls,
+      // since the declared device types do not carry them.
+      auto const same_type      = [](data_type lhs, data_type rhs) { return lhs.id() == rhs.id(); };
       auto const [it, inserted] = udfs.insert(*udf);
-      CUDF_EXPECTS(inserted || (it->output_type == udf->output_type &&
-                                it->input_types == udf->input_types &&
+      CUDF_EXPECTS(inserted || (same_type(it->output_type, udf->output_type) &&
+                                std::ranges::equal(it->input_types, udf->input_types, same_type) &&
                                 it->is_null_aware == udf->is_null_aware),
                    "Calls of one UDF symbol must use one signature",
                    std::invalid_argument);

@@ -91,7 +91,7 @@ cudf::ast::jit::udf callee(char const* symbol,
 cudf::lto_fragments modules()
 {
   static auto const fragments =
-    std::array{cudf::lto_fragment{ast_udf_callees(), cudf::lto_binary_type::FATBIN}};
+    std::array{cudf::lto_fragment{cudf::lto_binary_type::FATBIN, ast_udf_callees()}};
   return fragments;
 }
 
@@ -266,8 +266,9 @@ TEST_F(JITExpressionTest, UdfCallCommonSubexpressions)
 
 TEST_F(JITExpressionTest, UdfCallImpureCalls)
 {
-  // lto_next_id returns a new number on every call. One call referred to twice is evaluated
-  // at each reference. Impure calls are never merged, so their difference is never zero.
+  // lto_next_id returns a new number on every call. One call referred to twice is evaluated once
+  // per row, within an expression and across outputs. Separate impure calls are never merged, so
+  // their difference is never zero.
   auto a         = column_wrapper<int32_t>{{1, 2, 3}};
   auto table     = cudf::table_view{{a}};
   auto tree      = cudf::ast::tree{};
@@ -278,11 +279,15 @@ TEST_F(JITExpressionTest, UdfCallImpureCalls)
   auto& same     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {id, id});
   auto& apart    = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {id, other_id});
 
-  auto const repeated = cudf::test::to_host<int64_t>(run_column(table, same)->view()).first;
-  EXPECT_TRUE(std::ranges::all_of(repeated, [](auto value) { return value != 0; }));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int64_t>{{0, 0, 0}}, run_column(table, same)->view(), VERBOSITY);
   auto const differences = cudf::test::to_host<int64_t>(run_column(table, apart)->view()).first;
   EXPECT_TRUE(std::none_of(
     differences.begin(), differences.end(), [](int64_t difference) { return difference == 0; }));
+
+  auto outputs = std::to_array<std::reference_wrapper<cudf::ast::expression const>>({id, id});
+  auto result  = run_table(table, outputs);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view().column(0), result->view().column(1), VERBOSITY);
 }
 
 TEST_F(JITExpressionTest, UdfCallPropagatesNulls)
@@ -431,6 +436,39 @@ TEST_F(JITExpressionTest, UdfCallDecimalInputsAndOutput)
   }
 }
 
+TEST_F(JITExpressionTest, UdfCallAtTwoDecimalScales)
+{
+  // Calls of one function in one kernel may declare different decimal scales, which the device
+  // types do not carry.
+  auto a =
+    cudf::test::fixed_point_column_wrapper<int32_t>{{125, -250, 0, 375}, numeric::scale_type{-2}};
+  auto b =
+    cudf::test::fixed_point_column_wrapper<int64_t>{{20, 15, -30, 0}, numeric::scale_type{-1}};
+  auto table       = cudf::table_view{{a, b}};
+  auto tree        = cudf::ast::tree{};
+  auto a_ref       = cudf::ast::column_reference{0};
+  auto b_ref       = cudf::ast::column_reference{1};
+  auto input_types = std::vector{table.column(0).type(), table.column(1).type(), int32_type};
+  auto milli_scale = cudf::numeric_scalar<int32_t>{-3};
+  auto deci_scale  = cudf::numeric_scalar<int32_t>{-1};
+  auto call_at     = [&](cudf::numeric_scalar<int32_t>& scale) -> cudf::ast::expression const& {
+    auto output_type = cudf::data_type{cudf::type_id::DECIMAL64, scale.value()};
+    auto function    = cudf::ast::jit::udf{"lto_decimal_add", true, output_type, input_types};
+    auto& scale_ref  = tree.push(cudf::ast::literal{scale});
+    return cudf::ast::jit::call(tree, function, {a_ref, b_ref, scale_ref});
+  };
+  auto expressions = std::to_array<std::reference_wrapper<cudf::ast::expression const>>(
+    {call_at(milli_scale), call_at(deci_scale)});
+  auto result = run_table(table, expressions);
+
+  auto milli = cudf::test::fixed_point_column_wrapper<int64_t>{{3250, -1000, -3000, 3750},
+                                                               numeric::scale_type{-3}};
+  auto deci =
+    cudf::test::fixed_point_column_wrapper<int64_t>{{32, -10, -30, 37}, numeric::scale_type{-1}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(milli, result->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(deci, result->view().column(1), VERBOSITY);
+}
+
 TEST_F(JITExpressionTest, UdfCallOverTimestamps)
 {
   using cudf::timestamp_ns;
@@ -501,7 +539,7 @@ TEST_F(JITExpressionTest, UdfCallRejectsTwoSignaturesForOneSymbol)
   auto& sum = cudf::ast::jit::operation(by_argument, cudf::ast::jit::op::ADD, {narrow, wide});
   EXPECT_THROW(std::ignore = run_column(table, sum), std::invalid_argument);
 
-  // NVRTC diagnoses calls whose output type is incompatible with the symbol declaration.
+  // Calls of one symbol must declare one output type.
   auto by_output = cudf::ast::tree{};
   auto& as_int32 = cudf::ast::jit::call(by_output, callee("lto_add_one", int32_type), {a_ref});
   auto& as_int64 = cudf::ast::jit::call(by_output, callee("lto_add_one", int64), {a_ref});
@@ -509,7 +547,17 @@ TEST_F(JITExpressionTest, UdfCallRejectsTwoSignaturesForOneSymbol)
     cudf::ast::jit::operation(by_output, cudf::ast::jit::op::CAST_TO_INT64, {as_int32});
   auto& sum64 =
     cudf::ast::jit::operation(by_output, cudf::ast::jit::op::ADD, {as_int64s, as_int64});
-  EXPECT_THROW(std::ignore = run_column(table, sum64), std::runtime_error);
+  EXPECT_THROW(std::ignore = run_column(table, sum64), std::invalid_argument);
+
+  // They must also declare one list of input types. Only one declaration is emitted, so the INT64
+  // argument would otherwise be narrowed to the INT32 input of the first call.
+  auto by_input       = cudf::ast::tree{};
+  auto const of_int64 = cudf::ast::jit::udf{"lto_add_one", true, int32_type, {int64}};
+  auto& from_int32    = cudf::ast::jit::call(by_input, callee("lto_add_one", int32_type), {a_ref});
+  auto& from_int64    = cudf::ast::jit::call(by_input, of_int64, {b_ref});
+  auto& sum_of_inputs =
+    cudf::ast::jit::operation(by_input, cudf::ast::jit::op::ADD, {from_int32, from_int64});
+  EXPECT_THROW(std::ignore = run_column(table, sum_of_inputs), std::invalid_argument);
 }
 
 /// @brief Selects the fixture value type so integer and decimal cases share input factories.

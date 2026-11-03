@@ -26,8 +26,8 @@ enum class lto_binary_type : uint8_t {
  * alive until evaluation completes or a reusable transform program has been constructed.
  */
 struct lto_fragment {
-  std::span<uint8_t const> data = {};                       ///< The module's bytes
   lto_binary_type type          = lto_binary_type::LTO_IR;  ///< Binary format of the module
+  std::span<uint8_t const> data = {};                       ///< The module's bytes
 };
 
 /// @brief Device modules linked into a JIT kernel.

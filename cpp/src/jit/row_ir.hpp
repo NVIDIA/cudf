@@ -179,9 +179,9 @@ struct [[nodiscard]] instance_context {
   /**
    * @brief Finds a structurally equivalent node belonging to a previously completed output.
    *
-   * Calls of impure functions are never equivalent to another node, including a repeated
-   * reference to the same AST call. Calls of pure functions are equivalent when their
-   * declarations, error policies, and arguments are equivalent.
+   * Calls of impure functions are never equivalent to another call, but a repeated reference to
+   * an AST call is equivalent to its first reference. Calls of pure functions are equivalent when
+   * their declarations, error policies, and arguments are equivalent.
    *
    * @param candidate Node for which to find an equivalent common subexpression
    * @return Equivalent node, or `nullptr` if none exists
@@ -269,6 +269,10 @@ struct [[nodiscard]] output_reference {
   constexpr bool operator!=(output_reference const& other) const { return index != other.index; }
 };
 
+struct [[nodiscard]] repeated_reference {
+  node const* first = nullptr;  ///< The node converted from the first reference to an AST call
+};
+
 struct [[nodiscard]] node {
  private:
   std::variant<std::monostate, input_reference, output_reference> reference_ =
@@ -297,6 +301,8 @@ struct [[nodiscard]] node {
 
   node const* alias_ = nullptr;  ///< The equivalent IR node that this IR aliases, if any. This is
                                  ///< used to avoid emitting duplicate code for equivalent IR nodes.
+                                 ///< A repeated reference to an AST call aliases its first
+                                 ///< reference from construction.
 
   /**
    * @brief Computes the structural hash of this node and its arguments.
@@ -387,6 +393,14 @@ struct [[nodiscard]] node {
    * @param args The arguments of the call
    */
   node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
+
+  /**
+   * @brief Construct a node for a repeated reference to an AST call, which reuses the evaluation
+   * of its first reference.
+   *
+   * @param reference The node converted from the first reference
+   */
+  explicit node(repeated_reference reference);
 
   /**
    * @brief Construct a new output reference IR node
@@ -502,6 +516,8 @@ struct [[nodiscard]] ast_converter {
   instance_context instance_;  ///< The instance context used during the IR generation
   table_view left_table_;      ///< The left input table for the expression
   table_view right_table_;     ///< The right input table for the expression
+  std::unordered_map<ast::jit::detail::udf_call const*, row_ir::node const*>
+    calls_;  ///< The node converted from the first reference to each AST call
 
  public:
   /**

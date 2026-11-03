@@ -481,14 +481,15 @@ return cudf::errc::SUCCESS;
 TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
 {
   // An LTO callee is declared before the generated function, which keeps its own name. Equal calls
-  // of a pure callee share one evaluation; separate calls of an impure one are never merged.
+  // of a pure callee share one evaluation; separate calls of an impure one are never merged, but
+  // one call referred to twice is evaluated once.
   auto ref      = cudf::ast::column_reference{3};
-  auto code_for = [&](bool is_pure) {
+  auto code_for = [&](bool is_pure, bool one_call) {
     auto const function = cudf::ast::jit::udf{
       "f", is_pure, cudf::data_type{cudf::type_id::INT32}, {cudf::data_type{cudf::type_id::INT32}}};
     auto tree = cudf::ast::tree{};
     auto& one = cudf::ast::jit::call(tree, function, {ref});
-    auto& two = cudf::ast::jit::call(tree, function, {ref});
+    auto& two = one_call ? one : cudf::ast::jit::call(tree, function, {ref});
     auto& sum = tree.push(cudf::ast::operation{cudf::ast::ast_operator::ADD, one, two});
     std::array<std::reference_wrapper<cudf::ast::expression const>, 1> expressions{sum};
     row_ir::ast_converter converter{
@@ -521,8 +522,9 @@ int32_t tmp_4 = tmp_3;
 return cudf::errc::SUCCESS;
 })***";
 
-  EXPECT_EQ(code_for(true), expected_pure);
-  EXPECT_EQ(code_for(false), expected_impure);
+  EXPECT_EQ(code_for(true, false), expected_pure);
+  EXPECT_EQ(code_for(false, false), expected_impure);
+  EXPECT_EQ(code_for(false, true), expected_pure);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

@@ -37,6 +37,11 @@ static void bench_contains(nvbench::state& state)
   auto const pattern_index = state.get_int64("pattern");
   auto backend             = state.get_string("backend");
 
+  if (backend != "interpreter" && backend != "jit") {
+    state.skip("invalid backend");
+    return;
+  }
+
   if (pattern_index < 0 || std::cmp_greater_equal(pattern_index, patterns.size())) {
     state.skip("invalid pattern index");
     return;
@@ -53,12 +58,14 @@ static void bench_contains(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(col->alloc_size());
   state.add_global_memory_writes<nvbench::int32_t>(input.size());
 
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    auto const stream = cuda::stream_ref{launch.get_stream().get_stream()};
     if (backend == "jit") {
-      static_cast<void>(cudf::experimental::contains_re(input, *jit_program));
+      static_cast<void>(cudf::experimental::contains_re(input, *jit_program, stream));
     } else {
-      static_cast<void>(cudf::strings::contains_re(input, *program));
+      static_cast<void>(cudf::strings::contains_re(input, *program, stream));
     }
   });
   state.add_buffer_size(

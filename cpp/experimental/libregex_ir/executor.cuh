@@ -871,8 +871,13 @@ __device__ __forceinline__ bool glushkov_find(input input_value, i64 search, i64
                Pattern::reach(Pattern::classify(code_point));
     if (state == 0 && saved_end == -1) window = pos;
     pos += character.width;
-    if ((raw & Pattern::accept_mask) && (!Pattern::require_end || pos == input_value.size))
-      saved_end = pos;
+    if ((raw & Pattern::accept_mask) && (!Pattern::require_end || pos == input_value.size)) {
+      if constexpr (Pattern::fixed_match_bytes >= 0) {
+        if (saved_end == -1) saved_end = pos;
+      } else {
+        saved_end = pos;
+      }
+    }
     state = priority_trim<Pattern>(raw);
     if (state == 0 && saved_end != -1) break;
   }

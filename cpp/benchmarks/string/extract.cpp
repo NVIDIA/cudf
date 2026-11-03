@@ -25,6 +25,11 @@ static void bench_extract(nvbench::state& state)
   auto const row_width = static_cast<cudf::size_type>(state.get_int64("row_width"));
   auto backend         = state.get_string("backend");
 
+  if (backend != "interpreter" && backend != "jit") {
+    state.skip("invalid backend");
+    return;
+  }
+
   auto groups = static_cast<cudf::size_type>(state.get_int64("groups"));
 
   std::default_random_engine generator;
@@ -63,10 +68,11 @@ static void bench_extract(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    auto const stream = cuda::stream_ref{launch.get_stream().get_stream()};
     if (backend == "jit") {
-      static_cast<void>(cudf::experimental::extract(strings_view, *jit_program));
+      static_cast<void>(cudf::experimental::extract(strings_view, *jit_program, stream));
     } else {
-      static_cast<void>(cudf::strings::extract(strings_view, *prog));
+      static_cast<void>(cudf::strings::extract(strings_view, *prog, stream));
     }
   });
   state.add_buffer_size(

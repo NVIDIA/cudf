@@ -206,7 +206,8 @@ std::string normalize_pattern(std::string_view pattern)
     }
 
     auto escaped = pattern[position + 1];
-    if (escaped < '0' || escaped > '7') {
+    // Zero-prefixed octal is handled by the compiler; adapt legacy nonzero short forms.
+    if (escaped <= '0' || escaped > '7') {
       result.append(pattern.substr(position, 2));
       position += 2;
       continue;
@@ -1211,6 +1212,9 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
     }
     auto replacement_operation =
       operation == regex_operation::REPLACE || operation == regex_operation::REPLACE_WITH_BACKREFS;
+    CUDF_EXPECTS(operation != regex_operation::REPLACE_WITH_BACKREFS ||
+                   !program_options.max_replace_count.has_value(),
+                 "max_replace_count is only supported for replace_re programs");
     auto native_replace   = replacement_operation && !program_options.max_replace_count.has_value();
     auto replacement_text = program_options.replacement.value_or("");
     if (operation == regex_operation::REPLACE_WITH_BACKREFS) {

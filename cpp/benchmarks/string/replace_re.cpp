@@ -15,6 +15,8 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <optional>
+
 static std::vector<std::string> const patterns = {
   "\\d+",                  // 0: builtins class and quantifier
   " ",                     // 1: literal
@@ -33,6 +35,11 @@ static void bench_replace(nvbench::state& state)
   auto const pattern_index = state.get_int64("pattern");
   auto const rtype         = state.get_string("type");
   auto backend             = state.get_string("backend");
+
+  if (backend != "interpreter" && backend != "jit") {
+    state.skip("invalid backend");
+    return;
+  }
 
   if (pattern_index < 0 || std::cmp_greater_equal(pattern_index, patterns.size())) {
     state.skip("invalid pattern index");
@@ -61,24 +68,30 @@ static void bench_replace(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   if (rtype == "backref") {
     auto replacement = std::string("#\\1X");
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+      auto const stream = cuda::stream_ref{launch.get_stream().get_stream()};
       if (backend == "jit") {
         static_cast<void>(
-          cudf::experimental::replace_with_backrefs(input, *jit_program, replacement));
+          cudf::experimental::replace_with_backrefs(input, *jit_program, replacement, stream));
       } else {
-        static_cast<void>(cudf::strings::replace_with_backrefs(input, *program, replacement));
+        static_cast<void>(
+          cudf::strings::replace_with_backrefs(input, *program, replacement, stream));
       }
     });
   } else {
     auto replacement = cudf::string_scalar("77");
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+      auto const stream = cuda::stream_ref{launch.get_stream().get_stream()};
       if (backend == "jit") {
-        static_cast<void>(cudf::experimental::replace_re(input, *jit_program, replacement));
+        static_cast<void>(
+          cudf::experimental::replace_re(input, *jit_program, replacement, std::nullopt, stream));
       } else {
-        static_cast<void>(cudf::strings::replace_re(input, *program, replacement));
+        static_cast<void>(
+          cudf::strings::replace_re(input, *program, replacement, std::nullopt, stream));
       }
     });
   }

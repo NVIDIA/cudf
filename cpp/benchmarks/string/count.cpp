@@ -34,6 +34,11 @@ static void bench_count(nvbench::state& state)
   auto const pattern_index = state.get_int64("pattern");
   auto backend             = state.get_string("backend");
 
+  if (backend != "interpreter" && backend != "jit") {
+    state.skip("invalid backend");
+    return;
+  }
+
   if (pattern_index < 0 || std::cmp_greater_equal(pattern_index, patterns.size())) {
     state.skip("invalid pattern index");
     return;
@@ -58,10 +63,11 @@ static void bench_count(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    auto const stream = cuda::stream_ref{launch.get_stream().get_stream()};
     if (backend == "jit") {
-      static_cast<void>(cudf::experimental::count_re(input, *jit_program));
+      static_cast<void>(cudf::experimental::count_re(input, *jit_program, stream));
     } else {
-      static_cast<void>(cudf::strings::count_re(input, *prog));
+      static_cast<void>(cudf::strings::count_re(input, *prog, stream));
     }
   });
   state.add_buffer_size(

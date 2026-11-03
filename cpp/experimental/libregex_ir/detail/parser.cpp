@@ -746,7 +746,8 @@ class parser {
       if (value >= '1' && value <= '9' && !three_digit_octal) {
         fail({start, 2}, "backreferences are not supported");
       }
-      auto literal = three_digit_octal ? parse_octal(value) : escaped_literal(value, start);
+      auto literal =
+        (three_digit_octal || value == '0') ? parse_octal(value) : escaped_literal(value, start);
       if (flags_.case_insensitive && !in_class) {
         add_case(result->predicate, literal, literal);
       } else {

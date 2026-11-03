@@ -44,6 +44,46 @@ std::unique_ptr<cudf::column> make_int64_offsets_column(cudf::column_view const&
 
 struct RegexJitProgramTest : public cudf::test::BaseFixture {};
 
+TEST_F(RegexJitProgramTest, BackreferencesRejectReplacementLimit)
+{
+  for (auto limit : {-1, 0, 1}) {
+    SCOPED_TRACE(limit);
+    auto options =
+      cudf::experimental::regex_jit_program_options{.replacement = "X", .max_replace_count = limit};
+    EXPECT_THROW(cudf::experimental::regex_jit_program::create(
+                   "(a)", cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS, options),
+                 cudf::logic_error);
+  }
+  auto options =
+    cudf::experimental::regex_jit_program_options{.replacement = "X", .max_replace_count = 1};
+  auto program = cudf::experimental::regex_jit_program::create(
+    "(a)", cudf::experimental::regex_operation::REPLACE, options);
+  cudf::test::strings_column_wrapper input({"aa"});
+  auto result = cudf::experimental::replace_re(
+    cudf::strings_column_view{input}, *program, cudf::string_scalar("X"), 1);
+  cudf::test::strings_column_wrapper expected({"Xa"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
+}
+
+TEST_F(RegexJitProgramTest, FixedWidthAlternativesMaterialization)
+{
+  cudf::test::strings_column_wrapper input({"abcabc", "abca", ""});
+  auto const view = cudf::strings_column_view{input};
+  auto findall =
+    cudf::experimental::regex_jit_program::create("bca|abc",
+                                                  cudf::experimental::regex_operation::FINDALL,
+                                                  {},
+                                                  cudf::strings::regex_flags::DEFAULT,
+                                                  cudf::strings::capture_groups::NON_CAPTURE);
+  auto split = cudf::experimental::regex_jit_program::create(
+    "bca|abc", cudf::experimental::regex_operation::SPLIT_RECORD);
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW matches{{"abc", "abc"}, {"abc"}, {}};
+  LCW fields{{"", "", ""}, {"", "a"}, {""}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*cudf::experimental::findall(view, *findall), matches);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*cudf::experimental::split_record_re(view, *split), fields);
+}
+
 TEST_F(RegexJitProgramTest, ScopedFlags)
 {
   struct test_case {

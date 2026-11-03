@@ -185,6 +185,14 @@ public final class Table implements AutoCloseable {
                                              int seed,
                                              int[] outputOffsets) throws CudfException;
 
+  private static native long hashPartitionIndices(long inputTable,
+                                                  int[] columnsToHash,
+                                                  int hashTypeId,
+                                                  int numberOfPartitions,
+                                                  boolean stable,
+                                                  int seed,
+                                                  int[] outputOffsets) throws CudfException;
+
   private static native long[] roundRobinPartition(long inputTable,
                                                    int numberOfPartitions,
                                                    int startPartition,
@@ -4696,6 +4704,42 @@ public final class Table implements AutoCloseable {
           operation.indices,
           type.nativeId,
           numberOfPartitions,
+          seed,
+          partitionOffsets)), partitionOffsets);
+    }
+
+    /**
+     * Compute a gather map that groups the rows of the table by hash partition, without
+     * materializing the partitioned table. Uses the default MURMUR3 hashing and seed.
+     * @param numberOfPartitions number of partitions to use
+     * @param stable if true, row indices within each partition are in increasing order
+     * @return the gather map and partition offsets
+     */
+    public HashPartitionIndices hashPartitionIndices(int numberOfPartitions, boolean stable) {
+      final int DEFAULT_HASH_SEED = 0;
+      return hashPartitionIndices(HashType.MURMUR3, numberOfPartitions, stable, DEFAULT_HASH_SEED);
+    }
+
+    /**
+     * Compute a gather map that groups the rows of the table by hash partition, without
+     * materializing the partitioned table.
+     * @param type the type of hash to use. Depending on the type of hash different restrictions
+     *             on the hash column(s) may exist. Not all hash functions are guaranteed to work
+     *             besides IDENTITY and MURMUR3.
+     * @param numberOfPartitions number of partitions to use
+     * @param stable if true, row indices within each partition are in increasing order
+     * @param seed the seed value for hashing
+     * @return the gather map and partition offsets
+     */
+    public HashPartitionIndices hashPartitionIndices(HashType type, int numberOfPartitions,
+                                                     boolean stable, int seed) {
+      int[] partitionOffsets = new int[numberOfPartitions + 1];
+      return new HashPartitionIndices(new ColumnVector(Table.hashPartitionIndices(
+          operation.table.nativeHandle,
+          operation.indices,
+          type.nativeId,
+          numberOfPartitions,
+          stable,
           seed,
           partitionOffsets)), partitionOffsets);
     }

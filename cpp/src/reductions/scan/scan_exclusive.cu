@@ -12,6 +12,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/null_mask.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -42,12 +43,11 @@ struct scan_dispatcher {
    * @param mr Device memory resource used to allocate the returned column's device memory
    * @return Output column with scan results
    */
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      bitmask_type const*,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cuda::std::is_arithmetic_v<T>)
   {
     auto output_column =
       detail::allocate_like(input, input.size(), mask_allocation_policy::NEVER, stream, mr);
@@ -73,7 +73,7 @@ struct scan_dispatcher {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(not cuda::std::is_arithmetic_v<T>)
+    requires(not cudf::concepts::arithmetic<T>)
   {
     CUDF_FAIL("Non-arithmetic types not supported for exclusive scan");
   }

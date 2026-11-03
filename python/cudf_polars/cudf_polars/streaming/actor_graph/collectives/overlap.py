@@ -742,6 +742,14 @@ class _PreparedInput:
     owned_host_values: tuple[RangeValues | None, ...]
     """Cached host range values for locally owned chunks."""
 
+    async def aclose(self) -> None:
+        """Release buffered chunks and finish the ghost exchange."""
+        try:
+            self.owned_buffer.clear()
+        finally:
+            if self.ghost_exchange is not None:
+                await self.ghost_exchange.aclose()
+
 
 class OverlapInput[BufferedChunkT: BufferedChunk]:
     """
@@ -784,22 +792,17 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
             self._prepared = await self._prepare()
         return self
 
-    async def __aexit__(self, exc_type: object, *_exc_info: object) -> None:
+    async def __aexit__(
+        self, exc_type: object, _exc_value: object, _traceback: object
+    ) -> None:
         """Release messages still owned by this input."""
         prepared, self._prepared = self._prepared, None
         if prepared is not None:
             if exc_type is not None:
                 with suppress(BaseException):
-                    prepared.owned_buffer.clear()
-                if prepared.ghost_exchange is not None:
-                    with suppress(BaseException):
-                        await prepared.ghost_exchange.aclose()
-                return
-            try:
-                prepared.owned_buffer.clear()
-            finally:
-                if prepared.ghost_exchange is not None:
-                    await prepared.ghost_exchange.aclose()
+                    await prepared.aclose()
+            else:
+                await prepared.aclose()
 
     def __aiter__(self) -> AsyncGenerator[StagedChunk[BufferedChunkT]]:
         """Yield prepared chunks in row order."""
@@ -905,7 +908,8 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
                 starts[self.comm.rank],
             )
         except BaseException:
-            buffer.clear()
+            with suppress(BaseException):
+                buffer.clear()
             raise
 
     async def _buffer_count_input(self, buffer: ChunkStore) -> _CountSummary:
@@ -1165,6 +1169,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
         destinations = tuple(sorted(set(destinations)))
         if not (sources or destinations):
             return _PreparedInput(buffer, None, sources, host_values)
+        source, output = buffer, ChunkStore(self.context)
         exchange = SparseExchange(
             self.context,
             self.comm,
@@ -1172,7 +1177,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
             sources=sources,
             destinations=destinations,
         )
-        source, output = buffer, ChunkStore(self.context)
+        prepared = _PreparedInput(output, exchange, sources, host_values)
         start = 0
         try:
             for position, msg in enumerate(source):
@@ -1239,13 +1244,9 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
             await exchange.finish()
         except BaseException:
             with suppress(BaseException):
-                output.clear()
-            with suppress(BaseException):
-                source.clear()
-            with suppress(BaseException):
-                await exchange.aclose()
+                await prepared.aclose()
             raise
-        return _PreparedInput(output, exchange, sources, host_values)
+        return prepared
 
     async def _range_pieces(
         self,

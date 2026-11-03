@@ -210,7 +210,8 @@ class SparseExchange:
                     Message(0, TableChunk.from_packed_data(packed, self.context.br()))
                 )
         except BaseException:
-            result.clear()
+            with suppress(BaseException):
+                result.clear()
             raise
         self._pending_sources.remove(source)
         return result

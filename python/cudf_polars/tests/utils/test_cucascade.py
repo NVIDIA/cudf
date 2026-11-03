@@ -15,30 +15,30 @@ import pylibcudf as plc
 from cudf_polars.utils import cucascade
 
 
-class FakeGlue:
-    """Stands in for the `cucascade` package."""
+class FakeScanCache:
+    """Stands in for `cucascade.cudf.ScanCache`."""
 
     def __init__(self):
         self.opened = []
         self.layouts = {}
 
-    def CucascadeDatasource(self, path):
+    def open(self, path):
         self.opened.append(path)
         return types.SimpleNamespace(path=path, nbytes=lambda: 10)
 
-    def register(self, path, directory, columns, col_index, offsets, sizes):
+    def register_layout(self, path, directory, columns, col_index, offsets, sizes):
         self.layouts[path] = (directory, columns, col_index, offsets, sizes)
 
 
 @pytest.fixture
 def disabled(monkeypatch):
-    monkeypatch.setattr(cucascade, "_module", None)
+    monkeypatch.setattr(cucascade, "_cache", None)
 
 
 @pytest.fixture
 def glue(monkeypatch):
-    fake = FakeGlue()
-    monkeypatch.setattr(cucascade, "_module", fake)
+    fake = FakeScanCache()
+    monkeypatch.setattr(cucascade, "_cache", fake)
     monkeypatch.setattr(cucascade, "_registered", set())
     return fake
 
@@ -62,11 +62,12 @@ def test_disabled_is_a_no_op(disabled):
     assert cucascade.wrap_sources(["s3://bucket/a.parquet"]) is None
     cucascade.register_layouts([])
     cucascade.configure_cucascade(0)
-    assert cucascade._module is None
+    assert cucascade._cache is None
 
 
 def test_missing_glue_is_reported(disabled, monkeypatch):
     monkeypatch.delitem(sys.modules, "cucascade", raising=False)
+    monkeypatch.delitem(sys.modules, "cucascade.cudf", raising=False)
     monkeypatch.setattr(sys, "path", [])
     with pytest.raises(RuntimeError, match="cucascade"):
         cucascade.configure_cucascade(1 << 30)

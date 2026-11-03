@@ -38,7 +38,7 @@ __all__ = [
 _MAX_OPEN_THREADS = 32
 
 _lock = threading.Lock()
-_module: Any = None
+_cache: Any = None
 _registered: set[str] = set()
 
 
@@ -56,14 +56,14 @@ def configure_cucascade(cache_bytes: int) -> None:
         engine start, so the first query does not pay for it. 0 leaves the
         cache off.
     """
-    global _module  # noqa: PLW0603
+    global _cache  # noqa: PLW0603
     if cache_bytes == 0:
         return
     with _lock:
-        if _module is not None:
+        if _cache is not None:
             return
         try:
-            module = importlib.import_module("cucascade")
+            module = importlib.import_module("cucascade.cudf")
         except ImportError as err:
             raise RuntimeError(
                 "cucascade_cache_bytes is set but the `cucascade` package "
@@ -74,15 +74,16 @@ def configure_cucascade(cache_bytes: int) -> None:
             or os.environ.get("AWS_REGION")
             or "us-east-1"
         )
-        module.start(
-            cache_bytes=cache_bytes,
-            endpoint=f"https://s3.{region}.amazonaws.com",
-            region=region,
-            access_key=os.environ["AWS_ACCESS_KEY_ID"],
-            secret_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-            session_token=os.environ.get("AWS_SESSION_TOKEN", ""),
+        _cache = module.ScanCache(
+            module.ScanCacheOptions(
+                cache_bytes=cache_bytes,
+                endpoint=f"https://s3.{region}.amazonaws.com",
+                region=region,
+                access_key=os.environ["AWS_ACCESS_KEY_ID"],
+                secret_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                session_token=os.environ.get("AWS_SESSION_TOKEN", ""),
+            )
         )
-        _module = module
 
 
 def _is_remote(path: str) -> bool:
@@ -155,7 +156,7 @@ def register_layouts(infos: Sequence[Any]) -> None:
     infos
         Objects with ``path``, ``size`` and the parsed ``file_metadata``.
     """
-    if _module is None:
+    if _cache is None:
         return
     for info in infos:
         path = str(info.path)
@@ -169,7 +170,7 @@ def register_layouts(infos: Sequence[Any]) -> None:
             columns, col_index, offsets, sizes = _layout(info)
         except Exception:
             continue
-        _module.register(
+        _cache.register_layout(
             path, path.rsplit("/", 1)[0], columns, col_index, offsets, sizes
         )
 
@@ -185,7 +186,7 @@ def register_layouts_from_sources(paths: Sequence[str], sources: Sequence[Any]) 
     sources
         The sources returned by :func:`wrap_sources` for ``paths``.
     """
-    if _module is None:
+    if _cache is None:
         return
     with _lock:
         todo = [
@@ -227,10 +228,10 @@ def wrap_sources(paths: Sequence[str]) -> list[Any] | None:
     in which case the caller uses the standard read path. The caller must keep the
     returned list alive for as long as the sources are read.
     """
-    if _module is None or not paths or not all(_is_remote(p) for p in paths):
+    if _cache is None or not paths or not all(_is_remote(p) for p in paths):
         return None
     if len(paths) == 1:
-        return [_module.CucascadeDatasource(str(paths[0]))]
+        return [_cache.open(str(paths[0]))]
     # Opening a source (size lookup plus footer read) releases the GIL.
     with ThreadPoolExecutor(min(_MAX_OPEN_THREADS, len(paths))) as pool:
-        return list(pool.map(lambda p: _module.CucascadeDatasource(str(p)), paths))
+        return list(pool.map(lambda p: _cache.open(str(p)), paths))

@@ -458,7 +458,6 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
                         out_row_mask.offset() + out_row_mask_offset + total_rows,
                         true,
                         stream);
-    out_row_mask.set_null_count(out_row_mask.null_count(0, out_row_mask.size(), stream));
   }
 }
 

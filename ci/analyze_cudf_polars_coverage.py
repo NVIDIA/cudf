@@ -401,6 +401,9 @@ def main() -> None:
     parser.add_argument("--cudf-sha", required=True)
     parser.add_argument("--polars-sha", required=True)
     parser.add_argument("--polars-version", required=True)
+    parser.add_argument("--local-exit-status", type=int)
+    parser.add_argument("--upstream-in-memory-exit-status", type=int)
+    parser.add_argument("--upstream-spmd-exit-status", type=int)
     parser.add_argument("--gpu-run-list", type=Path, required=True)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -415,6 +418,11 @@ def main() -> None:
     report["context_data"] = {
         "local": args.local_data.name,
         "upstream": args.upstream_data.name,
+    }
+    report["suite_exit_statuses"] = {
+        "local": args.local_exit_status,
+        "upstream_in_memory": args.upstream_in_memory_exit_status,
+        "upstream_spmd": args.upstream_spmd_exit_status,
     }
     selections = json.loads(args.gpu_run_list.read_text())["selections"]
     selection_key = f"{args.polars_version}|spmd|default"

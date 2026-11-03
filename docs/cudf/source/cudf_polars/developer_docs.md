@@ -618,7 +618,9 @@ GPU-execution list for that version. JSON samples up to 20 test contexts per
 source line and records the total count; the separate `.coverage.local` and
 `.coverage.upstream` files retain every context. The review queue puts
 GPU-observed upstream nodes first; its HTML shows the first 500 pairs, while
-the JSON retains the full ranking.
+the JSON retains the full ranking. The command still writes the report when a
+suite fails, records each suite's exit status, and then exits unsuccessfully;
+such comparisons are provisional.
 
 Review a queue entry's assertions and GPU-execution diagnostics before
 proposing any deletion. Shared source lines and similar test names only identify

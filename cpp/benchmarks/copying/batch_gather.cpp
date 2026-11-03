@@ -29,8 +29,7 @@ static void bench_batch_gather(nvbench::state& state)
   auto const num_cols        = static_cast<cudf::size_type>(state.get_int64("num_cols"));
   auto const nulls           = static_cast<double>(state.get_float64("nulls"));
   auto const coalesce        = static_cast<bool>(state.get_int64("coalesce"));
-  auto const tile_cols  = static_cast<cudf::size_type>(state.get_int64("tile_cols"));
-  auto const block_size = static_cast<cudf::size_type>(state.get_int64("block_size"));
+  auto const tile_cols = static_cast<cudf::size_type>(state.get_int64("tile_cols"));
 
   if (static_cast<long>(num_rows) * static_cast<long>(num_cols) >
       std::numeric_limits<int32_t>::max()) {  // reasonable limit
@@ -73,8 +72,7 @@ static void bench_batch_gather(nvbench::state& state)
                                cudf::negative_index_policy::NOT_ALLOWED,
                                stream,
                                cudf::memory_resources{cudf::get_current_device_resource_ref()},
-                               tile_cols,
-                               block_size);
+                               tile_cols);
   });
 
   state.add_buffer_size(
@@ -87,8 +85,7 @@ NVBENCH_BENCH(bench_batch_gather)
   .add_int64_axis("num_cols", {8, 100, 256, 512})
   .add_float64_axis("nulls", {0.0, 0.001, 0.3})
   .add_int64_axis("coalesce", {true, false})
-  .add_int64_axis("tile_cols", {1, 2, 4, 8})
-  .add_int64_axis("block_size", {128, 256, 512});
+  .add_int64_axis("tile_cols", {1, 2, 4, 8});
 
 // Drives the 6-param routed entry (host-side map-locality sampler picks the tile width) so
 // the router itself is measurable end-to-end — the `batch_gather` bench above pins explicit

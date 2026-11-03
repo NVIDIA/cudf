@@ -73,15 +73,12 @@ struct sampled_map_locality {
 
 namespace {
 
-// Default block size of the fused kernel; matches the valid_if_n_kernel/concatenate precedent.
-// The explicit block_size overload may select 128/256/512: all are warp multiples, which keeps
-// the masked path's dst-mask-word exactly-once invariant and the per-warp valid-count staging
-// (BlockSize / warp_size rows) well-formed at every choice.
-constexpr size_type kDefaultBlockSize{256};
+// Block size of the fused kernel; matches the valid_if_n_kernel/concatenate precedent.
+constexpr size_type block_size{256};
 
 // Default consecutive descriptors per blockIdx.y tile: each thread loads a row's gather-map
 // value once and reuses it across the tile's columns (per-column map re-reads dominated wide
-// cells). Measured variable — the driver accepts 1/2/4/8 via the tile_cols parameter.
+// cells). Measured variable — the driver accepts 1/2/4/8 via the tile_cols overload.
 constexpr size_type kDefaultTileCols{8};
 
 
@@ -161,31 +158,19 @@ static_assert(sizeof(descriptor_block<batch_gather_wide_by_value_descriptors>) +
 // don't-cache so L2 keeps the reuse-critical gather map. Random/unsampled verdicts, test-forced
 // geometries, host compilation, and pre-sm_70 all take plain default-cached accesses.
 template <bool kStreaming, typename T>
-__device__ inline T streaming_load(char const* src)
+__device__ inline void streaming_copy(char* dst, char const* src)
 {
   if constexpr (kStreaming) {
 #if defined(__CUDA_ARCH__)
     if constexpr (__CUDA_ARCH__ >= 700) {
-      return cuda::ptx::ld_L1_evict_first(cuda::ptx::space_global_t{},
-                                          reinterpret_cast<T const*>(src));
-    }
-#endif
-  }
-  return *reinterpret_cast<T const*>(src);
-}
-
-template <bool kStreaming, typename T>
-__device__ inline void streaming_store(char* dst, T value)
-{
-  if constexpr (kStreaming) {
-#if defined(__CUDA_ARCH__)
-    if constexpr (__CUDA_ARCH__ >= 700) {
+      auto const value =
+        cuda::ptx::ld_L1_evict_first(cuda::ptx::space_global_t{}, reinterpret_cast<T const*>(src));
       cuda::ptx::st_L1_evict_first(cuda::ptx::space_global_t{}, reinterpret_cast<T*>(dst), value);
       return;
     }
 #endif
   }
-  *reinterpret_cast<T*>(dst) = value;
+  *reinterpret_cast<T*>(dst) = *reinterpret_cast<T const*>(src);
 }
 
 // INVARIANT: element_size * row is computed in 64-bit below; it can exceed 2^31 for DECIMAL128.
@@ -205,6 +190,7 @@ __device__ void copy_element(char* dst, char const* src, int32_t element_size)
       streaming_copy<kStreaming, int64_t>(dst, src);
       streaming_copy<kStreaming, int64_t>(dst + 8, src + 8);
       break;
+
     }
     default: CUDF_UNREACHABLE("Unexpected element size");
   }
@@ -851,8 +837,7 @@ size_type select_gather_map_tile_cols(table_view const& source_table,
 // Shared body of the routed and explicit entry points; the routed entry enqueues the sampler
 // before its allocation work and leaves the tile width unresolved until the body's pre-launch
 // synchronization.
-// `explicit_tile_cols` nullopt means "resolve from the sample"; block_size must be one of
-// {128, 256, 512} and applies to every kernel instantiation this body can launch.
+// `explicit_tile_cols` nullopt means "resolve from the sample".
 std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                          column_view const& gather_map,
                                          out_of_bounds_policy bounds_policy,
@@ -860,8 +845,7 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                          cuda::stream_ref stream,
                                          memory_resources mr,
                                          std::optional<size_type> explicit_tile_cols,
-                                         sampled_map_locality const& sampled,
-                                         size_type block_size);
+                                         sampled_map_locality const& sampled);
 
 std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     column_view const& gather_map,
@@ -886,16 +870,8 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
   }
   if (num_fused_cols == 0 or gather_map.has_nulls()) {
     // Nothing to fuse (or the delegate rejects the map): no sampler, no measurable tile width.
-    return batch_gather_impl(source_table,
-                             gather_map,
-                             bounds_policy,
-                             neg_indices,
-                             stream,
-                             mr,
-                             std::optional<size_type>{kDefaultTileCols},
-                             sampled_map_locality::empty(stream),
-                             std::nullopt,
-                             kDefaultBlockSize);
+    return batch_gather(
+      source_table, gather_map, bounds_policy, neg_indices, stream, mr, kDefaultTileCols);
   }
   auto const tile_cols =
     unsampled_tile_width(gather_map.size(),
@@ -904,29 +880,12 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                          max_fused_elem_size,
                          static_cast<size_type>(cudf::size_of(gather_map.type())));
   if (tile_cols.has_value()) {
-    return batch_gather_impl(source_table,
-                             gather_map,
-                             bounds_policy,
-                             neg_indices,
-                             stream,
-                             mr,
-                             std::optional<size_type>{*tile_cols},
-                             sampled_map_locality::empty(stream),
-                             std::nullopt,
-                             kDefaultBlockSize);
+    return batch_gather(
+      source_table, gather_map, bounds_policy, neg_indices, stream, mr, *tile_cols);
   }
   auto const sampled = enqueue_map_locality_sample(gather_map, stream);
-  // The routed entry takes no block-size parameter: it always runs kDefaultBlockSize. The
-  // measurement axis exists only on the explicit (tile_cols, block_size) overload.
-  return batch_gather_impl(source_table,
-                           gather_map,
-                           bounds_policy,
-                           neg_indices,
-                           stream,
-                           mr,
-                           std::nullopt,
-                           sampled,
-                           kDefaultBlockSize);
+  return batch_gather_impl(
+    source_table, gather_map, bounds_policy, neg_indices, stream, mr, std::nullopt, sampled);
 }
 
 std::unique_ptr<table> batch_gather(table_view const& source_table,
@@ -935,8 +894,7 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                                     negative_index_policy neg_indices,
                                     cuda::stream_ref stream,
                                     memory_resources mr,
-                                    size_type tile_cols,
-                                    size_type block_size)
+                                    size_type tile_cols)
 {
   return batch_gather_impl(source_table,
                            gather_map,
@@ -945,8 +903,7 @@ std::unique_ptr<table> batch_gather(table_view const& source_table,
                            stream,
                            mr,
                            std::optional<size_type>{tile_cols},
-                           sampled_map_locality::empty(stream),
-                           block_size);
+                           sampled_map_locality::empty(stream));
 }
 
 std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
@@ -956,8 +913,7 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                                          cuda::stream_ref stream,
                                          memory_resources mr,
                                          std::optional<size_type> explicit_tile_cols,
-                                         sampled_map_locality const& sampled,
-                                         size_type block_size)
+                                         sampled_map_locality const& sampled)
 {
   cudf::scoped_range rng{"batch_gather"};
 
@@ -1256,8 +1212,8 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                              reinterpret_cast<std::byte*>(d_descriptors->data()) + head_bytes)
                          : valid_counts.data();
 
-    // One launch per call; the tile width, row coarsening, block size, descriptor tier, and map
-    // source pick the kernel instantiation. x dimension: the row blocks exactly cover the
+    // One launch per call; the tile width, descriptor tier, and map source pick the kernel
+    // instantiation. x dimension: the row blocks exactly cover the
     // chunks, so the device row loop runs one pass — never cap it (e.g. at the y 65535 limit)
     // or the single-pass guarantee breaks. y dimension: one block per column tile (the device
     // kernel's y-stride loop covers tiles past the 65535 cap; the by-value block always fits
@@ -1272,15 +1228,11 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // direct branch passes a `direct_map_reader` instead; the factory call is host-side and free.
     auto const map_begin   = indexalator_factory::make_input_iterator(gather_map);
     auto const map_reader  = indexalator_reader{map_begin};
-    auto const launch_tile = [&](auto tile_constant,
-                                 auto streaming_constant,
-                                 auto block_constant,
-                                 int by_value_tier) {
-      constexpr size_type kTileCols  = decltype(tile_constant)::value;
-      constexpr bool kStreaming      = decltype(streaming_constant)::value;
-      constexpr size_type kBlockSize = decltype(block_constant)::value;
+    auto const launch_tile = [&](auto tile_constant, auto streaming_constant, int by_value_tier) {
+      constexpr size_type kTileCols = decltype(tile_constant)::value;
+      constexpr bool kStreaming     = decltype(streaming_constant)::value;
       dim3 const grid{
-        static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, kBlockSize)),
+        static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
         static_cast<unsigned>(std::min<size_type>(
           cudf::util::div_rounding_up_safe(num_descs, kTileCols), 65535)),
         1};
@@ -1305,11 +1257,11 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
               auto block               = descriptor_block<kCap>{};
               block.count              = num_descs;
               std::copy(descriptors.begin(), descriptors.end(), block.descs);
-              batch_gather_block_kernel<kBlockSize,
+              batch_gather_block_kernel<block_size,
                                         kTileCols,
                                         kStreaming,
                                         kMasked,
-                                        kCap><<<grid, kBlockSize, 0, stream.get()>>>(
+                                        kCap><<<grid, block_size, 0, stream.get()>>>(
                 block,
                 map_reader,
                 num_rows,
@@ -1326,8 +1278,8 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                 std::integral_constant<size_type, batch_gather_wide_by_value_descriptors>{});
             }
           } else {
-            batch_gather_kernel<kBlockSize, kTileCols, kStreaming, kMasked>
-              <<<grid, kBlockSize, 0, stream.get()>>>(
+            batch_gather_kernel<block_size, kTileCols, kStreaming, kMasked>
+              <<<grid, block_size, 0, stream.get()>>>(
                 map_reader,
                 reinterpret_cast<column_descriptor const*>(d_descriptors->data()),
                 num_descs,
@@ -1351,11 +1303,11 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                   auto block               = descriptor_block<kCap>{};
                   block.count              = num_descs;
                   std::copy(descriptors.begin(), descriptors.end(), block.descs);
-                  batch_gather_block_kernel<kBlockSize,
+                  batch_gather_block_kernel<block_size,
                                             kTileCols,
                                             kStreaming,
                                             kMasked,
-                                            kCap><<<grid, kBlockSize, 0, stream.get()>>>(
+                                            kCap><<<grid, block_size, 0, stream.get()>>>(
                     block,
                     map_reader,
                     num_rows,
@@ -1372,12 +1324,12 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
                     std::integral_constant<size_type, batch_gather_wide_by_value_descriptors>{});
                 }
               } else {
-                batch_gather_direct_map_kernel<kBlockSize,
+                batch_gather_direct_map_kernel<block_size,
                                                kTileCols,
                                                kStreaming,
                                                kMasked,
                                                typename decltype(map_reader)::value_type>
-                  <<<grid, kBlockSize, 0, stream.get()>>>(
+                  <<<grid, block_size, 0, stream.get()>>>(
                     map_reader.base,
                     reinterpret_cast<column_descriptor const*>(d_descriptors->data()),
                     num_descs,
@@ -1420,54 +1372,28 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       not explicit_tile_cols.has_value() and effective_tile_cols == kCoalescedTileCols;
     // Tile 4 is explicit-only and has no by-value instantiation, so it always takes the device
     // array. `by_value_tier` already excludes the explicit 4 (see the tier comment above), which
-    // makes this arm unreachable from the by-value dispatch. Block size is a measurement axis,
-    // not a routing decision: the routed path always runs kDefaultBlockSize, and only the
-    // explicit entry can override it. Every supported size is a warp multiple, so the mask-word
-    // exactly-once invariant above holds for all of them.
+    // makes this arm unreachable from the by-value dispatch.
     auto const dispatch = [&](int by_value_tier) {
-      // The block-size switch feeds every tile geometry it can reach.
-      auto const launch_with_block = [&](auto tile_constant, auto streaming_constant) {
-        switch (block_size) {
-          case 128:
-            launch_tile(tile_constant,
-                        streaming_constant,
-                        std::integral_constant<size_type, 128>{},
-                        by_value_tier);
-            break;
-          case 256:
-            launch_tile(tile_constant,
-                        streaming_constant,
-                        std::integral_constant<size_type, 256>{},
-                        by_value_tier);
-            break;
-          case 512:
-            launch_tile(tile_constant,
-                        streaming_constant,
-                        std::integral_constant<size_type, 512>{},
-                        by_value_tier);
-            break;
-          default: CUDF_FAIL("Unsupported batch_gather block size", std::invalid_argument);
-        }
-      };
       if (streaming) {
-        launch_with_block(std::integral_constant<size_type, kCoalescedTileCols>{},
-                          std::true_type{});
-      } else {
-        switch (effective_tile_cols) {
-          case 1:
-            launch_with_block(std::integral_constant<size_type, 1>{}, std::false_type{});
-            break;
-          case 2:
-            launch_with_block(std::integral_constant<size_type, 2>{}, std::false_type{});
-            break;
-          case 4:
-            launch_with_block(std::integral_constant<size_type, 4>{}, std::false_type{});
-            break;
-          case 8:
-            launch_with_block(std::integral_constant<size_type, 8>{}, std::false_type{});
-            break;
-          default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
-        }
+        launch_tile(std::integral_constant<size_type, kCoalescedTileCols>{},
+                    std::true_type{},
+                    by_value_tier);
+        return;
+      }
+      switch (effective_tile_cols) {
+        case 1:
+          launch_tile(std::integral_constant<size_type, 1>{}, std::false_type{}, by_value_tier);
+          break;
+        case 2:
+          launch_tile(std::integral_constant<size_type, 2>{}, std::false_type{}, by_value_tier);
+          break;
+        case 4:
+          launch_tile(std::integral_constant<size_type, 4>{}, std::false_type{}, 0);
+          break;
+        case 8:
+          launch_tile(std::integral_constant<size_type, 8>{}, std::false_type{}, by_value_tier);
+          break;
+        default: CUDF_FAIL("Unsupported batch_gather tile width", std::invalid_argument);
       }
     };
 

@@ -240,21 +240,21 @@ def build_report(
                 example["source_file"]
             ]
             line = example["line"]
-            example["local_context"] = next(
+            example["local_context"] = min(
                 context
-                for context in sorted(local_contexts[line])
+                for context in local_contexts[line]
                 if _nodeid(context) == pair["local_nodeid"]
             )
-            example["upstream_context"] = next(
+            example["upstream_context"] = min(
                 context
-                for context in sorted(upstream_contexts[line])
+                for context in upstream_contexts[line]
                 if _nodeid(context) == pair["upstream_nodeid"]
             )
         for example in pair["local_only_lines"]:
             local_contexts, _ = context_maps[example["source_file"]]
-            example["local_context"] = next(
+            example["local_context"] = min(
                 context
-                for context in sorted(local_contexts[example["line"]])
+                for context in local_contexts[example["line"]]
                 if _nodeid(context) == pair["local_nodeid"]
             )
     return result

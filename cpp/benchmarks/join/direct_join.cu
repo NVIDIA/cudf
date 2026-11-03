@@ -5,6 +5,8 @@
 
 #include "join_common.hpp"
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/join/direct_join.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
@@ -67,6 +69,8 @@ void nvbench_direct_inner_join(nvbench::state& state)
   state.add_element_count(input_bytes, "input_bytes");
   state.add_global_memory_reads<nvbench::int8_t>(input_bytes);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   if (algorithm == "hash") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
       auto result = cudf::inner_join(left_keys, right_keys, cudf::null_equality::UNEQUAL);
@@ -95,7 +99,11 @@ void nvbench_direct_inner_join(nvbench::state& state)
     });
   } else {
     state.skip("unknown algorithm");
+    return;
   }
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(nvbench_direct_inner_join)

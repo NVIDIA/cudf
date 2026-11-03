@@ -18,6 +18,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -83,7 +84,8 @@ std::unique_ptr<table> extract(strings_column_view const& input,
   auto const groups = d_prog->group_counts();
   CUDF_EXPECTS(groups > 0, "Group indicators not found in regex pattern");
 
-  auto indices   = rmm::device_uvector<string_index_pair>(input.size() * groups, stream);
+  auto indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), input.size() * groups, cuda::no_init);
   auto d_indices = cudf::detail::device_2dspan<string_index_pair>(indices, groups);
 
   auto const d_strings = column_device_view::create(input.parent(), stream);
@@ -158,7 +160,8 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
                "group parameter outside the range of capture groups found in the regex pattern",
                std::invalid_argument);
 
-  auto indices = rmm::device_uvector<string_index_pair>(input.size(), stream);
+  auto indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
   auto const d_strings = column_device_view::create(input.parent(), stream);
 

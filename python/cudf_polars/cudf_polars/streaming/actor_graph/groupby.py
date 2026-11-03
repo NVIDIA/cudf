@@ -11,9 +11,10 @@ import pylibcudf as plc
 from cudf_streaming.channel_metadata import (
     ChannelMetadata,
     HashScheme,
-    OrderKey,
     OrderScheme,
     Partitioning,
+    RowOrdering,
+    RowOrderingScope,
 )
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.communicator.single import new_communicator as single_comm
@@ -31,21 +32,24 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
 )
+from cudf_polars.streaming.actor_graph.partitioning import (
+    NormalizedPartitioning,
+    is_row_ordered_by,
+    maybe_remap_partitioning,
+    remap_ordering_keys,
+)
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     MAX_ROWS_PER_PARTITION,
     ChannelManager,
-    NormalizedPartitioning,
     _make_hash_shuffle_metadata,
     allgather_and_reduce,
     allgather_reduce,
     chunkwise_evaluate,
-    clear_local_ordering,
     empty_table_chunk,
     evaluate_batch,
     evaluate_chunk,
     gather_in_task_group,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     send_metadata,
@@ -69,8 +73,8 @@ if TYPE_CHECKING:
 
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
+    from cudf_polars.streaming.actor_graph.partitioning import PartitioningLevel
     from cudf_polars.streaming.actor_graph.tracing import ActorTracer
-    from cudf_polars.streaming.actor_graph.utils import PartitioningLevel
     from cudf_polars.typing import Schema
 
 
@@ -461,21 +465,6 @@ async def _shuffle_reduce(
     await ch_out.drain(context)
 
 
-def _remap_ordering_keys(
-    ordering: Ordering,
-    column_indices: tuple[int, ...],
-) -> Ordering:
-    """Return ``ordering`` with keys remapped to another schema."""
-    return ordering.with_keys(
-        tuple(
-            OrderKey(index, key.order, key.null_order)
-            for key, index in zip(
-                ordering.keys[: len(column_indices)], column_indices, strict=True
-            )
-        )
-    )
-
-
 def _groupby_output_metadata(
     ir: GroupBy | Distinct,
     decomposed: DecomposedGroupBy,
@@ -487,30 +476,20 @@ def _groupby_output_metadata(
     preserves_output_order: bool,
 ) -> ChannelMetadata:
     """Return groupby output metadata after final reduction/select."""
-    partitioning = maybe_remap_partitioning(
-        decomposed.reduction_ir,
-        partitioning,
-        child_ir=decomposed.reduction_ir,
-        context=context,
-    )
     if decomposed.select_ir is not None:
         partitioning = maybe_remap_partitioning(
             decomposed.select_ir,
             partitioning,
-            child_ir=decomposed.reduction_ir,
             context=context,
+            preserves_row_order=preserves_output_order,
         )
     else:
         partitioning = maybe_remap_partitioning(
             ir,
             partitioning,
-            child_ir=ir.children[0],
             context=context,
+            preserves_row_order=preserves_output_order,
         )
-    if not preserves_output_order:
-        # Partitioning-level helper: clear local order on every Ordering
-        # in the inter-rank and local schemes.
-        partitioning = clear_local_ordering(partitioning)
     return ChannelMetadata(
         local_count=local_count,
         partitioning=partitioning,
@@ -567,21 +546,15 @@ async def _ordered_adjust_reduce(
     aggregated: TableChunk,
     input_drained: bool,
     input_ordering: Ordering,
+    input_rows_ordered: bool,
     preserves_output_order: bool,
     tracer: ActorTracer | None = None,
 ) -> None:
     """Adjust locally aggregated data to strict ordering boundaries."""
-    partial_input_ordering = _remap_ordering_keys(
+    partial_input_ordering = remap_ordering_keys(
         input_ordering,
         decomposed.shuffle_indices[: len(input_ordering.keys)],
     )
-    if not preserves_output_order:
-        # Ordering-level helper: this is a single Ordering passed into
-        # adjust_ordering, not a Partitioning, so clear_local_ordering
-        # does not apply.
-        partial_input_ordering = partial_input_ordering.with_locally_ordered(
-            locally_ordered=False
-        )
     partial_output_ordering = partial_input_ordering.as_strict(context.br())
     ch_local = context.create_channel()
     ch_adjusted = context.create_channel()
@@ -639,6 +612,7 @@ async def _ordered_adjust_reduce(
                 ch_local,
                 partial_input_ordering,
                 partial_output_ordering,
+                input_rows_ordered=(preserves_output_order and input_rows_ordered),
                 collective_id=collective_id,
             ),
             reduce_adjusted_chunks(),
@@ -726,7 +700,11 @@ def _adjusted_ordering_metadata(
         local_count=_partition_count_for_rank(
             comm.rank, comm.nranks, output_ordering.num_boundaries + 1
         ),
-        partitioning=Partitioning(OrderScheme([output_ordering]), "inherit"),
+        partitioning=Partitioning(
+            OrderScheme([output_ordering]),
+            "inherit",
+            row_orderings=(RowOrdering(output_ordering.keys, RowOrderingScope.GLOBAL),),
+        ),
         duplicated=metadata_in.duplicated,
     )
 
@@ -906,6 +884,11 @@ async def groupby_actor(
             level=partitioning_level,
         )
         input_ordering = None if metadata_in.duplicated else partitioning.get_ordering()
+        input_rows_ordered = input_ordering is not None and is_row_ordered_by(
+            metadata_in.partitioning,
+            input_ordering.keys,
+            scope=RowOrderingScope.RANK_LOCAL,
+        )
         can_adjust_preserving_order = (
             isinstance(ir, GroupBy)
             and preserves_output_order
@@ -926,11 +909,9 @@ async def groupby_actor(
             output_partitioning = maybe_remap_partitioning(
                 ir,
                 metadata_in.partitioning,
-                child_ir=ir.children[0],
                 context=context,
+                preserves_row_order=preserves_output_order,
             )
-            if not preserves_output_order:
-                output_partitioning = clear_local_ordering(output_partitioning)
             metadata_out = ChannelMetadata(
                 local_count=metadata_in.local_count,
                 partitioning=output_partitioning,
@@ -1004,6 +985,7 @@ async def groupby_actor(
                 aggregated=aggregated,
                 input_drained=input_drained,
                 input_ordering=input_ordering,
+                input_rows_ordered=input_rows_ordered,
                 preserves_output_order=preserves_output_order,
                 tracer=tracer,
             )

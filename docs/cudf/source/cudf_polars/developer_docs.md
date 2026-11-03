@@ -614,7 +614,9 @@ classifications, and a ranked local-to-upstream review queue under
 `coverage-results/cudf-polars-comparison/`. The comparison JSON records the
 cuDF and Polars revisions and installed Polars version. The queue also marks
 whether each upstream node appears in the maintained default-SPMD
-GPU-execution list for that version.
+GPU-execution list for that version. JSON samples up to 20 test contexts per
+source line and records the total count; the separate `.coverage.local` and
+`.coverage.upstream` files retain every context.
 
 Review a queue entry's assertions and GPU-execution diagnostics before
 proposing any deletion. Shared source lines and similar test names only identify

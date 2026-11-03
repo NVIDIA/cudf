@@ -71,24 +71,81 @@ def test_build_report_emits_focused_upstream_unit_candidates() -> None:
         "local_only": 1,
         "upstream_only": 1,
     }
-    assert report["review_candidates"] == [
-        {
-            "nodeid": "tests/unit/lazyframe/test_lazy.py::test_translate",
-            "sampled_shared_line_count": 1,
-            "local_only_line_count": 1,
-            "source_modules": [source],
-            "representative_contexts": [
-                {
-                    "source_file": source,
-                    "line": 10,
-                    "local_contexts": [
-                        "tests/dsl/test_to_ast.py::test_translate|run"
-                    ],
-                    "upstream_context": "tests/unit/lazyframe/test_lazy.py::test_translate|run",
-                }
-            ],
-        }
+    assert report["review_pairs"] == []
+    assert report["files"][source]["both"][0]["local_contexts"] == [
+        "tests/dsl/test_to_ast.py::test_translate|run"
     ]
+    assert report["files"][source]["both"][0]["upstream_contexts"] == [
+        "tests/unit/lazyframe/test_lazy.py::test_translate|run"
+    ]
+
+
+def test_review_pairs_need_shared_behavior_and_remain_candidates() -> None:
+    analyzer = _load_analyzer()
+    source = "/work/cudf_polars/dsl/translate.py"
+    local = _CoverageData(
+        {
+            source: {
+                line: {"tests/test_join.py::test_join|run"}
+                for line in range(10, 15)
+            }
+        }
+    )
+    upstream = _CoverageData(
+        {
+            source: {
+                line: {
+                    "tests/unit/operations/test_join.py::test_join|run",
+                    "tests/unit/operations/test_filter.py::test_filter|run",
+                }
+                for line in range(10, 14)
+            }
+        }
+    )
+
+    pairs = analyzer.build_report(local, upstream)["review_pairs"]
+
+    assert len(pairs) == 1
+    assert pairs[0]["local_nodeid"] == "tests/test_join.py::test_join"
+    assert pairs[0]["upstream_nodeid"] == (
+        "tests/unit/operations/test_join.py::test_join"
+    )
+    assert pairs[0]["shared_line_count"] == 4
+    assert pairs[0]["local_only_line_count"] == 1
+    assert pairs[0]["shared_lines"][0] == {"source_file": source, "line": 10}
+    assert pairs[0]["status"] == "review_candidate"
+
+
+def test_review_pairs_rank_by_overlap_fraction() -> None:
+    analyzer = _load_analyzer()
+    source = "/work/cudf_polars/dsl/translate.py"
+    upstream_lines = {line for line in range(10, 18)}
+    local_tests = {
+        "tests/test_join.py::test_join": {
+            (source, line) for line in range(10, 15)
+        },
+        "tests/test_filter.py::test_filter": {
+            (source, line) for line in range(14, 20)
+        },
+    }
+    upstream_tests = {
+        "tests/unit/test_join.py::test_join": {
+            (source, line) for line in range(10, 14)
+        },
+        "tests/unit/test_filter.py::test_filter": {
+            (source, line) for line in range(14, 18)
+        },
+    }
+
+    pairs = analyzer._review_pairs(
+        local_tests, upstream_tests, {source: upstream_lines}
+    )
+
+    assert [pair["local_nodeid"] for pair in pairs] == [
+        "tests/test_join.py::test_join",
+        "tests/test_filter.py::test_filter",
+    ]
+    assert [pair["local_only_line_count"] for pair in pairs] == [0, 2]
 
 
 def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:

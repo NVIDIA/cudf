@@ -66,6 +66,24 @@ def _nodeid(context: str) -> str:
     return context.rsplit("|", 1)[0]
 
 
+def _example_context(
+    cache: dict[tuple[str, int], dict[str, str]],
+    contexts: dict[int, set[str]],
+    filename: str,
+    line: int,
+    nodeid: str,
+) -> str:
+    key = (filename, line)
+    if key not in cache:
+        by_node: dict[str, str] = {}
+        for context in contexts[line]:
+            node = _nodeid(context)
+            if node not in by_node or context < by_node[node]:
+                by_node[node] = context
+        cache[key] = by_node
+    return cache[key][nodeid]
+
+
 def _is_review_context(context: str) -> bool:
     """Whether a context belongs in the focused upstream-unit review pool."""
     nodeid = _nodeid(context)
@@ -234,28 +252,36 @@ def build_report(
     result["review_pairs"] = _review_pairs(
         local_tests, upstream_tests, all_upstream_lines
     )
+    local_examples: dict[tuple[str, int], dict[str, str]] = {}
+    upstream_examples: dict[tuple[str, int], dict[str, str]] = {}
     for pair in result["review_pairs"]:
         for example in pair["shared_lines"]:
             local_contexts, upstream_contexts = context_maps[
                 example["source_file"]
             ]
             line = example["line"]
-            example["local_context"] = min(
-                context
-                for context in local_contexts[line]
-                if _nodeid(context) == pair["local_nodeid"]
+            example["local_context"] = _example_context(
+                local_examples,
+                local_contexts,
+                example["source_file"],
+                line,
+                pair["local_nodeid"],
             )
-            example["upstream_context"] = min(
-                context
-                for context in upstream_contexts[line]
-                if _nodeid(context) == pair["upstream_nodeid"]
+            example["upstream_context"] = _example_context(
+                upstream_examples,
+                upstream_contexts,
+                example["source_file"],
+                line,
+                pair["upstream_nodeid"],
             )
         for example in pair["local_only_lines"]:
             local_contexts, _ = context_maps[example["source_file"]]
-            example["local_context"] = min(
-                context
-                for context in local_contexts[example["line"]]
-                if _nodeid(context) == pair["local_nodeid"]
+            example["local_context"] = _example_context(
+                local_examples,
+                local_contexts,
+                example["source_file"],
+                example["line"],
+                pair["local_nodeid"],
             )
     return result
 

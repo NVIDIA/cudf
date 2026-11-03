@@ -19,7 +19,7 @@ std::unique_ptr<cudf::column> make_structs_column(
   size_type num_rows,
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
-  cuda::device_buffer<std::byte>&& null_mask,
+  cuda::device_buffer<cudf::bitmask_type>&& null_mask,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
@@ -34,11 +34,7 @@ std::unique_ptr<cudf::column> make_structs_column(
   if (null_mask.size() > 0) {
     for (auto& child : child_columns) {
       child = structs::detail::superimpose_and_sanitize_nulls(
-        reinterpret_cast<bitmask_type const*>(null_mask.data()),
-        null_count,
-        std::move(child),
-        stream,
-        mr);
+        null_mask.data(), null_count, std::move(child), stream, mr);
     }
   }
 
@@ -55,14 +51,14 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   size_type num_rows,
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
-  cuda::device_buffer<std::byte>&& null_mask,
+  cuda::device_buffer<cudf::bitmask_type>&& null_mask,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(null_count <= 0 || null_mask.size() > 0,
                "Struct column with nulls must be nullable.");
 
-  CUDF_EXPECTS(null_mask.size() == 0 || null_mask.size() == bitmask_allocation_size_bytes(num_rows),
+  CUDF_EXPECTS(null_mask.size() == 0 || null_mask.size() == bitmask_allocation_size_words(num_rows),
                "Number of bits in null_mask should equal number of rows in input columns");
 
   CUDF_EXPECTS(std::all_of(child_columns.begin(),

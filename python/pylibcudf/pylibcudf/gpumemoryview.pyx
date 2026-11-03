@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pylibcudf.libcudf.types cimport bitmask_type
 from libc.stddef cimport size_t
 from libc.stdint cimport uintptr_t, uint64_t
 from libcpp.memory cimport unique_ptr
@@ -12,7 +13,7 @@ import operator
 from typing import Any
 
 from .types cimport DataType, size_of, type_id
-from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
+from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 
 
 cdef class _CudaDeviceBuffer:
@@ -20,14 +21,14 @@ cdef class _CudaDeviceBuffer:
     def __cuda_array_interface__(self):
         return {
             "data": (<uintptr_t>self.c_obj.get().data(), False),
-            "shape": (self.c_obj.get().size(),),
+            "shape": (self.c_obj.get().size() * sizeof(bitmask_type),),
             "typestr": "|u1",
             "version": 3,
         }
 
 
 cdef gpumemoryview _from_cuda_device_buffer(
-    unique_ptr[device_buffer[byte]] buf, object stream, object mr
+    unique_ptr[device_buffer[bitmask_type]] buf, object stream, object mr
 ):
     cdef _CudaDeviceBuffer owner = _CudaDeviceBuffer.__new__(_CudaDeviceBuffer)
     owner.c_obj = move(buf)

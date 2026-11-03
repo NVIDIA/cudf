@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -63,7 +63,7 @@ void BM_ast_polynomials(nvbench::state& state)
     std::transform(cuda::counting_iterator<cudf::size_type>{0},
                    cuda::counting_iterator{order + 1},
                    std::back_inserter(constants),
-                   [&](int) { return distribution(generator); });
+                   [&](int) { return cudf::numeric_scalar<key_type>(distribution(generator)); });
   }
 
   cudf::ast::tree tree{};

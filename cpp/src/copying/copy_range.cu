@@ -166,12 +166,11 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   auto const source_indices = source_view.get_indices_annotated();
   auto target_contents      = target_matched->release();
   auto target_indices(std::move(target_contents.children.front()));
-  cudf::mutable_column_view new_indices(
-    target_indices->type(),
-    dict_target.size(),
-    target_indices->mutable_view().head(),
-    reinterpret_cast<cudf::bitmask_type*>(target_contents.null_mask->data()),
-    dict_target.null_count());
+  cudf::mutable_column_view new_indices(target_indices->type(),
+                                        dict_target.size(),
+                                        target_indices->mutable_view().head(),
+                                        target_contents.null_mask->data(),
+                                        dict_target.null_count());
   // TODO: route through the caller's memory resources once copy_range is migrated
   auto const temp_mr = cudf::get_current_device_resource_ref();
   cudf::type_dispatcher(new_indices.type(),

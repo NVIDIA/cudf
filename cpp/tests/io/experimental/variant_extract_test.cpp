@@ -2773,7 +2773,7 @@ TEST_F(CastVariantStatusTest, SqlNullInputProducesRowNullStatus)
                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   // Mask row 1 SQL null
   auto null_mask = cudf::create_null_mask(2, cudf::mask_state::ALL_VALID, stream, cmr());
-  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 1, 2, false);
+  cudf::set_null_mask(null_mask.data(), 1, 2, false);
   stream.sync();
   values_col->set_null_mask(std::move(null_mask), 1);
 

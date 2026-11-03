@@ -6,9 +6,9 @@ context:
   version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
   minor_version: ${{ (version | split("."))[:2] | join(".") }}
   cuda_version: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[:2] | join(".") }}
-  cuda_major: '${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}'
-  datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
-  head_rev: '${{ git.head_rev(".")[:8] }}'
+  cuda_major: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}
+  datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
+  head_rev: ${{ git.head_rev(".")[:8] }}
   py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
   py_buildstring: ${{ py_abi_min | version_to_buildstring }}
 
@@ -25,9 +25,15 @@ build:
   string: cuda${{ cuda_major }}_cp${{ py_buildstring }}_abi3_${{ datetime_string }}_${{ head_rev }}
   script:
     content: |
-      # Versioned debug-prefix maps change sccache keys even when build paths are stable.
-      export CFLAGS=$(echo "$CFLAGS" | sed -E 's@\-fdebug\-prefix\-map[^ ]*@@g')
-      export CXXFLAGS=$(echo "$CXXFLAGS" | sed -E 's@\-fdebug\-prefix\-map[^ ]*@@g')
+      # Versioned debug-prefix maps invalidate otherwise identical cached native objects.
+      for flags_name in CFLAGS CXXFLAGS; do
+          [[ -v "${flags_name}" ]] || continue
+          flags_value="${!flags_name}"
+          while [[ "${flags_value}" =~ -fdebug-prefix-map[^[:space:]]* ]]; do
+              flags_value="${flags_value/"${BASH_REMATCH[0]}"/}"
+          done
+          export "${flags_name}=${flags_value}"
+      done
       ./build.sh pylibcudf
     secrets:
       - AWS_ACCESS_KEY_ID
@@ -42,8 +48,10 @@ build:
       NVCC_APPEND_FLAGS: ${{ env.get("NVCC_APPEND_FLAGS", default="") }}
       PARALLEL_LEVEL: ${{ env.get("PARALLEL_LEVEL", default="8") }}
       RAPIDS_ARTIFACTS_DIR: ${{ env.get("RAPIDS_ARTIFACTS_DIR", default="") }}
+      RAPIDS_CUDA_VERSION: ${{ env.get("RAPIDS_CUDA_VERSION") }}
       RAPIDS_PY_VERSION: ${{ env.get("RAPIDS_PY_VERSION", default="") }}
       SCCACHE_BUCKET: ${{ env.get("SCCACHE_BUCKET", default="") }}
+      SCCACHE_CONF: ${{ env.get("SCCACHE_CONF", default="") }}
       SCCACHE_DIST_AUTH_TYPE: ${{ env.get("SCCACHE_DIST_AUTH_TYPE", default="token") }}
       SCCACHE_DIST_FALLBACK_TO_LOCAL_COMPILE: ${{ env.get("SCCACHE_DIST_FALLBACK_TO_LOCAL_COMPILE", default="false") }}
       SCCACHE_DIST_MAX_RETRIES: ${{ env.get("SCCACHE_DIST_MAX_RETRIES", default="inf") }}
@@ -59,6 +67,7 @@ build:
       SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX: pylibcudf-${{ env.get("RAPIDS_CONDA_ARCH") }}-cuda${{ cuda_major }}-conda-preprocessor-cache
       SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE: ${{ env.get("SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE", default="true") }}
       SCCACHE_S3_USE_SSL: ${{ env.get("SCCACHE_S3_USE_SSL", default="true") }}
+      SCCACHE_SERVER_PORT: ${{ env.get("SCCACHE_SERVER_PORT", default="4226") }}
       SCCACHE_SERVER_LOG: ${{ env.get("SCCACHE_SERVER_LOG", default="sccache=debug") }}
 
 requirements:
@@ -88,6 +97,7 @@ requirements:
         - libcufile-dev
     - cuda-version =${{ cuda_version }}
   run:
+    - librmm =${{ minor_version }}
     - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
     - python
     - libcudf =${{ version }}
@@ -98,7 +108,7 @@ requirements:
     - nvtx >=0.2.1
   run_constraints:
     - numpy >=2.0,<3.0
-    - pyarrow>=19.0.0,<26.0.0
+    - pyarrow>=19.0.0
   ignore_run_exports:
     from_package:
       - cuda-cudart-dev

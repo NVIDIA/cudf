@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use quent_analyzer::AnalyzerError;
-use quent_dynamic_attributes::DynamicAttributes;
+use quent_dynamic_attributes::{DynamicAttributes, DynamicValue};
 use quent_events::{EntityRef, Event, EventModel};
 use quent_query_engine_analyzer::ui::{QuentViewer, UiAnalyzer};
 use quent_query_engine_ui::{OperatorFilter, QueryFilter};
@@ -387,9 +387,16 @@ fn builds_query_bundle_from_generated_events() {
         bundle.entities.query.instance_name.as_deref(),
         Some("iteration-1")
     );
-    assert_eq!(
-        bundle.entities.query_group.instance_name.as_deref(),
-        Some("group")
+    assert!(
+        bundle
+            .entities
+            .query
+            .custom_attributes
+            .iter()
+            .any(|attribute| {
+                attribute.key == "query_group"
+                    && attribute.value == Some(DynamicValue::String("group".to_owned()))
+            })
     );
     assert_eq!(bundle.entities.plans.len(), 2);
     assert!(bundle.entities.workers.contains_key(&idle_worker_id));
@@ -409,33 +416,48 @@ fn builds_query_bundle_from_generated_events() {
             .active_span
             .is_some()
     );
-    assert!(bundle.entities.operators[&operator_id].custom_attributes["output_schema"].is_some());
+    let operator_attributes = &bundle.entities.operators[&operator_id].custom_attributes;
     assert!(
-        bundle.entities.operators[&operator_id].custom_attributes["join_filter_pushdown_details"]
-            .is_some()
+        operator_attributes
+            .iter()
+            .any(|attribute| attribute.key == "output_schema" && attribute.value.is_some())
     );
-    assert!(
-        bundle.entities.operators[&operator_id].custom_attributes["runtime_prefilter_statistics"]
-            .is_some()
-    );
+    assert!(operator_attributes.iter().any(|attribute| {
+        attribute.key == "join_filter_pushdown_details" && attribute.value.is_some()
+    }));
+    assert!(operator_attributes.iter().any(|attribute| {
+        attribute.key == "runtime_prefilter_statistics" && attribute.value.is_some()
+    }));
     let statistics = bundle.entities.operators[&operator_id]
         .statistics
         .as_ref()
         .expect("operator statistics should be present");
     assert_eq!(
-        statistics.custom_statistics["input_bytes"]
+        statistics
+            .custom_statistics
+            .iter()
+            .find(|statistic| statistic.value.key == "input_bytes")
+            .unwrap()
             .quantity
             .as_deref(),
         Some("bytes")
     );
     assert_eq!(
-        statistics.custom_statistics["output_bytes"]
+        statistics
+            .custom_statistics
+            .iter()
+            .find(|statistic| statistic.value.key == "output_bytes")
+            .unwrap()
             .quantity
             .as_deref(),
         Some("bytes")
     );
     assert!(
-        statistics.custom_statistics["chunk_count"]
+        statistics
+            .custom_statistics
+            .iter()
+            .find(|statistic| statistic.value.key == "chunk_count")
+            .unwrap()
             .quantity
             .is_none()
     );

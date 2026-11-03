@@ -15,15 +15,16 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -67,18 +68,17 @@ struct apply_indices_map_fn {
 
 struct remap_result {
   std::unique_ptr<cudf::column> indices;
-  cuda::device_buffer<std::byte> null_mask =
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   cudf::size_type null_count;
 };
 
 struct remap_indices_dispatch_fn {
-  template <typename T>
+  template <cudf::concepts::dictionary_key T>
   remap_result operator()(cudf::dictionary_column_view const& input,
                           cudf::column_view const& new_keys,
                           cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<T>())
   {
     // compute sorted-order so the new_keys can be searched more quickly
     auto sorted_indices = cudf::detail::sorted_order(
@@ -92,7 +92,8 @@ struct remap_indices_dispatch_fn {
     auto const iota     = cuda::counting_iterator<cudf::size_type>{0};
 
     // create a map from the old key indices to the new ones
-    auto indices_map = rmm::device_uvector<size_type>(old_keys.size(), stream);
+    auto indices_map = cuda::device_buffer<size_type>(
+      stream, cudf::get_current_device_resource_ref(), old_keys.size(), cuda::no_init);
     create_indices_map_fn<T, decltype(keys_itr)> map_fn{
       *d_old_keys, keys_itr, keys_itr + new_keys.size(), d_sorted_indices};
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -131,19 +132,18 @@ struct remap_indices_dispatch_fn {
                           cudf::column_view const&,
                           cuda::stream_ref,
                           rmm::device_async_resource_ref)
-    requires(not cudf::is_dictionary_key<T>())
+    requires(not cudf::concepts::dictionary_key<T>)
   {
     CUDF_UNREACHABLE("not a valid dictionary key type");
   }
 };
 
 struct set_keys_dispatch_fn {
-  template <typename T>
+  template <cudf::concepts::dictionary_key T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
                                            cudf::column_view const& new_keys,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<T>())
   {
     auto [indices, null_mask, null_count] = type_dispatcher<dispatch_storage_type>(
       new_keys.type(), remap_indices_dispatch_fn{}, input, new_keys, stream, mr);
@@ -157,7 +157,6 @@ struct set_keys_dispatch_fn {
                                            cudf::column_view const&,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref)
-    requires(not cudf::is_dictionary_key<T>())
   {
     CUDF_UNREACHABLE("not a valid dictionary key type");
   }

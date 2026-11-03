@@ -16,11 +16,13 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/wrappers/durations.hpp>
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/host_vector.h>
@@ -56,7 +58,7 @@ struct stripe_rowgroups {
  * @brief Holds the sizes of encoded elements of decimal columns.
  */
 struct encoder_decimal_info {
-  std::map<uint32_t, rmm::device_uvector<uint32_t>>
+  std::map<uint32_t, cuda::device_buffer<uint32_t>>
     elem_sizes;  ///< Column index -> per-element size map
   std::map<uint32_t, cudf::detail::host_vector<uint32_t>>
     rg_sizes;  ///< Column index -> per-rowgroup size map
@@ -106,9 +108,9 @@ struct file_segmentation {
  * transient arena, which is freed as soon as gathering completes.
  */
 struct encoded_data {
-  rmm::device_uvector<uint8_t> persistent_buffer;       // extents that may be read in place
-  rmm::device_uvector<uint8_t> transient_buffer;        // extents always copied out by the gather
-  rmm::device_uvector<uint8_t> gathered_buffer;         // arena for gather_stripes output
+  cuda::device_buffer<uint8_t> persistent_buffer;       // extents that may be read in place
+  cuda::device_buffer<uint8_t> transient_buffer;        // extents always copied out by the gather
+  cuda::device_buffer<uint8_t> gathered_buffer;         // arena for gather_stripes output
   std::vector<std::vector<device_span<uint8_t>>> data;  // [stripe][strm_id] views
   hostdevice_2dvector<encoder_chunk_streams> streams;   // streams of encoded data, per chunk
 };
@@ -117,10 +119,10 @@ struct encoded_data {
  * @brief Dictionary data for string columns and their device views, per column.
  */
 struct string_dictionaries {
-  std::vector<rmm::device_uvector<uint32_t>> data;
-  std::vector<rmm::device_uvector<uint32_t>> index;
-  rmm::device_uvector<device_span<uint32_t>> d_data_view;
-  rmm::device_uvector<device_span<uint32_t>> d_index_view;
+  std::vector<cuda::device_buffer<uint32_t>> data;
+  std::vector<cuda::device_buffer<uint32_t>> index;
+  cuda::device_buffer<device_span<uint32_t>> d_data_view;
+  cuda::device_buffer<device_span<uint32_t>> d_index_view;
   // Dictionaries are currently disabled for columns with a rowgroup larger than 2^15
   thrust::host_vector<bool> dictionary_enabled;
 };
@@ -138,12 +140,15 @@ struct stripe_size_limits {
  *
  */
 struct intermediate_statistics {
-  explicit intermediate_statistics(cuda::stream_ref stream) : stripe_stat_chunks(0, stream) {}
+  explicit intermediate_statistics(cuda::stream_ref stream)
+    : stripe_stat_chunks(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
+  {
+  }
 
   intermediate_statistics(orc_table_view const& table, cuda::stream_ref stream);
 
   intermediate_statistics(std::vector<col_stats_blob> rb,
-                          rmm::device_uvector<statistics_chunk> sc,
+                          cuda::device_buffer<statistics_chunk> sc,
                           cudf::detail::hostdevice_vector<statistics_merge_group> smg,
                           std::vector<statistics_dtype> sdt,
                           std::vector<data_type> sct)
@@ -158,7 +163,7 @@ struct intermediate_statistics {
   // blobs for the rowgroups. Not persisted
   std::vector<col_stats_blob> rowgroup_blobs;
 
-  rmm::device_uvector<statistics_chunk> stripe_stat_chunks;
+  cuda::device_buffer<statistics_chunk> stripe_stat_chunks;
   cudf::detail::hostdevice_vector<statistics_merge_group> stripe_stat_merge;
   std::vector<statistics_dtype> stats_dtypes;
   std::vector<data_type> col_types;
@@ -184,9 +189,9 @@ struct persisted_statistics {
                intermediate_statistics&& intermediate_stats,
                cuda::stream_ref stream);
 
-  std::vector<rmm::device_uvector<statistics_chunk>> stripe_stat_chunks;
+  std::vector<cuda::device_buffer<statistics_chunk>> stripe_stat_chunks;
   std::vector<cudf::detail::hostdevice_vector<statistics_merge_group>> stripe_stat_merge;
-  std::vector<rmm::device_uvector<char>> string_pools;
+  std::vector<cuda::device_buffer<char>> string_pools;
   std::vector<statistics_dtype> stats_dtypes;
   std::vector<data_type> col_types;
   uint64_t num_rows = 0;

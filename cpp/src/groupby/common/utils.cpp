@@ -11,7 +11,7 @@
 
 namespace cudf::groupby::detail {
 
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> compute_row_bitmask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> compute_row_bitmask(
   table_view const& keys, cuda::stream_ref stream)
 {
   auto const mr = cudf::get_current_device_resource_ref();
@@ -26,14 +26,15 @@ std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> compute_row_bitma
               col.null_mask()};
     }
     auto buf = cudf::copy_bitmask(col, stream, mr);
-    auto ptr = reinterpret_cast<bitmask_type const*>(buf.data());
+    auto ptr = buf.data();
     return {std::move(buf), ptr};
   }
   auto [buf, null_count] = cudf::bitmask_and(keys, stream, mr);
   if (null_count == 0) {
     return {cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), nullptr};
   }
-  return {std::move(buf), reinterpret_cast<bitmask_type const*>(buf.data())};
+  auto const ptr = buf.data();
+  return {std::move(buf), ptr};
 }
 
 }  // namespace cudf::groupby::detail

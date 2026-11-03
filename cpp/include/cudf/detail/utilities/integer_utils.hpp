@@ -42,9 +42,7 @@
 #include <type_traits>
 #endif
 
-namespace cudf {
-//! Utility functions
-namespace util {
+namespace cudf::detail {
 /**
  * @brief Rounds `number_to_round` up to the next multiple of modulus
  *
@@ -119,7 +117,7 @@ CUDF_HOST_DEVICE constexpr I div_rounding_up_safe(I dividend, I divisor) noexcep
  *          argument types are: (uint64_t)
  * @endcode
  *
- * Not all cases could be if-ed out using `std::is_signed_v<T>` and satisfy the compiler.
+ * Not all cases could be if-ed out using `cuda::std::is_signed_v<T>` and satisfy the compiler.
  *
  * @param value Numeric value can be either integer or float type.
  * @return Absolute value if value type is signed.
@@ -131,5 +129,4 @@ CUDF_HOST_DEVICE constexpr auto absolute_value(T value) -> T
   return value;
 }
 
-}  // namespace util
-}  // namespace cudf
+}  // namespace cudf::detail

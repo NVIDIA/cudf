@@ -60,26 +60,26 @@ def test_shutdown_dask_runs_all_steps_in_order() -> None:
 
     def run(func: Any) -> None:
         events.append(func.func.__name__)
-        if func.func.__name__ == "_close_quent_worker":
-            raise RuntimeError("worker Quent close failed")
 
     client = SimpleNamespace(run=run)
-    runtime = SimpleNamespace(close=lambda: events.append("controller"))
+
+    def quent_close() -> None:
+        events.append("quent")
+        raise RuntimeError("Quent close failed")
+
     owned_client = SimpleNamespace(close=lambda: events.append("client"))
     owned_cluster = SimpleNamespace(close=lambda: events.append("cluster"))
     with pytest.raises(ExceptionGroup, match="Dask engine shutdown failed"):
         _shutdown_dask(
             cast("Any", client),
             "test",
-            cast("Any", runtime),
-            None,
+            quent_close,
             cast("Any", owned_client),
             cast("Any", owned_cluster),
         )
 
     assert events == [
-        "_close_quent_worker",
-        "controller",
+        "quent",
         "_teardown_worker",
         "client",
         "cluster",
@@ -156,6 +156,7 @@ def reset_engine(dask_client: distributed.Client) -> Iterator[DaskEngine]:
     """
     with DaskEngine(
         executor_options={"max_rows_per_partition": 10},
+        engine_options={"allow_gpu_sharing": True},
         dask_client=dask_client,
     ) as e:
         yield e
@@ -175,6 +176,7 @@ def test_reset_keeps_workers_alive(reset_engine: DaskEngine) -> None:
     )
     pids_after = sorted(reset_engine._run(os.getpid))
 
+    assert reset_engine._allow_gpu_sharing is True
     # Same worker addresses …
     assert workers_before == workers_after
     # … and the workers are running in the same OS processes.

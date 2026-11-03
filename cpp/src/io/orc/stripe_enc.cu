@@ -10,6 +10,7 @@
 
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -23,9 +24,12 @@
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
+#include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
+#include <cuda/std/bit>
 #include <cuda/std/limits>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 namespace cudf::io::orc::detail {
@@ -229,7 +233,7 @@ static __device__ uint32_t byte_rle(
         uint32_t run_id = t >> 7;
         uint32_t run    = min(literal_run - run_id * 128, 128);
         if (!(t & 0x7f)) dst[run_id + t] = 0x100 - run;
-        dst[run_id + t + 1] = (cid == CI_PRESENT) ? __brev(v0) >> 24 : v0;
+        dst[run_id + t + 1] = (cid == CI_PRESENT) ? cuda::std::bit_reverse(v0) : v0;
       }
       dst += num_runs + literal_run;
       out_cnt += literal_run;
@@ -242,7 +246,7 @@ static __device__ uint32_t byte_rle(
         if (t == literal_run)  // repeat_run follows literal_run
         {
           dst[0] = 0x7f;
-          dst[1] = (cid == CI_PRESENT) ? __brev(v0) >> 24 : v0;
+          dst[1] = (cid == CI_PRESENT) ? cuda::std::bit_reverse(v0) : v0;
         }
         dst += 2;
         out_cnt += 130;
@@ -258,7 +262,7 @@ static __device__ uint32_t byte_rle(
         if (t == literal_run)  // repeat_run follows literal_run
         {
           dst[0] = repeat_run - 3;
-          dst[1] = (cid == CI_PRESENT) ? __brev(v0) >> 24 : v0;
+          dst[1] = (cid == CI_PRESENT) ? cuda::std::bit_reverse(v0) : v0;
         }
         dst += 2;
         out_cnt += repeat_run;
@@ -407,7 +411,7 @@ static __device__ uint32_t IntegerRLE(
       vmax = block_reduce(temp_storage).Reduce(vmax, cuda::maximum{});
       if (t == 0) {
         uint32_t mode1_w, mode2_w;
-        typename std::make_unsigned<T>::type vrange_mode1, vrange_mode2;
+        typename cuda::std::make_unsigned<T>::type vrange_mode1, vrange_mode2;
         block_vmin = static_cast<uint64_t>(vmin);
         if constexpr (sizeof(T) > 4) {
           vrange_mode1 = (is_signed) ? max(zigzag(vmin), zigzag(vmax)) : vmax;
@@ -465,7 +469,7 @@ static __device__ uint32_t IntegerRLE(
         }
         dst += 2;
 
-        typename std::make_unsigned<T>::type zzv0 = v0;
+        typename cuda::std::make_unsigned<T>::type zzv0 = v0;
         if (t < literal_run) { zzv0 = zigzag(v0); }
         if (literal_w < 8) {
           StoreBitsBigEndian(dst, zzv0, literal_w, literal_run, t);
@@ -1346,11 +1350,11 @@ void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
   auto const num_streams   = strm_desc.size().second;
   auto const num_stripes   = strm_desc.size().first;
   auto const num_chunks    = num_rowgroups * num_streams;
-  auto srcs                = cudf::detail::make_zeroed_device_uvector_async<uint8_t*>(
+  auto srcs                = cudf::detail::make_zeroed_device_buffer_async<uint8_t*>(
     num_chunks, stream, cudf::get_current_device_resource_ref());
-  auto dsts = cudf::detail::make_zeroed_device_uvector_async<uint8_t*>(
+  auto dsts = cudf::detail::make_zeroed_device_buffer_async<uint8_t*>(
     num_chunks, stream, cudf::get_current_device_resource_ref());
-  auto lengths = cudf::detail::make_zeroed_device_uvector_async<size_t>(
+  auto lengths = cudf::detail::make_zeroed_device_buffer_async<size_t>(
     num_chunks, stream, cudf::get_current_device_resource_ref());
 
   auto const num_blocks =
@@ -1377,8 +1381,10 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
   device_span<codec_exec_result> comp_res,
   cuda::stream_ref stream)
 {
-  rmm::device_uvector<device_span<uint8_t const>> comp_in(num_compressed_blocks, stream);
-  rmm::device_uvector<device_span<uint8_t>> comp_out(num_compressed_blocks, stream);
+  cuda::device_buffer<device_span<uint8_t const>> comp_in(
+    stream, cudf::get_current_device_resource_ref(), num_compressed_blocks, cuda::no_init);
+  cuda::device_buffer<device_span<uint8_t>> comp_out(
+    stream, cudf::get_current_device_resource_ref(), num_compressed_blocks, cuda::no_init);
 
   size_t const num_blocks = strm_desc.size().first * strm_desc.size().second;
   init_compression_blocks_kernel<<<num_blocks, 256, 0, stream.get()>>>(strm_desc,
@@ -1407,7 +1413,7 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
 }
 
 void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
-                              std::map<uint32_t, rmm::device_uvector<uint32_t>>& elem_sizes,
+                              std::map<uint32_t, cuda::device_buffer<uint32_t>>& elem_sizes,
                               cuda::stream_ref stream)
 {
   if (rg_bounds.count() == 0) return;
@@ -1420,7 +1426,7 @@ void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
   });
 
   // Copy the vector of views to the device so that we can pass it to the kernel
-  auto d_sizes = cudf::detail::make_device_uvector_async<decimal_column_element_sizes>(
+  auto d_sizes = cudf::detail::make_device_buffer_async<decimal_column_element_sizes>(
     h_sizes, stream, cudf::get_current_device_resource_ref());
 
   constexpr int block_size = 256;

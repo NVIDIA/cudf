@@ -31,7 +31,7 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief Concatenates `views[i]`'s bitmask from the bits
  * `[views[i].offset(), views[i].offset() + views[i].size())` for all elements
- * `views` into a `cuda::device_buffer<std::byte>`
+ * `views` into a `cuda::device_buffer<cudf::bitmask_type>`
  *
  * Returns an empty buffer if the column is not nullable.
  *
@@ -40,7 +40,7 @@ namespace CUDF_EXPORT cudf {
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return Bitmasks of all the column views in the views vector
  */
-cuda::device_buffer<std::byte> concatenate_masks(
+cuda::device_buffer<cudf::bitmask_type> concatenate_masks(
   std::span<column_view const> views,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());

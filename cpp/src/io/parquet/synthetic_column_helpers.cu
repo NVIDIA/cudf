@@ -8,6 +8,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
@@ -80,10 +81,10 @@ std::unique_ptr<cudf::column> synthesize_row_index_column(
     }
 
     // Copy to device
-    auto const rg_global_offsets = cudf::detail::make_device_uvector_async(
-      host_rg_global_offsets, stream, mr.get_temporary_mr());
+    auto const rg_global_offsets =
+      cudf::detail::make_device_buffer_async(host_rg_global_offsets, stream, mr.get_temporary_mr());
     auto const rg_local_offsets =
-      cudf::detail::make_device_uvector_async(host_rg_local_offsets, stream, mr.get_temporary_mr());
+      cudf::detail::make_device_buffer_async(host_rg_local_offsets, stream, mr.get_temporary_mr());
 
     // For each output row, binary search its row group and compute the (file-local) row index
     CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
@@ -136,7 +137,7 @@ std::unique_ptr<cudf::column> synthesize_source_index_column(
     std::inclusive_scan(
       num_rows_per_source.begin(), num_rows_per_source.end(), host_row_offsets.begin() + 1);
     auto const row_offsets =
-      cudf::detail::make_device_uvector_async(host_row_offsets, stream, mr.get_temporary_mr());
+      cudf::detail::make_device_buffer_async(host_row_offsets, stream, mr.get_temporary_mr());
     cudf::detail::label_segments(
       row_offsets.begin(), row_offsets.end(), col_data.begin(), col_data.end(), stream);
     stream.sync();

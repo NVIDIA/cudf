@@ -407,7 +407,7 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
  * @param mr      Device memory resource used to allocate the returned valid mask
  * @return        Computed validity mask
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> scalar_col_valid_mask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
   cuda::stream_ref stream           = cudf::get_default_stream(),

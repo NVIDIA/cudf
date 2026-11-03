@@ -3,15 +3,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use quent_analyzer::{AnalyzerError, AnalyzerResult, Entity, Span};
+use quent_analyzer::{AnalyzerResult, Entity, Span};
 use quent_query_engine_analyzer::{
     EngineEntity, OperatorEntity, PlanEntity, PortEntity, QueryEngineModel, QueryEntity,
-    QueryGroupEntity, WorkerEntity,
+    WorkerEntity,
 };
 use quent_query_engine_ui::{EntityRef as UiEntityRef, QueryBundle, QueryEntities};
 use quent_ui::{
-    Resource, ResourceGroup, ResourceGroupNode, ResourceGroupTypeDecl, ResourceTree,
-    ResourceTypeDecl as UiResourceTypeDecl,
+    FsmTypeSelection, Resource, ResourceGroup, ResourceGroupNode, ResourceGroupTypeDecl,
+    ResourceTree, ResourceTypeDecl as UiResourceTypeDecl,
     fsm::{FsmStateTypeDecl, FsmTransitionDecl, FsmTypeDecl},
     quantity::{CapacityDecl as UiCapacityDecl, CapacityKind, QuantitySpec},
 };
@@ -28,11 +28,6 @@ impl CudfPolarsUiAnalyzer {
         let view = self.model.query_view(query_id)?;
         let query = view.query(query_id)?;
         let epoch = view.query_epoch(query_id)?;
-        let query_group_id = query.query_group_id().ok_or_else(|| {
-            AnalyzerError::IncompleteEntity(format!(
-                "query {query_id} has no query-group reference"
-            ))
-        })?;
         let worker_ids: HashSet<_> = view.workers().map(|worker| worker.id()).collect();
         let query_resource_group_ids: HashSet<_> = self
             .resource_groups
@@ -70,7 +65,10 @@ impl CudfPolarsUiAnalyzer {
                         kind: CapacityKind::Occupancy,
                         quantity: "unit".to_owned(),
                     }],
-                    used_by: vec![EVALUATE_ENTITY_TYPE.to_owned()],
+                    display_order: vec![
+                        FsmTypeSelection::All,
+                        FsmTypeSelection::Type(EVALUATE_ENTITY_TYPE.to_owned()),
+                    ],
                 },
             ),
             (
@@ -82,7 +80,7 @@ impl CudfPolarsUiAnalyzer {
                         kind: CapacityKind::Occupancy,
                         quantity: "bytes".to_owned(),
                     }],
-                    used_by: vec![],
+                    display_order: vec![FsmTypeSelection::All],
                 },
             ),
             (
@@ -94,7 +92,10 @@ impl CudfPolarsUiAnalyzer {
                         kind: CapacityKind::Rate,
                         quantity: "bytes".to_owned(),
                     }],
-                    used_by: vec![EVALUATE_ENTITY_TYPE.to_owned()],
+                    display_order: vec![
+                        FsmTypeSelection::All,
+                        FsmTypeSelection::Type(EVALUATE_ENTITY_TYPE.to_owned()),
+                    ],
                 },
             ),
         ]
@@ -102,7 +103,10 @@ impl CudfPolarsUiAnalyzer {
         .collect();
         let group_type = |name: &str, contains_resource_types: Vec<String>| ResourceGroupTypeDecl {
             name: name.to_owned(),
-            used_by_entity_types: vec![EVALUATE_ENTITY_TYPE.to_owned()],
+            display_order: vec![
+                FsmTypeSelection::All,
+                FsmTypeSelection::Type(EVALUATE_ENTITY_TYPE.to_owned()),
+            ],
             contains_resource_types,
         };
         let resource_group_types = [
@@ -226,7 +230,6 @@ impl CudfPolarsUiAnalyzer {
 
         let entities = QueryEntities {
             engine: view.engine()?.to_ui()?,
-            query_group: view.query_group(query_group_id)?.to_ui(),
             query: query.to_ui()?,
             workers: view
                 .workers()

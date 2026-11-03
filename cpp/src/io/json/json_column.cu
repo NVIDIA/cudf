@@ -10,6 +10,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
 #include <cudf/io/detail/json.hpp>
@@ -22,6 +23,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
@@ -89,7 +91,7 @@ void print_tree(host_span<SymbolT const> input,
  * @return A tuple of column tree representation of JSON string, column ids of columns, and
  * max row offsets of columns
  */
-std::tuple<tree_meta_t, rmm::device_uvector<NodeIndexT>, rmm::device_uvector<size_type>>
+std::tuple<tree_meta_t, cuda::device_buffer<NodeIndexT>, cuda::device_buffer<size_type>>
 reduce_to_column_tree(tree_meta_t const& tree,
                       device_span<NodeIndexT const> original_col_ids,
                       device_span<NodeIndexT const> sorted_col_ids,
@@ -108,8 +110,10 @@ reduce_to_column_tree(tree_meta_t const& tree,
                          sorted_col_ids.end());
 
   // 2. reduce_by_key {col_id}, {row_offset}, max.
-  rmm::device_uvector<NodeIndexT> unique_col_ids(num_columns, stream);
-  rmm::device_uvector<size_type> max_row_offsets(num_columns, stream);
+  cuda::device_buffer<NodeIndexT> unique_col_ids(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+  cuda::device_buffer<size_type> max_row_offsets(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
   auto ordered_row_offsets =
     cuda::make_permutation_iterator(row_offsets.begin(), ordered_node_ids.begin());
   thrust::reduce_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -122,7 +126,8 @@ reduce_to_column_tree(tree_meta_t const& tree,
                         cuda::maximum<size_type>());
 
   // 3. reduce_by_key {col_id}, {node_categories} - custom opp (*+v=*, v+v=v, *+#=E)
-  rmm::device_uvector<NodeT> column_categories(num_columns, stream);
+  cuda::device_buffer<NodeT> column_categories(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
   thrust::reduce_by_key(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     sorted_col_ids.begin(),
@@ -150,11 +155,16 @@ reduce_to_column_tree(tree_meta_t const& tree,
     });
 
   // 4. unique_copy parent_node_ids, ranges
-  rmm::device_uvector<TreeDepthT> column_levels(num_columns, stream);  // not required
-  rmm::device_uvector<NodeIndexT> parent_col_ids(num_columns, stream);
-  rmm::device_uvector<SymbolOffsetT> col_range_begin(num_columns, stream);  // Field names
-  rmm::device_uvector<SymbolOffsetT> col_range_end(num_columns, stream);
-  rmm::device_uvector<size_type> unique_node_ids(num_columns, stream);
+  cuda::device_buffer<TreeDepthT> column_levels(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);  // not required
+  cuda::device_buffer<NodeIndexT> parent_col_ids(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+  cuda::device_buffer<SymbolOffsetT> col_range_begin(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);  // Field names
+  cuda::device_buffer<SymbolOffsetT> col_range_end(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
+  cuda::device_buffer<size_type> unique_node_ids(
+    stream, cudf::get_current_device_resource_ref(), num_columns, cuda::no_init);
   thrust::unique_by_key_copy(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     sorted_col_ids.begin(),
@@ -204,7 +214,7 @@ reduce_to_column_tree(tree_meta_t const& tree,
   //   gather the max_row_offsets from children row offset array.
   {
     auto list_parents_children_max_row_offsets =
-      cudf::detail::make_zeroed_device_uvector_async<NodeIndexT>(
+      cudf::detail::make_zeroed_device_buffer_async<NodeIndexT>(
         static_cast<std::size_t>(num_columns), stream, cudf::get_current_device_resource_ref());
     thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      unique_col_ids.begin(),
@@ -293,15 +303,15 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
 {
   CUDF_FUNC_RANGE();
   auto validity_size_check = [](device_json_column& json_col) {
-    CUDF_EXPECTS(json_col.validity.size() >= bitmask_allocation_size_bytes(json_col.num_rows),
+    CUDF_EXPECTS(json_col.validity.size() * sizeof(bitmask_type) >=
+                   bitmask_allocation_size_bytes(json_col.num_rows),
                  "valid_count is too small");
   };
-  auto make_validity =
-    [stream, validity_size_check](
-      device_json_column& json_col) -> std::pair<cuda::device_buffer<std::byte>, size_type> {
+  auto make_validity = [stream, validity_size_check](device_json_column& json_col)
+    -> std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> {
     validity_size_check(json_col);
-    auto null_count = cudf::detail::null_count(
-      reinterpret_cast<bitmask_type*>(json_col.validity.data()), 0, json_col.num_rows, stream);
+    auto null_count =
+      cudf::detail::null_count(json_col.validity.data(), 0, json_col.num_rows, stream);
     // full null_mask is always required for parse_data
     return {std::move(json_col.validity), null_count};
     // Note: json_col modified here, moves this memory

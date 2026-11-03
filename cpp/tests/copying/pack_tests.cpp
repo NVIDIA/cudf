@@ -13,6 +13,10 @@
 #include <cudf/contiguous_split.hpp>
 #include <cudf/copying.hpp>
 
+#include <rmm/mr/statistics_resource_adaptor.hpp>
+
+#include <cuda/stream>
+
 // Size of the serialized table header that precedes the column entries in the
 // packed metadata buffer: version + num_columns + num_rows + pad, four 4-byte fields.
 // Must match `serialized_table_header` in cpp/src/copying/pack.cpp.
@@ -608,6 +612,35 @@ TEST_F(PackUnpackTest, ZeroColumnsWithRows)
   auto unpacked_empty = cudf::unpack(cudf::pack(empty));
   EXPECT_EQ(unpacked_empty.num_columns(), 0);
   EXPECT_EQ(unpacked_empty.num_rows(), 0);
+}
+
+TEST_F(PackUnpackTest, EmptyBuffersPreserveStreamAndResource)
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  cuda::stream stream{cuda::device_ref{device}};
+  auto output_mr  = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
+  auto output_ref = rmm::device_async_resource_ref{output_mr};
+
+  auto const verify_buffer = [&](cudf::packed_columns const& packed) {
+    EXPECT_EQ(packed.gpu_data->size(), 0);
+    EXPECT_EQ(packed.gpu_data->stream().get(), stream.get());
+    EXPECT_TRUE(packed.gpu_data->memory_resource() == output_ref);
+  };
+
+  cudf::test::fixed_width_column_wrapper<int> column;
+  for (auto const& input : {cudf::table_view{{column}},
+                            cudf::table_view{std::vector<cudf::column_view>{}, 7},
+                            cudf::table_view{}}) {
+    verify_buffer(cudf::pack(input, stream, output_ref));
+    if (input.num_columns() == 0 && input.num_rows() == 0) { continue; }
+
+    auto partitions = cudf::contiguous_split(input, {input.num_rows() / 2}, stream, output_ref);
+    ASSERT_EQ(partitions.size(), 2);
+    for (auto const& partition : partitions) {
+      verify_buffer(partition.data);
+    }
+  }
 }
 
 TEST_F(PackUnpackTest, UnpackMetadataSpan)

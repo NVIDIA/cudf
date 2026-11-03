@@ -2,18 +2,26 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pure-MLIR building blocks composed by the ``mlir_string`` lowerings.
 
-Helpers work on raw MLIR SSA values (no cuDF/NRT dependency). ``mlir_string``
-layout is ``{ptr meminfo, ptr data, i64 nbytes}``; ops run over an internal
-*view* value ``{ptr data, i32 nbytes, i32 length}`` built by
+Most helpers work on raw MLIR SSA values with no runtime dependency. The
+allocation helpers (:func:`allocate_mlir_string`, :func:`lower_concat`)
+additionally emit calls into the Numba Runtime (NRT) to create *owned* strings;
+see the developer guide "String UDF memory management" for the ownership model.
+``mlir_string`` layout is ``{ptr meminfo, ptr data, i64 nbytes}``; ops run over
+an internal *view* value ``{ptr data, i32 nbytes, i32 length}`` built by
 :func:`_mlir_string_to_view`.
 """
 
 from __future__ import annotations
 
 from numba_cuda_mlir._mlir import ir
-from numba_cuda_mlir._mlir.dialects import arith, llvm, scf
+from numba_cuda_mlir._mlir.dialects import arith, func, llvm, scf
 from numba_cuda_mlir._mlir.extras import types as T
-from numba_cuda_mlir.lowering_utilities import GEP_DYNAMIC_INDEX
+from numba_cuda_mlir.lowering_utilities import (
+    GEP_DYNAMIC_INDEX,
+    get_or_insert_function,
+)
+
+from pylibcudf.strings.char_types import StringCharacterTypes
 
 
 def _byte_at(data: ir.Value, idx: ir.Value) -> ir.Value:
@@ -67,6 +75,312 @@ def _mlir_string_to_view(ms_val: ir.Value) -> ir.Value:
     return llvm.insertvalue(
         container=val, value=nbytes_i32, position=ir.DenseI64ArrayAttr.get([2])
     )
+
+
+# --- NRT-managed allocation (creates new owned strings) --------------------
+# Unlike the accessors above, these helpers emit calls into the Numba Runtime
+# to allocate device memory for *new* strings, so the result carries a non-null
+# ``meminfo`` that numba's reference counting will free. See the developer guide
+# "String UDF memory management".
+def _call_nrt(
+    gpu_module: ir.Module,
+    name: str,
+    arg_types: list,
+    result_types: list,
+    args: list,
+) -> ir.Value:
+    """Emit a call to NRT device function ``name`` declared in ``gpu_module``."""
+    ft = ir.FunctionType.get(arg_types, result_types)
+    callee = get_or_insert_function(name, ft, gpu_module)
+    return func.call(
+        result=result_types, callee=callee.name.value, operands_=args
+    )
+
+
+def build_mlir_string(
+    meminfo: ir.Value, data: ir.Value, nbytes_i64: ir.Value
+) -> ir.Value:
+    """Assemble an ``mlir_string`` value ``{meminfo, data, nbytes}``.
+
+    ``meminfo`` lands in field 0, which is where numba's reference counting
+    looks for the ``MemInfo`` (see ``MLIRStringModel.get_nrt_meminfo``).
+
+    Parameters
+    ----------
+    meminfo : ir.Value
+        The NRT ``MemInfo`` pointer (null for a borrowed string).
+    data : ir.Value
+        Pointer to the UTF-8 byte buffer.
+    nbytes_i64 : ir.Value
+        Byte length of the string (``i64``).
+
+    Returns
+    -------
+    ir.Value
+        The assembled ``mlir_string`` SSA value.
+    """
+    ptr = llvm.PointerType.get()
+    ty = llvm.StructType.get_literal([ptr, ptr, T.i64()])
+    val = llvm.UndefOp(ty)
+    val = llvm.insertvalue(
+        container=val, value=meminfo, position=ir.DenseI64ArrayAttr.get([0])
+    )
+    val = llvm.insertvalue(
+        container=val, value=data, position=ir.DenseI64ArrayAttr.get([1])
+    )
+    return llvm.insertvalue(
+        container=val, value=nbytes_i64, position=ir.DenseI64ArrayAttr.get([2])
+    )
+
+
+def allocate_mlir_string(
+    gpu_module: ir.Module, nbytes_i64: ir.Value
+) -> tuple[ir.Value, ir.Value]:
+    """Allocate an NRT-managed byte buffer; return ``(meminfo, data_ptr)``.
+
+    ``NRT_MemInfo_new_varsize`` installs the varsize destructor so the buffer is
+    freed when the refcount drops to zero (a no-op under the arena allocator).
+    At least one byte is requested to avoid a device ``malloc(0)``.
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    nbytes_i64 : ir.Value
+        Requested buffer size in bytes (``i64``).
+
+    Returns
+    -------
+    tuple of ir.Value
+        ``(meminfo, data_ptr)`` for the newly allocated buffer.
+    """
+    ptr = llvm.PointerType.get()
+    alloc_size = arith.maxui(nbytes_i64, arith.constant(T.i64(), 1))
+    mi = _call_nrt(
+        gpu_module, "NRT_MemInfo_new_varsize", [T.i64()], [ptr], [alloc_size]
+    )
+    data = _call_nrt(gpu_module, "NRT_MemInfo_data_fast", [ptr], [ptr], [mi])
+    return mi, data
+
+
+def lower_concat(
+    gpu_module: ir.Module, lhs_view: ir.Value, rhs_view: ir.Value
+) -> ir.Value:
+    """Concatenate two views into a newly allocated owned ``mlir_string``.
+
+    Computes ``total = lhs.nbytes + rhs.nbytes``, allocates an NRT buffer of
+    that size, copies the ``lhs`` then the ``rhs`` bytes, and returns
+    ``{meminfo, data, total}``.
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    lhs_view : ir.Value
+        View of the left operand's bytes.
+    rhs_view : ir.Value
+        View of the right operand's bytes.
+
+    Returns
+    -------
+    ir.Value
+        The concatenated owned ``mlir_string``.
+    """
+    ptr = llvm.PointerType.get()
+    lhs_nbytes = llvm.zext(T.i64(), _view_nbytes(lhs_view))
+    rhs_nbytes = llvm.zext(T.i64(), _view_nbytes(rhs_view))
+    total = arith.addi(lhs_nbytes, rhs_nbytes)
+    mi, data = allocate_mlir_string(gpu_module, total)
+    llvm.intr_memcpy(data, _view_data(lhs_view), lhs_nbytes, False)
+    dst = llvm.getelementptr(
+        ptr, data, [lhs_nbytes], [GEP_DYNAMIC_INDEX], T.i8(), None
+    )
+    llvm.intr_memcpy(dst, _view_data(rhs_view), rhs_nbytes, False)
+    return build_mlir_string(mi, data, total)
+
+
+def _gep_byte_offset(base: ir.Value, offset: ir.Value) -> ir.Value:
+    """Pointer to ``base + offset`` bytes (GEP on an ``i8*`` buffer)."""
+    return llvm.getelementptr(
+        llvm.PointerType.get(),
+        base,
+        [offset],
+        [GEP_DYNAMIC_INDEX],
+        T.i8(),
+        None,
+    )
+
+
+def _empty_view() -> ir.Value:
+    """View with a null data pointer and ``nbytes == 0`` (whitespace mode)."""
+    i32 = ir.IntegerType.get_signless(32)
+    ptr = llvm.PointerType.get()
+    zero = arith.constant(i32, 0)
+    null = llvm.inttoptr(ptr, arith.constant(T.i64(), 0))
+    view_ty = llvm.StructType.get_literal([ptr, i32, i32])
+    val = llvm.UndefOp(view_ty)
+    val = llvm.insertvalue(
+        container=val, value=null, position=ir.DenseI64ArrayAttr.get([0])
+    )
+    val = llvm.insertvalue(
+        container=val, value=zero, position=ir.DenseI64ArrayAttr.get([1])
+    )
+    return llvm.insertvalue(
+        container=val, value=zero, position=ir.DenseI64ArrayAttr.get([2])
+    )
+
+
+def _is_strip_char(
+    byte_val: ir.Value, strip_data: ir.Value, strip_nb: ir.Value
+) -> ir.Value:
+    """i1: whether ``byte_val`` should be stripped.
+
+    Mirrors libcudf ``detail::strip``: with an empty strip set, strip bytes with
+    code ``<= 0x20`` (ASCII whitespace); otherwise strip any byte present in the
+    strip set.
+    """
+    i1 = ir.IntegerType.get_signless(1)
+    zero = arith.constant(T.i64(), 0)
+    one = arith.constant(T.i64(), 1)
+    strip_empty = arith.cmpi(arith.CmpIPredicate.eq, strip_nb, zero)
+    is_ws = arith.cmpi(
+        arith.CmpIPredicate.ule, byte_val, arith.constant(T.i8(), 0x20)
+    )
+    loop = scf.ForOp(zero, strip_nb, one, [arith.constant(i1, 0)])
+    si = loop.body.arguments[0]
+    found = loop.body.arguments[1]
+    with ir.InsertionPoint(loop.body):
+        sb = _byte_at(strip_data, si)
+        eq = arith.cmpi(arith.CmpIPredicate.eq, byte_val, sb)
+        scf.YieldOp([arith.ori(found, eq)])
+    return arith.select(strip_empty, is_ws, loop.results[0])
+
+
+def _strip_core(
+    gpu_module: ir.Module,
+    str_view: ir.Value,
+    strip_view: ir.Value,
+    do_left: bool,
+    do_right: bool,
+) -> ir.Value:
+    """Shared strip/lstrip/rstrip: trim the matching run from each requested end.
+
+    Scans from the left (and/or right) while the current byte is a strip char
+    and no non-strip byte has yet been seen on that side, then allocates and
+    copies the surviving ``[left_idx, right_idx)`` byte range.
+    """
+    data = _view_data(str_view)
+    nb = llvm.zext(T.i64(), _view_nbytes(str_view))
+    strip_data = _view_data(strip_view)
+    strip_nb = llvm.zext(T.i64(), _view_nbytes(strip_view))
+    zero = arith.constant(T.i64(), 0)
+    one = arith.constant(T.i64(), 1)
+
+    if do_left:
+        loop_l = scf.ForOp(zero, nb, one, [zero])
+        i = loop_l.body.arguments[0]
+        left = loop_l.body.arguments[1]
+        with ir.InsertionPoint(loop_l.body):
+            should_strip = _is_strip_char(
+                _byte_at(data, i), strip_data, strip_nb
+            )
+            still = arith.cmpi(arith.CmpIPredicate.eq, left, i)
+            advance = arith.andi(should_strip, still)
+            scf.YieldOp([arith.select(advance, arith.addi(left, one), left)])
+        left_idx = loop_l.results[0]
+    else:
+        left_idx = zero
+
+    if do_right:
+        loop_r = scf.ForOp(zero, nb, one, [nb])
+        j = loop_r.body.arguments[0]
+        right = loop_r.body.arguments[1]
+        with ir.InsertionPoint(loop_r.body):
+            ridx = arith.subi(arith.subi(nb, j), one)
+            should_strip = _is_strip_char(
+                _byte_at(data, ridx), strip_data, strip_nb
+            )
+            expected = arith.subi(nb, j)
+            still = arith.cmpi(arith.CmpIPredicate.eq, right, expected)
+            advance = arith.andi(should_strip, still)
+            scf.YieldOp([arith.select(advance, ridx, right)])
+        right_idx = loop_r.results[0]
+    else:
+        right_idx = nb
+
+    nonempty = arith.cmpi(arith.CmpIPredicate.ult, left_idx, right_idx)
+    result_len = arith.select(nonempty, arith.subi(right_idx, left_idx), zero)
+    mi, out_data = allocate_mlir_string(gpu_module, result_len)
+    llvm.intr_memcpy(
+        out_data, _gep_byte_offset(data, left_idx), result_len, False
+    )
+    return build_mlir_string(mi, out_data, result_len)
+
+
+def lower_strip(
+    gpu_module: ir.Module, str_view: ir.Value, strip_view: ir.Value
+) -> ir.Value:
+    """``s.strip(chars)`` -> trimmed ``mlir_string`` (both ends).
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    str_view : ir.Value
+        View of the source string's bytes.
+    strip_view : ir.Value
+        View of the strip-character set (empty for whitespace mode).
+
+    Returns
+    -------
+    ir.Value
+        The trimmed owned ``mlir_string``.
+    """
+    return _strip_core(gpu_module, str_view, strip_view, True, True)
+
+
+def lower_lstrip(
+    gpu_module: ir.Module, str_view: ir.Value, strip_view: ir.Value
+) -> ir.Value:
+    """``s.lstrip(chars)`` -> left-trimmed ``mlir_string``.
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    str_view : ir.Value
+        View of the source string's bytes.
+    strip_view : ir.Value
+        View of the strip-character set (empty for whitespace mode).
+
+    Returns
+    -------
+    ir.Value
+        The left-trimmed owned ``mlir_string``.
+    """
+    return _strip_core(gpu_module, str_view, strip_view, True, False)
+
+
+def lower_rstrip(
+    gpu_module: ir.Module, str_view: ir.Value, strip_view: ir.Value
+) -> ir.Value:
+    """``s.rstrip(chars)`` -> right-trimmed ``mlir_string``.
+
+    Parameters
+    ----------
+    gpu_module : ir.Module
+        The GPU module the NRT functions are declared in.
+    str_view : ir.Value
+        View of the source string's bytes.
+    strip_view : ir.Value
+        View of the strip-character set (empty for whitespace mode).
+
+    Returns
+    -------
+    ir.Value
+        The right-trimmed owned ``mlir_string``.
+    """
+    return _strip_core(gpu_module, str_view, strip_view, False, True)
 
 
 def _is_begin_utf8_char(byte_val: ir.Value) -> ir.Value:
@@ -373,3 +687,329 @@ def _lower_contains(container: ir.Value, target: ir.Value) -> ir.Value:
         _lower_find(container, target),
         arith.constant(ir.IntegerType.get_signless(32), 0),
     )
+
+
+# --- character-class predicates (libcudf flags table) ----------------------
+# Flag bits sourced directly from the public ``cudf::strings`` enum so the
+# values stay in sync with libcudf rather than being duplicated here.
+_CT_DECIMAL = int(StringCharacterTypes.DECIMAL)
+_CT_NUMERIC = int(StringCharacterTypes.NUMERIC)
+_CT_DIGIT = int(StringCharacterTypes.DIGIT)
+_CT_ALPHA = int(StringCharacterTypes.ALPHA)
+_CT_SPACE = int(StringCharacterTypes.SPACE)
+_CT_UPPER = int(StringCharacterTypes.UPPER)
+_CT_LOWER = int(StringCharacterTypes.LOWER)
+_CT_ALPHANUM = int(StringCharacterTypes.ALPHANUM)
+_CT_CASE_TYPES = int(StringCharacterTypes.CASE_TYPES)
+_CT_ALL_TYPES = int(StringCharacterTypes.ALL_TYPES)
+
+
+def _utf8_byte_width(first_byte: ir.Value) -> ir.Value:
+    """Width in ``[1, 4]`` (i64) of the UTF-8 char starting at ``first_byte``."""
+    fb = arith.extui(T.i64(), first_byte)
+
+    def _is(mask: int) -> ir.Value:
+        return arith.cmpi(
+            arith.CmpIPredicate.eq,
+            arith.andi(fb, arith.constant(T.i64(), mask)),
+            arith.constant(T.i64(), mask),
+        )
+
+    width = arith.constant(T.i64(), 1)
+    width = arith.select(_is(0xC0), arith.constant(T.i64(), 2), width)
+    width = arith.select(_is(0xE0), arith.constant(T.i64(), 3), width)
+    return arith.select(_is(0xF0), arith.constant(T.i64(), 4), width)
+
+
+def _decode_utf8_to_codepoint(
+    data_ptr: ir.Value, byte_offset: ir.Value, nbytes_i64: ir.Value
+) -> tuple[ir.Value, ir.Value]:
+    """Decode the UTF-8 char at ``data_ptr[byte_offset]``.
+
+    Returns ``(codepoint_i32, width_i64)``. Every byte load (including the first)
+    is clamped to ``nbytes - 1`` so decoding never reads past the buffer, even
+    for a truncated final character.
+    """
+    i32 = ir.IntegerType.get_signless(32)
+    last_valid = arith.subi(nbytes_i64, arith.constant(T.i64(), 1))
+    byte_offset = arith.minui(byte_offset, last_valid)
+    b0 = _byte_at(data_ptr, byte_offset)
+    width = _utf8_byte_width(b0)
+    b0_32 = arith.extui(i32, b0)
+
+    def _cont(step: int) -> ir.Value:
+        off = arith.minui(
+            arith.addi(byte_offset, arith.constant(T.i64(), step)), last_valid
+        )
+        return arith.extui(i32, _byte_at(data_ptr, off))
+
+    def _c(val: int) -> ir.Value:
+        return arith.constant(i32, val)
+
+    b1, b2, b3 = _cont(1), _cont(2), _cont(3)
+    cp1 = arith.andi(b0_32, _c(0x7F))
+    cp2 = arith.ori(
+        arith.shli(arith.andi(b0_32, _c(0x1F)), _c(6)),
+        arith.andi(b1, _c(0x3F)),
+    )
+    cp3 = arith.ori(
+        arith.ori(
+            arith.shli(arith.andi(b0_32, _c(0x0F)), _c(12)),
+            arith.shli(arith.andi(b1, _c(0x3F)), _c(6)),
+        ),
+        arith.andi(b2, _c(0x3F)),
+    )
+    cp4 = arith.ori(
+        arith.ori(
+            arith.shli(arith.andi(b0_32, _c(0x07)), _c(18)),
+            arith.shli(arith.andi(b1, _c(0x3F)), _c(12)),
+        ),
+        arith.ori(
+            arith.shli(arith.andi(b2, _c(0x3F)), _c(6)),
+            arith.andi(b3, _c(0x3F)),
+        ),
+    )
+
+    is1 = arith.cmpi(arith.CmpIPredicate.eq, width, arith.constant(T.i64(), 1))
+    is2 = arith.cmpi(arith.CmpIPredicate.eq, width, arith.constant(T.i64(), 2))
+    is3 = arith.cmpi(arith.CmpIPredicate.eq, width, arith.constant(T.i64(), 3))
+    cp = cp4
+    cp = arith.select(is3, cp3, cp)
+    cp = arith.select(is2, cp2, cp)
+    cp = arith.select(is1, cp1, cp)
+    return cp, width
+
+
+def _all_characters_of_type(
+    str_view: ir.Value,
+    flags_table_ptr: ir.Value,
+    types_i32: ir.Value,
+    verify_types_i32: ir.Value,
+) -> ir.Value:
+    """i1: mirror ``cudf::strings::udf::all_characters_of_type``.
+
+    ``flags_table_ptr`` is a device pointer to the ``uint8`` character-flags
+    table; ``types``/``verify_types`` are character-class bit masks.
+    """
+    i32 = ir.IntegerType.get_signless(32)
+    i1 = ir.IntegerType.get_signless(1)
+    data = _view_data(str_view)
+    nb = llvm.zext(T.i64(), _view_nbytes(str_view))
+    zero_i32 = arith.constant(i32, 0)
+    true_i1 = arith.constant(i1, 1)
+    max_cp = arith.constant(i32, 0xFFFF)
+    all_types = arith.constant(i32, _CT_ALL_TYPES)
+    is_empty = arith.cmpi(
+        arith.CmpIPredicate.eq, nb, arith.constant(T.i64(), 0)
+    )
+
+    # Loop state: [byte_offset, check, check_count].
+    loop = scf.ForOp(
+        arith.constant(T.i64(), 0),
+        nb,
+        arith.constant(T.i64(), 1),
+        [arith.constant(T.i64(), 0), true_i1, zero_i32],
+    )
+    with ir.InsertionPoint(loop.body):
+        idx = loop.induction_variable
+        cur_off = loop.inner_iter_args[0]
+        cur_check = loop.inner_iter_args[1]
+        cur_count = loop.inner_iter_args[2]
+
+        at_boundary = arith.cmpi(arith.CmpIPredicate.eq, idx, cur_off)
+        cp, char_width = _decode_utf8_to_codepoint(data, cur_off, nb)
+        in_range = arith.cmpi(arith.CmpIPredicate.ule, cp, max_cp)
+        # Clamp the table index to the BMP before loading; out-of-range code
+        # points get flag 0 (so the load never runs past the 64K table).
+        safe_cp = arith.select(in_range, cp, zero_i32)
+        flag = arith.extui(
+            i32, _byte_at(flags_table_ptr, arith.extui(T.i64(), safe_cp))
+        )
+        flag = arith.select(in_range, flag, zero_i32)
+
+        should_verify = arith.ori(
+            arith.cmpi(
+                arith.CmpIPredicate.ne,
+                arith.andi(verify_types_i32, flag),
+                zero_i32,
+            ),
+            arith.andi(
+                arith.cmpi(arith.CmpIPredicate.eq, flag, zero_i32),
+                arith.cmpi(
+                    arith.CmpIPredicate.eq, verify_types_i32, all_types
+                ),
+            ),
+        )
+        type_match = arith.cmpi(
+            arith.CmpIPredicate.ne, arith.andi(types_i32, flag), zero_i32
+        )
+        new_check = arith.select(
+            should_verify, arith.andi(cur_check, type_match), cur_check
+        )
+        new_count = arith.select(
+            should_verify,
+            arith.addi(cur_count, arith.constant(i32, 1)),
+            cur_count,
+        )
+        final_check = arith.select(at_boundary, new_check, cur_check)
+        final_count = arith.select(at_boundary, new_count, cur_count)
+        next_off = arith.select(
+            at_boundary, arith.addi(cur_off, char_width), cur_off
+        )
+        scf.yield_([next_off, final_check, final_count])
+
+    has_chars = arith.cmpi(arith.CmpIPredicate.sgt, loop.results[2], zero_i32)
+    return arith.andi(
+        arith.andi(loop.results[1], has_chars),
+        arith.xori(is_empty, true_i1),
+    )
+
+
+def _lower_isalpha(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``isalpha`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_ALPHA),
+        arith.constant(i32, _CT_ALL_TYPES),
+    )
+
+
+def _lower_isalnum(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``isalnum`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_ALPHANUM),
+        arith.constant(i32, _CT_ALL_TYPES),
+    )
+
+
+def _lower_isdigit(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``isdigit`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_DIGIT),
+        arith.constant(i32, _CT_ALL_TYPES),
+    )
+
+
+def _lower_isdecimal(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``isdecimal`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_DECIMAL),
+        arith.constant(i32, _CT_ALL_TYPES),
+    )
+
+
+def _lower_isnumeric(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``isnumeric`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_NUMERIC),
+        arith.constant(i32, _CT_ALL_TYPES),
+    )
+
+
+def _lower_isspace(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``isspace`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_SPACE),
+        arith.constant(i32, _CT_ALL_TYPES),
+    )
+
+
+def _lower_isupper(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``isupper`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_UPPER),
+        arith.constant(i32, _CT_CASE_TYPES),
+    )
+
+
+def _lower_islower(str_view: ir.Value, flags: ir.Value) -> ir.Value:
+    """``islower`` -> ``i1``."""
+    i32 = ir.IntegerType.get_signless(32)
+    return _all_characters_of_type(
+        str_view,
+        flags,
+        arith.constant(i32, _CT_LOWER),
+        arith.constant(i32, _CT_CASE_TYPES),
+    )
+
+
+def _lower_istitle(str_view: ir.Value, flags_table_ptr: ir.Value) -> ir.Value:
+    """``istitle`` -> ``i1``. Mirrors ``cudf::strings::udf::is_title``."""
+    i32 = ir.IntegerType.get_signless(32)
+    i1 = ir.IntegerType.get_signless(1)
+    data = _view_data(str_view)
+    nb = llvm.zext(T.i64(), _view_nbytes(str_view))
+    zero_i32 = arith.constant(i32, 0)
+    true_i1 = arith.constant(i1, 1)
+    false_i1 = arith.constant(i1, 0)
+    max_cp = arith.constant(i32, 0xFFFF)
+    upper_mask = arith.constant(i32, _CT_UPPER)
+    case_mask = arith.constant(i32, _CT_CASE_TYPES)
+
+    # Loop state: [byte_offset, valid (saw a cased char), should_be_cap, ok].
+    loop = scf.ForOp(
+        arith.constant(T.i64(), 0),
+        nb,
+        arith.constant(T.i64(), 1),
+        [arith.constant(T.i64(), 0), false_i1, true_i1, true_i1],
+    )
+    with ir.InsertionPoint(loop.body):
+        idx = loop.induction_variable
+        cur_off = loop.inner_iter_args[0]
+        cur_valid = loop.inner_iter_args[1]
+        cur_should_cap = loop.inner_iter_args[2]
+        cur_ok = loop.inner_iter_args[3]
+
+        at_boundary = arith.cmpi(arith.CmpIPredicate.eq, idx, cur_off)
+        cp, char_width = _decode_utf8_to_codepoint(data, cur_off, nb)
+        in_range = arith.cmpi(arith.CmpIPredicate.ule, cp, max_cp)
+        safe_cp = arith.select(in_range, cp, zero_i32)
+        flag = arith.extui(
+            i32, _byte_at(flags_table_ptr, arith.extui(T.i64(), safe_cp))
+        )
+        flag = arith.select(in_range, flag, zero_i32)
+
+        is_upper = arith.cmpi(
+            arith.CmpIPredicate.ne, arith.andi(flag, upper_mask), zero_i32
+        )
+        is_cased = arith.cmpi(
+            arith.CmpIPredicate.ne, arith.andi(flag, case_mask), zero_i32
+        )
+        wrong_case = arith.xori(cur_should_cap, is_upper)
+        new_ok = arith.select(
+            arith.andi(is_cased, wrong_case), false_i1, cur_ok
+        )
+        new_valid = arith.select(is_cased, true_i1, cur_valid)
+        new_should_cap = arith.select(is_cased, false_i1, true_i1)
+
+        final_ok = arith.select(at_boundary, new_ok, cur_ok)
+        final_valid = arith.select(at_boundary, new_valid, cur_valid)
+        final_should_cap = arith.select(
+            at_boundary, new_should_cap, cur_should_cap
+        )
+        next_off = arith.select(
+            at_boundary, arith.addi(cur_off, char_width), cur_off
+        )
+        scf.yield_([next_off, final_valid, final_should_cap, final_ok])
+
+    return arith.andi(loop.results[1], loop.results[3])

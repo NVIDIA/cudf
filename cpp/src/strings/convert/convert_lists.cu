@@ -12,6 +12,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf {
@@ -201,7 +202,8 @@ std::unique_ptr<column> format_list_column(lists_column_view const& input,
   CUDF_EXPECTS(na_rep.is_valid(stream), "Null replacement string must be valid");
 
   // create stack memory for processing nested lists
-  auto stack_buffer = rmm::device_uvector<stack_item>(input.size() * depth, stream);
+  auto stack_buffer = cuda::device_buffer<stack_item>(
+    stream, cudf::get_current_device_resource_ref(), input.size() * depth, cuda::no_init);
 
   auto const d_input      = column_device_view::create(input.parent(), stream);
   auto const d_separators = column_device_view::create(separators.parent(), stream);

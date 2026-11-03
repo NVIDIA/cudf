@@ -14,9 +14,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -40,7 +40,8 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
   auto out_offsets = get_normalized_offsets(input, stream, mr);
 
   // Build a gather map to copy the output list elements from the input list elements.
-  auto gather_map = rmm::device_uvector<size_type>(child.size(), stream);
+  cuda::device_buffer<size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), child.size(), cuda::no_init);
 
   // Build a segmented reversed order for the child column.
   thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

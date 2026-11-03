@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -257,7 +258,7 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
  * @param mr Memory resources used for allocations
  */
 template <typename Binop>
-std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_binop(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> bitmask_binop(
   Binop op,
   host_span<bitmask_type const* const> masks,
   host_span<size_type const> masks_begin_bits,
@@ -268,21 +269,21 @@ std::pair<cuda::device_buffer<std::byte>, size_type> bitmask_binop(
   auto dest_mask =
     cudf::create_null_mask(mask_size_bits, cudf::mask_state::UNINITIALIZED, stream, mr);
   auto null_count =
-    mask_size_bits - inplace_bitmask_binop(
-                       op,
-                       device_span<bitmask_type>(reinterpret_cast<bitmask_type*>(dest_mask.data()),
-                                                 num_bitmask_words(mask_size_bits)),
-                       masks,
-                       masks_begin_bits,
-                       mask_size_bits,
-                       stream,
-                       mr.as_temporary());
+    mask_size_bits - inplace_bitmask_binop(op,
+                                           device_span<bitmask_type>(
+                                             dest_mask.data(), num_bitmask_words(mask_size_bits)),
+                                           masks,
+                                           masks_begin_bits,
+                                           mask_size_bits,
+                                           stream,
+                                           mr.as_temporary());
 
   return std::pair(std::move(dest_mask), null_count);
 }
 
 template <typename Binop>
-std::pair<std::vector<std::unique_ptr<cuda::device_buffer<std::byte>>>, std::vector<size_type>>
+std::pair<std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>>,
+          std::vector<size_type>>
 segmented_bitmask_binop(Binop op,
                         host_span<bitmask_type const* const> masks,
                         host_span<size_type const> masks_begin_bits,
@@ -304,18 +305,17 @@ segmented_bitmask_binop(Binop op,
   auto const num_segments = segment_offsets.size() - 1;
   auto const temp_mr      = mr.get_temporary_mr();
 
-  std::vector<std::unique_ptr<cuda::device_buffer<std::byte>>> h_destination_masks;
+  std::vector<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>> h_destination_masks;
   h_destination_masks.reserve(num_segments);
   std::vector<bitmask_type*> h_destination_masks_ptrs;
   h_destination_masks_ptrs.reserve(num_segments);
   for (size_t i = 0; i < segment_offsets.size() - 1; i++) {
-    h_destination_masks.push_back(std::make_unique<cuda::device_buffer<std::byte>>(
+    h_destination_masks.push_back(std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
       cudf::create_null_mask(num_bytes * CHAR_BIT, cudf::mask_state::UNINITIALIZED, stream, mr)));
-    h_destination_masks_ptrs.push_back(
-      reinterpret_cast<bitmask_type*>(h_destination_masks.back()->data()));
+    h_destination_masks_ptrs.push_back(h_destination_masks.back()->data());
   }
   auto destination_masks =
-    cudf::detail::make_device_uvector_async(h_destination_masks_ptrs, stream, temp_mr);
+    cudf::detail::make_device_buffer_async(h_destination_masks_ptrs, stream, temp_mr);
 
   // for destination size, pass number of words in each destination buffer instead of number of bits
   auto null_counts = inplace_segmented_bitmask_binop(op,
@@ -365,8 +365,8 @@ size_type inplace_bitmask_binop(Binop op,
   auto const temp_mr = mr.get_temporary_mr();
   cudf::detail::device_scalar<size_type> d_counter{0, stream, temp_mr};
 
-  auto d_masks      = cudf::detail::make_device_uvector_async(masks, stream, temp_mr);
-  auto d_begin_bits = cudf::detail::make_device_uvector_async(masks_begin_bits, stream, temp_mr);
+  auto d_masks      = cudf::detail::make_device_buffer_async(masks, stream, temp_mr);
+  auto d_begin_bits = cudf::detail::make_device_buffer_async(masks_begin_bits, stream, temp_mr);
 
   auto constexpr block_size = 256;
   cudf::detail::grid_1d config(dest_mask.size(), block_size);
@@ -429,15 +429,15 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
   auto d_null_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
     num_segments, stream, mr.get_output_mr());
   auto const temp_mr = mr.get_temporary_mr();
-  auto d_masks       = cudf::detail::make_device_uvector_async(masks, stream, temp_mr);
-  auto d_begin_bits  = cudf::detail::make_device_uvector_async(masks_begin_bits, stream, temp_mr);
-  auto d_segment_offsets =
-    cudf::detail::make_device_uvector_async(segment_offsets, stream, temp_mr);
+  auto d_masks       = cudf::detail::make_device_buffer_async(masks, stream, temp_mr);
+  auto d_begin_bits  = cudf::detail::make_device_buffer_async(masks_begin_bits, stream, temp_mr);
+  auto d_segment_offsets = cudf::detail::make_device_buffer_async(segment_offsets, stream, temp_mr);
 
   auto constexpr block_size = 256;
 
   // Any block past this one would find no words left to process
-  auto const blocks_to_cover_segment = util::div_rounding_up_safe<int>(dest_mask_size, block_size);
+  auto const blocks_to_cover_segment =
+    cudf::detail::div_rounding_up_safe<int>(dest_mask_size, block_size);
 
   // The number of waves was chosen empirically based on Parquet and segmented bitmask benchmarks.
   auto constexpr target_waves    = 8;
@@ -706,7 +706,7 @@ std::vector<size_type> segmented_count_bits(
     std::distance(indices_begin, indices_end), stream);
   std::copy(indices_begin, indices_end, std::back_inserter(h_indices));
   auto const temp_mr   = mr.get_temporary_mr();
-  auto const d_indices = make_device_uvector_async(h_indices, stream, temp_mr);
+  auto const d_indices = make_device_buffer_async(h_indices, stream, temp_mr);
 
   // Compute the bit counts over each segment.
   auto first_bit_indices_begin = cuda::transform_iterator(
@@ -816,7 +816,7 @@ std::vector<size_type> segmented_null_count(
  * @return A pair containing the reduced null mask and number of nulls.
  */
 template <typename OffsetIterator>
-std::pair<cuda::device_buffer<std::byte>, size_type> segmented_null_mask_reduction(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> segmented_null_mask_reduction(
   bitmask_type const* bitmask,
   OffsetIterator first_bit_indices_begin,
   OffsetIterator first_bit_indices_end,

@@ -391,7 +391,7 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                std::invalid_argument);
 
   return compiled_fragment(compile_fragment(
-    "cudf_udf.cu", source_code, include_names, includes, {}, includes_cudf, include_paths));
+    "cudf_user_fragment.cu", source_code, include_names, includes, {}, include_paths));
 }
 
 kernel get_kernel(std::string const& name,

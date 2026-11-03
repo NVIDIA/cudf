@@ -56,13 +56,14 @@ extern "C" __device__ int transform(cuda::std::optional<int>* output,
   return 0;
 }
 )";
-  auto fragment           = cudf::compile_cuda_to_lto_ir(source, true, {}, {}, {});
+  auto fragment           = cudf::compile_cuda_to_lto_ir(source, {}, {}, {});
   cudf::test::dictionary_column_wrapper<int32_t> input{{1, 2, 3}, {true, false, true}};
   cudf::transform_input inputs[]{input};
   cudf::transform_output outputs[]{
     {cudf::data_type{cudf::type_id::INT32}, cudf::output_nullability::PRESERVE}};
-  auto result = cudf::transform_lto(fragment.view(),
-                                    cudf::lto_binary_type::LTO_IR,
+  auto view   = fragment.view();
+  auto result = cudf::transform_lto(view.data,
+                                    view.type,
                                     cudf::null_aware::YES,
                                     std::nullopt,
                                     inputs,

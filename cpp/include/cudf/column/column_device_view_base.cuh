@@ -740,7 +740,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
   template <typename T>
   [[nodiscard]] __device__ auto nullable_element(size_type element_index) const noexcept
   {
-    using value_type = decltype(element<T>(element_index));
+    using value_type = cuda::std::remove_cvref_t<decltype(element<T>(element_index))>;
     if (is_null(element_index)) { return cuda::std::optional<value_type>{}; }
     return cuda::std::optional<value_type>{element<T>(element_index)};
   }

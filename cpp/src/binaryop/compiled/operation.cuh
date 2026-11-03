@@ -9,6 +9,7 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
@@ -194,11 +195,11 @@ struct PyMod {
   {
     auto const x1 = static_cast<double>(x);
     auto const y1 = static_cast<double>(y);
-    auto mod      = std::fmod(x1, y1);
+    auto mod      = cuda::std::fmod(x1, y1);
     if (mod != 0.0) {
       if ((y1 < 0.0) != (mod < 0.0)) { mod += y1; }
     } else {
-      mod = std::copysign(0.0, y1);
+      mod = cuda::std::copysign(0.0, y1);
     }
     return mod;
   }

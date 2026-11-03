@@ -280,6 +280,35 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     }
   }
 
+  // ---- fused short-string engine admission: BELOW the routing gate, the payload kernel's
+  // group walk (3 CTA barriers per 8-row group) is replaced by the warp-tile engine when
+  // every live column's average gathered row is short enough for it — the exact premise the
+  // group walk was designed for. Calls in the excluded seam band never reach the kernel
+  // (those strings take the stock fallback); at ≥524288 rows the routed-metadata path owns
+  // string metadata, so the engine serves only below-band short-row calls. Above the
+  // gate the payload kernel serves only the UNROUTED cohort (long-row columns), which the
+  // engine does NOT admit (subgroup copies serialize on long rows), so the group walk stays
+  // authoritative there. The AVERAGE does not bound the maximum: long outlier rows are safe
+  // on the engine (they ride the full-warp copy), so the short-average check alone admits.
+  auto engine_active = false;
+  std::vector<size_type> engine_cols;
+  if (not chars_routing_active and not memcpy_unrouted.empty()) {
+    auto all_short = true;
+    for (size_t k = 0; k < memcpy_unrouted.size(); ++k) {
+      auto const& idx  = memcpy_unrouted[k];
+      auto const bytes = h_col_totals[idx];
+      if (bytes / num_rows > static_cast<int64_t>(kBlockRowCopyThreshold)) {
+        all_short = false;
+        break;
+      }
+    }
+    if (all_short) {
+      engine_cols = std::move(memcpy_unrouted);
+      memcpy_unrouted.clear();
+      engine_active = true;
+    }
+  }
+
   // Wire the payload work items (num_rows > 0 guaranteed for live columns).
   // any_kernel_masked was computed above the landing-buffer allocation.
   rmm::device_uvector<size_type> string_counts(0, stream, temp_mr);
@@ -414,6 +443,25 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
                                               check_bounds,
                                               negative_allowed,
                                               map_begin);
+    CUDF_CUDA_TRY(cudaGetLastError());
+  } else if (engine_active) {
+    auto const d_engine_cols = cudf::detail::make_device_uvector_async(
+      host_span<size_type const>{engine_cols}, stream, temp_mr);
+    auto const engine_tiles =
+      static_cast<int64_t>(engine_cols.size()) *
+      util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
+    auto const engine_grid = static_cast<unsigned>(std::min<int64_t>(
+      util::div_rounding_up_safe(engine_tiles, static_cast<int64_t>(block_size / warp_size)),
+      static_cast<int64_t>(65535)));
+    string_fused_short_engine_kernel<block_size>
+      <<<engine_grid, block_size, 0, stream.get()>>>(d_payload_items.data(),
+                                                     d_engine_cols.data(),
+                                                     static_cast<int64_t>(engine_cols.size()),
+                                                     static_cast<int64_t>(num_rows),
+                                                     num_source_rows,
+                                                     check_bounds,
+                                                     negative_allowed,
+                                                     map_begin);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 

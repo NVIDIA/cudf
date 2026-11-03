@@ -169,6 +169,15 @@ done
 cp -f "${MAIN_JAR}" "${OUTPUT_DIR}/"
 cp -f pom.xml "${OUTPUT_DIR}/cudf-${CUDF_VERSION}.pom"
 
+# Exercise opt-in chunk packaging in one CI matrix cell without changing the
+# conventional artifact copied to OUTPUT_DIR.
+if [[ ${RAPIDS_CUDA_VERSION%%.*} == 12 && $(uname -m) == x86_64 ]]; then
+  rapids-logger "Checking opt-in zstd native chunks"
+  CUDF_INSTALL_DIR="${CUDF_INSTALL_DIR}" cudf_java_scl mvn package \
+    -Pzstd-native-chunks "${BUILD_ARG[@]}"
+  unzip -Z -1 "${MAIN_JAR}" | grep '/libcudf.so.chunks.properties$' >/dev/null
+fi
+
 rapids-logger "Emitted artifacts to ${OUTPUT_DIR}"
 if command -v sccache >/dev/null 2>&1; then
   sccache --show-adv-stats || true

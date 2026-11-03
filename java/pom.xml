@@ -259,6 +259,16 @@
                         </dependencies>
                         <executions>
                             <execution>
+                                <id>test-native-chunk-script</id>
+                                <phase>test</phase>
+                                <goals><goal>java</goal></goals>
+                                <configuration>
+                                    <arguments>
+                                        <argument>${project.basedir}/buildscripts/test_native_chunks.py</argument>
+                                    </arguments>
+                                </configuration>
+                            </execution>
+                            <execution>
                                 <id>chunk-native-library</id>
                                 <phase>process-resources</phase>
                                 <goals><goal>java</goal></goals>
@@ -856,6 +866,9 @@
                 <configuration>
                     <!--Set by groovy script-->
                     <classifier>${cuda.classifier}</classifier>
+                    <excludes>
+                        <exclude>**/*.chunks/**</exclude>
+                    </excludes>
                 </configuration>
                 <executions>
                     <execution>

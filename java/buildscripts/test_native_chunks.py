@@ -100,4 +100,6 @@ class NativeChunkPackagingTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    result = unittest.main(exit=False).result
+    if not result.wasSuccessful():
+        raise RuntimeError("Native chunk script tests failed")

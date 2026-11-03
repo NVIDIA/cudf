@@ -36,7 +36,7 @@ namespace CUDF_EXPORT cudf {
 namespace detail {
 
 cuda::device_buffer<cudf::size_type> nulls_per_group(column_view const& orderby,
-                                                     device_span<size_type const> const& offsets,
+                                                     device_span<size_type const> offsets,
                                                      cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();

@@ -115,11 +115,8 @@ cudf::io::source_info cuio_source_sink_pair::make_source_info()
       // TODO: Restore resizing when https://github.com/NVIDIA/cccl/issues/12051 is resolved.
       // Retain the allocation when it can hold the current input; all bytes are overwritten below.
       if (d_buffer.size() < h_buffer.size()) {
-        d_buffer = cuda::device_buffer<std::byte>(
-          stream, d_buffer.memory_resource(), h_buffer.size(), cuda::no_init);
+        d_buffer = cudf::detail::make_device_buffer(h_buffer, stream, d_buffer.memory_resource());
       }
-      CUDF_CUDA_TRY(
-        cudf::detail::memcpy_async(d_buffer.data(), h_buffer.data(), h_buffer.size(), stream));
 
       cudf::device_span<std::byte const> buffer = d_buffer.subspan(0, h_buffer.size());
       return cudf::io::source_info(buffer);

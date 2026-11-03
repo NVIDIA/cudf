@@ -345,7 +345,7 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
 [[nodiscard]] static null_order deduce_null_order(
   column_view const& orderby,
   order order,
-  device_span<size_type const> const& offsets,
+  device_span<size_type const> offsets,
   cuda::device_buffer<size_type> const& per_group_nulls,
   cuda::stream_ref stream)
 {

@@ -32,7 +32,7 @@ enum class direction : bool {
  */
 struct preprocessed_group_info {
   cuda::device_buffer<size_type> const& labels;  ///< Mapping from row index to group label
-  device_span<size_type const> const& offsets;   ///< Mapping from group label to row offsets
+  device_span<size_type const> offsets;          ///< Mapping from group label to row offsets
   cuda::device_buffer<size_type> const&
     nulls_per_group;  ///< Mapping from group label to null count in the group
 };

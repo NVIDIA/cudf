@@ -84,3 +84,20 @@ def test_classification_precedence() -> None:
         )
         == "review_upstream_overlap"
     )
+    assert (
+        classifier._classification(
+            _coverage(classifier, "tests/test_hconcat.py::test_hconcat"),
+            set(),
+        )
+        == "review_upstream_overlap"
+    )
+    assert (
+        classifier._classification(
+            _coverage(
+                classifier,
+                "tests/test_hconcat.py::test_hconcat_should_broadcast",
+            ),
+            set(),
+        )
+        == "retain_internal_contract"
+    )

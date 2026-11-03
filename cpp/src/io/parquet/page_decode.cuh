@@ -660,9 +660,10 @@ inline __device__ void store_validity(int valid_map_offset,
  * @brief Returns the number of values of a page whose levels can be read from its decoded levels
  *
  * With skip_rows/num_rows, the levels of a page without lists are only decoded up to the end of
- * the rows being read, and not at all for a page outside them, in which case the page has no
- * decoded level buffers. Neither do pruned pages. Pages of columns without levels have all of their
- * values. Whether a column has levels must match compute_page_level_decode_sizes().
+ * the rows being read, and not at all for a page outside them. Pruned pages are not decoded
+ * either. In both cases the page has no decoded level buffers. Pages of columns without levels
+ * have all of their values. Whether a column has levels must match
+ * compute_page_level_decode_sizes().
  *
  * @param page The page
  * @param chunk The column chunk of the page

@@ -38,14 +38,6 @@ device_span<size_type const> join_match_context::match_counts() const
     _match_counts != nullptr, "join_match_context is missing match counts", std::invalid_argument);
   return *_match_counts;
 }
-
-std::size_t join_match_context::output_size() const
-{
-  CUDF_EXPECTS(_state != nullptr,
-               "join_match_context was not created by a join object",
-               std::invalid_argument);
-  return _state->output_size;
-}
 }  // namespace cudf
 
 #pragma GCC diagnostic pop

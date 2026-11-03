@@ -15,6 +15,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
@@ -335,10 +336,10 @@ CUDF_EXTERN_HASH_CSR_PROBE_COUNT(true, hash_csr_nested_equal, hash_csr_row_hashe
 /**
  * @brief Computes the output offset of each probe row from its match count
  *
- * @return The `num_probe_rows + 1` offsets and the total number of output pairs
+ * @return One offset per probe row plus the end offset, and the total number of output pairs
  */
 std::pair<cuda::device_buffer<cuda::std::int64_t>, std::size_t> hash_csr_match_offsets(
-  size_type const* match_counts, size_type num_probe_rows, cuda::stream_ref stream);
+  device_span<size_type const> match_counts, cuda::stream_ref stream);
 
 /**
  * @brief Emits the row index pairs of the probe rows from their output offsets and matching
@@ -350,9 +351,8 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_csr_retrieve(bool is_outer,
                   std::size_t output_size,
-                  size_type num_probe_rows,
-                  cuda::std::int64_t const* offsets,
-                  size_type const* probe_groups,
+                  device_span<cuda::std::int64_t const> offsets,
+                  device_span<size_type const> probe_groups,
                   csr_ref csr,
                   size_type left_index_offset,
                   std::size_t extra_capacity,

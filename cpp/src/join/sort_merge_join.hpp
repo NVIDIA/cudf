@@ -196,14 +196,10 @@ class sort_merge_join {
      * @brief Construct a sort_merge_join_match_state
      *
      * @param owner Join object that created the context
-     * @param output_size Number of row index pairs for the whole left table
      * @param preprocessed Preprocessed left table state
      */
-    sort_merge_join_match_state(void const* owner,
-                                std::size_t output_size,
-                                preprocessed_table preprocessed)
-      : join_match_state{owner, join_kind::INNER_JOIN, output_size},
-        preprocessed_left{std::move(preprocessed)}
+    sort_merge_join_match_state(void const* owner, preprocessed_table preprocessed)
+      : join_match_state{owner, join_kind::INNER_JOIN}, preprocessed_left{std::move(preprocessed)}
     {
     }
   };

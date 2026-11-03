@@ -12,6 +12,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
@@ -192,16 +193,27 @@ class hash_join {
     rmm::device_async_resource_ref mr) const;
 
   /**
-   * @brief Probes the hash table with `left`, writing each non-null output: the matching group
-   * and match count of each row, the total match count, and the matched build groups and their
-   * row count
+   * @brief Probes the hash table with `left`, which the caller has validated
+   *
+   * Each output is optional and skipped when empty or null.
+   *
+   * @param join Join kind; left and full joins count an unmatched left row as one match
+   * @param left Probe table
+   * @param groups Matching build group of each left row
+   * @param counts Match count of each left row
+   * @param total Sum of `counts`, added to the existing value
+   * @param matched_groups Zero-initialized flag of each build group, sized to the right row
+   * count; outer joins set the flags of the groups they match
+   * @param matched_build_rows Number of build rows in the groups newly flagged in
+   * `matched_groups`, added to the existing value
+   * @param stream CUDA stream used for kernel launches
    */
   void probe(join_kind join,
              cudf::table_view const& left,
-             size_type* groups,
-             size_type* counts,
+             device_span<size_type> groups,
+             device_span<size_type> counts,
              cuda::std::uint64_t* total,
-             cuda::std::uint32_t* matched_groups,
+             device_span<cuda::std::uint32_t> matched_groups,
              cuda::std::uint64_t* matched_build_rows,
              cuda::stream_ref stream) const;
 

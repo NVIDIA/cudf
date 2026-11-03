@@ -8,7 +8,6 @@
 #include "hash_csr_kernels.cuh"
 #include "join/join_match_state.hpp"
 
-#include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/dispatchers.hpp>
 
@@ -22,14 +21,20 @@ namespace cudf::detail {
 template <typename Hasher>
 void hash_join<Hasher>::probe(join_kind join,
                               table_view const& left,
-                              size_type* groups,
-                              size_type* counts,
+                              device_span<size_type> groups,
+                              device_span<size_type> counts,
                               cuda::std::uint64_t* total,
-                              cuda::std::uint32_t* matched_groups,
+                              device_span<cuda::std::uint32_t> matched_groups,
                               cuda::std::uint64_t* matched_build_rows,
                               cuda::stream_ref stream) const
 {
-  validate_hash_join_probe(_right, left, _has_nulls);
+  auto const num_rows = static_cast<std::size_t>(left.num_rows());
+  CUDF_EXPECTS((groups.empty() || groups.size() == num_rows) &&
+                 (counts.empty() || counts.size() == num_rows) &&
+                 (matched_groups.empty() ||
+                  matched_groups.size() == static_cast<std::size_t>(_right.num_rows())),
+               "Probe output sizes do not match the tables");
+  auto const data_or_null = [](auto span) { return span.empty() ? nullptr : span.data(); };
 
   auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_left =
@@ -41,10 +46,10 @@ void hash_join<Hasher>::probe(join_kind join,
     dispatch_bool(join != join_kind::INNER_JOIN, [&](auto is_outer) {
       launch_hash_csr_probe_count_kernel<decltype(is_outer)::value>(left.num_rows(),
                                                                     valid_rows,
-                                                                    groups,
-                                                                    counts,
+                                                                    data_or_null(groups),
+                                                                    data_or_null(counts),
                                                                     total,
-                                                                    matched_groups,
+                                                                    data_or_null(matched_groups),
                                                                     matched_build_rows,
                                                                     _impl->hash_table(),
                                                                     _impl->csr(),
@@ -65,36 +70,32 @@ cudf::join_match_context hash_join<Hasher>::make_match_context(
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr) const
 {
-  auto const is_outer = join != join_kind::INNER_JOIN;
+  validate_hash_join_probe(_right, left, _has_nulls);
+
   auto match_counts = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
   cuda::device_buffer<size_type> groups(stream, mr, _is_empty ? 0 : left.num_rows(), cuda::no_init);
-  std::size_t output_size{};
 
   if (_is_empty) {
     thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  match_counts->begin(),
                  match_counts->end(),
-                 is_outer ? 1 : 0);
-    output_size = is_outer ? left.num_rows() : 0;
+                 join == join_kind::INNER_JOIN ? 0 : 1);
   } else {
-    cudf::detail::device_scalar<cuda::std::uint64_t> total{
-      0, stream, cudf::get_current_device_resource_ref()};
-    probe(join, left, groups.data(), match_counts->data(), total.data(), nullptr, nullptr, stream);
-    output_size = total.value(stream);
+    probe(join, left, groups, *match_counts, nullptr, {}, nullptr, stream);
   }
 
   return join_match_state::make_context(
     left,
     std::move(match_counts),
-    std::make_unique<hash_join_match_state>(this, join, output_size, std::move(groups)));
+    std::make_unique<hash_join_match_state>(this, join, std::move(groups)));
 }
 
 template void hash_join<hash_join_hasher>::probe(join_kind,
                                                  cudf::table_view const&,
-                                                 size_type*,
-                                                 size_type*,
+                                                 device_span<size_type>,
+                                                 device_span<size_type>,
                                                  cuda::std::uint64_t*,
-                                                 cuda::std::uint32_t*,
+                                                 device_span<cuda::std::uint32_t>,
                                                  cuda::std::uint64_t*,
                                                  cuda::stream_ref) const;
 

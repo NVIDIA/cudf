@@ -25,6 +25,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   static_assert(Join == join_kind::INNER_JOIN || Join == join_kind::LEFT_JOIN);
 
   CUDF_FUNC_RANGE();
+  validate_hash_join_probe(_right, left, _has_nulls);
 
   if constexpr (Join == join_kind::INNER_JOIN) {
     if (_is_empty) { return 0; }
@@ -34,7 +35,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
 
   auto total_matches = cudf::detail::device_scalar<cuda::std::uint64_t>(
     0, stream, cudf::get_current_device_resource_ref());
-  probe(Join, left, nullptr, nullptr, total_matches.data(), nullptr, nullptr, stream);
+  probe(Join, left, {}, {}, total_matches.data(), {}, nullptr, stream);
   return static_cast<std::size_t>(total_matches.value(stream));
 }
 
@@ -47,6 +48,7 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   static_assert(Join == join_kind::FULL_JOIN);
 
   CUDF_FUNC_RANGE();
+  validate_hash_join_probe(_right, left, _has_nulls);
   if (_is_empty) { return left.num_rows(); }
 
   auto const temp_mr  = cudf::get_current_device_resource_ref();
@@ -56,10 +58,10 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
   probe(join_kind::FULL_JOIN,
         left,
-        nullptr,
-        nullptr,
+        {},
+        {},
         total_matches.data(),
-        matched_groups.data(),
+        matched_groups,
         matched_build_rows.data(),
         stream);
 

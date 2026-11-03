@@ -3547,6 +3547,13 @@ TEST_F(JoinTest, HashJoinPartitionedInnerJoin)
                std::invalid_argument);
   EXPECT_THROW(std::ignore = hash_joiner.partitioned_left_join(part_ctx, stream, mr),
                std::invalid_argument);
+  cudf::sort_merge_join sort_merge_joiner(
+    t1.select(right_on), cudf::sorted::NO, compare_nulls, stream);
+  EXPECT_THROW(std::ignore = sort_merge_joiner.partitioned_inner_join(part_ctx, stream, mr),
+               std::invalid_argument);
+  EXPECT_THROW(std::ignore = sort_merge_joiner.partitioned_inner_join(
+                 cudf::join_partition_context{nullptr, 0, 0}, stream, mr),
+               std::invalid_argument);
 
   // A caller-constructed context probes each partition again
   // TODO: Remove this case with the deprecated constructor in 27.02 (#20958).
@@ -3558,7 +3565,6 @@ TEST_F(JoinTest, HashJoinPartitionedInnerJoin)
   auto uncached_ctx = cudf::join_partition_context{
     std::make_unique<cudf::join_match_context>(t0.select(left_on), std::move(counts)), 0, 0};
 #pragma GCC diagnostic pop
-  EXPECT_THROW(std::ignore = uncached_ctx.left_table_context->output_size(), std::invalid_argument);
   expect_row_by_row_equal(uncached_ctx);
 }
 

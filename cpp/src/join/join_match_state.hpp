@@ -16,10 +16,7 @@ namespace cudf::detail {
  * @brief State a join object caches in the join_match_context it creates
  */
 struct join_match_state {
-  join_match_state(void const* owner, join_kind kind, std::size_t output_size)
-    : owner{owner}, kind{kind}, output_size{output_size}
-  {
-  }
+  join_match_state(void const* owner, join_kind kind) : owner{owner}, kind{kind} {}
   virtual ~join_match_state() = default;
 
   /**
@@ -48,20 +45,16 @@ struct join_match_state {
     return static_cast<State const*>(state);
   }
 
-  void const* owner;        ///< Join object that created the context
-  join_kind kind;           ///< Join kind of the context
-  std::size_t output_size;  ///< Number of row index pairs for the whole left table
+  void const* owner;  ///< Join object that created the context
+  join_kind kind;     ///< Join kind of the context
 };
 
 /**
  * @brief Hash join state: the matching build-side group of each left row
  */
 struct hash_join_match_state final : join_match_state {
-  hash_join_match_state(void const* owner,
-                        join_kind kind,
-                        std::size_t output_size,
-                        cuda::device_buffer<size_type> groups)
-    : join_match_state{owner, kind, output_size}, groups{std::move(groups)}
+  hash_join_match_state(void const* owner, join_kind kind, cuda::device_buffer<size_type> groups)
+    : join_match_state{owner, kind}, groups{std::move(groups)}
   {
   }
 

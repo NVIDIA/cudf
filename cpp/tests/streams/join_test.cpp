@@ -94,6 +94,7 @@ TEST_F(JoinTest, HashJoinPartitionedJoin)
     std::make_unique<cudf::join_match_context>(obj.left_join_match_context(table0, stream)),
     1,
     table0.num_rows()};
+  std::ignore = context.left_table_context->output_size(stream);
   std::ignore = obj.partitioned_left_join(context, stream);
 }
 

@@ -44,7 +44,6 @@
 #include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/for_each.h>
-#include <thrust/reduce.h>
 #include <thrust/unique.h>
 
 #include <memory>
@@ -940,16 +939,10 @@ std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_cont
       return matches_per_row;
     },
     stream);
-  auto const output_size =
-    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   match_counts->begin(),
-                   match_counts->end(),
-                   std::size_t{0});
-  return std::make_unique<cudf::join_match_context>(
-    join_match_state::make_context(left,
-                                   std::move(match_counts),
-                                   std::make_unique<sort_merge_join_match_state>(
-                                     this, output_size, std::move(preprocessed_left))));
+  return std::make_unique<cudf::join_match_context>(join_match_state::make_context(
+    left,
+    std::move(match_counts),
+    std::make_unique<sort_merge_join_match_state>(this, std::move(preprocessed_left))));
 }
 
 // left_partition_end exclusive
@@ -961,6 +954,9 @@ sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& cont
 {
   cudf::scoped_range range{"sort_merge_join::partitioned_inner_join"};
 
+  CUDF_EXPECTS(context.left_table_context != nullptr,
+               "join_partition_context is missing left_table_context",
+               std::invalid_argument);
   auto const* state = join_match_state::get<sort_merge_join_match_state>(
     *context.left_table_context, this, join_kind::INNER_JOIN);
   CUDF_EXPECTS(state != nullptr,

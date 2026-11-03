@@ -83,10 +83,10 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
         cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
       probe(Join,
             left,
-            probe_groups.data(),
-            match_counts.data(),
+            probe_groups,
+            match_counts,
             nullptr,
-            Join == join_kind::FULL_JOIN ? matched_groups.data() : nullptr,
+            matched_groups,
             matched_build_rows.data(),
             stream);
 
@@ -98,7 +98,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
         unmatched_right_rows =
           static_cast<size_type>(static_cast<cuda::std::uint64_t>(_right.num_rows()) - matched);
       }
-      return hash_csr_match_offsets(match_counts.data(), left.num_rows(), stream);
+      return hash_csr_match_offsets(match_counts, stream);
     }();
 
     auto const extra_capacity =
@@ -108,9 +108,8 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
 
     return hash_csr_retrieve(Join != join_kind::INNER_JOIN,
                              join_size,
-                             left.num_rows(),
-                             offsets.data(),
-                             probe_groups.data(),
+                             offsets,
+                             probe_groups,
                              _impl->csr(),
                              0,
                              extra_capacity,

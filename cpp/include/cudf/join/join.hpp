@@ -144,14 +144,15 @@ struct join_match_context {
   /**
    * @brief Returns the number of row index pairs a retrieval of the whole left table produces
    *
-   * The value is cached, so this function does no device work. For full joins, it excludes the
-   * unmatched right rows added by finalize_partitioned_full_join().
+   * Sums the match counts and synchronizes `stream`. For full joins, it excludes the unmatched
+   * right rows added by finalize_partitioned_full_join().
    *
-   * @throw std::invalid_argument If the context was not created by a join object
+   * @throw std::invalid_argument If the context has no match counts
    *
+   * @param stream CUDA stream used for device memory operations and kernel launches
    * @return Number of row index pairs
    */
-  [[nodiscard]] std::size_t output_size() const;
+  [[nodiscard]] std::size_t output_size(cuda::stream_ref stream = cudf::get_default_stream()) const;
 
  private:
   friend struct detail::join_match_state;

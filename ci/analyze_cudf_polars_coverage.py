@@ -287,6 +287,7 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
             "<tr>"
             f"<td><code>{html.escape(pair['local_nodeid'])}</code></td>"
             f"<td><code>{html.escape(pair['upstream_nodeid'])}</code></td>"
+            f"<td>{'yes' if pair['upstream_gpu_observed'] else 'no'}</td>"
             f"<td>{pair['shared_line_count']}</td>"
             f"<td>{pair['local_only_line_count']}</td>"
             f"<td><code>{examples}</code></td>"
@@ -297,8 +298,10 @@ def _write_candidate_html(report: dict[str, Any], output: Path) -> None:
         "<title>cudf-polars upstream review candidates</title>"
         "<h1>cudf-polars upstream review candidates</h1>"
         "<p>Coverage overlap is a review signal, not proof that upstream "
-        "tests assert the same behavior or execute on the GPU.</p>"
+        "tests assert the same behavior. GPU observation comes from the "
+        "maintained SPMD-default run list.</p>"
         "<table><thead><tr><th>Local node</th><th>Upstream node</th>"
+        "<th>GPU observed</th>"
         "<th>Shared lines</th><th>Local-only lines</th>"
         "<th>Sampled source lines</th></tr></thead><tbody>"
         + "".join(rows)
@@ -314,6 +317,7 @@ def main() -> None:
     parser.add_argument("--cudf-sha", required=True)
     parser.add_argument("--polars-sha", required=True)
     parser.add_argument("--polars-version", required=True)
+    parser.add_argument("--gpu-run-list", type=Path, required=True)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report = build_report(
@@ -324,6 +328,13 @@ def main() -> None:
         "polars_sha": args.polars_sha,
         "polars_version": args.polars_version,
     }
+    selections = json.loads(args.gpu_run_list.read_text())["selections"]
+    selection_key = f"{args.polars_version}|spmd|default"
+    if selection_key not in selections:
+        parser.error(f"No GPU-execution selection for {selection_key}")
+    gpu_nodes = set(selections[selection_key]["nodes"])
+    for pair in report["review_pairs"]:
+        pair["upstream_gpu_observed"] = pair["upstream_nodeid"] in gpu_nodes
     (args.output_dir / "coverage-comparison.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
     )

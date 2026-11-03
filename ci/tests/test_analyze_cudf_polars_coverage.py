@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
 from coverage import CoverageData
 
 if TYPE_CHECKING:
@@ -174,20 +175,37 @@ def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:
     )
 
 
-def test_main_writes_provenance_and_contexts(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("gpu_observed", [False, True])
+def test_main_writes_provenance_and_contexts(
+    tmp_path, monkeypatch, gpu_observed
+) -> None:
     analyzer = _load_analyzer()
     source = str(tmp_path / "cudf_polars" / "dsl" / "translate.py")
     local_path = tmp_path / ".coverage.local"
     upstream_path = tmp_path / ".coverage.upstream"
     local = CoverageData(basename=str(local_path))
     local.set_context("tests/test_join.py::test_join|run")
-    local.add_lines({source: {10, 11}})
+    local.add_lines({source: {10, 11, 13, 14, 15}})
     local.write()
     upstream = CoverageData(basename=str(upstream_path))
     upstream.set_context("tests/unit/test_join.py::test_join|run")
-    upstream.add_lines({source: {10, 12}})
+    upstream.add_lines({source: {10, 12, 13, 14, 15}})
     upstream.write()
     output = tmp_path / "reports"
+    run_list = tmp_path / "run-list.json"
+    run_list.write_text(
+        json.dumps(
+            {
+                "selections": {
+                    "2.1.0|spmd|default": {
+                        "nodes": ["tests/unit/test_join.py::test_join"]
+                        if gpu_observed
+                        else []
+                    }
+                }
+            }
+        )
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -205,6 +223,8 @@ def test_main_writes_provenance_and_contexts(tmp_path, monkeypatch) -> None:
             "polars-sha",
             "--polars-version",
             "2.1.0",
+            "--gpu-run-list",
+            str(run_list),
         ],
     )
 
@@ -219,5 +239,6 @@ def test_main_writes_provenance_and_contexts(tmp_path, monkeypatch) -> None:
     assert report["files"][source]["both"][0]["local_contexts"] == [
         "tests/test_join.py::test_join|run"
     ]
+    assert report["review_pairs"][0]["upstream_gpu_observed"] is gpu_observed
     assert (output / "index.html").is_file()
     assert (output / "upstream-review-candidates.html").is_file()

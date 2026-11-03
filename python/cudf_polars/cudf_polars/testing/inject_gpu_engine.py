@@ -422,6 +422,18 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 
 EXPECTED_FAILURES: dict[str, str] = {
+    "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
+    "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_io_plugin.py::test_datetime_io_predicate_pushdown_21790": "cudf-polars validates the IO source schema exactly and does not coerce datetime time units (us vs ns)",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[small.parquet-4]": "Debug output on stderr doesn't match",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[foods*.parquet-54]": "Debug output on stderr doesn't match",
@@ -431,9 +443,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type1]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type2]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type3]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
-    "tests/unit/io/cloud/test_cloud.py::test_sink_single_put_28356[sink_parquet-scan_parquet]": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
-    "tests/unit/io/cloud/test_metadata_prefetch.py::test_scan_parquet_metadata_without_head_request": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
-    "tests/unit/io/cloud/test_metadata_prefetch.py::test_scan_parquet_metadata_prefetch_too_small": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
     "tests/unit/io/test_sink.py::test_collect_all_lazy": "SinkMultiple not supported by InMemory CPU Engine, which we fallback to. See pola-rs/polars/pull/26537",
     "tests/unit/io/test_parquet.py::test_resolve_heavy_sources_survives_an_unreadable_footer": "libcudf raises RuntimeError rather than polars.exceptions.ComputeError for a corrupted parquet footer",
     "tests/unit/io/test_parquet.py::test_parquet_known_source_sizes": "cudf-polars ignores the _source_sizes hint, so a wrong size does not raise polars.exceptions.ComputeError",
@@ -511,6 +520,13 @@ EXPECTED_FAILURES: dict[str, str] = {
 
 TESTS_TO_SKIP: dict[str, str] = {
     "tests/unit/io/cloud/test_cloud.py::test_scan_http_same_host": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_ndjson_http_prefix_metrics_retried_body": "Checks Polars CPU object-store request counts and metrics, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[0]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[1]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[2]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_ndjson_mixed_buckets_29758": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_line_format_small_files_single_request[ndjson]": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_line_format_prefix_continuation[ndjson]": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr7]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[True-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
@@ -695,6 +711,7 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
 
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "Passes under the streaming engine but fails under the in-memory engine, which xfails it",
     "tests/unit/operations/aggregation/test_aggregations.py::test_boolean_aggs": "float difference in std/var in the unit of least precision",
     # Crashes the worker instead of raising cleanly; skip rather than xfail
     # since a crashed worker never reports a result. See
@@ -724,6 +741,7 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
 }
 
 STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
+    "tests/unit/streaming/test_streaming_window.py::test_window_scalar_order_key": "Too slow with --inject-gpu-engine-blocksize=small: the 20,000-row frame becomes ~5,000 4-row chunks and the window shuffle partitions each chunk into ~5,000 pieces (quadratic), exceeding the CI test timeout",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q1": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q2": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q3": "Too slow with --inject-gpu-engine-blocksize=small",

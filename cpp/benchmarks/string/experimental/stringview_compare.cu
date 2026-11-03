@@ -11,7 +11,6 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
@@ -22,6 +21,7 @@
 
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/bit>
@@ -261,7 +261,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, cuda::device_buffer<char>> creat
   // Make sure only one buffer is needed.
   // Using a single data buffer makes the two formats more similar focusing on the layout.
   constexpr int64_t max_size = std::numeric_limits<cudf::size_type>::max() / 2;
-  auto const num_buffers     = cudf::util::div_rounding_up_safe(longer_chars_size, max_size);
+  auto const num_buffers     = cuda::ceil_div(longer_chars_size, max_size);
   CUDF_EXPECTS(num_buffers <= 1, "num_buffers must be <= 1");
 
   // now build BinaryView objects from the strings in device memory

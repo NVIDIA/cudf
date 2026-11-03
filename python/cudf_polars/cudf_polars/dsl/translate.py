@@ -30,6 +30,7 @@ from cudf_polars.dsl.traversal import traversal
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.dsl.utils.groupby import rewrite_groupby
 from cudf_polars.dsl.utils.groupby_dynamic import rewrite_groupby_dynamic
+from cudf_polars.dsl.utils.lake import LakehouseScanOptions
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.dsl.utils.replace import replace
@@ -609,23 +610,14 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
     with_columns = file_options.with_columns
     row_index = file_options.row_index
     include_file_paths = file_options.include_file_paths
-    deletion_files = file_options.deletion_files
-    if (
-        deletion_files
-        or file_options.column_mapping is not None
-        or file_options.default_values is not None
-    ):  # pragma: no cover
-        raise NotImplementedError(
-            "Iceberg format is not supported in cudf-polars. Furthermore, "
-            "row-level deletions, column mapping and default values are not supported."
-        )  # pragma: no cover
-    if file_options.missing_columns_policy != "raise":
-        raise NotImplementedError("Inserting missing columns is not supported.")
     hive_parts = (
         None
         if node.hive_parts is None
         else PerPathValues.from_polars(pl.DataFrame._from_pydf(node.hive_parts))
     )
+    lake_options = LakehouseScanOptions.from_file_options(file_options, node.paths)
+    if lake_options is not None:
+        lake_options.check_field_ids(paths)
     config_options = translator.config_options
     parquet_options = config_options.parquet_options
 
@@ -638,6 +630,10 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         if (n_rows == 2**32 - 1) or (n_rows == 2**64 - 1):
             # Polars translates slice(10, None) -> (10, u32/64max)
             n_rows = -1
+        if lake_options is not None and lake_options.partition_errors:
+            raise NotImplementedError(
+                "Sliced Iceberg scan with partition values polars cannot supply"
+            )
 
     # TODO: Get compression info from Polars plan
     if typ in ("csv", "ndjson"):
@@ -675,6 +671,7 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         parquet_options,
         hive_parts=hive_parts,
         cached_parquet_info=None,
+        lake_options=lake_options,
     )
 
 

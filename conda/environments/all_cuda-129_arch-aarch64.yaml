@@ -30,6 +30,7 @@ dependencies:
 - cxx-compiler
 - cython>=3.2.2,<3.3.0a0
 - dask-cuda==26.12.*,>=0.0.0a0
+- deltalake>=1.6.0
 - dlpack>=0.8,<1.0
 - doxygen=1.18.0
 - fastavro>=0.22.9
@@ -78,6 +79,7 @@ dependencies:
 - pre-commit
 - psutil
 - pyarrow>=19.0.0
+- pyiceberg>=0.12.0
 - pytest-benchmark
 - pytest-cases>=3.8.2
 - pytest-cov
@@ -106,6 +108,7 @@ dependencies:
 - sphinx-remove-toctrees
 - sphinx>=8.1.0
 - sphinxcontrib-websupport
+- sqlalchemy>=2.0.18
 - streamz
 - sysroot_linux-aarch64==2.28
 - typing_extensions>=4.0.0
@@ -114,4 +117,5 @@ dependencies:
 - zstandard
 - pip:
   - nvidia-sphinx-theme
+  - polars-iceberg>=0.1.0
 name: all_cuda-129_arch-aarch64

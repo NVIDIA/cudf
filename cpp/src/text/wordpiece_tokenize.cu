@@ -961,7 +961,7 @@ cuda::device_buffer<cudf::bitmask_type> make_row_starts(cudf::strings_column_vie
   auto d_row_starts = cuda::device_buffer<cudf::bitmask_type>{
     stream,
     mr.get_output_mr(),
-    static_cast<std::size_t>(cudf::util::div_rounding_up_safe(chars_size, row_starts_word_bits)),
+    static_cast<std::size_t>(cudf::detail::div_rounding_up_safe(chars_size, row_starts_word_bits)),
     cuda::no_init};
   CUDF_CUDA_TRY(cudaMemsetAsync(
     d_row_starts.data(), 0, d_row_starts.size() * sizeof(cudf::bitmask_type), stream.get()));

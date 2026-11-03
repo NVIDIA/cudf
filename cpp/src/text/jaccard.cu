@@ -201,7 +201,7 @@ std::pair<cuda::device_buffer<hash_value_type>, cuda::device_buffer<int64_t>> ha
   // count substrings
   auto offsets = cuda::device_buffer<int64_t>(
     stream, output_mr, static_cast<std::size_t>(d_strings.size()) + 1, cuda::no_init);
-  auto const num_blocks = cudf::util::div_rounding_up_safe(
+  auto const num_blocks = cudf::detail::div_rounding_up_safe(
     static_cast<cudf::thread_index_type>(d_strings.size()) * cudf::detail::warp_size, block_size);
   count_substrings_kernel<<<num_blocks, block_size, 0, stream.get()>>>(d_strings, width, offsets);
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -611,7 +611,7 @@ void count_partitions(cuda::std::span<hash_value_type const> hashes1,
       auto const size =
         cuda::std::max(offsets1[row + 1] - offsets1[row], offsets2[row + 1] - offsets2[row]);
       if (size <= warp_set_capacity) { return 0; }
-      return cuda::std::min(cudf::util::div_rounding_up_safe(size, int64_t{block_set_capacity}),
+      return cuda::std::min(cudf::detail::div_rounding_up_safe(size, int64_t{block_set_capacity}),
                             int64_t{max_partitions});
     });
   auto const total_work = cudf::detail::sizes_to_offsets(
@@ -711,7 +711,7 @@ std::unique_ptr<cudf::column> jaccard_index(cudf::strings_column_view const& inp
     auto const [hash2, offsets2] = hash_substrings(*d_strings2, width, stream, temp_resources);
 
     // count rows small enough to be processed by a single warp
-    auto const num_blocks = cudf::util::div_rounding_up_safe(
+    auto const num_blocks = cudf::detail::div_rounding_up_safe(
       static_cast<cudf::thread_index_type>(rows) * cudf::detail::warp_size, block_size);
     count_rows_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
       hash1, offsets1, hash2, offsets2, d_counts1, d_counts2, d_intersects);

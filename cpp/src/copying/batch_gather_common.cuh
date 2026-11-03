@@ -215,16 +215,6 @@ constexpr int64_t kBlockRowCopyThreshold{32};
 // regime ~7x its CUB counterpart. Below the gate the payload kernel keeps its 65536-row wins.
 constexpr int64_t kBatchMemcpyRowThreshold{524'288};
 
-// Row-count gate (rows) between the N3 scan+payload string fast path and the stock per-column
-// string path (run_fallback -> column_gatherer<string_view> -> strings::detail::gather). The
-// payload's group-walk cost scales with the call's row count: measured A/B on tall cells shows
-// every string shape at >= 262144 rows losing to the stock path (up to ~1.9x) while 65536 rows
-// wins ~1.7x, and the loss persists even when every column's chars route to CUB — so the
-// discriminator is the call's row count, not bytes-per-row. Above this threshold the
-// chars-routing branch below becomes unreachable through this API; keep it (the stock path
-// runs the same CUB engine there, and a lowered threshold or a1 coarsening revives the band).
-constexpr size_type kStringFallbackRowThreshold{262'144};
-
 // Preset-mask staging bands pay off only above this many preset destination masks in one call:
 // a band memset costs ~24 µs (nsys-captured band-fill attribution) while a per-mask memset
 // submission costs ~7 µs (submission-latency-bound — the device bytes are negligible at both
@@ -295,6 +285,77 @@ inline __device__ bool string_row_valid(string_work_item const& item, int64_t sr
 struct string_flat_layout {
   cuda::fast_mod_div<uint32_t> rows_per_col;  // scan/offsets scratch space
   cuda::fast_mod_div<uint32_t> num_rows;      // chars-phase flat-row space
+};
+
+// The three virtual iterators one cub::DeviceMemcpy::Batched dereferences over the routed
+// flat (column, row) domain. Destination and size come straight from the scanned prefixes
+// (dst_scratch) — `locate` yields the owning item/row and the prefix delta in ONE div/mod
+// pass through the precomputed 32-bit divisor, and only the src operator then resolves the
+// row through the gather map; the old per-operator resolve chains and 64-bit //% pairs are
+// gone. Every operator is a pure read, so CUB may dereference them in any order.
+//
+// Constraints the host establishes before building these:
+// - every flat index fits uint32_t (the flat-size CUDF_EXPECTS); dividends are narrowed
+//   before dividing, which the fast divisor's dividend-type assert requires.
+// - a routed column's total is > 0 (the routing predicate rejects zero-total columns), so
+//   its `dst_chars` is a real allocation and the destination operator never does pointer
+//   arithmetic on nullptr.
+// - the scan wrote a zero prefix delta for every dead row (map out of bounds under NULLIFY,
+//   invalid source row, or empty source string), so a zero delta stands in for the
+//   resolve/validity gate: CUB classifies from the sizes iterator first and assigns no byte
+//   work to a size-0 buffer, so the nullptr src/dst such rows return are never dereferenced.
+struct routed_memcpy_iterators {
+  string_work_item const* items;  // live item table; indexed through `routed`
+  size_type const* routed;        // routed position -> live item index
+  input_indexalator gather_map;
+  size_type num_source_rows;
+  bool check_bounds;
+  bool negative_allowed;
+  string_flat_layout layout;  // `.num_rows` divides the flat domain
+
+  // Resolves the flat buffer's owning (item, destination row) and its scanned prefix delta.
+  // Returns the prefix delta as `size` and false when the delta is 0 (dead or empty row: CUB
+  // assigns no byte work to a size-0 buffer, so its src/dst are never dereferenced).
+  __device__ bool locate(int64_t flat,
+                         string_work_item const*& item,
+                         size_type& row,
+                         int64_t& size) const
+  {
+    item = items + routed[static_cast<uint32_t>(flat) / layout.num_rows];
+    row  = static_cast<size_type>(static_cast<uint32_t>(flat) % layout.num_rows);
+    size = item->dst_scratch[row + 1] - item->dst_scratch[row];
+    return size > 0;
+  }
+
+  __device__ char const* src_of(int64_t flat) const
+  {
+    string_work_item const* item;
+    size_type row;
+    int64_t size;
+    if (not locate(flat, item, row, size)) { return nullptr; }
+    auto const src =
+      resolve_gathered_row(gather_map, row, num_source_rows, check_bounds, negative_allowed);
+    if (src < 0 or not string_row_valid(*item, static_cast<size_type>(src))) { return nullptr; }
+    return item->src_chars + item->src_offsets[static_cast<size_type>(src)];
+  }
+
+  __device__ char* dst_of(int64_t flat) const
+  {
+    string_work_item const* item;
+    size_type row;
+    int64_t size;
+    if (not locate(flat, item, row, size)) { return nullptr; }
+    return item->dst_chars + item->dst_scratch[row];
+  }
+
+  __device__ int64_t size_of(int64_t flat) const
+  {
+    string_work_item const* item;
+    size_type row;
+    int64_t size;
+    if (not locate(flat, item, row, size)) { return int64_t{0}; }
+    return size;
+  }
 };
 
 // Scan output: the exclusive prefix into the flat scratch; each column's tail

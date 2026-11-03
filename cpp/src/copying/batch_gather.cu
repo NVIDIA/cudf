@@ -1066,8 +1066,6 @@ size_type classify_map_locality(sampled_map_locality const& sampled)
 // in 64 bits.
 // ---------------------------------------------------------------------------
 
-// `kStringFallbackRowThreshold` lives in `batch_gather_common.cuh` (shared with the strings TU).
-
 // The batched string payload kernel `string_payload_kernel` lives in `batch_gather_common.cuh`
 // (only `batch_gather_strings.cu` launches it).
 
@@ -1774,23 +1772,19 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   size_type estimated_kernel_masked = 0;
   for (size_type i = 0; i < source_table.num_columns(); ++i) {
     auto const& src = source_table.column(i);
-    // Tall string columns ride the stock per-column fallback unless the batched-memcpy
-    // routing engine will be active for the call: the routed metadata path removes the
-    // group-walk metadata work that made the fused path lose tall cells, but it only engages
-    // above `kBatchMemcpyRowThreshold` (the host routing walk keys off `chars_routing_active`).
-    // The seam band between the two thresholds is EXCLUDED: the engine wins the band cell when
-    // admitted (262144x100 −69.5%, engine-vs-stock) but the band route costs the tall regime —
-    // the band exclusion trades that one-cell win for keeping ≥524288-row strings on the
-    // routed-metadata path, the measured tall win a wholesale exclusion would forfeit. Gathered
-    // row sizes
-    // are unknowable before the scan, so no stronger per-column proxy is possible here; the
-    // exact post-totals routing still splits per column. Below the band `assemble_strings`
-    // picks the engine for short-row shapes; an all-long-row below-band table falls to the
-    // payload kernel's group walk (the pre-engine fused behavior) — its loss on that shape is
-    // the known admission risk the falsifier's regression checks watch.
-    if (is_descriptor_path_candidate(src) and
-        not(src.type().id() == type_id::STRING and num_rows >= kStringFallbackRowThreshold and
-            num_rows < kBatchMemcpyRowThreshold)) {
+    // String columns join the fused path at every row count: the batched-memcpy routing
+    // engine engages above `kBatchMemcpyRowThreshold` (the host routing walk keys off
+    // `chars_routing_active`).
+    // Below the gate every string cohort stays fused: the engine serves short-row shapes (the
+    // band cell is one of its measured win cells, engine-vs-stock) and an all-long-row table
+    // falls to the payload kernel's group walk (the pre-engine fused behavior) — its loss on
+    // that shape is the known admission risk the falsifier's regression checks watch. The
+    // earlier band exclusion was a guard against a composed-tree tall regression that turned
+    // out to be that tree losing the routed tall route, not a cost of admitting the band, and
+    // it forfeited the measured band win while only the band's stock route differed; it is
+    // reverted. Gathered row sizes are unknowable before the scan, so no stronger per-column
+    // proxy is possible here; the exact post-totals routing still splits per column.
+    if (is_descriptor_path_candidate(src)) {
       fused_indices.push_back(i);
       if (not(num_rows == 0 and not cudf::is_fixed_width(src.type()))) {
         // Mirror the build's skip: an empty map routes non-fixed-width columns to empty_like
@@ -1829,7 +1823,10 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     // through gather_bitmask exactly as stock does. The APPLICATION stays subset-scoped — the
     // fused columns' masks are kernel-written per the mask-policy table, which matches stock's
     // per-column outcome (gather_bitmask is per-column self-guarding,
-    // and set_all_valid_null_masks is a no-op for non-nullable inputs).
+    // and set_all_valid_null_masks is a no-op for non-nullable inputs). Under DONT_CHECK a
+    // null-FREE fallback cohort skips gather_bitmask entirely: its per-column outcome is
+    // host-known (all-valid top-level masks, children untouched), which also drops the
+    // valid_counts D2H readback and its stream sync.
     auto fallback_views = std::vector<cudf::column_view>{};
     fallback_views.reserve(indices.size());
     for (auto const idx : indices) {
@@ -1838,15 +1835,36 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     auto const fallback_table = cudf::table_view{fallback_views};
     if (bounds_policy == out_of_bounds_policy::NULLIFY or
         cudf::has_nested_nullable_columns(source_table)) {
-      if (bounds_policy == out_of_bounds_policy::NULLIFY or cudf::has_nested_nulls(source_table)) {
-        gather_bitmask(fallback_table,
-                       map_it_begin,
-                       fallback_columns,
-                       bounds_policy == out_of_bounds_policy::NULLIFY
-                         ? gather_bitmask_op::NULLIFY
-                         : gather_bitmask_op::DONT_CHECK,
-                       stream,
-                       mr);
+      if (bounds_policy == out_of_bounds_policy::NULLIFY) {
+        gather_bitmask(
+          fallback_table, map_it_begin, fallback_columns, gather_bitmask_op::NULLIFY, stream, mr);
+      } else if (cudf::has_nested_nulls(source_table)) {
+        if (cudf::has_nested_nulls(fallback_table)) {
+          // The fallback cohort itself carries nulls: per-row validity must be computed on the
+          // device, exactly as stock does.
+          gather_bitmask(fallback_table,
+                         map_it_begin,
+                         fallback_columns,
+                         gather_bitmask_op::DONT_CHECK,
+                         stream,
+                         mr);
+        } else {
+          // Null-free fallback cohort under DONT_CHECK: every gathered row is valid, so stock's
+          // per-column outcome is known host-side — no device-view build, no valid_if launch, no
+          // counts readback, no blocking sync. Only nullable SOURCES need a destination mask
+          // (stock's kernel skips null-mask-free sources); a fresh ALL_VALID top-level mask with
+          // null_count 0 matches stock for any destination state, and children are deliberately
+          // NOT rewritten: stock's gather_bitmask writes top-level masks only, and fabricating
+          // child masks here diverges from stock (the child-nullability regression the
+          // whole-table gate exists to prevent).
+          for (size_t i = 0; i < fallback_columns.size(); ++i) {
+            auto const& src = fallback_table.column(i);
+            auto& dst       = *fallback_columns[i];
+            if (not src.nullable()) { continue; }
+            dst.set_null_mask(
+              cudf::create_null_mask(dst.size(), mask_state::ALL_VALID, stream, output_mr), 0);
+          }
+        }
       } else {
         for (size_t i = 0; i < fallback_columns.size(); ++i) {
           cudf::detail::set_all_valid_null_masks(
@@ -2128,15 +2146,13 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     auto const by_value_tier =
       explicit_tile_cols != size_type{4} ? batch_gather_descriptors_by_value_tier(num_descs) : 0;
 
-    // Device path staging: pinned host staging (stream-ordered free, so the H2D needs no host
-    // sync and the copy's source stays valid past this scope) plus the device buffer the kernel
-    // reads. Built only for the device path. The staging bytes — descriptors and, when folded,
-    // the zeroed counts tail — are written from the HOST before the launch, into pinned-pool
-    // memory handed out by the ASYNC factory: the pool can return a block whose previous
-    // stream-ordered copy is still in flight, so the host writes are safe only AFTER the
-    // pre-launch sync above. The receive-only buffers below and the sampler staging have no
-    // host writes at all: their writers are stream-ordered copies, and their readers wait on
-    // the stream.
+    // Pinned staging: the pool's deallocation keeps the source readable for as long as
+    // the copy may read it (stream-ordered pool free; the pool-exhaustion fallback frees
+    // through cudaFreeHost, a synchronizing free — no host sync needed either way). The
+    // device landing buffer is carved from a descriptor-staging arena (ONE upstream pair
+    // instead of one malloc/free per call); its scope is this launch block, and
+    // `batch_gather_kernel` — the buffer's only consumer — is enqueued inside it before
+    // the staging vectors die.
     std::optional<cuda::host_buffer<std::byte>> staging;
     std::optional<rmm::device_uvector<std::byte>> d_descriptors;
     // Masked device-array calls fold the kernel's per-descriptor valid counts into the staging

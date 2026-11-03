@@ -117,3 +117,15 @@ extern "C" __device__ cudf::errc lto_nullable_string_tail(
   *out             = value.empty() ? value : value.substr(1, value.length() - 1);
   return cudf::errc::SUCCESS;
 }
+
+extern "C" __device__ cudf::errc lto_constant(int32_t* out)
+{
+  *out = 42;
+  return cudf::errc::SUCCESS;
+}
+
+extern "C" __device__ cudf::errc lto_nullable_constant(cuda::std::optional<int32_t>* out)
+{
+  *out = cuda::std::nullopt;
+  return cudf::errc::SUCCESS;
+}

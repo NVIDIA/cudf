@@ -123,6 +123,28 @@ TEST_F(JITExpressionTest, UdfCall)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
 }
 
+TEST_F(JITExpressionTest, UdfCallWithoutArguments)
+{
+  // The table supplies the row count; its nullable column is not a UDF argument.
+  auto input = column_wrapper<int32_t>{{1, 2, 3}, {1, 0, 1}};
+  auto table = cudf::table_view{{input}};
+  for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+    SCOPED_TRACE(::testing::Message() << "nullify=" << (policy == cudf::error_policy::NULLIFY));
+    auto tree     = cudf::ast::tree{};
+    auto function = cudf::ast::jit::udf{"lto_constant", true, int32_type, {}};
+    auto& call    = cudf::ast::jit::call(tree, function, {}, policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+      column_wrapper<int32_t>{{42, 42, 42}}, run_column(table, call)->view(), VERBOSITY);
+
+    function.symbol        = "lto_nullable_constant";
+    function.is_null_aware = cudf::null_aware::YES;
+    auto& nullable         = cudf::ast::jit::call(tree, function, {}, policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(column_wrapper<int32_t>{{0, 0, 0}, {0, 0, 0}},
+                                        run_column(table, nullable)->view(),
+                                        VERBOSITY);
+  }
+}
+
 TEST_F(JITExpressionTest, UdfCallStringViewInputsAndOutput)
 {
   std::vector<std::string> const values{"", "a", "é", "你好", "cudf", "🙂z"};

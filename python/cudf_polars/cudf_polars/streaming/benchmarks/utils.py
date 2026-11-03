@@ -72,6 +72,14 @@ try:
 except ImportError:
     pynvml = None
 
+try:
+    import pyarrow  # noqa: F401
+    import pyiceberg  # noqa: F401
+
+    iceberg_err = None
+except ImportError as e:
+    iceberg_err = e
+
 
 try:
     import cudf_polars.quent
@@ -699,11 +707,10 @@ class RunConfig:
                 raise NotImplementedError(
                     "--debug is not supported with --input-format iceberg."
                 )
-            if importlib.util.find_spec("pyiceberg") is None:
-                raise RuntimeError(
-                    "pyiceberg is not installed. "
-                    "Please install it to use --input-format iceberg."
-                )
+            if iceberg_err is not None:
+                raise ImportError(
+                    "pyiceberg and pyarrow are required for --input-format iceberg."
+                ) from iceberg_err
 
         if scale_factor is None:
             if "pdsds" in name:

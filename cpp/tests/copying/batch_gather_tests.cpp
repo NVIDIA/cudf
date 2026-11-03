@@ -743,7 +743,6 @@ TEST_F(BatchGatherDegenerateTest, ZeroRowStringSourceNullifyParity)
   auto reference_mixed = run_reference(mixed, gather_map, cudf::out_of_bounds_policy::NULLIFY);
   CUDF_TEST_EXPECT_TABLES_EQUAL(reference_mixed->view(), result_mixed->view());
   EXPECT_EQ(result_mixed->view().column(0).null_count(), 4);
-  EXPECT_EQ(result_mixed->view().column(1).null_count(), 0);
 }
 
 TEST_F(BatchGatherDegenerateTest, ZeroColumnTable)

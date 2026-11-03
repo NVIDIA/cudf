@@ -74,9 +74,9 @@ namespace {
 
 // A struct column joins the descriptor path when every descendant is a fixed-width leaf; any
 // list child at any depth keeps the WHOLE column in the fallback (partial flattening is a
-// later stage). A STRING child is no longer disqualifying: top-level strings take the
-// string fast path below, and a string inside a struct takes the same fast path via the
-// string_descriptor machinery.
+// later stage). A STRING child keeps the struct in the fallback too: the whole column
+// gathers through the stock per-column gatherer (test-pinned), and a top-level STRING column
+// takes the string fast path below.
 bool is_fully_fixed_width_struct(column_view const& col)
 {
   for (size_type i = 0; i < col.num_children(); ++i) {

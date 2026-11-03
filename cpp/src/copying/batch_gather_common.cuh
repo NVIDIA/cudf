@@ -279,8 +279,8 @@ inline __device__ bool string_row_valid(string_work_item const& item, int64_t sr
 
 // Layout of the flat string workspaces: the scan and the offsets phase index the int64
 // scratch with `rows_per_col = num_rows + 1` slots per column, while the chars phase indexes
-// flat ROWS with `num_rows` rows per column — two divisors. Every grid cell holds at most
-// 41.9M flat rows, so every flat index fits uint32_t (the host enforces the bound); the
+// flat ROWS with `num_rows` rows per column — two divisors. The host enforces every flat index
+// fits uint32_t before these divisors are built (see assemble_strings_impl's expects); the
 // precomputed 32-bit divisors replace the per-element 64-bit //% at each site.
 struct string_flat_layout {
   cuda::fast_mod_div<uint32_t> rows_per_col;  // scan/offsets scratch space

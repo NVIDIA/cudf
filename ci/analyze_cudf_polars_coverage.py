@@ -16,6 +16,7 @@ from typing import Any
 
 from coverage import CoverageData
 
+MAX_CONTEXTS_PER_LINE = 20
 MIN_SHARED_LINES = 4
 MAX_SHARED_LINE_EXAMPLES = 10
 MAX_LOCAL_ONLY_LINE_EXAMPLES = 10
@@ -235,8 +236,16 @@ def build_report(
                     upstream_tests[_nodeid(context)].add((filename, line))
             entry = {
                 "line": line,
-                "local_contexts": local_line_contexts,
-                "upstream_contexts": upstream_line_contexts,
+                "local_contexts": local_line_contexts[:MAX_CONTEXTS_PER_LINE],
+                "local_context_count": len(local_line_contexts),
+                "local_contexts_truncated": len(local_line_contexts)
+                > MAX_CONTEXTS_PER_LINE,
+                "upstream_contexts": upstream_line_contexts[
+                    :MAX_CONTEXTS_PER_LINE
+                ],
+                "upstream_context_count": len(upstream_line_contexts),
+                "upstream_contexts_truncated": len(upstream_line_contexts)
+                > MAX_CONTEXTS_PER_LINE,
             }
             if line in local_lines and line in upstream_lines:
                 classifications["both"].append(entry)
@@ -304,8 +313,10 @@ def _write_html(report: dict[str, Any], output: Path) -> None:
         "<h1>cudf-polars coverage comparison</h1>"
         f"<p>Files: {summary['files']}; local-only: {summary['local_only']}; "
         f"upstream-only: {summary['upstream_only']}; both: {summary['both']}.</p>"
-        "<p>See <code>coverage-comparison.json</code> for line-level pytest "
-        "contexts.</p><table><thead><tr><th>Source file</th><th>Local only</th>"
+        "<p>The JSON samples line-level pytest contexts; the separate "
+        "<code>.coverage.local</code> and <code>.coverage.upstream</code> "
+        "files retain every context.</p>"
+        "<table><thead><tr><th>Source file</th><th>Local only</th>"
         "<th>Upstream only</th><th>Both</th></tr></thead><tbody>"
         + "".join(rows)
         + "</tbody></table>"
@@ -370,6 +381,10 @@ def main() -> None:
         "cudf_sha": args.cudf_sha,
         "polars_sha": args.polars_sha,
         "polars_version": args.polars_version,
+    }
+    report["context_data"] = {
+        "local": args.local_data.name,
+        "upstream": args.upstream_data.name,
     }
     selections = json.loads(args.gpu_run_list.read_text())["selections"]
     selection_key = f"{args.polars_version}|spmd|default"

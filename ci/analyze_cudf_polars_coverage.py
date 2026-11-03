@@ -16,7 +16,6 @@ from typing import Any
 
 from coverage import CoverageData
 
-MAX_CONTEXTS_PER_LINE = 20
 MIN_SHARED_LINES = 4
 MAX_SHARED_LINE_EXAMPLES = 10
 MAX_UPSTREAM_CONTEXTS_PER_LINE = 100
@@ -209,16 +208,8 @@ def build_report(
                     upstream_tests[_nodeid(context)].add((filename, line))
             entry = {
                 "line": line,
-                "local_contexts": local_line_contexts[:MAX_CONTEXTS_PER_LINE],
-                "local_context_count": len(local_line_contexts),
-                "local_contexts_truncated": len(local_line_contexts)
-                > MAX_CONTEXTS_PER_LINE,
-                "upstream_contexts": upstream_line_contexts[
-                    :MAX_CONTEXTS_PER_LINE
-                ],
-                "upstream_context_count": len(upstream_line_contexts),
-                "upstream_contexts_truncated": len(upstream_line_contexts)
-                > MAX_CONTEXTS_PER_LINE,
+                "local_contexts": local_line_contexts,
+                "upstream_contexts": upstream_line_contexts,
             }
             if line in local_lines and line in upstream_lines:
                 classifications["both"].append(entry)

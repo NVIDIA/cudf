@@ -126,6 +126,21 @@ def test_review_pairs_need_shared_behavior_and_remain_candidates() -> None:
     assert pairs[0]["status"] == "review_candidate"
 
 
+def test_line_report_keeps_every_test_context() -> None:
+    analyzer = _load_analyzer()
+    source = "/work/cudf_polars/dsl/translate.py"
+    contexts = {f"tests/test_expr.py::test_case_{i}|run" for i in range(25)}
+    local = _CoverageData({source: {10: contexts}})
+    upstream = _CoverageData({})
+
+    report = analyzer.build_report(local, upstream)
+
+    assert (
+        set(report["files"][source]["local_only"][0]["local_contexts"])
+        == contexts
+    )
+
+
 def test_review_pairs_rank_by_overlap_fraction() -> None:
     analyzer = _load_analyzer()
     source = "/work/cudf_polars/dsl/translate.py"

@@ -591,7 +591,7 @@ jobs:
         ci/test_python_cudf.sh
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   conda-python-cudf-polars-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
@@ -619,7 +619,7 @@ jobs:
       script: "env POLARS_VERSIONS=latest ci/test_python_cudf_polars.sh"
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   conda-python-cudf-polars-tests-integration-optional:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
@@ -645,7 +645,7 @@ jobs:
       # https://github.com/NVIDIA/cudf/pull/22381/changes#r3196736965
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/test_python_cudf_polars_integrations.sh"
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   conda-python-other-tests:
     # Tests for dask_cudf, cudf_kafka, custreamz, and cudf_streaming run separately from cudf_polars.
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
@@ -717,7 +717,7 @@ jobs:
         ci/test_python_other.sh
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   # Build and test the cuDF Java JAR for every Maven classifier.
   java-build-matrix:
     needs: [checks]
@@ -801,7 +801,7 @@ jobs:
     with:
       build_type: pull-request
       matrix_name: docs-build
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr
   docs-build:
     needs: [docs-build-matrix, conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
@@ -928,7 +928,7 @@ jobs:
         ci/test_wheel_cudf.sh
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   wheel-tests-cudf-polars:
     needs:
       [wheel-build, wheel-python-build-noarch, cudf-polars-quent, changed-files]
@@ -946,7 +946,7 @@ jobs:
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "env POLARS_VERSIONS=earliest ci/test_wheel_cudf_polars.sh"
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   cudf-polars-polars-tests:
     needs: [wheel-build, wheel-python-build-noarch, changed-files]
     permissions:
@@ -1023,7 +1023,7 @@ jobs:
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
       script: ci/test_wheel_dask_cudf.sh
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   # build cudf with benchmarks but disable for cudf_streaming since we can't use MPI/UCX in wheel-based builds
   devcontainer:
     permissions:
@@ -1069,7 +1069,7 @@ jobs:
         map(select(.GPU != "gb300" and .GPU != "gh200"))
       build_type: pull-request
       script: ci/cudf_pandas_scripts/run_tests.sh
-      matrix_type: pull-request
+      matrix_type: python-3-15-pr, pull-request
   third-party-integration-tests-cudf-pandas:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:

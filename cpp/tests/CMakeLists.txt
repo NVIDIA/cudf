@@ -416,6 +416,11 @@ ConfigureTest(
   GPUS 1
   PERCENT 70
 )
+ConfigureTest(
+  STRING_SORT_RADIX_LRB_TEST sort/string_sort_lrb_test.cpp
+  GPUS 1
+  PERCENT 70
+)
 
 # ##################################################################################################
 # * copying tests ---------------------------------------------------------------------------------

@@ -342,8 +342,8 @@ __device__ __forceinline__ void gather_tile_rows(MapReader gather_map,
           }
         }
         // Data at out-of-bounds/null rows may be left unwritten (fixed-width undefined-value
-        // policy).
-        if (valid && !d.skip_data) {
+        // policy); all-null sources carry no descriptor at all, so no skip is needed here.
+        if (valid) {
           copy_element<kStreaming>(
             static_cast<char*>(d.dst_data) + static_cast<std::size_t>(row) * d.element_size,
             static_cast<char const*>(d.src_data) + static_cast<std::size_t>(idx) * d.element_size,

@@ -123,6 +123,13 @@ def test_review_pairs_need_shared_behavior_and_remain_candidates() -> None:
         "local_context": "tests/test_join.py::test_join|run",
         "upstream_context": "tests/unit/operations/test_join.py::test_join|run",
     }
+    assert pairs[0]["local_only_lines"] == [
+        {
+            "source_file": source,
+            "line": 14,
+            "local_context": "tests/test_join.py::test_join|run",
+        }
+    ]
     assert pairs[0]["status"] == "review_candidate"
 
 
@@ -256,5 +263,10 @@ def test_main_writes_provenance_and_contexts(
         "tests/test_join.py::test_join|run"
     ]
     assert report["review_pairs"][0]["upstream_gpu_observed"] is gpu_observed
+    assert report["review_pairs"][0]["local_only_lines"][0] == {
+        "source_file": source,
+        "line": 11,
+        "local_context": "tests/test_join.py::test_join|run",
+    }
     assert (output / "index.html").is_file()
     assert (output / "upstream-review-candidates.html").is_file()

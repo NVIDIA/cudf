@@ -748,6 +748,53 @@ def _plan_unit_truncate(
     return _TruncatePlan(method, every_ticks, day, on_date)
 
 
+def _plan_offset_by(dtype: DataType, by: str) -> int:
+    """
+    Translate ``dt.offset_by(by)`` into a number of ticks to add.
+
+    Parameters
+    ----------
+    dtype
+        Dtype of the column being offset.
+    by
+        Duration string such as ``"40m"`` or ``"-1d1h"``.
+
+    Returns
+    -------
+    The ticks of the column's time unit to add, which is negative for a
+    negative duration. A duration finer than the time unit is rounded toward
+    zero, as polars does.
+
+    Raises
+    ------
+    NotImplementedError
+        If the offset is not a fixed length on this dtype: calendar units,
+        ``Date`` columns, and days or weeks on a time zone aware column, where
+        polars adds calendar days.
+    """
+    polars_type = dtype.polars_type
+    if not isinstance(polars_type, pl.Datetime):
+        raise NotImplementedError(f"dt.offset_by on {polars_type}")
+    negative = by.startswith("-")
+    parsed = _parse_duration_string(by.removeprefix("-"))
+    if parsed is None:
+        raise NotImplementedError(f"Unsupported offset: {by!r}")
+    months, weeks, days, nanoseconds = parsed
+    if months > 0:
+        raise NotImplementedError(f"dt.offset_by with calendar units: {by!r}")
+    if polars_type.time_zone is not None and (weeks > 0 or days > 0):
+        raise NotImplementedError(
+            f"dt.offset_by with days or weeks on a time zone aware column: {by!r}"
+        )
+    total_nanoseconds = (7 * weeks + days) * _NANOSECONDS_PER_DAY + nanoseconds
+    # polars holds the duration in INT64 nanoseconds, where a longer one wraps
+    # before it is converted to the column's time unit.
+    if total_nanoseconds >= 2**63:
+        raise NotImplementedError(f"Offset too large to evaluate: {by!r}")
+    ticks = total_nanoseconds // _NANOSECONDS_PER_UNIT[polars_type.time_unit]
+    return -ticks if negative else ticks
+
+
 def _int64_literal(value: int, stream: Stream) -> plc.expressions.Literal:
     return plc.expressions.Literal(plc.Scalar.from_py(value, _INT64, stream=stream))
 
@@ -1105,6 +1152,7 @@ class TemporalFunction(Expr):
     _valid_ops: ClassVar[set[Name]] = {
         *_COMPONENT_MAP.keys(),
         Name.Combine,
+        Name.OffsetBy,
         Name.Round,
         Name.IsLeapYear,
         Name.OrdinalDay,
@@ -1188,6 +1236,13 @@ class TemporalFunction(Expr):
                 raise NotImplementedError(f"dt.combine with {time_dtype} time input")
             if isinstance(date_dtype, pl.Datetime):
                 self.tz_descs = (_get_tz_desc(date_dtype.time_zone), None)
+        elif self.name is TemporalFunction.Name.OffsetBy:
+            from cudf_polars.dsl.expressions.literal import Literal
+
+            by_expr = self.children[1]
+            if not isinstance(by_expr, Literal) or not isinstance(by_expr.value, str):
+                raise NotImplementedError("dt.offset_by with a non-literal offset")
+            self.options = _plan_offset_by(self.children[0].dtype, by_expr.value)
         elif self.name in {
             TemporalFunction.Name.Truncate,
             TemporalFunction.Name.Round,
@@ -1427,6 +1482,19 @@ class TemporalFunction(Expr):
                     self.options[0],
                     stream=df.stream,
                 ),
+                dtype=self.dtype,
+            )
+        elif self.name is TemporalFunction.Name.OffsetBy:
+            (column, _) = columns
+            # polars adds the ticks with INT64 arithmetic, wrapping on overflow.
+            shifted = _wrapping(
+                plc.binaryop.BinaryOperator.ADD,
+                plc.unary.bit_cast(column.obj, _INT64, stream=df.stream),
+                cast("int", self.options),
+                df.stream,
+            )
+            return Column(
+                plc.unary.bit_cast(shifted, column.obj.type(), stream=df.stream),
                 dtype=self.dtype,
             )
         elif self.name is TemporalFunction.Name.Truncate:

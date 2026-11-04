@@ -26,6 +26,7 @@
 #include <thrust/transform.h>
 
 struct ColumnDeviceViewTest : public cudf::test::BaseFixture {
+  void test_mutable_nullable_element();
   void test_noncanonical_bool();
   void test_nullable_noncanonical_bool();
 };
@@ -65,14 +66,15 @@ TEST_F(ColumnDeviceViewTest, MismatchingType)
                cudf::logic_error);
 }
 
-TEST_F(ColumnDeviceViewTest, MutableNullableElement)
+void ColumnDeviceViewTest::test_mutable_nullable_element()
 {
   auto const stream = cudf::get_default_stream();
   auto input =
     cudf::test::fixed_width_column_wrapper<int32_t>{{99, 10, 20, 30, 40, 99},
                                                     {false, true, false, true, false, true}}
       .release();
-  auto const sliced      = cudf::slice(input->mutable_view(), {1, 5}).front();
+  auto const view = input->mutable_view();
+  cudf::mutable_column_view const sliced{view.type(), 4, view.head(), view.null_mask(), 2, 1};
   auto const device_view = cudf::mutable_column_device_view::create(sliced, stream);
 
   cudf::test::fixed_width_column_wrapper<int32_t> const expected{10, -1, 30, -1};
@@ -168,6 +170,8 @@ void ColumnDeviceViewTest::test_nullable_noncanonical_bool()
                     });
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
 }
+
+TEST_F(ColumnDeviceViewTest, MutableNullableElement) { test_mutable_nullable_element(); }
 
 TEST_F(ColumnDeviceViewTest, NonCanonicalBool) { test_noncanonical_bool(); }
 

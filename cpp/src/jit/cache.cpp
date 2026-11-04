@@ -475,7 +475,6 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          bool use_pch)
 {
   CUDF_FUNC_RANGE();
-  CUDF_EXPECTS(source_code != nullptr, "CUDA source must not be null", std::invalid_argument);
   CUDF_EXPECTS(include_names.size() == includes.size(),
                "Header names and contents must have the same size",
                std::invalid_argument);

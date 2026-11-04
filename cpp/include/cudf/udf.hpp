@@ -20,14 +20,13 @@ namespace CUDF_EXPORT cudf {
 /// @brief Device-code formats accepted by LTO execution APIs.
 enum class lto_binary_type : uint8_t {
   LTO_IR = 0,  ///< LTO IR binary
-  FATBIN = 1  ///< FATBIN binary
+  FATBIN = 1   ///< FATBIN binary
 };
 
 /**
  * @brief Non-owning device-code fragment.
  *
- * Keep the bytes alive throughout the calling operation. PTX must include its terminating zero.
- * Declare callback symbols with @c extern "C" to avoid C++ name mangling.
+ * Keep the bytes alive throughout the calling operation.
  *
  */
 struct lto_fragment {
@@ -45,6 +44,7 @@ using lto_fragments = std::span<lto_fragment const>;
  */
 struct [[nodiscard]] compiled_fragment {
   /// @brief Returns a non-owning view of the compiled fragment
+  /// @return Non-owning view of the compiled fragment
   [[nodiscard]] lto_fragment view() const noexcept;
 
  private:
@@ -63,6 +63,7 @@ struct [[nodiscard]] compiled_fragment {
  * @brief Compiles CUDA device source into an owning LTO IR fragment.
  *
  * Compiled fragments are cached by source, in-memory headers, ordered include paths and PCH use.
+ *
  * Filesystem headers and their dependencies must remain unchanged while caches may be reused;
  * use versioned include paths when changing filesystem dependencies.
  *
@@ -75,7 +76,7 @@ struct [[nodiscard]] compiled_fragment {
  * @param include_paths Filesystem header directories, searched before bundled header directories
  * @param use_pch Enable automatic precompiled headers on supported NVRTC versions
  * @return Shared ownership of the compiled bytes
- * @throws std::invalid_argument for null source or mismatched header spans
+ * @throws std::invalid_argument for mismatched header spans
  * @throws std::runtime_error if compilation fails
  */
 compiled_fragment compile_cuda_to_lto_ir(char const* source_code,

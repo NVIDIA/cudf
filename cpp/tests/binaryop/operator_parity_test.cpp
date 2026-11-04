@@ -36,6 +36,19 @@ TEST_F(BinaryOperatorParityTest, CheckedDecimalSupportRequiresOutputScale)
   expect_scale(cudf::binary_operator::MOD_OVERFLOW, -2);
 }
 
+TEST_F(BinaryOperatorParityTest, StringNullMinMaxSupported)
+{
+  auto const str = cudf::data_type{cudf::type_id::STRING};
+  for (auto op : {cudf::binary_operator::NULL_MIN, cudf::binary_operator::NULL_MAX}) {
+    EXPECT_TRUE(cudf::binops::is_supported_operation(str, str, str, op));
+    EXPECT_FALSE(
+      cudf::binops::is_supported_operation(cudf::data_type{cudf::type_id::INT32}, str, str, op));
+    EXPECT_FALSE(
+      cudf::binops::is_supported_operation(str, str, cudf::data_type{cudf::type_id::INT32}, op));
+  }
+  EXPECT_FALSE(cudf::binops::is_supported_operation(str, str, str, cudf::binary_operator::ADD));
+}
+
 TEST_F(BinaryOperatorParityTest, CheckedArithmeticPropagates)
 {
   auto max  = std::numeric_limits<int32_t>::max();

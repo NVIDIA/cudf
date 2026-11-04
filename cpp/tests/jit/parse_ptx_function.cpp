@@ -24,7 +24,7 @@ TEST_F(JitParseTest, PTXNoFunction)
 TEST_F(JitParseTest, PTXRenameOnly)
 {
   std::string const source = R"ptx(
-.version 8.0
+.version 6.3
 .target sm_80
 .address_size 64
 // .func fake() {} original$fn

@@ -357,7 +357,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
 // Based on NVVM 7.0.1
 //
 
-.version 9.1
+.version 6.3
 .target sm_70
 .address_size 64
 
@@ -450,7 +450,7 @@ __device__ inline void f(
 // Based on NVVM 7.0.1
 //
 
-.version 9.1
+.version 6.3
 .target sm_70
 .address_size 64
 
@@ -635,7 +635,7 @@ __device__ inline void decode(float * output, float input){
 // Based on NVVM 7.0.1
 //
 
-.version 9.2
+.version 6.3
 .target sm_70
 .address_size 64
 
@@ -861,7 +861,7 @@ __device__ inline void transform(
 // Based on NVVM 7.0.1
 //
 
-.version 8.7
+.version 6.3
 .target sm_70
 .address_size 64
 
@@ -1498,7 +1498,7 @@ struct NullTest : public cudf::test::BaseFixture {
 // Based on NVVM 7.0.1
 //
 
-.version 8.8
+.version 6.3
 .target sm_70
 .address_size 64
 

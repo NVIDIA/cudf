@@ -89,7 +89,7 @@ public class ColumnVectorTest extends CudfTestBase {
       "// Based on NVVM 7.0.1\n" +
       "//\n" +
       "\n" +
-      ".version 9.1\n" +
+      ".version 6.3\n" +
       ".target sm_70\n" +
       ".address_size 64\n" +
       "\n" +

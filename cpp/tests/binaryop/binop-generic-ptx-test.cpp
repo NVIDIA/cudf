@@ -48,7 +48,7 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_FP32_FP32_FP32)
 // Based on LLVM 3.4svn
 //
 
-.version 6.4
+.version 6.3
 .target sm_70
 .address_size 64
 
@@ -107,7 +107,7 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT32)
 // Based on LLVM 3.4svn
 //
 
-.version 6.4
+.version 6.3
 .target sm_70
 .address_size 64
 

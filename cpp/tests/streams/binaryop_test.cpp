@@ -91,7 +91,7 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
 // Based on NVVM 7.0.1
 //
 
-.version 9.3
+.version 6.3
 .target sm_70
 .address_size 64
 

@@ -12,7 +12,15 @@ Every CooperativeArray is a non-owning view: meminfo (bytes 0..7 of the
 {ptr meminfo, ptr data, i64 size, ptr index} struct) is null and no
 NRT-managed, array-returning operations are implemented, so cooperative
 reductions pull in no NRT runtime.
+
+Call ``register_cooperative_lowerings()`` to install the lowerings; it is invoked
+once at import, but is a single entry point so the registration cost can be
+measured or deferred.
 """
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from numba_cuda_mlir._mlir import ir
 from numba_cuda_mlir._mlir.extras import types as T
@@ -24,33 +32,29 @@ from numba_cuda_mlir.lowering_utilities import (
 )
 from numba_cuda_mlir.extending import lowering_registry as registry
 from cudf.core.udf.mlir_backend.cooperative_types import CooperativeArrayType
-from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
-    corr_func_name,
-    idxmax_func_name,
-    idxmin_func_name,
-    max_func_name,
-    mean_func_name,
-    min_func_name,
-    std_func_name,
-    sum_func_name,
-    var_func_name,
-)
+from cudf.core.udf.mlir_backend.cooperative_device_funcs import func_name
 from numba_cuda_mlir.numba_cuda import types as nb_types
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from numba_cuda_mlir.mlir_lowering import MLIRLower
+    from numba_cuda_mlir.numba_cuda.core.ir import Var
 
 
 # ---------------------------------------------------------------------------
 # MLIR type / constant helpers
 # ---------------------------------------------------------------------------
 
-def _ptr():
+def _ptr() -> ir.Type:
     return llvm.PointerType.get()
 
 
-def _const_i64(val):
+def _const_i64(val: int) -> ir.Value:
     return arith.constant(T.i64(), val)
 
 
-def _dtype_mlir_type(dtype):
+def _dtype_mlir_type(dtype) -> ir.Type:
     if dtype == nb_types.float64:
         return ir.F64Type.get()
     elif dtype == nb_types.float32:
@@ -66,11 +70,16 @@ def _dtype_mlir_type(dtype):
 # CooperativeArray struct accessors
 # ---------------------------------------------------------------------------
 
-def _ca_struct_type():
+def _ca_struct_type() -> ir.Type:
     return llvm.StructType.get_literal([_ptr(), _ptr(), T.i64(), _ptr()])
 
 
-def build_cooperative_array(meminfo, data, size_i64, index_data=None):
+def build_cooperative_array(
+    meminfo: ir.Value,
+    data: ir.Value,
+    size_i64: ir.Value,
+    index_data: ir.Value | None = None,
+) -> ir.Value:
     ty = _ca_struct_type()
     if index_data is None:
         index_data = llvm.ZeroOp(_ptr())
@@ -93,19 +102,19 @@ def build_cooperative_array(meminfo, data, size_i64, index_data=None):
     )
 
 
-def ca_extract_data(val):
+def ca_extract_data(val: ir.Value) -> ir.Value:
     return llvm.extractvalue(_ptr(), val, [1])
 
 
-def ca_extract_size(val):
+def ca_extract_size(val: ir.Value) -> ir.Value:
     return llvm.extractvalue(T.i64(), val, [2])
 
 
-def ca_extract_index(val):
+def ca_extract_index(val: ir.Value) -> ir.Value:
     return llvm.extractvalue(_ptr(), val, [3])
 
 
-def _shm_base_ptr(builder):
+def _shm_base_ptr(builder: MLIRLower) -> ir.Value:
     """Extract the dynamic shared memory base as a valid generic llvm.ptr.
 
     Uses addrspacecast (cvta.shared) so the resulting pointer is a
@@ -124,325 +133,147 @@ _SUPPORTED_DTYPES = (nb_types.float64, nb_types.float32, nb_types.int64, nb_type
 
 
 # ---------------------------------------------------------------------------
-# .size attribute
+# Reduction call sites: a thin declaration + func.call to the outlined shim
+# function _coop_<op>_<dtype>. The shared memory base is always the last operand.
 # ---------------------------------------------------------------------------
 
-for _dt in _SUPPORTED_DTYPES:
-    _ca = CooperativeArrayType(_dt)
+def _call_reduction(
+    builder: MLIRLower,
+    op: str,
+    dtype,
+    operands: list[ir.Value],
+    result_ty: ir.Type,
+) -> ir.Value:
+    """Insert a declaration of ``_coop_<op>_<dtype>`` and call it.
 
-    def _make_size_lower(ca_type):
-        @registry.lower_getattr(ca_type, "size")
-        def _lower_size(context, builder, target, value, attr=None):
-            ca_val = builder.load_var(value)
-            builder.store_var(target, ca_extract_size(ca_val))
-    _make_size_lower(_ca)
+    ``operands`` are the already-materialized MLIR values (data pointer(s), size,
+    shared-memory base); the callee signature is inferred from their types.
+    """
+    ft = ir.FunctionType.get([o.type for o in operands], [result_ty])
+    callee = get_or_insert_function(
+        func_name(op, dtype), ft, builder.mlir_gpu_module)
+    return func.call(
+        result=[result_ty], callee=callee.name.value, operands_=operands)
 
 
-# ---------------------------------------------------------------------------
-# .sum() reduction: thin call to the separately-compiled reduction shim
-# ---------------------------------------------------------------------------
+def _reduction_operands(builder: MLIRLower, ca_val: ir.Value) -> list[ir.Value]:
+    """(data, size, shm) \u2014 operands shared by the single-array reductions."""
+    return [
+        ca_extract_data(ca_val),
+        ca_extract_size(ca_val),
+        _shm_base_ptr(builder),
+    ]
 
-def _lower_sum(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_sum_{dtype} device function."""
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-    elem_ty = _dtype_mlir_type(dtype)
 
-    data = ca_extract_data(ca_val)
-    size = ca_extract_size(ca_val)
+def _self_dtype(builder: MLIRLower, self_var: Var):
+    return builder.get_numba_type(self_var.name).dtype
 
-    shm = _shm_base_ptr(builder)
-    # pandas promotes integer sums to int64; floats keep their width. The
-    # device function returns this accumulator type.
-    acc_ty = T.i64() if isinstance(dtype, nb_types.Integer) else elem_ty
-    fname = sum_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [acc_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[acc_ty], callee=callee.name.value,
-        operands_=[data, size, shm],
-    )
+
+def _lower_sum(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    ca_val = builder.load_var(args[0])
+    dtype = _self_dtype(builder, args[0])
+    # pandas promotes integer sums to int64 (overflow-safe); floats keep width.
+    acc_ty = T.i64() if isinstance(dtype, nb_types.Integer) else _dtype_mlir_type(dtype)
+    result = _call_reduction(
+        builder, "sum", dtype, _reduction_operands(builder, ca_val), acc_ty)
     builder.store_var(target, result)
 
 
-for _dt in _SUPPORTED_DTYPES:
-    def _make_sum_lower(ca_type):
-        @registry.lower_getattr(ca_type, "sum")
-        def _lower_ca_sum_attr(context, builder, target, value, attr=None):
-            builder.store_var(target, DeferredMethodCall(value, _lower_sum))
-    _make_sum_lower(CooperativeArrayType(_dt))
-
-
-# ---------------------------------------------------------------------------
-# .mean() reduction: thin call to the separately-compiled reduction shim
-# ---------------------------------------------------------------------------
-
-def _lower_mean(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_mean_{dtype} device function."""
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-
-    data = ca_extract_data(ca_val)
-    size = ca_extract_size(ca_val)
-
-    shm = _shm_base_ptr(builder)
-    f64_ty = ir.F64Type.get()
-    fname = mean_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [f64_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[f64_ty], callee=callee.name.value,
-        operands_=[data, size, shm],
-    )
+def _lower_mean(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    ca_val = builder.load_var(args[0])
+    dtype = _self_dtype(builder, args[0])
+    result = _call_reduction(
+        builder, "mean", dtype, _reduction_operands(builder, ca_val),
+        ir.F64Type.get())
     # pandas mean of float32 stays float32; truncate the f64 accumulator.
     if dtype == nb_types.float32:
         result = arith.truncf(ir.F32Type.get(), result)
     builder.store_var(target, result)
 
 
-for _dt in _SUPPORTED_DTYPES:
-    def _make_mean_lower(ca_type):
-        @registry.lower_getattr(ca_type, "mean")
-        def _lower_ca_mean_attr(context, builder, target, value, attr=None):
-            builder.store_var(target, DeferredMethodCall(value, _lower_mean))
-    _make_mean_lower(CooperativeArrayType(_dt))
-
-
-# ---------------------------------------------------------------------------
-# .min() reduction: thin call to the separately-compiled reduction shim
-# ---------------------------------------------------------------------------
-
-def _lower_min(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_min_{dtype} device function."""
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-    elem_ty = _dtype_mlir_type(dtype)
-
-    data = ca_extract_data(ca_val)
-    size = ca_extract_size(ca_val)
-
-    shm = _shm_base_ptr(builder)
-    fname = min_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [elem_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[elem_ty], callee=callee.name.value,
-        operands_=[data, size, shm],
-    )
+def _lower_minmax(builder: MLIRLower, target: Var, args: list[Var], op: str) -> None:
+    ca_val = builder.load_var(args[0])
+    dtype = _self_dtype(builder, args[0])
+    result = _call_reduction(
+        builder, op, dtype, _reduction_operands(builder, ca_val),
+        _dtype_mlir_type(dtype))
     builder.store_var(target, result)
 
 
-for _dt in _SUPPORTED_DTYPES:
-    def _make_min_lower(ca_type):
-        @registry.lower_getattr(ca_type, "min")
-        def _lower_ca_min_attr(context, builder, target, value, attr=None):
-            builder.store_var(target, DeferredMethodCall(value, _lower_min))
-    _make_min_lower(CooperativeArrayType(_dt))
+def _lower_min(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    _lower_minmax(builder, target, args, "min")
 
 
-# ---------------------------------------------------------------------------
-# .max() reduction: thin call to the separately-compiled reduction shim
-# ---------------------------------------------------------------------------
-
-def _lower_max(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_max_{dtype} device function."""
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-    elem_ty = _dtype_mlir_type(dtype)
-
-    data = ca_extract_data(ca_val)
-    size = ca_extract_size(ca_val)
-
-    shm = _shm_base_ptr(builder)
-    fname = max_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [elem_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[elem_ty], callee=callee.name.value,
-        operands_=[data, size, shm],
-    )
-    builder.store_var(target, result)
+def _lower_max(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    _lower_minmax(builder, target, args, "max")
 
 
-for _dt in _SUPPORTED_DTYPES:
-    def _make_max_lower(ca_type):
-        @registry.lower_getattr(ca_type, "max")
-        def _lower_ca_max_attr(context, builder, target, value, attr=None):
-            builder.store_var(target, DeferredMethodCall(value, _lower_max))
-    _make_max_lower(CooperativeArrayType(_dt))
-
-
-# ---------------------------------------------------------------------------
-# .std() reduction: thin call to the separately-compiled reduction shim
-# ---------------------------------------------------------------------------
-
-def _lower_std(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_std_{dtype} device function."""
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-
-    data = ca_extract_data(ca_val)
-    size = ca_extract_size(ca_val)
-
-    shm = _shm_base_ptr(builder)
-    f64_ty = ir.F64Type.get()
-    fname = std_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [f64_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[f64_ty], callee=callee.name.value,
-        operands_=[data, size, shm],
-    )
+def _lower_std_var(builder: MLIRLower, target: Var, args: list[Var], op: str) -> None:
+    ca_val = builder.load_var(args[0])
+    dtype = _self_dtype(builder, args[0])
+    result = _call_reduction(
+        builder, op, dtype, _reduction_operands(builder, ca_val),
+        ir.F64Type.get())
     if dtype == nb_types.float32:
         result = arith.truncf(ir.F32Type.get(), result)
     builder.store_var(target, result)
 
 
-for _dt in _SUPPORTED_DTYPES:
-    def _make_std_lower(ca_type):
-        @registry.lower_getattr(ca_type, "std")
-        def _lower_ca_std_attr(context, builder, target, value, attr=None):
-            builder.store_var(target, DeferredMethodCall(value, _lower_std))
-    _make_std_lower(CooperativeArrayType(_dt))
+def _lower_std(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    _lower_std_var(builder, target, args, "std")
 
 
-# ---------------------------------------------------------------------------
-# .var() reduction: thin call to the separately-compiled reduction shim
-# ---------------------------------------------------------------------------
+def _lower_var(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    _lower_std_var(builder, target, args, "var")
 
-def _lower_var(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_var_{dtype} device function."""
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
 
-    data = ca_extract_data(ca_val)
-    size = ca_extract_size(ca_val)
-
-    shm = _shm_base_ptr(builder)
-    f64_ty = ir.F64Type.get()
-    fname = var_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [f64_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[f64_ty], callee=callee.name.value,
-        operands_=[data, size, shm],
-    )
-    if dtype == nb_types.float32:
-        result = arith.truncf(ir.F32Type.get(), result)
+def _lower_corr(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    lhs_val = builder.load_var(args[0])
+    rhs_val = builder.load_var(args[1])
+    dtype = _self_dtype(builder, args[0])
+    operands = [
+        ca_extract_data(lhs_val),
+        ca_extract_data(rhs_val),
+        ca_extract_size(lhs_val),
+        _shm_base_ptr(builder),
+    ]
+    result = _call_reduction(builder, "corr", dtype, operands, ir.F64Type.get())
     builder.store_var(target, result)
 
 
-for _dt in _SUPPORTED_DTYPES:
-    def _make_var_lower(ca_type):
-        @registry.lower_getattr(ca_type, "var")
-        def _lower_ca_var_attr(context, builder, target, value, attr=None):
-            builder.store_var(target, DeferredMethodCall(value, _lower_var))
-    _make_var_lower(CooperativeArrayType(_dt))
-
-
-# ---------------------------------------------------------------------------
-# .corr(other) reduction: thin call to the separately-compiled reduction shim
-# ---------------------------------------------------------------------------
-
-def _lower_corr(builder, target, args, kwargs):
-    """Emit a call to the outlined _coop_corr_{dtype} device function."""
-    self_var = args[0]
-    other_var = args[1]
-    lhs_val = builder.load_var(self_var)
-    rhs_val = builder.load_var(other_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-
-    lhs_data = ca_extract_data(lhs_val)
-    rhs_data = ca_extract_data(rhs_val)
-    size = ca_extract_size(lhs_val)
-
-    shm = _shm_base_ptr(builder)
-    f64_ty = ir.F64Type.get()
-    fname = corr_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), _ptr(), T.i64(), _ptr()], [f64_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[f64_ty], callee=callee.name.value,
-        operands_=[lhs_data, rhs_data, size, shm],
-    )
+def _lower_idx(builder: MLIRLower, target: Var, args: list[Var], op: str) -> None:
+    ca_val = builder.load_var(args[0])
+    dtype = _self_dtype(builder, args[0])
+    operands = [
+        ca_extract_data(ca_val),
+        ca_extract_index(ca_val),
+        ca_extract_size(ca_val),
+        _shm_base_ptr(builder),
+    ]
+    result = _call_reduction(builder, op, dtype, operands, T.i64())
     builder.store_var(target, result)
 
 
-for _dt in _SUPPORTED_DTYPES:
-    def _make_corr_lower(ca_type):
-        @registry.lower_getattr(ca_type, "corr")
-        def _lower_ca_corr_attr(context, builder, target, value, attr=None):
-            builder.store_var(target, DeferredMethodCall(value, _lower_corr))
-    _make_corr_lower(CooperativeArrayType(_dt))
+def _lower_idxmax(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    _lower_idx(builder, target, args, "idxmax")
 
 
-# ---------------------------------------------------------------------------
-# .idxmax()/.idxmin() reductions: return the int64 index label of the extremum
-# ---------------------------------------------------------------------------
-
-def _lower_idx(builder, target, args, kwargs, *, is_max):
-    self_var = args[0]
-    ca_val = builder.load_var(self_var)
-    ca_type = builder.get_numba_type(self_var.name)
-    dtype = ca_type.dtype
-
-    data = ca_extract_data(ca_val)
-    index = ca_extract_index(ca_val)
-    size = ca_extract_size(ca_val)
-
-    shm = _shm_base_ptr(builder)
-    i64_ty = T.i64()
-    fname = idxmax_func_name(dtype) if is_max else idxmin_func_name(dtype)
-    ft = ir.FunctionType.get([_ptr(), _ptr(), T.i64(), _ptr()], [i64_ty])
-    gm = builder.mlir_gpu_module
-    callee = get_or_insert_function(fname, ft, gm)
-    result = func.call(
-        result=[i64_ty], callee=callee.name.value,
-        operands_=[data, index, size, shm],
-    )
-    builder.store_var(target, result)
+def _lower_idxmin(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+    _lower_idx(builder, target, args, "idxmin")
 
 
-def _lower_idxmax(builder, target, args, kwargs):
-    _lower_idx(builder, target, args, kwargs, is_max=True)
-
-
-def _lower_idxmin(builder, target, args, kwargs):
-    _lower_idx(builder, target, args, kwargs, is_max=False)
-
-
-for _dt in _SUPPORTED_DTYPES:
-    def _make_idx_lower(ca_type):
-        @registry.lower_getattr(ca_type, "idxmax")
-        def _lower_ca_idxmax_attr(context, builder, target, value, attr=None):
-            builder.store_var(
-                target, DeferredMethodCall(value, _lower_idxmax))
-
-        @registry.lower_getattr(ca_type, "idxmin")
-        def _lower_ca_idxmin_attr(context, builder, target, value, attr=None):
-            builder.store_var(
-                target, DeferredMethodCall(value, _lower_idxmin))
-    _make_idx_lower(CooperativeArrayType(_dt))
+# (attribute name -> lowering) for every CooperativeArray reduction.
+_REDUCTIONS: tuple[tuple[str, Callable], ...] = (
+    ("sum", _lower_sum),
+    ("mean", _lower_mean),
+    ("min", _lower_min),
+    ("max", _lower_max),
+    ("std", _lower_std),
+    ("var", _lower_var),
+    ("corr", _lower_corr),
+    ("idxmax", _lower_idxmax),
+    ("idxmin", _lower_idxmin),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -452,8 +283,15 @@ for _dt in _SUPPORTED_DTYPES:
 # and builds a non-owning view (meminfo=null).
 # ---------------------------------------------------------------------------
 
-def _get_base_ptr_from_memref(array_val):
-    """Extract the data pointer from a (possibly sliced) memref."""
+def _get_base_ptr_from_memref(array_val: ir.Value) -> ir.Value:
+    """Extract the data pointer from a (possibly sliced) memref.
+
+    Strides are intentionally ignored: the group/row columns handed to these
+    kernels are backed by libcudf column views of fixed-width types, which have
+    no stride concept (element i is always at data + (offset+i)*itemsize), and
+    the kernel arg is typed C-contiguous ([::1]) accordingly. So the element
+    stride is always 1 and only the slice's start offset (md[1]) matters.
+    """
     if not isinstance(array_val.type, ir.MemRefType):
         return array_val
     md = memref.extract_strided_metadata(array_val)
@@ -474,7 +312,7 @@ def _get_base_ptr_from_memref(array_val):
     return llvm.inttoptr(_ptr(), data_i64)
 
 
-def _register_cooperative_array_constructor():
+def _register_cooperative_array_constructor() -> None:
     from cudf.core.udf.mlir_backend.cooperative_typing import CooperativeArray as _ctor
 
     @registry.lower(_ctor, nb_types.Array, nb_types.Integer)
@@ -504,4 +342,32 @@ def _register_cooperative_array_constructor():
         builder.store_var(target, result)
 
 
-_register_cooperative_array_constructor()
+# ---------------------------------------------------------------------------
+# Registration (single entry point so its cost can be measured/deferred)
+# ---------------------------------------------------------------------------
+
+def _register_size(ca_type: CooperativeArrayType) -> None:
+    @registry.lower_getattr(ca_type, "size")
+    def _lower_size(context, builder, target, value, attr=None):
+        builder.store_var(target, ca_extract_size(builder.load_var(value)))
+
+
+def _register_reduction(
+    ca_type: CooperativeArrayType, name: str, lower_fn: Callable
+) -> None:
+    @registry.lower_getattr(ca_type, name)
+    def _lower_attr(context, builder, target, value, attr=None):
+        builder.store_var(target, DeferredMethodCall(value, lower_fn))
+
+
+def register_cooperative_lowerings() -> None:
+    """Install .size / reduction getattr lowerings and the constructor."""
+    for dt in _SUPPORTED_DTYPES:
+        ca_type = CooperativeArrayType(dt)
+        _register_size(ca_type)
+        for name, lower_fn in _REDUCTIONS:
+            _register_reduction(ca_type, name, lower_fn)
+    _register_cooperative_array_constructor()
+
+
+register_cooperative_lowerings()

@@ -1,22 +1,25 @@
 """
 Compile the cooperative reduction device functions to a single PTX "shim".
 
-Every (reduction, dtype) combination is emitted as a public ``func.func`` into
-*one* ``gpu.module``, compiled through the full MLIR->LLVM->PTX pipeline once per
-compute capability (cached), and exposed as a :class:`PTXSource` via
-``cooperative_reductions_linkable()``. Callers link it into a kernel by passing
+Every (reduction, dtype) combination is emitted as a public ``func.func``
+(``numba_cuda_mlir._mlir.dialects.func``) into *one* ``gpu.module``, compiled
+through the full MLIR->LLVM->PTX pipeline once per compute capability (cached),
+and exposed as a :class:`PTXSource` via ``cooperative_reductions_linkable()``.
+Callers link it into a kernel by passing
 ``link=[cooperative_reductions_linkable()]`` to ``cuda.jit`` -- mirroring how the
-legacy numba-cuda backend linked its ``udf_cpp`` block-reduction shim. The kernel
-module only contains declarations (no bodies), so the MLIR inliner cannot inline
-them and the linker resolves the calls against this shim.
+legacy backend linked its block-reduction shim. The kernel module only contains
+declarations (no bodies), so the MLIR inliner cannot inline them and the linker
+resolves the calls against this shim.
 
 Shared-memory contract: the outlined functions receive the dynamic shared memory
 base pointer as their last argument. gpu.dynamic_shared_memory only works inside
 kernels; device functions must receive it externally.
 """
 
+from contextlib import contextmanager
 from functools import lru_cache
 
+from numba_cuda_mlir import cuda
 from numba_cuda_mlir._mlir import ir
 from numba_cuda_mlir._mlir.extras import types as T
 from numba_cuda_mlir._mlir.dialects import arith, func, gpu, llvm, math as mlir_math, scf
@@ -77,22 +80,23 @@ def _zero_val(mlir_ty):
     raise NotImplementedError
 
 
+# INT32_MIN: the sentinel MLIR's ``llvm.getelementptr`` API uses in its indices
+# list to mark a *dynamic* (SSA value) index rather than a constant one.
 GEP_DYNAMIC_INDEX = -2147483648
 
 
-def _gep_typed(base_ptr, index_i64, elem_mlir_type):
+def _gep_typed(base_ptr, index_i64, elem_mlir_type, ptr_ty=None):
+    """Typed GEP by a dynamic ``index_i64``. ``ptr_ty`` defaults to the generic
+    address space; pass ``_ptr3()`` for shared-memory (addr-space-3) pointers."""
     return llvm.getelementptr(
-        _ptr(), base_ptr, [index_i64], [GEP_DYNAMIC_INDEX],
-        elem_mlir_type, None,
+        ptr_ty if ptr_ty is not None else _ptr(),
+        base_ptr, [index_i64], [GEP_DYNAMIC_INDEX], elem_mlir_type, None,
     )
 
 
 def _gep_typed3(base_ptr, index_i64, elem_mlir_type):
     """GEP on address-space-3 pointers (shared memory)."""
-    return llvm.getelementptr(
-        _ptr3(), base_ptr, [index_i64], [GEP_DYNAMIC_INDEX],
-        elem_mlir_type, None,
-    )
+    return _gep_typed(base_ptr, index_i64, elem_mlir_type, _ptr3())
 
 
 def _tid_x():
@@ -116,40 +120,9 @@ def _widen_to_f64(val, elem_ty, f64_ty):
 # Function name convention
 # ---------------------------------------------------------------------------
 
-def sum_func_name(dtype):
-    return f"_coop_sum_{_dtype_tag(dtype)}"
-
-
-def mean_func_name(dtype):
-    return f"_coop_mean_{_dtype_tag(dtype)}"
-
-
-def min_func_name(dtype):
-    return f"_coop_min_{_dtype_tag(dtype)}"
-
-
-def max_func_name(dtype):
-    return f"_coop_max_{_dtype_tag(dtype)}"
-
-
-def std_func_name(dtype):
-    return f"_coop_std_{_dtype_tag(dtype)}"
-
-
-def var_func_name(dtype):
-    return f"_coop_var_{_dtype_tag(dtype)}"
-
-
-def corr_func_name(dtype):
-    return f"_coop_corr_{_dtype_tag(dtype)}"
-
-
-def idxmax_func_name(dtype):
-    return f"_coop_idxmax_{_dtype_tag(dtype)}"
-
-
-def idxmin_func_name(dtype):
-    return f"_coop_idxmin_{_dtype_tag(dtype)}"
+def func_name(op, dtype):
+    """Outlined device-function symbol, e.g. ``_coop_sum_i64``."""
+    return f"_coop_{op}_{_dtype_tag(dtype)}"
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +139,49 @@ def _shm3_base(shm_generic_ptr, byte_offset):
 
 
 # ---------------------------------------------------------------------------
-# Block tree-reduction primitive (correct for non-power-of-two block sizes)
+# Reduction primitives shared by every outlined function
 # ---------------------------------------------------------------------------
+
+@contextmanager
+def _device_reduction(name, input_types, result_type):
+    """Emit the boilerplate for one cooperative device function.
+
+    Creates the public ``func.func`` named ``name`` taking ``input_types`` plus a
+    trailing shared-memory base pointer, opens its entry block, and yields
+    ``(inputs, tid, bdim, scratch)`` where ``inputs`` are the non-shm arguments
+    and ``scratch`` is the (addr-space-3) reduction scratch region. The caller
+    emits the body and the ``func.ReturnOp`` inside the ``with`` block.
+    """
+    function_type = ir.FunctionType.get([*input_types, _ptr()], [result_type])
+    fn = func.FuncOp(name=name, type=function_type, visibility="public")
+    entry = fn.add_entry_block()
+    with ir.InsertionPoint(entry):
+        inputs = list(fn.arguments[:-1])
+        shm_base = fn.arguments[-1]
+        tid = _tid_x()
+        bdim = _bdim_x()
+        scratch = _shm3_base(shm_base, _SHM_REDUCTION_OFFSET)
+        yield inputs, tid, bdim, scratch
+
+
+def _emit_thread_reduce(inputs, size, tid, bdim, initial_values, update):
+    """Strided per-thread partial reduction.
+
+    ``inputs`` is a sequence of ``(data_ptr, elem_ty)``; each thread strides over
+    ``[tid, tid+bdim, ...)`` up to ``size``. ``update(i, accumulators, elements)``
+    returns the new accumulators. Returns the per-thread accumulators (one per
+    ``initial_values`` entry).
+    """
+    loop = scf.ForOp(tid, size, bdim, list(initial_values))
+    with ir.InsertionPoint(loop.body):
+        i = loop.induction_variable
+        accumulators = list(loop.body.arguments[1:])
+        elements = [
+            llvm.load(ty, _gep_typed(ptr, i, ty)) for ptr, ty in inputs
+        ]
+        scf.YieldOp(list(update(i, accumulators, elements)))
+    return list(loop.results)
+
 
 def _emit_tree_reduce(bdim, tid, combine_fn):
     """Emit an in-place shared-memory tree reduction over ``bdim`` slots.
@@ -207,27 +221,30 @@ def _emit_tree_reduce(bdim, tid, combine_fn):
         scf.YieldOp([half])
 
 
-def _emit_tree_sum_f64(shm3, value, bdim, tid):
-    """Block-reduce an f64 ``value`` by addition; broadcast the total.
+def _emit_block_reduce(shm, value, value_ty, bdim, tid, combine):
+    """Store each thread's ``value`` to ``shm[tid]``, tree-reduce with the binary
+    ``combine(lhs, rhs)``, and return the result broadcast to all threads.
 
-    Stores ``value`` to ``shm[tid]``, tree-reduces, and returns the grand total
-    (identical on every thread). Ends with a barrier so the same scratch may be
-    reused by a subsequent pass.
+    Ends with a barrier so ``shm`` may be reused by a subsequent pass.
     """
-    f64_ty = ir.F64Type.get()
     zero = _const_i64(0)
-    llvm.store(value, _gep_typed3(shm3, tid, f64_ty))
+    llvm.store(value, _gep_typed3(shm, tid, value_ty))
     gpu.barrier()
 
     def _combine(partner):
-        mv = llvm.load(f64_ty, _gep_typed3(shm3, tid, f64_ty))
-        pv = llvm.load(f64_ty, _gep_typed3(shm3, partner, f64_ty))
-        llvm.store(arith.addf(mv, pv), _gep_typed3(shm3, tid, f64_ty))
+        mv = llvm.load(value_ty, _gep_typed3(shm, tid, value_ty))
+        pv = llvm.load(value_ty, _gep_typed3(shm, partner, value_ty))
+        llvm.store(combine(mv, pv), _gep_typed3(shm, tid, value_ty))
 
     _emit_tree_reduce(bdim, tid, _combine)
-    total = llvm.load(f64_ty, _gep_typed3(shm3, zero, f64_ty))
+    result = llvm.load(value_ty, _gep_typed3(shm, zero, value_ty))
     gpu.barrier()
-    return total
+    return result
+
+
+def _emit_tree_sum_f64(shm, value, bdim, tid):
+    """Block-reduce an f64 ``value`` by addition; broadcast the total."""
+    return _emit_block_reduce(shm, value, ir.F64Type.get(), bdim, tid, arith.addf)
 
 
 # ---------------------------------------------------------------------------
@@ -241,80 +258,50 @@ def _emit_sum(dtype):
     Shared-memory tree reduction. Floats skip NaN (pandas skipna=True, all-NaN
     sum is 0.0); integers accumulate in int64 (overflow-safe promotion).
     """
-    name = sum_func_name(dtype)
     elem_ty = _dtype_mlir_type(dtype)
     is_float = isinstance(elem_ty, (ir.F64Type, ir.F32Type))
     acc_ty = elem_ty if is_float else T.i64()
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [acc_ty])
-    fn = func.FuncOp(name=name, type=ft, visibility="public")
-    entry = fn.add_entry_block()
+    add = arith.addf if is_float else arith.addi
 
-    with ir.InsertionPoint(entry):
-        data, size, shm_base = fn.arguments
-        shm3 = _shm3_base(shm_base, _SHM_REDUCTION_OFFSET)
-
-        tid = _tid_x()
-        bdim = _bdim_x()
+    with _device_reduction(
+        func_name("sum", dtype), [_ptr(), T.i64()], acc_ty
+    ) as (inputs, tid, bdim, scratch):
+        data, size = inputs
         zero_acc = _zero_val(acc_ty)
-        zero = _const_i64(0)
 
-        partial = scf.ForOp(tid, size, bdim, [zero_acc])
-        with ir.InsertionPoint(partial.body):
-            i = partial.induction_variable
-            acc = partial.body.arguments[1]
-            elem = llvm.load(elem_ty, _gep_typed(data, i, elem_ty))
+        def update(i, acc, elems):
+            elem = elems[0]
             if is_float:
                 is_nan = arith.cmpf(arith.CmpFPredicate.UNO, elem, elem)
-                elem = arith.select(is_nan, zero_acc, elem)
-                new_acc = arith.addf(acc, elem)
-            else:
-                if elem_ty != acc_ty:
-                    elem = arith.extsi(acc_ty, elem)
-                new_acc = arith.addi(acc, elem)
-            scf.YieldOp([new_acc])
+                return [add(acc[0], arith.select(is_nan, zero_acc, elem))]
+            if elem_ty != acc_ty:
+                elem = arith.extsi(acc_ty, elem)
+            return [add(acc[0], elem)]
 
-        llvm.store(partial.results[0], _gep_typed3(shm3, tid, acc_ty))
-        gpu.barrier()
-
-        def _combine(partner):
-            mv = llvm.load(acc_ty, _gep_typed3(shm3, tid, acc_ty))
-            pv = llvm.load(acc_ty, _gep_typed3(shm3, partner, acc_ty))
-            r = arith.addf(mv, pv) if is_float else arith.addi(mv, pv)
-            llvm.store(r, _gep_typed3(shm3, tid, acc_ty))
-
-        _emit_tree_reduce(bdim, tid, _combine)
-        result = llvm.load(acc_ty, _gep_typed3(shm3, zero, acc_ty))
+        (partial,) = _emit_thread_reduce(
+            [(data, elem_ty)], size, tid, bdim, [zero_acc], update)
+        result = _emit_block_reduce(scratch, partial, acc_ty, bdim, tid, add)
         func.ReturnOp([result])
 
 
 def _emit_mean(dtype):
     """_coop_mean_{dtype}(ptr data, i64 size, ptr shm) -> f64."""
-    name = mean_func_name(dtype)
     elem_ty = _dtype_mlir_type(dtype)
     f64_ty = ir.F64Type.get()
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [f64_ty])
-    fn = func.FuncOp(name=name, type=ft, visibility="public")
-    entry = fn.add_entry_block()
 
-    with ir.InsertionPoint(entry):
-        data, size, shm_base = fn.arguments
-        shm3 = _shm3_base(shm_base, _SHM_REDUCTION_OFFSET)
+    with _device_reduction(
+        func_name("mean", dtype), [_ptr(), T.i64()], f64_ty
+    ) as (inputs, tid, bdim, scratch):
+        data, size = inputs
+        zero = arith.constant(f64_ty, 0.0)
 
-        tid = _tid_x()
-        bdim = _bdim_x()
-        zero_f64 = arith.constant(f64_ty, 0.0)
+        def update(i, acc, elems):
+            return [arith.addf(acc[0], _widen_to_f64(elems[0], elem_ty, f64_ty))]
 
-        partial = scf.ForOp(tid, size, bdim, [zero_f64])
-        with ir.InsertionPoint(partial.body):
-            i = partial.induction_variable
-            acc = partial.body.arguments[1]
-            elem = llvm.load(elem_ty, _gep_typed(data, i, elem_ty))
-            e64 = _widen_to_f64(elem, elem_ty, f64_ty)
-            scf.YieldOp([arith.addf(acc, e64)])
-
-        total = _emit_tree_sum_f64(shm3, partial.results[0], bdim, tid)
-        mean_val = arith.divf(total, arith.uitofp(f64_ty, size))
-        func.ReturnOp([mean_val])
+        (partial,) = _emit_thread_reduce(
+            [(data, elem_ty)], size, tid, bdim, [zero], update)
+        total = _emit_tree_sum_f64(scratch, partial, bdim, tid)
+        func.ReturnOp([arith.divf(total, arith.uitofp(f64_ty, size))])
 
 
 def _emit_minmax(dtype, *, is_max):
@@ -323,47 +310,29 @@ def _emit_minmax(dtype, *, is_max):
     Shared-memory tree reduction. Floats use minnumf/maxnumf, which skip NaN
     operands (pandas skipna=True; see #14860); integers use minsi/maxsi.
     """
-    name = max_func_name(dtype) if is_max else min_func_name(dtype)
     elem_ty = _dtype_mlir_type(dtype)
     is_float = isinstance(elem_ty, (ir.F64Type, ir.F32Type))
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [elem_ty])
-    fn = func.FuncOp(name=name, type=ft, visibility="public")
-    entry = fn.add_entry_block()
 
-    with ir.InsertionPoint(entry):
-        data, size, shm_base = fn.arguments
-        shm3 = _shm3_base(shm_base, _SHM_REDUCTION_OFFSET)
+    def mm(a, b):
+        if is_float:
+            return arith.maxnumf(a, b) if is_max else arith.minnumf(a, b)
+        return arith.maxsi(a, b) if is_max else arith.minsi(a, b)
 
-        tid = _tid_x()
-        bdim = _bdim_x()
-        zero = _const_i64(0)
-
-        def _mm(a, b):
-            if is_float:
-                return arith.maxnumf(a, b) if is_max else arith.minnumf(a, b)
-            return arith.maxsi(a, b) if is_max else arith.minsi(a, b)
-
+    name = func_name("max" if is_max else "min", dtype)
+    with _device_reduction(
+        name, [_ptr(), T.i64()], elem_ty
+    ) as (inputs, tid, bdim, scratch):
+        data, size = inputs
         # Threads with no elements seed from data[0], a real element, so they
         # never skew the min/max.
-        first_elem = llvm.load(elem_ty, _gep_typed(data, zero, elem_ty))
+        first_elem = llvm.load(elem_ty, _gep_typed(data, _const_i64(0), elem_ty))
 
-        partial = scf.ForOp(tid, size, bdim, [first_elem])
-        with ir.InsertionPoint(partial.body):
-            i = partial.induction_variable
-            acc = partial.body.arguments[1]
-            elem = llvm.load(elem_ty, _gep_typed(data, i, elem_ty))
-            scf.YieldOp([_mm(acc, elem)])
+        def update(i, acc, elems):
+            return [mm(acc[0], elems[0])]
 
-        llvm.store(partial.results[0], _gep_typed3(shm3, tid, elem_ty))
-        gpu.barrier()
-
-        def _combine(partner):
-            mv = llvm.load(elem_ty, _gep_typed3(shm3, tid, elem_ty))
-            pv = llvm.load(elem_ty, _gep_typed3(shm3, partner, elem_ty))
-            llvm.store(_mm(mv, pv), _gep_typed3(shm3, tid, elem_ty))
-
-        _emit_tree_reduce(bdim, tid, _combine)
-        result = llvm.load(elem_ty, _gep_typed3(shm3, zero, elem_ty))
+        (partial,) = _emit_thread_reduce(
+            [(data, elem_ty)], size, tid, bdim, [first_elem], update)
+        result = _emit_block_reduce(scratch, partial, elem_ty, bdim, tid, mm)
         func.ReturnOp([result])
 
 
@@ -380,44 +349,34 @@ def _emit_std(dtype, *, take_sqrt, name):
     """
     elem_ty = _dtype_mlir_type(dtype)
     f64_ty = ir.F64Type.get()
-    ft = ir.FunctionType.get([_ptr(), T.i64(), _ptr()], [f64_ty])
-    fn = func.FuncOp(name=name, type=ft, visibility="public")
-    entry = fn.add_entry_block()
 
-    with ir.InsertionPoint(entry):
-        data, size, shm_base = fn.arguments
-        shm3 = _shm3_base(shm_base, _SHM_REDUCTION_OFFSET)
-
-        tid = _tid_x()
-        bdim = _bdim_x()
-        zero_f64 = arith.constant(f64_ty, 0.0)
+    with _device_reduction(
+        name, [_ptr(), T.i64()], f64_ty
+    ) as (inputs, tid, bdim, scratch):
+        data, size = inputs
+        zero = arith.constant(f64_ty, 0.0)
+        n_f64 = arith.uitofp(f64_ty, size)
 
         # Pass 1: grand mean.
-        p1 = scf.ForOp(tid, size, bdim, [zero_f64])
-        with ir.InsertionPoint(p1.body):
-            i = p1.induction_variable
-            acc = p1.body.arguments[1]
-            elem = llvm.load(elem_ty, _gep_typed(data, i, elem_ty))
-            scf.YieldOp([arith.addf(acc, _widen_to_f64(elem, elem_ty, f64_ty))])
-        n_f64 = arith.uitofp(f64_ty, size)
-        mean = arith.divf(
-            _emit_tree_sum_f64(shm3, p1.results[0], bdim, tid), n_f64)
+        def upd_sum(i, acc, elems):
+            return [arith.addf(acc[0], _widen_to_f64(elems[0], elem_ty, f64_ty))]
+
+        (p1,) = _emit_thread_reduce(
+            [(data, elem_ty)], size, tid, bdim, [zero], upd_sum)
+        mean = arith.divf(_emit_tree_sum_f64(scratch, p1, bdim, tid), n_f64)
 
         # Pass 2: sum of squared deviations.
-        p2 = scf.ForOp(tid, size, bdim, [zero_f64])
-        with ir.InsertionPoint(p2.body):
-            i = p2.induction_variable
-            acc = p2.body.arguments[1]
-            elem = llvm.load(elem_ty, _gep_typed(data, i, elem_ty))
-            d = arith.subf(_widen_to_f64(elem, elem_ty, f64_ty), mean)
-            scf.YieldOp([arith.addf(acc, arith.mulf(d, d))])
-        total_ss = _emit_tree_sum_f64(shm3, p2.results[0], bdim, tid)
+        def upd_ss(i, acc, elems):
+            d = arith.subf(_widen_to_f64(elems[0], elem_ty, f64_ty), mean)
+            return [arith.addf(acc[0], arith.mulf(d, d))]
 
-        one_f64 = arith.constant(f64_ty, 1.0)
-        variance = arith.divf(total_ss, arith.subf(n_f64, one_f64))
+        (p2,) = _emit_thread_reduce(
+            [(data, elem_ty)], size, tid, bdim, [zero], upd_ss)
+        total_ss = _emit_tree_sum_f64(scratch, p2, bdim, tid)
 
-        result = mlir_math.sqrt(variance) if take_sqrt else variance
-        func.ReturnOp([result])
+        one = arith.constant(f64_ty, 1.0)
+        variance = arith.divf(total_ss, arith.subf(n_f64, one))
+        func.ReturnOp([mlir_math.sqrt(variance) if take_sqrt else variance])
 
 
 def _emit_corr(dtype):
@@ -427,65 +386,52 @@ def _emit_corr(dtype):
     (means first, then centered sums) to match pandas and avoid catastrophic
     cancellation. The ddof factor cancels, so correlation reduces to
     S_lr / sqrt(S_ll * S_rr). Returns NaN when either centered sum of squares is
-    zero. Integer inputs only (float     corr is rejected in typing).
+    zero. Integer inputs only (float corr is rejected in typing).
     """
-    name = corr_func_name(dtype)
     elem_ty = _dtype_mlir_type(dtype)
     f64_ty = ir.F64Type.get()
-    ft = ir.FunctionType.get([_ptr(), _ptr(), T.i64(), _ptr()], [f64_ty])
-    fn = func.FuncOp(name=name, type=ft, visibility="public")
-    entry = fn.add_entry_block()
 
-    with ir.InsertionPoint(entry):
-        lhs, rhs, size, shm_base = fn.arguments
-        shm3 = _shm3_base(shm_base, _SHM_REDUCTION_OFFSET)
+    def w(elem):
+        return _widen_to_f64(elem, elem_ty, f64_ty)
 
-        tid = _tid_x()
-        bdim = _bdim_x()
-        zero_f64 = arith.constant(f64_ty, 0.0)
-
-        def _load(ptr, i):
-            return _widen_to_f64(
-                llvm.load(elem_ty, _gep_typed(ptr, i, elem_ty)),
-                elem_ty, f64_ty,
-            )
+    with _device_reduction(
+        func_name("corr", dtype), [_ptr(), _ptr(), T.i64()], f64_ty
+    ) as (inputs, tid, bdim, scratch):
+        lhs, rhs, size = inputs
+        zero = arith.constant(f64_ty, 0.0)
+        n_f64 = arith.uitofp(f64_ty, size)
 
         # Pass 1: means.
-        p1 = scf.ForOp(tid, size, bdim, [zero_f64, zero_f64])
-        with ir.InsertionPoint(p1.body):
-            i = p1.induction_variable
-            a_l, a_r = p1.body.arguments[1:3]
-            scf.YieldOp([
-                arith.addf(a_l, _load(lhs, i)),
-                arith.addf(a_r, _load(rhs, i)),
-            ])
-        n_f64 = arith.uitofp(f64_ty, size)
-        mean_l = arith.divf(
-            _emit_tree_sum_f64(shm3, p1.results[0], bdim, tid), n_f64)
-        mean_r = arith.divf(
-            _emit_tree_sum_f64(shm3, p1.results[1], bdim, tid), n_f64)
+        def upd_means(i, acc, elems):
+            return [arith.addf(acc[0], w(elems[0])),
+                    arith.addf(acc[1], w(elems[1]))]
+
+        s_l, s_r = _emit_thread_reduce(
+            [(lhs, elem_ty), (rhs, elem_ty)], size, tid, bdim,
+            [zero, zero], upd_means)
+        mean_l = arith.divf(_emit_tree_sum_f64(scratch, s_l, bdim, tid), n_f64)
+        mean_r = arith.divf(_emit_tree_sum_f64(scratch, s_r, bdim, tid), n_f64)
 
         # Pass 2: centered sums S_lr, S_ll, S_rr.
-        p2 = scf.ForOp(tid, size, bdim, [zero_f64, zero_f64, zero_f64])
-        with ir.InsertionPoint(p2.body):
-            i = p2.induction_variable
-            a_lr, a_ll, a_rr = p2.body.arguments[1:4]
-            dl = arith.subf(_load(lhs, i), mean_l)
-            dr = arith.subf(_load(rhs, i), mean_r)
-            scf.YieldOp([
-                arith.addf(a_lr, arith.mulf(dl, dr)),
-                arith.addf(a_ll, arith.mulf(dl, dl)),
-                arith.addf(a_rr, arith.mulf(dr, dr)),
-            ])
-        s_lr = _emit_tree_sum_f64(shm3, p2.results[0], bdim, tid)
-        s_ll = _emit_tree_sum_f64(shm3, p2.results[1], bdim, tid)
-        s_rr = _emit_tree_sum_f64(shm3, p2.results[2], bdim, tid)
+        def upd_centered(i, acc, elems):
+            dl = arith.subf(w(elems[0]), mean_l)
+            dr = arith.subf(w(elems[1]), mean_r)
+            return [arith.addf(acc[0], arith.mulf(dl, dr)),
+                    arith.addf(acc[1], arith.mulf(dl, dl)),
+                    arith.addf(acc[2], arith.mulf(dr, dr))]
+
+        p_lr, p_ll, p_rr = _emit_thread_reduce(
+            [(lhs, elem_ty), (rhs, elem_ty)], size, tid, bdim,
+            [zero, zero, zero], upd_centered)
+        s_lr = _emit_tree_sum_f64(scratch, p_lr, bdim, tid)
+        s_ll = _emit_tree_sum_f64(scratch, p_ll, bdim, tid)
+        s_rr = _emit_tree_sum_f64(scratch, p_rr, bdim, tid)
 
         denom = arith.mulf(mlir_math.sqrt(s_ll), mlir_math.sqrt(s_rr))
-        is_zero = arith.cmpf(arith.CmpFPredicate.OEQ, denom, zero_f64)
+        is_zero = arith.cmpf(arith.CmpFPredicate.OEQ, denom, zero)
         nan_f64 = arith.constant(f64_ty, float("nan"))
-        result = arith.select(is_zero, nan_f64, arith.divf(s_lr, denom))
-        func.ReturnOp([result])
+        func.ReturnOp(
+            [arith.select(is_zero, nan_f64, arith.divf(s_lr, denom))])
 
 
 def _emit_idx(dtype, *, is_max):
@@ -497,23 +443,18 @@ def _emit_idx(dtype, *, is_max):
     legacy BlockIdxMax/BlockIdxMin. Uses two shared-memory scratch arrays (value
     + index) and a tree reduction that carries the (value, index) pair.
     """
-    name = idxmax_func_name(dtype) if is_max else idxmin_func_name(dtype)
-    _SHM_IDX_OFFSET = _SHM_REDUCTION_OFFSET + _MAX_BLOCK_SIZE * 8
-
     elem_ty = _dtype_mlir_type(dtype)
     is_float = isinstance(elem_ty, (ir.F64Type, ir.F32Type))
     i64 = T.i64()
-    ft = ir.FunctionType.get([_ptr(), _ptr(), i64, _ptr()], [i64])
-    fn = func.FuncOp(name=name, type=ft, visibility="public")
-    entry = fn.add_entry_block()
+    name = func_name("idxmax" if is_max else "idxmin", dtype)
 
-    with ir.InsertionPoint(entry):
-        data, index, size, shm_base = fn.arguments
-        shm_val = _shm3_base(shm_base, _SHM_REDUCTION_OFFSET)
-        shm_idx = _shm3_base(shm_base, _SHM_IDX_OFFSET)
-
-        tid = _tid_x()
-        bdim = _bdim_x()
+    with _device_reduction(
+        name, [_ptr(), _ptr(), i64], i64
+    ) as (inputs, tid, bdim, shm_val):
+        data, index, size = inputs
+        # Second scratch region (index payloads) just past the value region.
+        shm_idx = _gep_typed(
+            shm_val, _const_i64(_MAX_BLOCK_SIZE * 8), T.i8(), _ptr3())
         zero = _const_i64(0)
 
         # Sentinel "worst" value so empty/NaN-only threads always lose.
@@ -548,23 +489,22 @@ def _emit_idx(dtype, *, is_max):
             i_smaller = arith.cmpi(arith.CmpIPredicate.slt, cand_i, best_i)
             return arith.ori(strict, arith.andi(eq, i_smaller))
 
-        partial = scf.ForOp(tid, size, bdim, [sentinel, idx_sentinel])
-        with ir.InsertionPoint(partial.body):
-            i = partial.induction_variable
-            best_v = partial.body.arguments[1]
-            best_i = partial.body.arguments[2]
-            elem = llvm.load(elem_ty, _gep_typed(data, i, elem_ty))
-            idx = llvm.load(i64, _gep_typed(index, i, i64))
+        def update(i, acc, elems):
+            elem, idx = elems
+            best_v, best_i = acc
             better = _is_better(elem, best_v, idx, best_i)
             if is_float:
                 not_nan = arith.cmpf(arith.CmpFPredicate.ORD, elem, elem)
                 better = arith.andi(better, not_nan)
-            new_v = arith.select(better, elem, best_v)
-            new_i = arith.select(better, idx, best_i)
-            scf.YieldOp([new_v, new_i])
+            return [arith.select(better, elem, best_v),
+                    arith.select(better, idx, best_i)]
 
-        llvm.store(partial.results[0], _gep_typed3(shm_val, tid, elem_ty))
-        llvm.store(partial.results[1], _gep_typed3(shm_idx, tid, i64))
+        best_v, best_i = _emit_thread_reduce(
+            [(data, elem_ty), (index, i64)], size, tid, bdim,
+            [sentinel, idx_sentinel], update)
+
+        llvm.store(best_v, _gep_typed3(shm_val, tid, elem_ty))
+        llvm.store(best_i, _gep_typed3(shm_idx, tid, i64))
         gpu.barrier()
 
         def _combine(partner):
@@ -590,8 +530,7 @@ def _emit_idx(dtype, *, is_max):
         all_skipped = arith.cmpi(
             arith.CmpIPredicate.eq, result_idx, idx_sentinel)
         idx0 = llvm.load(i64, _gep_typed(index, zero, i64))
-        result = arith.select(all_skipped, idx0, result_idx)
-        func.ReturnOp([result])
+        func.ReturnOp([arith.select(all_skipped, idx0, result_idx)])
 
 
 # ---------------------------------------------------------------------------
@@ -612,8 +551,8 @@ def _build_all_reductions_module():
                 _emit_mean(dt)
                 _emit_minmax(dt, is_max=False)
                 _emit_minmax(dt, is_max=True)
-                _emit_std(dt, take_sqrt=True, name=std_func_name(dt))
-                _emit_std(dt, take_sqrt=False, name=var_func_name(dt))
+                _emit_std(dt, take_sqrt=True, name=func_name("std", dt))
+                _emit_std(dt, take_sqrt=False, name=func_name("var", dt))
                 _emit_corr(dt)
                 _emit_idx(dt, is_max=True)
                 _emit_idx(dt, is_max=False)
@@ -680,7 +619,5 @@ def cooperative_reductions_linkable(cc=None):
     The PTX is built and compiled once per compute capability and cached.
     """
     if cc is None:
-        from numba_cuda_mlir import cuda
-
         cc = cuda.get_current_device().compute_capability
     return _reductions_linkable_for_cc(f"{cc[0]}{cc[1]}")

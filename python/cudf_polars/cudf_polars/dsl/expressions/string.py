@@ -285,10 +285,14 @@ class StringFunction(Expr):
                     "for empty strings"
                 )
         elif self.name is StringFunction.Name.Slice:
-            if not all(
-                isinstance(child, Literal) and not isinstance(child.value, float)
-                for child in self.children[1:]
-            ):
+            offsets = [
+                child for child in self.children[1:] if isinstance(child, Literal)
+            ]
+            if len(offsets) != len(self.children) - 1:
+                raise NotImplementedError(
+                    "Slice only supports literal start and stop values"
+                )
+            if any(isinstance(child.value, float) for child in offsets):
                 raise NotImplementedError(
                     "Slice does not support float literal start and stop values"
                 )
@@ -1038,6 +1042,16 @@ class StringFunction(Expr):
             )
         elif self.name is StringFunction.Name.EndsWith:
             column, suffix = columns
+            if suffix.is_scalar and suffix.null_count:
+                # libcudf requires a valid target; a null suffix matches nothing
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
             return Column(
                 plc.strings.find.ends_with(
                     column.obj,
@@ -1050,6 +1064,16 @@ class StringFunction(Expr):
             )
         elif self.name is StringFunction.Name.StartsWith:
             column, prefix = columns
+            if prefix.is_scalar and prefix.null_count:
+                # libcudf requires a valid target; a null prefix matches nothing
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
             return Column(
                 plc.strings.find.starts_with(
                     column.obj,

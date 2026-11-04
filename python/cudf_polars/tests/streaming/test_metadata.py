@@ -776,6 +776,45 @@ def _make_order_scheme(
     )
 
 
+@pytest.mark.spmd
+def test_sort_preserves_global_row_order(spmd_engine_factory) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=1,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    df = pl.LazyFrame({"k": [1, 1, 2]})
+    base_ir = Translator(df._ldf.visit(), engine).translate_ir()
+    hinted_ir = MapFunction(
+        base_ir.schema, "hint_sorted", (("k",), (False,), (False,)), base_ir
+    )
+    sort_ir = Sort(
+        base_ir.schema,
+        (expr.NamedExpr("k", expr.Col(base_ir.schema["k"], "k")),),
+        (plc.types.Order.ASCENDING,),
+        (plc.types.NullOrder.BEFORE,),
+        stable=False,
+        zlice=None,
+        df=hinted_ir,
+    )
+
+    result, metadata_collector = evaluate_logical_plan(
+        sort_ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+    )
+
+    assert result["k"].to_list() == [1, 1, 2]
+    assert metadata_collector is not None
+    (metadata,) = metadata_collector
+    assert metadata.partitioning is not None
+    assert is_row_ordered_by(
+        metadata.partitioning,
+        sort_to_order_keys(sort_ir),
+        scope=RowOrderingScope.GLOBAL,
+    )
+
+
 def test_remap_partitioning_drops_only_row_order(spmd_engine) -> None:
     engine = pl.GPUEngine(executor="in-memory", raise_on_fail=True)
     ordering = _make_ordering(spmd_engine.context, key_indices=(0,), strict=True)
@@ -844,7 +883,7 @@ def test_set_sorted_dataframe_extracts_ordering_boundaries(spmd_engine_factory):
         [DataType(pl.Int64())],
         boundaries.stream,
     ).to_polars()
-    assert boundary_df["k"].to_list() == [2, 3]
+    assert boundary_df["k"].to_list() == [1, 2]
 
 
 def test_apply_ordering_metadata_marks_leading_key_only(spmd_engine) -> None:

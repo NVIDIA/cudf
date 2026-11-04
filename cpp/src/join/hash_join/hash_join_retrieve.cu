@@ -3,20 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "common.cuh"
-#include "dispatch.cuh"
 #include "hash_csr_kernels.cuh"
 #include "join/join_common_utils.hpp"
 
 #include <cudf/detail/device_scalar.hpp>
-#include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/prefetch.hpp>
 
 #include <rmm/device_uvector.hpp>
 
@@ -25,8 +20,6 @@
 
 #include <memory>
 #include <optional>
-#include <stdexcept>
-#include <tuple>
 #include <utility>
 
 namespace cudf::detail {
@@ -74,14 +67,11 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   std::optional<size_type> unmatched_right_rows;
   // Release retrieval scratch before full-join finalization allocates its match flags.
   auto join_indices = [&] {
+    cuda::device_buffer<size_type> probe_groups(stream, temp_mr, left.num_rows(), cuda::no_init);
     // Only offsets and group IDs are needed to emit the output. Keep counting scratch out
     // of the output allocation's lifetime.
-    auto [offsets, probe_groups, actual_size] = [&] {
-      auto const preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
-        left, stream, cudf::get_current_device_resource_ref());
-      auto match_counts = cudf::detail::make_zeroed_device_buffer_async<size_type>(
-        static_cast<std::size_t>(left.num_rows()) + 1, stream, temp_mr);
-      cuda::device_buffer<size_type> probe_groups(stream, temp_mr, left.num_rows(), cuda::no_init);
+    auto [offsets, join_size] = [&] {
+      cuda::device_buffer<size_type> match_counts(stream, temp_mr, left.num_rows(), cuda::no_init);
       // A full join appends the unmatched right rows, so track which build rows the probe matched
       // to size the output exactly. Other join kinds skip these flags and their atomics.
       auto matched_groups =
@@ -91,37 +81,14 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
           : cuda::device_buffer<cuda::std::uint32_t>{stream, temp_mr, 0, cuda::no_init};
       auto matched_build_rows =
         cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
-      auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
-      auto const valid_rows = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
-
-      auto count_matches = [&](auto equality, auto hasher) {
-        launch_hash_csr_probe_count_kernel<Join != join_kind::INNER_JOIN>(
-          left.num_rows(),
-          valid_rows,
-          probe_groups.data(),
-          match_counts.data(),
-          nullptr,
-          Join == join_kind::FULL_JOIN ? matched_groups.data() : nullptr,
-          matched_build_rows.data(),
-          _impl->hash_table(),
-          _impl->csr(),
-          equality,
-          hasher,
-          stream);
-      };
-      dispatch_join_comparator(_right,
-                               left,
-                               _preprocessed_right,
-                               preprocessed_left,
-                               _has_nulls,
-                               _nulls_equal,
-                               count_matches);
-
-      auto offsets = cudf::detail::make_zeroed_device_buffer_async<cuda::std::int64_t>(
-        static_cast<std::size_t>(left.num_rows()) + 1, stream, temp_mr);
-      auto const actual_size = cudf::detail::sizes_to_offsets(
-        match_counts.begin(), match_counts.end(), offsets.begin(), 0, stream, temp_mr);
-      CUDF_EXPECTS(actual_size >= 0, "Join output size overflowed", std::overflow_error);
+      probe(Join,
+            left,
+            probe_groups,
+            match_counts,
+            nullptr,
+            matched_groups,
+            matched_build_rows.data(),
+            stream);
 
       // The count pass already tallied matched build rows. Preserve the exact complement size
       // for output allocation and full-join finalization before releasing its device scalar.
@@ -131,47 +98,23 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
         unmatched_right_rows =
           static_cast<size_type>(static_cast<cuda::std::uint64_t>(_right.num_rows()) - matched);
       }
-      return std::tuple(std::move(offsets), std::move(probe_groups), actual_size);
+      return hash_csr_match_offsets(match_counts, stream);
     }();
 
-    auto const join_size = static_cast<std::size_t>(actual_size);
-    auto const allocation_size =
-      join_size + static_cast<std::size_t>(unmatched_right_rows.value_or(size_type{0}));
+    auto const extra_capacity =
+      static_cast<std::size_t>(unmatched_right_rows.value_or(size_type{0}));
     // For a full join the final size includes the unmatched right rows, so validate only now.
-    validate_output_size(allocation_size);
+    validate_output_size(join_size + extra_capacity);
 
-    auto left_indices =
-      std::make_unique<rmm::device_uvector<size_type>>(allocation_size, stream, mr);
-    auto right_indices =
-      std::make_unique<rmm::device_uvector<size_type>>(allocation_size, stream, mr);
-    left_indices->resize(join_size, stream);
-    right_indices->resize(join_size, stream);
-    cudf::prefetch::detail::prefetch(*left_indices, stream);
-    cudf::prefetch::detail::prefetch(*right_indices, stream);
-
-    if constexpr (Join == join_kind::INNER_JOIN) {
-      launch_hash_csr_inner_retrieve_kernel(actual_size,
-                                            left.num_rows(),
-                                            offsets.data(),
-                                            probe_groups.data(),
-                                            _impl->csr(),
-                                            0,
-                                            left_indices->data(),
-                                            right_indices->data(),
-                                            stream);
-    } else {
-      launch_hash_csr_outer_retrieve_kernel(actual_size,
-                                            left.num_rows(),
-                                            offsets.data(),
-                                            probe_groups.data(),
-                                            _impl->csr(),
-                                            0,
-                                            left_indices->data(),
-                                            right_indices->data(),
-                                            stream);
-    }
-
-    return std::pair(std::move(left_indices), std::move(right_indices));
+    return hash_csr_retrieve(Join != join_kind::INNER_JOIN,
+                             join_size,
+                             offsets,
+                             probe_groups,
+                             _impl->csr(),
+                             0,
+                             extra_capacity,
+                             stream,
+                             mr);
   }();
 
   if constexpr (Join == join_kind::FULL_JOIN) {

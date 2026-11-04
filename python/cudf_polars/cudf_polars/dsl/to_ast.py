@@ -230,6 +230,7 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
 def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
     if node.name is expr.BooleanFunction.Name.IsIn:
         needles, haystack = node.children
+        (nulls_equal,) = node.options
         if isinstance(haystack, expr.LiteralColumn):
             haystack_values = haystack.value
             if haystack_values.dtype == pl.List:
@@ -237,6 +238,14 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                 haystack_values = haystack_values.explode()
             if 0 < len(haystack_values) < 16:
                 # 16 is an arbitrary limit
+                if haystack_values.dtype.is_float() and haystack_values.is_nan().any():
+                    # NaN never compares equal in an AST, but is_in matches it
+                    raise NotImplementedError("is_in with NaN in the haystack")
+                if not nulls_equal:
+                    # A null in the haystack never matches when nulls are not equal
+                    haystack_values = haystack_values.drop_nulls()
+                if not len(haystack_values):
+                    raise NotImplementedError("is_in with only nulls in the haystack")
                 needle_ref = self(needles)
                 if haystack.dtype.id() == plc.TypeId.LIST:
                     # Because we originally translated pl_expr.Literal with a list scalar
@@ -256,14 +265,14 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                     )
                     for val in haystack_values
                 )
+                equal = (
+                    plc_expr.ASTOperator.NULL_EQUAL
+                    if nulls_equal
+                    else plc_expr.ASTOperator.EQUAL
+                )
                 return reduce(
                     partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
-                    (
-                        plc_expr.Operation(
-                            plc_expr.ASTOperator.EQUAL, needle_ref, value
-                        )
-                        for value in values
-                    ),
+                    (plc_expr.Operation(equal, needle_ref, value) for value in values),
                 )
     if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
         if node.name not in (
@@ -488,6 +497,14 @@ class JoinPredicate(NamedTuple):
     """Columns appended to the right table, evaluated on the right input."""
 
 
+def _sides(node: expr.Expr, state: JoinPredicateState) -> set[plc_expr.TableReference]:
+    return {
+        state["columns"][col.name][0]
+        for col in traversal([node])
+        if isinstance(col, expr.Col)
+    }
+
+
 def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> expr.Expr:
     state = rec.state
     if isinstance(node, expr.Col):
@@ -498,11 +515,7 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
             table_ref,
             expr.Col(node.dtype, name),
         )
-    sides = {
-        state["columns"][col.name][0]
-        for col in traversal([node])
-        if isinstance(col, expr.Col)
-    }
+    sides = _sides(node, state)
     if len(sides) == 1:
         (table_ref,) = sides
         if not node.all_pointwise():
@@ -520,7 +533,51 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
         return expr.ColRef(
             node.dtype, index, table_ref, expr.Col(node.dtype, extras[local])
         )
+    if isinstance(node, expr.BinOp) and node.op in expr.BinOp._COMPARISONS:
+        # The AST has no conditional, so compare each branch of a conditional
+        # whose condition only uses one input, and select with AND and OR.
+        for position, child in enumerate(node.children):
+            if (
+                isinstance(child, expr.Ternary)
+                and len(_sides(child.children[0], state)) <= 1
+            ):
+                return rec(_distribute_comparison(node, position))
     return reuse_if_unchanged(node, rec)
+
+
+def _distribute_comparison(node: expr.BinOp, position: int) -> expr.Expr:
+    """
+    Rewrite a comparison with a conditional operand as AND and OR.
+
+    ``(when c then x otherwise y) < z`` becomes
+    ``(c and x < z) or (not c and y < z)``, where a null ``c`` counts as false,
+    as it does in the conditional.
+    """
+    ternary = node.children[position]
+    other = node.children[1 - position]
+    when, then, otherwise = ternary.children
+    boolean = when.dtype
+    true = expr.Literal(boolean, True)  # noqa: FBT003
+    false = expr.Literal(boolean, False)  # noqa: FBT003
+
+    def compare(branch: expr.Expr) -> expr.Expr:
+        operands = (branch, other) if position == 0 else (other, branch)
+        return expr.BinOp(node.dtype, node.op, *operands)
+
+    def select(condition: expr.Expr, branch: expr.Expr) -> expr.Expr:
+        return expr.BinOp(
+            node.dtype,
+            plc.binaryop.BinaryOperator.NULL_LOGICAL_AND,
+            condition,
+            compare(branch),
+        )
+
+    return expr.BinOp(
+        node.dtype,
+        plc.binaryop.BinaryOperator.NULL_LOGICAL_OR,
+        select(expr.Ternary(boolean, when, true, false), then),
+        select(expr.Ternary(boolean, when, false, true), otherwise),
+    )
 
 
 def split_join_predicate(

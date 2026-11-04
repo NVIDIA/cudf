@@ -713,8 +713,12 @@ void encode_segments(char const* d_input_chars,
   auto const d_flags = cuda::transform_iterator(
     d_spaces,
     cuda::proclaim_return_type<IndexType>([] __device__(int8_t v) -> IndexType { return v; }));
-  auto const num_segments = cudf::detail::reduce(
-    d_flags, d_flags + chars_size, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
+  auto const num_segments = cudf::detail::reduce(d_flags,
+                                                 d_flags + chars_size,
+                                                 IndexType{0},
+                                                 cuda::std::plus<IndexType>{},
+                                                 stream,
+                                                 mr.as_temporary());
   auto d_segments =
     cuda::device_buffer<IndexType>(stream, temp_mr, num_segments + 1, cuda::no_init);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
@@ -761,8 +765,12 @@ void encode_segments(char const* d_input_chars,
                                [seg_size, is_copy] __device__(IndexType seg) -> IndexType {
                                  return seg_size(seg) <= max_short_size && !is_copy(seg);
                                }));
-  auto const num_encode = cudf::detail::reduce(
-    d_encode, d_encode + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
+  auto const num_encode = cudf::detail::reduce(d_encode,
+                                               d_encode + num_segments,
+                                               IndexType{0},
+                                               cuda::std::plus<IndexType>{},
+                                               stream,
+                                               mr.as_temporary());
   auto d_encode_ids = cuda::device_buffer<IndexType>(stream, temp_mr, num_encode, cuda::no_init);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                         cuda::counting_iterator<IndexType>{num_segments},
@@ -797,8 +805,12 @@ void encode_segments(char const* d_input_chars,
     d_seg_sizes, cuda::proclaim_return_type<IndexType>([] __device__(IndexType size) -> IndexType {
       return size > 0;
     }));
-  auto const num_long = cudf::detail::reduce(
-    d_is_long, d_is_long + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
+  auto const num_long = cudf::detail::reduce(d_is_long,
+                                             d_is_long + num_segments,
+                                             IndexType{0},
+                                             cuda::std::plus<IndexType>{},
+                                             stream,
+                                             mr.as_temporary());
   if (num_long > 0) {
     auto d_long_ids = cuda::device_buffer<IndexType>(stream, temp_mr, num_long, cuda::no_init);
     cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},

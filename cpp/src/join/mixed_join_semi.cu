@@ -47,6 +47,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
+  cudf::memory_resources mrs{mr};
   CUDF_EXPECTS((join_type != join_kind::INNER_JOIN) and (join_type != join_kind::LEFT_JOIN) and
                  (join_type != join_kind::FULL_JOIN),
                "Inner, left, and full joins should use mixed_join.");
@@ -208,7 +209,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     [join_type] __device__(bool keep_row) -> bool {
       return keep_row == (join_type == join_kind::LEFT_SEMI_JOIN);
     },
-    stream);
+    stream,
+    mrs.as_temporary());
 
   gather_map->resize(cuda::std::distance(gather_map->begin(), gather_map_end), stream);
   return gather_map;

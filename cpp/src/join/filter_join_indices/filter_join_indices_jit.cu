@@ -198,6 +198,7 @@ apply_join_semantics(cudf::table_view const& left,
                      cuda::stream_ref stream,
                      cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto make_empty_result = [&]() {
     return std::pair{
       std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
@@ -222,7 +223,8 @@ apply_join_semantics(cudf::table_view const& left,
       cudf::detail::count_if(cuda::counting_iterator<size_type>{0},
                              cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
                              valid_predicate,
-                             stream);
+                             stream,
+                             mrs.as_temporary());
 
     if (num_valid == 0) { return make_empty_result(); }
 
@@ -239,7 +241,8 @@ apply_join_semantics(cudf::table_view const& left,
       cuda::counting_iterator<size_type>{0},
       output_iter,
       [valid_predicate] __device__(size_type idx) -> bool { return valid_predicate(idx); },
-      stream);
+      stream,
+      mrs.as_temporary());
 
     return std::pair{std::move(filtered_left_indices), std::move(filtered_right_indices)};
 
@@ -279,7 +282,8 @@ apply_join_semantics(cudf::table_view const& left,
       cuda::counting_iterator<size_type>{0},
       cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
       [predicate_results_ptr] __device__(size_type i) -> bool { return predicate_results_ptr[i]; },
-      stream);
+      stream,
+      mrs.as_temporary());
     auto const output_size = num_valid + num_invalid;
     if (output_size == 0) { return make_empty_result(); }
 
@@ -298,7 +302,8 @@ apply_join_semantics(cudf::table_view const& left,
                             cuda::counting_iterator<std::size_t>{0},
                             output_iter,
                             valid_predicate,
-                            stream);
+                            stream,
+                            mrs.as_temporary());
     }
     if (num_invalid > 0) {
       auto filter_passing_indices_ref = filter_passing_indices.ref(cuco::contains);
@@ -310,7 +315,8 @@ apply_join_semantics(cudf::table_view const& left,
                             cuda::counting_iterator{static_cast<std::size_t>(left.num_rows())},
                             filtered_left_indices->begin() + num_valid,
                             is_unmatched_idx,
-                            stream);
+                            stream,
+                            mrs.as_temporary());
 
       cub::DeviceTransform::Fill(
         filtered_right_indices->begin() + num_valid, num_invalid, JoinNoMatch, stream.get());

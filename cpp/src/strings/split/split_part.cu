@@ -56,7 +56,8 @@ cuda::device_buffer<int64_t> find_string_delimiter_positions(strings_column_view
                               cuda::counting_iterator<int64_t>{chars_bytes},
                               positions.begin(),
                               delimiter_fn,
-                              stream);
+                              stream,
+                              mr.as_temporary());
   return positions;
 }
 
@@ -87,7 +88,8 @@ cuda::device_buffer<int64_t> find_whitespace_delimiter_positions(strings_column_
                               cuda::counting_iterator<int64_t>{chars_bytes},
                               positions.begin(),
                               delimiter_fn,
-                              stream);
+                              stream,
+                              mr.as_temporary());
   return positions;
 }
 

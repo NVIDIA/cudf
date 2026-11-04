@@ -317,8 +317,9 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
       auto parent_mask_len = chunks[0][col_idx].column_num_rows;
 
       if (child_valid_map_base != nullptr) {
-        cuda::device_buffer<uint32_t> dst_idx(
-          stream, cudf::get_current_device_resource_ref(), child_mask_len, cuda::no_init);
+        cudf::memory_resources mrs(mr);
+        auto temp_mr = mrs.get_temporary_mr();
+        cuda::device_buffer<uint32_t> dst_idx(stream, temp_mr, child_mask_len, cuda::no_init);
         // Copy indexes at which the parent has valid value.
         cudf::detail::copy_if_async(
           cuda::counting_iterator<int64_t>{0},
@@ -327,7 +328,8 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
           [parent_valid_map_base] __device__(auto idx) -> bool {
             return bit_is_set(parent_valid_map_base, idx);
           },
-          stream);
+          stream,
+          mrs.as_temporary());
 
         auto merged_null_mask = cudf::detail::create_null_mask(
           parent_mask_len, mask_state::ALL_NULL, cuda::stream_ref(stream), mr);

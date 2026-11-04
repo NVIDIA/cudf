@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/batch_gather.hpp>
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/indexalator.cuh>
@@ -81,7 +82,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
   auto const index_policy = is_unsigned(gather_map.type()) ? negative_index_policy::NOT_ALLOWED
                                                            : negative_index_policy::ALLOWED;
 
-  return detail::gather(source_table, gather_map, bounds_policy, index_policy, stream, mr);
+  return detail::batch_gather(source_table, gather_map, bounds_policy, index_policy, stream, mr);
 }
 
 std::unique_ptr<table> gather(table_view const& source_table,
@@ -92,7 +93,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::gather(source_table, gather_map, bounds_policy, neg_indices, stream, mr);
+  return detail::batch_gather(source_table, gather_map, bounds_policy, neg_indices, stream, mr);
 }
 
 }  // namespace cudf

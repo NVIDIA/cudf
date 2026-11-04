@@ -36,7 +36,17 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <cstring>
+#include <fstream>
+#include <future>
+#include <iterator>
+#include <mutex>
+#include <optional>
 #include <ranges>
+#include <stdexcept>
 
 namespace {
 enum class output_limit : std::size_t {};
@@ -1682,3 +1692,174 @@ INSTANTIATE_TEST_CASE_P(Host,
                                            ::testing::Values(cudf::io::compression_type::AUTO,
                                                              cudf::io::compression_type::SNAPPY,
                                                              cudf::io::compression_type::ZSTD)));
+
+namespace {
+// Promise-backed futures intentionally do not wait in their destructors. The first read
+// fails on demand and the remaining reads stay pending until the test releases them.
+class pending_async_orc_source final : public cudf::io::datasource {
+ public:
+  using datasource::host_read_async;
+
+  explicit pending_async_orc_source(std::vector<uint8_t> data, bool device_reads)
+    : data_{std::move(data)}, device_reads_{device_reads}
+  {
+  }
+
+  [[nodiscard]] size_t size() const override { return data_.size(); }
+  [[nodiscard]] bool supports_device_read() const override { return device_reads_; }
+
+  std::unique_ptr<buffer> host_read(size_t offset, size_t size) override
+  {
+    auto const count = offset < data_.size() ? std::min(size, data_.size() - offset) : 0;
+    std::vector<uint8_t> bytes(count);
+    if (count != 0) { std::memcpy(bytes.data(), data_.data() + offset, count); }
+    return buffer::create(std::move(bytes));
+  }
+
+  size_t host_read(size_t offset, size_t size, uint8_t* dst) override
+  {
+    auto const count = offset < data_.size() ? std::min(size, data_.size() - offset) : 0;
+    if (count != 0) { std::memcpy(dst, data_.data() + offset, count); }
+    return count;
+  }
+
+  std::future<std::unique_ptr<buffer>> host_read_async(size_t, size_t) override
+  {
+    std::promise<std::unique_ptr<buffer>> promise;
+    auto future = promise.get_future();
+    {
+      std::lock_guard lock{mutex_};
+      if (submitted_++ == 0) {
+        if (failure_requested_) {
+          promise.set_exception(failure());
+        } else {
+          first_host_.emplace(std::move(promise));
+        }
+      } else if (released_) {
+        promise.set_value(buffer::create(std::vector<uint8_t>{}));
+      } else {
+        host_pending_.push_back(std::move(promise));
+      }
+    }
+    submitted_cv_.notify_all();
+    return future;
+  }
+
+  std::future<size_t> device_read_async(size_t, size_t, uint8_t*, cuda::stream_ref) override
+  {
+    std::promise<size_t> promise;
+    auto future = promise.get_future();
+    {
+      std::lock_guard lock{mutex_};
+      if (submitted_++ == 0) {
+        if (failure_requested_) {
+          promise.set_exception(failure());
+        } else {
+          first_device_.emplace(std::move(promise));
+        }
+      } else if (released_) {
+        promise.set_value(0);
+      } else {
+        device_pending_.push_back(std::move(promise));
+      }
+    }
+    submitted_cv_.notify_all();
+    return future;
+  }
+
+  bool wait_for_multiple_reads()
+  {
+    std::unique_lock lock{mutex_};
+    return submitted_cv_.wait_for(
+      lock, std::chrono::seconds{10}, [this] { return submitted_ >= 2; });
+  }
+
+  void fail_first()
+  {
+    std::lock_guard lock{mutex_};
+    failure_requested_ = true;
+    if (first_host_) { first_host_->set_exception(failure()); }
+    if (first_device_) { first_device_->set_exception(failure()); }
+  }
+
+  void release_remaining()
+  {
+    std::lock_guard lock{mutex_};
+    released_ = true;
+    for (auto& promise : host_pending_) {
+      promise.set_value(buffer::create(std::vector<uint8_t>{}));
+    }
+    for (auto& promise : device_pending_) {
+      promise.set_value(0);
+    }
+  }
+
+ private:
+  static std::exception_ptr failure()
+  {
+    return std::make_exception_ptr(std::runtime_error{"injected async read failure"});
+  }
+
+  std::vector<uint8_t> data_;
+  bool device_reads_;
+  std::mutex mutex_;
+  std::condition_variable submitted_cv_;
+  size_t submitted_{0};
+  bool failure_requested_{false};
+  bool released_{false};
+  std::optional<std::promise<std::unique_ptr<buffer>>> first_host_;
+  std::optional<std::promise<size_t>> first_device_;
+  std::vector<std::promise<std::unique_ptr<buffer>>> host_pending_;
+  std::vector<std::promise<size_t>> device_pending_;
+};
+
+void expect_orc_reader_waits_for_pending_reads(bool device_reads)
+{
+  auto const it = cuda::counting_iterator<int32_t>{0};
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.emplace_back(int32s_col(it, it + 50'000).release());
+  auto const [input, filepath] =
+    write_file(columns,
+               device_reads ? "orc_device_async_failure" : "orc_host_async_failure",
+               false,
+               cudf::io::default_stripe_size_bytes,
+               2'000);
+  auto const metadata = cudf::io::read_orc_metadata(cudf::io::source_info{filepath});
+  ASSERT_GT(metadata.num_stripes(), 1);
+  std::ifstream file{filepath, std::ios::binary};
+  ASSERT_TRUE(file.good());
+  auto const contents =
+    std::vector<uint8_t>(std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{});
+  pending_async_orc_source source{contents, device_reads};
+
+  auto reader               = std::async(std::launch::async, [&source] {
+    try {
+      auto const options =
+        cudf::io::orc_reader_options::builder(cudf::io::source_info{&source}).build();
+      cudf::io::read_orc(options);
+      return std::string{"read unexpectedly succeeded"};
+    } catch (std::exception const& e) {
+      return std::string{e.what()};
+    }
+  });
+  auto const multiple_reads = source.wait_for_multiple_reads();
+  source.fail_first();
+  auto const returned_early = reader.wait_for(std::chrono::seconds{1}) == std::future_status::ready;
+  // Always release pending futures before evaluating assertions or destroying the reader.
+  source.release_remaining();
+  auto const error = reader.get();
+  EXPECT_TRUE(multiple_reads);
+  EXPECT_FALSE(returned_early);
+  EXPECT_NE(error.find("injected async read failure"), std::string::npos) << error;
+}
+}  // namespace
+
+TEST_F(OrcChunkedReaderTest, WaitsForPendingHostReadsAfterFailure)
+{
+  expect_orc_reader_waits_for_pending_reads(false);
+}
+
+TEST_F(OrcChunkedReaderTest, WaitsForPendingDeviceReadsAfterFailure)
+{
+  expect_orc_reader_waits_for_pending_reads(true);
+}

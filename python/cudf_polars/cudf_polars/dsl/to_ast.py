@@ -497,6 +497,14 @@ class JoinPredicate(NamedTuple):
     """Columns appended to the right table, evaluated on the right input."""
 
 
+def _sides(node: expr.Expr, state: JoinPredicateState) -> set[plc_expr.TableReference]:
+    return {
+        state["columns"][col.name][0]
+        for col in traversal([node])
+        if isinstance(col, expr.Col)
+    }
+
+
 def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> expr.Expr:
     state = rec.state
     if isinstance(node, expr.Col):
@@ -507,11 +515,7 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
             table_ref,
             expr.Col(node.dtype, name),
         )
-    sides = {
-        state["columns"][col.name][0]
-        for col in traversal([node])
-        if isinstance(col, expr.Col)
-    }
+    sides = _sides(node, state)
     if len(sides) == 1:
         (table_ref,) = sides
         if not node.all_pointwise():
@@ -539,14 +543,6 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
             ):
                 return rec(_distribute_comparison(node, position))
     return reuse_if_unchanged(node, rec)
-
-
-def _sides(node: expr.Expr, state: JoinPredicateState) -> set[plc_expr.TableReference]:
-    return {
-        state["columns"][col.name][0]
-        for col in traversal([node])
-        if isinstance(col, expr.Col)
-    }
 
 
 def _distribute_comparison(node: expr.BinOp, position: int) -> expr.Expr:

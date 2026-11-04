@@ -213,15 +213,17 @@ with SPMDEngine(comm=comm) as engine:
 ## Cluster diagnostics
 
 {meth}`~cudf_polars.engine.spmd.SPMDEngine.gather_cluster_info` returns
-placement information for every rank:
+placement information for every rank. It is a collective operation, so every rank must
+call it:
 
 ```python
 with SPMDEngine() as engine:
+    cluster_info = engine.gather_cluster_info()
     if engine.rank == 0:
-        for i, info in enumerate(engine.gather_cluster_info()):
+        for i, info in enumerate(cluster_info):
             print(
-                f"rank {i}: hostname={info['hostname']}, pid={info['pid']}, "
-                f"CUDA_VISIBLE_DEVICES={info['cuda_visible_devices']}"
+                f"rank {i}: hostname={info.hostname}, pid={info.pid}, "
+                f"CUDA_VISIBLE_DEVICES={info.cuda_visible_devices}"
             )
 ```
 

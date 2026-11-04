@@ -16,6 +16,7 @@
 
 #include <cuda/std/type_traits>
 
+#include <cmath>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -319,6 +320,28 @@ TEST_F(StableSortDouble, InfinityAndNaNDescending)
   results = stable_sorted_order(
     cudf::table_view({with_nulls}), {cudf::order::DESCENDING}, {cudf::null_order::BEFORE});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected_nulls);
+}
+
+TEST_F(StableSortDouble, NaNPayloadOrder)
+{
+  // Equal NaNs are only distinguishable by their bits, so distinct payloads are used to check
+  // that the value-only radix path of stable_sort keeps them in input order
+  auto input = cudf::test::fixed_width_column_wrapper<double>(
+    {std::nan("1"), 1.0, -std::nan("2"), 2.0, std::nan("3"), std::nan("4")});
+  auto const as_bits = [](cudf::column_view const& col) {
+    return cudf::bit_cast(col, cudf::data_type{cudf::type_id::INT64});
+  };
+
+  for (auto [order, indices] :
+       {std::pair{cudf::order::ASCENDING, std::vector<cudf::size_type>{1, 3, 0, 2, 4, 5}},
+        std::pair{cudf::order::DESCENDING, std::vector<cudf::size_type>{0, 2, 4, 5, 3, 1}}}) {
+    auto const gather_map =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(indices.begin(), indices.end());
+    auto const expected = cudf::gather(cudf::table_view({input}), gather_map);
+    auto const sorted   = cudf::stable_sort(cudf::table_view({input}), {order});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(as_bits(sorted->get_column(0).view()),
+                                   as_bits(expected->get_column(0).view()));
+  }
 }
 
 TEST_F(StableSortDouble, SlicedNumericColumnsWithNullsAndTies)

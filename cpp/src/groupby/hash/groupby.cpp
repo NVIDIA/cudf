@@ -31,7 +31,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <unordered_map>
 #include <utility>
 
 namespace cudf {

@@ -1940,9 +1940,9 @@ public class TableTest extends CudfTestBase {
   void testReaderTimeUnitRejectsTimestampDays() {
     // Both readers convert timestamps to a second-based unit only, so TIMESTAMP_DAYS is
     // rejected up front; the four second-based units and the default are accepted.
-    assertThrows(AssertionError.class,
+    assertThrows(IllegalArgumentException.class,
         () -> ParquetOptions.builder().withTimeUnit(DType.TIMESTAMP_DAYS));
-    assertThrows(AssertionError.class,
+    assertThrows(IllegalArgumentException.class,
         () -> ORCOptions.builder().withTimeUnit(DType.TIMESTAMP_DAYS));
     for (DType unit : new DType[]{DType.EMPTY, DType.TIMESTAMP_SECONDS,
         DType.TIMESTAMP_MILLISECONDS, DType.TIMESTAMP_MICROSECONDS, DType.TIMESTAMP_NANOSECONDS}) {

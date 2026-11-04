@@ -78,9 +78,13 @@ public class ORCOptions extends ColumnFilterOptions {
      * cast the returned column instead.
      * @param unit default unit of time specified by the user
      * @return builder for chaining
+     * @throws IllegalArgumentException if {@code unit} is not one of those types
      */
     public ORCOptions.Builder withTimeUnit(DType unit) {
-      assert unit == DType.EMPTY || unit.hasTimeResolution();
+      if (unit == null || (unit != DType.EMPTY && !unit.hasTimeResolution())) {
+        throw new IllegalArgumentException(
+            "Time unit must be EMPTY or a second-based timestamp type, got " + unit);
+      }
       this.unit = unit;
       return this;
     }

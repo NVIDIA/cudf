@@ -198,9 +198,9 @@ inline __device__ bool is_bounds_page(PageInfo const& page,
     ((page_begin <= begin and page_end >= begin) or (page_begin <= end and page_end >= end));
 
   // For non-list schemas, rows cannot span pages, so use a more restrictive test. Make sure to
-  // relax the test for `page_end` if we adjusted the `num_rows` for the last page to compensate
-  // for list row size estimates in `generate_list_column_row_count_estimates()` when chunked
-  // read mode.
+  // relax the test for `page_end` if we adjusted the `num_rows` of the last page to end at the
+  // last row of its chunk in chunked read mode (see `set_final_row_count()` and
+  // `compute_page_num_rows_from_chunk_rows`).
   auto const test_page_end_nonlists = page.is_num_rows_adjusted ? page_end >= end : page_end > end;
 
   auto const is_bounds_page_nonlists =

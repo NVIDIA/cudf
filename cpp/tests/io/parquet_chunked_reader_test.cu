@@ -609,6 +609,66 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithPlainListOfStringSpanningPag
   }
 }
 
+TEST_F(ParquetChunkedReaderTest, TestChunkedReadBoundedStringsWithPageIndex)
+{
+  // Regression test for strings read with row bounds and a pass read limit from a compressed file
+  // with a page index, when the read ends inside the last page of a row group and does not start
+  // inside that page. The page index gives string sizes for whole pages, and that page used to look
+  // fully read, so the last string of the read came back with extra bytes.
+  auto constexpr num_rows = 10'000;  // one row group, two pages of 5'000 rows
+
+  auto const values = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return "row_" + std::to_string(i) + std::string(i % 13, 'x'); });
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 3; });
+  auto const strings          = strings_col(values, values + num_rows);
+  auto const nullable_strings = strings_col(values, values + num_rows, valids);
+
+  using cudf::io::column_encoding;
+  // DELTA_BYTE_ARRAY is left out since it fails for another reason with a page index (#24389).
+  std::vector<std::pair<column_encoding, std::string>> const encodings{
+    {column_encoding::PLAIN, "PLAIN"},
+    {column_encoding::DICTIONARY, "DICTIONARY"},
+    {column_encoding::DELTA_LENGTH_BYTE_ARRAY, "DELTA_LENGTH_BYTE_ARRAY"}};
+
+  for (auto const is_nullable : {false, true}) {
+    auto const expected = cudf::table_view{{is_nullable ? nullable_strings : strings}};
+    for (auto const& [encoding, encoding_name] : encodings) {
+      SCOPED_TRACE(encoding_name + (is_nullable ? ", nullable" : ""));
+      cudf::io::table_input_metadata metadata(expected);
+      metadata.column_metadata[0].set_encoding(encoding);
+      auto const filepath =
+        temp_env->get_temp_filepath("TestChunkedReadBoundedStringsWithPageIndex.parquet");
+      cudf::io::write_parquet(
+        cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+          .metadata(metadata)
+          .dictionary_policy(encoding == column_encoding::DICTIONARY
+                               ? cudf::io::dictionary_policy::ALWAYS
+                               : cudf::io::dictionary_policy::NEVER)
+          .compression(cudf::io::compression_type::SNAPPY)
+          .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+          .max_page_size_rows(5'000)
+          .build());
+
+      // Both reads end inside the second page, one with `skip_rows` and one without.
+      for (auto const& [skip_rows, read_rows] : {std::pair{4'000, 2'000}, std::pair{0, 6'000}}) {
+        auto const read_opts =
+          cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+            .skip_rows(skip_rows)
+            .num_rows(read_rows)
+            .build();
+        for (auto const output_limit : {0, 10'000}) {
+          SCOPED_TRACE("skip " + std::to_string(skip_rows) + ", output limit " +
+                       std::to_string(output_limit));
+          auto const [result, num_chunks] = chunked_read(read_opts, output_limit, 1'000'000);
+          CUDF_TEST_EXPECT_TABLES_EQUAL(
+            cudf::slice(expected, {skip_rows, skip_rows + read_rows})[0], result->view());
+        }
+      }
+    }
+  }
+}
+
 TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithStringPrecise)
 {
   auto constexpr num_rows = 60'000;

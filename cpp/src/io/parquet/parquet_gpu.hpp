@@ -440,7 +440,8 @@ struct PageInfo {
   decode_kernel_mask kernel_mask;
 
   bool is_num_rows_adjusted;  // Flag to indicate if the number of rows of this page have been
-                              // adjusted to compensate for the list row size estimates.
+                              // adjusted to end at the last row of its chunk, which can end
+                              // inside the page (list row size estimates or row bounds).
   uint8_t flags;              // PAGEINFO_FLAGS_XXX
   Encoding encoding;          // Encoding for data or dictionary page
   Encoding definition_level_encoding;  // Encoding used for definition levels (data page)

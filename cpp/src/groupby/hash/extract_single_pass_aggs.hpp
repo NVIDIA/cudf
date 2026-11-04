@@ -7,26 +7,12 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/groupby.hpp>
-#include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
 
 #include <memory>
 #include <tuple>
 #include <vector>
 
 namespace cudf::groupby::detail::hash {
-
-/**
- * @brief Check if MIN and MAX on values of the given type are computed through ARGMIN and ARGMAX
- *
- * @param type The data type of the values
- * @return `true` for strings and nested types, whose results are gathered by the ARGMIN or ARGMAX
- *         result
- */
-[[nodiscard]] inline bool is_minmax_through_argminmax(data_type type)
-{
-  return type.id() == type_id::STRING || cudf::is_nested(type);
-}
 
 /**
  * @brief Extract single pass aggregations from the given aggregation requests.

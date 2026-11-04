@@ -406,9 +406,9 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
     std::copy(memcpy_unrouted.begin(), memcpy_unrouted.end(), staging_unrouted.begin());
     auto const d_unrouted =
       carve_device_vector(host_span<size_type const>{staging_unrouted}, stream, staging_carve_mr);
-    auto const grid = static_cast<unsigned>(
-      std::min<int64_t>(util::div_rounding_up_safe(unrouted_rows, static_cast<int64_t>(block_size)),
-                        static_cast<int64_t>(65535)));
+    auto const grid = static_cast<unsigned>(std::min<int64_t>(
+      detail::div_rounding_up_safe(unrouted_rows, static_cast<int64_t>(block_size)),
+      static_cast<int64_t>(65535)));
     string_payload_kernel<block_size>
       <<<grid, block_size, 0, stream.get()>>>(d_payload_items.data(),
                                               d_unrouted.data(),
@@ -428,9 +428,9 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
       host_span<size_type const>{staging_engine_cols}, stream, staging_carve_mr);
     auto const engine_tiles =
       static_cast<int64_t>(engine_cols.size()) *
-      util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
+      detail::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
     auto const engine_grid = static_cast<unsigned>(std::min<int64_t>(
-      util::div_rounding_up_safe(engine_tiles, static_cast<int64_t>(block_size / warp_size)),
+      detail::div_rounding_up_safe(engine_tiles, static_cast<int64_t>(block_size / warp_size)),
       static_cast<int64_t>(65535)));
     string_fused_short_engine_kernel<block_size>
       <<<engine_grid, block_size, 0, stream.get()>>>(d_payload_items.data(),
@@ -462,7 +462,7 @@ void assemble_strings_impl(std::vector<staged_string>& staged_strings,
       host_span<string_work_item const>{staging_routed_items}, stream, staging_carve_mr);
     auto const routed_rows = static_cast<int64_t>(memcpy_live.size()) * num_rows;
     auto const meta_grid   = static_cast<unsigned>(
-      std::min<int64_t>(util::div_rounding_up_safe(routed_rows, static_cast<int64_t>(block_size)),
+      std::min<int64_t>(detail::div_rounding_up_safe(routed_rows, static_cast<int64_t>(block_size)),
                         static_cast<int64_t>(65535)));
     string_routed_metadata_kernel<block_size>
       <<<meta_grid, block_size, 0, stream.get()>>>(d_routed_items.data(),

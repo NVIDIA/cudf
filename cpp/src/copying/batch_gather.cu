@@ -530,7 +530,7 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_kernel(
   size_type* valid_counts)
 {
   __shared__ column_descriptor tile_descs[kTileCols];
-  auto const num_tiles = util::div_rounding_up_safe(num_descriptors, kTileCols);
+  auto const num_tiles = detail::div_rounding_up_safe(num_descriptors, kTileCols);
   for (size_type tile = static_cast<size_type>(blockIdx.y); tile < num_tiles;
        tile += static_cast<size_type>(gridDim.y)) {
     auto const tile_begin = tile * kTileCols;
@@ -626,7 +626,7 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void batch_gather_direct_map_kernel(
   size_type* valid_counts)
 {
   __shared__ column_descriptor tile_descs[kTileCols];
-  auto const num_tiles = util::div_rounding_up_safe(num_descriptors, kTileCols);
+  auto const num_tiles = detail::div_rounding_up_safe(num_descriptors, kTileCols);
   for (size_type tile = static_cast<size_type>(blockIdx.y); tile < num_tiles;
        tile += static_cast<size_type>(gridDim.y)) {
     auto const tile_begin = tile * kTileCols;
@@ -1069,7 +1069,7 @@ struct descriptor_path_builder {
     for (auto const& staged : pending_dictionaries) {
       bool const is_wide = staged.offsets->type().id() == type_id::INT64;
       wide.push_back(is_wide);
-      total_bytes = cudf::util::round_up_safe(total_bytes, sizeof(int64_t));
+      total_bytes = cudf::detail::round_up_safe(total_bytes, sizeof(int64_t));
       spans.push_back(total_bytes);
       total_bytes +=
         (static_cast<size_t>(staged.keys_size) + 1) * (is_wide ? sizeof(int64_t) : sizeof(int32_t));
@@ -1593,8 +1593,8 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
   // shapes stock gather produces for an empty map:
   // - fixed-width: `allocate_like(src, 0, NEVER)` (unallocated mask), matching the stock
   //   per-column gatherer plus its zero-range `thrust::gather`;
-  // - struct/dictionary: the stock per-type gatherers early-return `empty_like` /
-  //   `make_empty_column(DICTIONARY32)`, mirrored here so the shapes stay stock-exact.
+  // - struct/dictionary: the stock per-type gatherers early-return `empty_like`, mirrored
+  //   here so the shapes stay stock-exact (a dictionary keeps its key type on an empty map).
   // Every destination has zero rows and null count 0. A non-empty map is never routed here
   // even when NULLIFY would nullify every gathered row: proving that needs the map values
   // (device data), so those calls run the full path below. With a zero-size map the mask
@@ -1608,7 +1608,7 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
       } else if (src.type().id() == type_id::STRING) {
         destination[idx] = cudf::make_empty_column(type_id::STRING);
       } else if (src.type().id() == type_id::DICTIONARY32) {
-        destination[idx] = cudf::make_empty_column(type_id::DICTIONARY32);
+        destination[idx] = cudf::empty_like(src);
       } else {
         destination[idx] = cudf::detail::allocate_like(
           src, 0, cudf::mask_allocation_policy::NEVER, stream, output_mr);
@@ -1747,12 +1747,13 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     for (size_type pos = 0; pos < static_cast<size_type>(fused_indices.size()); ++pos) {
       auto const& src = source_table.column(fused_indices[pos]);
       if (num_rows == 0 and not cudf::is_fixed_width(src.type())) {
-        // Empty map: stock's per-type gatherers return exactly these shapes for these types.
+        // Empty map: stock's per-type gatherers return exactly these shapes for these types
+        // (a dictionary keeps its key type on an empty map).
         destination[fused_indices[pos]] =
           (src.type().id() == type_id::STRUCT)
             ? cudf::empty_like(src)
             : (src.type().id() == type_id::STRING ? cudf::make_empty_column(type_id::STRING)
-                                                  : cudf::make_empty_column(type_id::DICTIONARY32));
+                                                  : cudf::empty_like(src));
         continue;
       }
       switch (src.type().id()) {
@@ -1939,10 +1940,11 @@ std::unique_ptr<table> batch_gather_impl(table_view const& source_table,
     auto const launch_tile = [&](auto tile_constant, auto streaming_constant, int by_value_tier) {
       constexpr size_type kTileCols = decltype(tile_constant)::value;
       constexpr bool kStreaming     = decltype(streaming_constant)::value;
-      dim3 const grid{static_cast<unsigned>(cudf::util::div_rounding_up_safe(num_rows, block_size)),
-                      static_cast<unsigned>(std::min<size_type>(
-                        cudf::util::div_rounding_up_safe(num_descs, kTileCols), 65535)),
-                      1};
+      dim3 const grid{
+        static_cast<unsigned>(cudf::detail::div_rounding_up_safe(num_rows, block_size)),
+        static_cast<unsigned>(
+          std::min<size_type>(cudf::detail::div_rounding_up_safe(num_descs, kTileCols), 65535)),
+        1};
       // The mask-free choice comes from host descriptor fields, so it selects the
       // instantiation directly; the unmasked one never receives a `valid_counts` buffer.
       auto const launch = [&](auto masked_constant) {

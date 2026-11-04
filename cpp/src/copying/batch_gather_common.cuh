@@ -687,7 +687,7 @@ CUDF_KERNEL void string_payload_kernel(string_work_item const* items,
   // Routed columns are outside the cohort domain: string_routed_metadata_kernel owns their
   // masks and counts entirely.
   auto const words_per_col =
-    util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
+    detail::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(warp_size));
   auto const total_windows = num_unrouted * words_per_col;
   for (int64_t w = global_tid; w < total_windows; w += grid_stride) {
     auto const& item = items[unrouted[static_cast<size_type>(w / words_per_col)]];
@@ -757,7 +757,7 @@ CUDF_KERNEL void string_routed_metadata_kernel(string_work_item const* routed_it
   __shared__ size_type warp_counts[BlockSize / warp_size];
 
   auto const tiles_per_col = static_cast<int64_t>(
-    util::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(BlockSize)));
+    detail::div_rounding_up_safe(static_cast<int64_t>(num_rows), static_cast<int64_t>(BlockSize)));
   auto const total_tiles = static_cast<int64_t>(num_routed) * tiles_per_col;
   for (int64_t t = static_cast<int64_t>(blockIdx.x); t < total_tiles;
        t += static_cast<int64_t>(gridDim.x)) {
@@ -861,7 +861,7 @@ CUDF_KERNEL __launch_bounds__(BlockSize) void string_fused_short_engine_kernel(
   __shared__ int64_t warp_len[BlockSize / warp_size][warp_size];
 
   auto const tiles_per_col =
-    static_cast<int64_t>(util::div_rounding_up_safe(num_rows, static_cast<int64_t>(warp_size)));
+    static_cast<int64_t>(detail::div_rounding_up_safe(num_rows, static_cast<int64_t>(warp_size)));
   auto const total_tiles = num_unrouted * tiles_per_col;
   for (int64_t t = static_cast<int64_t>(blockIdx.x) * warps_per_block + warp; t < total_tiles;
        t += static_cast<int64_t>(gridDim.x) * warps_per_block) {
@@ -1104,11 +1104,11 @@ struct strings_destination_layout {
     auto const offsets_elem  = chars_bytes < threshold ? sizeof(int32_t) : sizeof(int64_t);
     auto const offsets_bytes = static_cast<std::size_t>(num_rows + 1) * offsets_elem;
     slice_offsets offsets;
-    offsets.offsets = cudf::util::round_up_safe(total_bytes, slice_alignment);
+    offsets.offsets = cudf::detail::round_up_safe(total_bytes, slice_alignment);
     total_bytes     = offsets.offsets + offsets_bytes;
-    offsets.chars   = cudf::util::round_up_safe(total_bytes, slice_alignment);
-    total_bytes = cudf::util::round_up_safe(offsets.chars + static_cast<std::size_t>(chars_bytes),
-                                            slice_alignment);
+    offsets.chars   = cudf::detail::round_up_safe(total_bytes, slice_alignment);
+    total_bytes = cudf::detail::round_up_safe(offsets.chars + static_cast<std::size_t>(chars_bytes),
+                                              slice_alignment);
     return offsets;
   }
 };
@@ -1171,7 +1171,7 @@ class carve_memory_resource {
   [[nodiscard]] void* allocate_sync(std::size_t bytes, std::size_t alignment)
   {
     CUDF_EXPECTS(alignment <= slice_alignment, "Alignment exceeds the carve granularity");
-    auto const offset = cudf::util::round_up_safe(_used, alignment);
+    auto const offset = cudf::detail::round_up_safe(_used, alignment);
     CUDF_EXPECTS(offset + bytes <= _size, "Destination arena exhausted");
     _used = offset + bytes;
     return static_cast<std::byte*>(_arena) + offset;
@@ -1225,8 +1225,8 @@ struct fixed_width_destination_layout {
     auto const mask_words =
       with_mask ? cudf::bitmask_allocation_size_words(num_rows) : std::size_t{0};
     total_bytes =
-      cudf::util::round_up_safe(total_bytes + mask_words * sizeof(bitmask_type), slice_alignment);
-    total_bytes = cudf::util::round_up_safe(total_bytes + data_bytes, slice_alignment);
+      cudf::detail::round_up_safe(total_bytes + mask_words * sizeof(bitmask_type), slice_alignment);
+    total_bytes = cudf::detail::round_up_safe(total_bytes + data_bytes, slice_alignment);
   }
 };
 
@@ -1248,7 +1248,7 @@ struct preset_mask_fill_layout {
   // (sliced sources included), matching the carve sites' sizing.
   void carve(size_type num_rows)
   {
-    total_bytes = cudf::util::round_up_safe(
+    total_bytes = cudf::detail::round_up_safe(
       total_bytes + cudf::bitmask_allocation_size_words(num_rows) * sizeof(bitmask_type),
       slice_alignment);
   }

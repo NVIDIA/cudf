@@ -21,7 +21,7 @@ can cause unexpected behavior if you mix them with cuDF Java on the same thread.
 
 ## Dependency
 
-cuDF Java is published to Maven Central as `ai.rapids:cudf`:
+cuDF Java is published to Maven Central as [`ai.rapids:cudf`](https://central.sonatype.com/artifact/ai.rapids/cudf):
 
 ```xml
 <dependency>

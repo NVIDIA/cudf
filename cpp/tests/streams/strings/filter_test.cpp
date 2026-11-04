@@ -64,3 +64,12 @@ TEST_F(StringsFilterTest, FilterTypes)
   cudf::strings::filter_characters_of_type(
     view, all_types, repl, space_types, cudf::test::get_default_stream());
 }
+
+TEST_F(StringsFilterTest, CharacterTables)
+{
+  // The character flags/cases/special-case tables are lazily copied to the
+  // device on first use using the supplied stream.
+  cudf::strings::get_character_flags_table(cudf::test::get_default_stream());
+  cudf::strings::get_character_cases_table(cudf::test::get_default_stream());
+  cudf::strings::get_special_case_mapping_table(cudf::test::get_default_stream());
+}

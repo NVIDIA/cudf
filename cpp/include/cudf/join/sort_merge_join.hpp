@@ -125,7 +125,7 @@ class sort_merge_join {
    * - Determining the total size of a potential join result without materializing it
    * - Planning partitioned join operations for large datasets
    *
-   * The returned sort_merge_join_match_context can be used directly with partitioned_inner_join()
+   * The returned join_match_context can be used directly with partitioned_inner_join()
    * to process large joins in manageable chunks.
    *
    * @param left The left table to join with the pre-processed right table
@@ -159,6 +159,9 @@ class sort_merge_join {
    * The returned indices can be used to construct the join result for this partition. The
    * left_indices are relative to the original complete left table (not just the partition), so they
    * can be used directly with the original left table to extract matching rows.
+   *
+   * @throw std::invalid_argument If `context.left_table_context` was not created by this object's
+   * inner_join_match_context().
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches

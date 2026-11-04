@@ -325,6 +325,12 @@ def test_rolling_multirank_spmd(spmd_engine, tmp_path, kind) -> None:
     _assert_rolling_result(spmd_engine, source, kind, "-2i")
 
 
+def test_rolling_multirank_ray(ray_engine, tmp_path) -> None:
+    source = tmp_path / "rolling.parquet"
+    _write_rolling_source(source)
+    _assert_rolling_result(ray_engine, source, "range", "-2i")
+
+
 @pytest.mark.spmd
 def test_rolling_multirank_uint64(spmd_engine, tmp_path) -> None:
     source = tmp_path / "rolling-uint64.parquet"

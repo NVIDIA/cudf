@@ -20,8 +20,6 @@ from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils import dtypes, sorting
 
 if TYPE_CHECKING:
-    from rmm.pylibrmm.stream import Stream
-
     from cudf_polars.containers import DataFrame
 
 __all__ = ["Cast", "Len", "UnaryFunction"]
@@ -45,34 +43,6 @@ def _integer_range(dtype: plc.DataType) -> tuple[int, int]:
     if signed:
         return -(1 << (bits - 1)), (1 << (bits - 1)) - 1
     return 0, (1 << bits) - 1
-
-
-def _scan_skipping_nans(
-    column: plc.Column, agg: plc.aggregation.Aggregation, stream: Stream
-) -> plc.Column:
-    """
-    Inclusive min or max scan of a floating-point column that skips NaN.
-
-    A NaN takes the result of the preceding values, or stays NaN if no
-    value precedes it. A null stays null.
-    """
-    scanned = plc.reduce.scan(
-        plc.transform.column_nans_to_nulls(column, stream=stream),
-        agg,
-        plc.reduce.ScanType.INCLUSIVE,
-        stream=stream,
-    )
-    filled = plc.replace.replace_nulls(
-        scanned, plc.replace.ReplacePolicy.PRECEDING, stream=stream
-    )
-    use_filled = plc.binaryop.binary_operation(
-        plc.unary.is_valid(filled, stream=stream),
-        plc.unary.is_valid(column, stream=stream),
-        plc.binaryop.BinaryOperator.LOGICAL_AND,
-        plc.DataType(plc.TypeId.BOOL8),
-        stream=stream,
-    )
-    return plc.copying.copy_if_else(filled, column, use_filled, stream=stream)
 
 
 class Cast(Expr):
@@ -2233,7 +2203,27 @@ class UnaryFunction(Expr):
             if self.name in {"cum_min", "cum_max"} and plc.traits.is_floating_point(
                 col_type
             ):
-                result = _scan_skipping_nans(plc_col, agg, df.stream)
+                # Polars skips NaN: a NaN takes the result of the preceding
+                # values, or stays NaN if no value precedes it.
+                scanned = plc.reduce.scan(
+                    plc.transform.column_nans_to_nulls(plc_col, stream=df.stream),
+                    agg,
+                    plc.reduce.ScanType.INCLUSIVE,
+                    stream=df.stream,
+                )
+                nan_filled = plc.replace.replace_nulls(
+                    scanned, plc.replace.ReplacePolicy.PRECEDING, stream=df.stream
+                )
+                use_filled = plc.binaryop.binary_operation(
+                    plc.unary.is_valid(nan_filled, stream=df.stream),
+                    plc.unary.is_valid(plc_col, stream=df.stream),
+                    plc.binaryop.BinaryOperator.LOGICAL_AND,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
+                result = plc.copying.copy_if_else(
+                    nan_filled, plc_col, use_filled, stream=df.stream
+                )
             else:
                 result = plc.reduce.scan(
                     plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream

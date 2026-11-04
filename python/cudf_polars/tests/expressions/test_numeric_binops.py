@@ -407,7 +407,16 @@ def test_pow_with_a_float_exponent_stays_floating_point(engine: pl.GPUEngine):
 @pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
 @pytest.mark.parametrize(
     "op",
-    [pl.Expr.eq, pl.Expr.ne, pl.Expr.lt, pl.Expr.le, pl.Expr.gt, pl.Expr.ge],
+    [
+        pl.Expr.eq,
+        pl.Expr.eq_missing,
+        pl.Expr.ne,
+        pl.Expr.ne_missing,
+        pl.Expr.lt,
+        pl.Expr.le,
+        pl.Expr.gt,
+        pl.Expr.ge,
+    ],
     ids=lambda op: op.__name__,
 )
 @pytest.mark.parametrize("other", [1.0, float("nan"), pl.col("b")], ids=str)
@@ -427,13 +436,24 @@ def test_float_comparison_orders_nan_above_everything(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize("op", [pl.Expr.gt, pl.Expr.ge, pl.Expr.eq, pl.Expr.ne])
-def test_parquet_filter_on_float_keeps_nan(engine: pl.GPUEngine, tmp_path, op):
+@pytest.mark.parametrize(
+    "op",
+    [
+        pl.Expr.gt,
+        pl.Expr.ge,
+        pl.Expr.eq,
+        pl.Expr.eq_missing,
+        pl.Expr.ne,
+        pl.Expr.ne_missing,
+    ],
+)
+@pytest.mark.parametrize("other", [1.0, float("nan")], ids=str)
+def test_parquet_filter_on_float_keeps_nan(engine: pl.GPUEngine, tmp_path, op, other):
     nan = float("nan")
     pl.DataFrame({"a": [nan, 0.0, 1.0, None]}).write_parquet(tmp_path / "a.parquet")
     pl.DataFrame({"a": [nan]}).write_parquet(tmp_path / "b.parquet")
     q = pl.scan_parquet([tmp_path / "a.parquet", tmp_path / "b.parquet"]).filter(
-        op(pl.col("a"), 1.0)
+        op(pl.col("a"), other)
     )
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 

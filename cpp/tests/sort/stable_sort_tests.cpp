@@ -292,6 +292,35 @@ TEST_F(StableSortDouble, InfinityAndNaN)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
 
+TEST_F(StableSortDouble, InfinityAndNaNDescending)
+{
+  auto constexpr NaN = std::numeric_limits<double>::quiet_NaN();
+  auto constexpr Inf = std::numeric_limits<double>::infinity();
+
+  auto input = cudf::test::fixed_width_column_wrapper<double>(
+    {-0.0, -NaN, -NaN, NaN, Inf, -Inf, 7.0, 5.0, 6.0, NaN, Inf, -Inf, -NaN, -NaN, -0.0});
+  auto expected =  // -nan,-nan,nan,nan,-nan,-nan,inf,inf,7,6,5,-0,-0,-inf,-inf
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+      {1, 2, 3, 9, 12, 13, 4, 10, 6, 8, 7, 0, 14, 5, 11});
+  auto results = stable_sorted_order(cudf::table_view({input}), {cudf::order::DESCENDING});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  auto sorted          = cudf::stable_sort(cudf::table_view({input}), {cudf::order::DESCENDING});
+  auto expected_sorted = cudf::gather(cudf::table_view({input}), expected);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(sorted->view(), expected_sorted->view());
+
+  // A column with nulls takes the comparator path rather than the radix path;
+  // the relative order of the non-null rows must be the same.
+  auto with_nulls = cudf::test::fixed_width_column_wrapper<double>(
+    {-0.0, -NaN, -NaN, NaN, Inf, -Inf, 7.0, 5.0, 6.0, NaN, Inf, -Inf, -NaN, -NaN, -0.0, 0.0},
+    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0});
+  auto expected_nulls = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {1, 2, 3, 9, 12, 13, 4, 10, 6, 8, 7, 0, 14, 5, 11, 15});
+  results = stable_sorted_order(
+    cudf::table_view({with_nulls}), {cudf::order::DESCENDING}, {cudf::null_order::BEFORE});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected_nulls);
+}
+
 TEST_F(StableSortDouble, SlicedNumericColumnsWithNullsAndTies)
 {
   auto constexpr nan = std::numeric_limits<double>::quiet_NaN();

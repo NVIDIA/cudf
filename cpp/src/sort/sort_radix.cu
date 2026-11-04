@@ -37,10 +37,14 @@ struct float_decomposer {
 template <typename F>
 struct float_to_pair_fn {
   F const* fs;
+  size_type size;  // number of rows
+  bool ascending;  // sort direction
   __device__ float_pair<F> operator()(cudf::size_type idx) const
   {
     auto const f = fs[idx];
-    auto const s = (isnan(f) * (idx + 1));  // multiplier helps keep the sort stable for NaNs
+    // NaNs sort after all other values: a non-zero bias makes them larger than any non-NaN.
+    // The bias is ordered by row index in the sort direction so equal NaNs remain stable.
+    auto const s = isnan(f) * (ascending ? idx + 1 : size - idx);
     return float_pair<F>{s, f};
   }
 };
@@ -95,7 +99,7 @@ struct sort_radix_fn {
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_in,
-                      float_to_pair_fn<T>{input.begin<T>()});
+                      float_to_pair_fn<T>{input.begin<T>(), input.size(), ascending});
 
     auto const decomposer = float_decomposer<T>{};
     auto const end_bit    = sizeof(float_pair<T>) * 8;

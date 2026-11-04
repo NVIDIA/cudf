@@ -156,6 +156,17 @@ class hybrid_scan_metadata {
    */
   hybrid_scan_metadata& operator=(hybrid_scan_metadata&&) = default;
 
+  /**
+   * @brief Get the parsed Parquet file metadata without copying it
+   *
+   * The metadata contains the materialized page index once `setup_page_index()` has been called
+   * on a reader sharing this handle, which updates it in place.
+   *
+   * @return Reference to the Parquet file metadata, valid while this handle or any reader
+   *         constructed from it is alive
+   */
+  [[nodiscard]] FileMetaData const& parquet_metadata() const;
+
  private:
   std::shared_ptr<detail::aggregate_reader_metadata> _metadata;
   friend class hybrid_scan_reader;

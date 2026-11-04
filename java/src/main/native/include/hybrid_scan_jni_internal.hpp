@@ -55,6 +55,14 @@ struct hybrid_scan_reader_wrapper {
       reader(std::make_unique<exp_pq::hybrid_scan_reader>(footer_bytes, options))
   {
   }
+
+  hybrid_scan_reader_wrapper(exp_pq::hybrid_scan_metadata const& metadata,
+                             cudf::io::parquet_reader_options opts)
+    : options(opts),
+      base_options(std::move(opts)),
+      reader(std::make_unique<exp_pq::hybrid_scan_reader>(metadata))
+  {
+  }
 };
 
 /**

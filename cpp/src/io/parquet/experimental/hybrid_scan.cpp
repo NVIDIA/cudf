@@ -79,6 +79,11 @@ hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData&& parquet_metadata,
 
 hybrid_scan_metadata::~hybrid_scan_metadata() = default;
 
+FileMetaData const& hybrid_scan_metadata::parquet_metadata() const
+{
+  return _metadata->parquet_metadata(0);
+}
+
 hybrid_scan_reader::hybrid_scan_reader(cudf::host_span<uint8_t const> footer_bytes,
                                        parquet_reader_options const& options)
   : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(

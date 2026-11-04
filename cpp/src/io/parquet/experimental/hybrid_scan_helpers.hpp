@@ -139,6 +139,16 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
   [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
 
   /**
+   * @brief Get the Parquet file metadata of one source without copying it
+   *
+   * @throws std::out_of_range if `source_index` is not a valid source index
+   *
+   * @param source_index Index of the source
+   * @return Reference to the source's file metadata, valid for the lifetime of this object
+   */
+  [[nodiscard]] FileMetaData const& parquet_metadata(std::size_t source_index) const;
+
+  /**
    * @brief Check whether selected columns have column and offset indexes
    *
    * Schema indices are mapped to each source before locating the column chunks.

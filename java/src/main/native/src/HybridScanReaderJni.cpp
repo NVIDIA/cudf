@@ -52,6 +52,27 @@ Java_ai_rapids_cudf_HybridScanReader_createFromFooter(JNIEnv* env,
   JNI_CATCH(env, 0);
 }
 
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_HybridScanReader_createFromMetadata(JNIEnv* env,
+                                                        jclass,
+                                                        jlong metadata_handle,
+                                                        jobjectArray j_column_names,
+                                                        jbooleanArray j_binary_as_str,
+                                                        jint time_unit_type_id)
+{
+  JNI_NULL_CHECK(env, metadata_handle, "metadata handle is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    (void)j_binary_as_str;
+    auto opts            = build_options(env, j_column_names, time_unit_type_id);
+    auto const* metadata = reinterpret_cast<exp_pq::hybrid_scan_metadata const*>(metadata_handle);
+    auto wrapper         = std::make_unique<hybrid_scan_reader_wrapper>(*metadata, std::move(opts));
+    return reinterpret_cast<jlong>(wrapper.release());
+  }
+  JNI_CATCH(env, 0);
+}
+
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_HybridScanReader_destroy(JNIEnv* env,
                                                                     jclass,
                                                                     jlong handle)

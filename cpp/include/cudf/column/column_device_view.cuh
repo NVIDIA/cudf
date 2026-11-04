@@ -9,6 +9,7 @@
 #include <cudf/lists/list_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/struct_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -18,6 +19,7 @@
 
 #include <cuda/iterator>
 #include <cuda/memory>
+#include <cuda/std/concepts>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -114,7 +116,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param element_index Position of the desired element
    * @return The element at the specified index
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     return base::element<T>(element_index);
@@ -131,7 +133,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param element_index Position of the desired string element
    * @return string_view instance representing this element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, string_view>)>
+  template <cudf::concepts::string_view T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     return base::element<T>(element_index);
@@ -147,7 +149,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param element_index Position of the desired element
    * @return numeric::fixed_point representing the element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     return base::element<T>(element_index);
@@ -160,16 +162,14 @@ class alignas(16) column_device_view : public column_device_view_core {
    * The basic dictionary elements are the indices which can be any index type.
    */
   struct index_element_fn {
-    template <typename IndexType,
-              CUDF_ENABLE_IF(is_index_type<IndexType>() and cuda::std::is_signed_v<IndexType>)>
+    template <cuda::std::signed_integral IndexType>
     __device__ size_type operator()(column_device_view const& indices, size_type index)
     {
       return static_cast<size_type>(indices.element<IndexType>(index));
     }
 
-    template <typename IndexType,
-              typename... Args,
-              CUDF_ENABLE_IF(not(is_index_type<IndexType>() and cuda::std::is_signed_v<IndexType>))>
+    template <typename IndexType, typename... Args>
+      requires(not cuda::std::signed_integral<IndexType>)
     __device__ size_type operator()(Args&&... args)
     {
       CUDF_UNREACHABLE("dictionary indices must be a signed integral type");
@@ -201,7 +201,7 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param element_index Position of the desired element
    * @return dictionary32 instance representing this element at this index
    */
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<T, dictionary32>)>
+  template <cudf::concepts::dictionary T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     size_type index    = element_index + offset();  // account for this view's _offset
@@ -244,7 +244,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @tparam T Type of the elements in the column
    * @return An iterator to the first element of the column
    */
-  template <typename T, CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T>
+    requires(column_device_view::has_element_accessor<T>())
   [[nodiscard]] const_iterator<T> begin() const
   {
     return const_iterator<T>{count_it{0}, detail::value_accessor<T>{*this}};
@@ -264,7 +265,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    *
    * @return An iterator to the element following the last element of the column
    */
-  template <typename T, CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T>
+    requires(column_device_view::has_element_accessor<T>())
   [[nodiscard]] const_iterator<T> end() const
   {
     return const_iterator<T>{count_it{size()}, detail::value_accessor<T>{*this}};
@@ -347,9 +349,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param has_nulls  A cudf::nullate type describing how to check for nulls
    * @return An optional iterator to the first element of the column
    */
-  template <typename T,
-            typename Nullate,
-            CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T, typename Nullate>
+    requires(column_device_view::has_element_accessor<T>())
   auto optional_begin(Nullate has_nulls) const
   {
     return const_optional_iterator<T, Nullate>{
@@ -377,9 +378,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    *
    * @return A pair iterator to the first element of the column
    */
-  template <typename T,
-            bool has_nulls,
-            CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T, bool has_nulls>
+    requires(column_device_view::has_element_accessor<T>())
   [[nodiscard]] const_pair_iterator<T, has_nulls> pair_begin() const
   {
     return const_pair_iterator<T, has_nulls>{count_it{0},
@@ -409,9 +409,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    *
    * @return A pair iterator to the first element of the column
    */
-  template <typename T,
-            bool has_nulls,
-            CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T, bool has_nulls>
+    requires(column_device_view::has_element_accessor<T>())
   [[nodiscard]] const_pair_rep_iterator<T, has_nulls> pair_rep_begin() const
   {
     return const_pair_rep_iterator<T, has_nulls>{count_it{0},
@@ -434,9 +433,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @param has_nulls  A cudf::nullate type describing how to check for nulls
    * @return An optional iterator to the element following the last element of the column
    */
-  template <typename T,
-            typename Nullate,
-            CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T, typename Nullate>
+    requires(column_device_view::has_element_accessor<T>())
   auto optional_end(Nullate has_nulls) const
   {
     return const_optional_iterator<T, Nullate>{
@@ -454,9 +452,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    * @throws cudf::logic_error if column datatype and Element type mismatch.
    * @return A pair iterator to the element following the last element of the column
    */
-  template <typename T,
-            bool has_nulls,
-            CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T, bool has_nulls>
+    requires(column_device_view::has_element_accessor<T>())
   [[nodiscard]] const_pair_iterator<T, has_nulls> pair_end() const
   {
     return const_pair_iterator<T, has_nulls>{count_it{size()},
@@ -475,9 +472,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    *
    * @return A pair iterator to the element following the last element of the column
    */
-  template <typename T,
-            bool has_nulls,
-            CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T, bool has_nulls>
+    requires(column_device_view::has_element_accessor<T>())
   [[nodiscard]] const_pair_rep_iterator<T, has_nulls> pair_rep_end() const
   {
     return const_pair_rep_iterator<T, has_nulls>{count_it{size()},
@@ -676,7 +672,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    * @param element_index Position of the desired element
    * @return Reference to the element at the specified index
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   [[nodiscard]] __device__ T& element(size_type element_index) const noexcept
   {
     return base::element<T>(element_index);
@@ -712,7 +708,8 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    * @tparam T The desired type
    * @return Pointer to the first element after casting
    */
-  template <typename T, CUDF_ENABLE_IF(mutable_column_device_view::has_element_accessor<T>())>
+  template <typename T>
+    requires(mutable_column_device_view::has_element_accessor<T>())
   iterator<T> begin()
   {
     return iterator<T>{count_it{0}, detail::mutable_value_accessor<T>{*this}};
@@ -728,7 +725,8 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
    * @tparam T The desired type
    * @return Pointer to one past the last element after casting
    */
-  template <typename T, CUDF_ENABLE_IF(mutable_column_device_view::has_element_accessor<T>())>
+  template <typename T>
+    requires(mutable_column_device_view::has_element_accessor<T>())
   iterator<T> end()
   {
     return iterator<T>{count_it{size()}, detail::mutable_value_accessor<T>{*this}};
@@ -1017,16 +1015,14 @@ struct pair_rep_accessor {
   }
 
  private:
-  template <typename R>
+  template <cuda::std::same_as<rep_type> R>
   [[nodiscard]] __device__ inline auto get_rep(cudf::size_type i) const
-    requires(std::is_same_v<R, rep_type>)
   {
     return col.element<R>(i);
   }
 
   template <typename R>
   [[nodiscard]] __device__ inline auto get_rep(cudf::size_type i) const
-    requires(not std::is_same_v<R, rep_type>)
   {
     return col.element<R>(i).value();
   }

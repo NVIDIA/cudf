@@ -108,39 +108,35 @@ struct host_span {
 
   /// Constructor from container
   /// @param in The container to construct the span from
-  template <
-    typename C,
-    // Only supported containers of types convertible to T
-    std::enable_if_t<
-      is_host_span_supported_container<C>::value &&
+  // Only supported containers of types convertible to T
+  template <typename C>
+    requires(
+      is_host_span_supported_container<C>::value and
       std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
                               std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
-                            T (*)[]>>* = nullptr>                  // NOLINT
+                            T (*)[]>)                              // NOLINT
   constexpr host_span(C& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
 
   /// Constructor from const container
   /// @param in The container to construct the span from
-  template <
-    typename C,
-    // Only supported containers of types convertible to T
-    std::enable_if_t<
-      is_host_span_supported_container<C>::value &&
+  // Only supported containers of types convertible to T
+  template <typename C>
+    requires(
+      is_host_span_supported_container<C>::value and
       std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
                               std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
-                            T (*)[]>>* = nullptr>                  // NOLINT
+                            T (*)[]>)                              // NOLINT
   constexpr host_span(C const& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
 
   // Copy construction to support const conversion
   /// @param other The span to copy
-  template <typename OtherT,
-            std::size_t OtherExtent,
-            std::enable_if_t<(Extent == OtherExtent || Extent == dynamic_extent) &&
-                               std::is_convertible_v<OtherT (*)[], T (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename OtherT, std::size_t OtherExtent>
+    requires((Extent == OtherExtent or Extent == dynamic_extent) and
+             std::is_convertible_v<OtherT (*)[], T (*)[]>)  // NOLINT
   constexpr host_span(host_span<OtherT, OtherExtent> const& other) noexcept
     : _span{other.data(), other.size()}, _is_device_accessible{other.is_device_accessible()}
   {
@@ -390,11 +386,9 @@ class base_2dspan {
    * @tparam OtherRowType Type of the row of the other 2D span
    * @param other The other 2D span
    */
-  template <typename OtherT,
-            template <typename, size_t> typename OtherRowType,
-            std::enable_if_t<std::is_convertible_v<OtherRowType<OtherT, dynamic_extent>,
-                                                   RowType<T, dynamic_extent>>,
-                             void>* = nullptr>
+  template <typename OtherT, template <typename, size_t> typename OtherRowType>
+    requires(std::is_convertible_v<OtherRowType<OtherT, dynamic_extent>,
+                                   RowType<T, dynamic_extent>>)
   constexpr base_2dspan(base_2dspan<OtherT, OtherRowType> const& other) noexcept
     : _flat{other.flat_view()}, _size{other.size()}
   {

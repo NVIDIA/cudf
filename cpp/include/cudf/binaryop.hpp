@@ -7,8 +7,11 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/std/concepts>
 
 #include <memory>
 
@@ -95,53 +98,37 @@ enum class binary_operator : int32_t {
 };
 
 /// Binary operation common type default
-template <typename L, typename R, typename = void>
+template <typename L, typename R>
 struct binary_op_common_type {};
 
-/// Binary operation common type specialization
+/// @cond
+// Sphinx cannot parse constrained partial specializations or requires expressions
 template <typename L, typename R>
-struct binary_op_common_type<L, R, std::enable_if_t<has_common_type_v<L, R>>> {
-  /// The common type of the template parameters
+  requires(has_common_type_v<L, R>)
+struct binary_op_common_type<L, R> {
   using type = std::common_type_t<L, R>;
 };
 
-/// Binary operation common type specialization
-template <typename L, typename R>
-struct binary_op_common_type<
-  L,
-  R,
-  std::enable_if_t<is_fixed_point<L>() && cuda::std::is_floating_point_v<R>>> {
-  /// The common type of the template parameters
+template <cudf::concepts::fixed_point L, cuda::std::floating_point R>
+struct binary_op_common_type<L, R> {
   using type = L;
 };
 
-/// Binary operation common type specialization
-template <typename L, typename R>
-struct binary_op_common_type<
-  L,
-  R,
-  std::enable_if_t<is_fixed_point<R>() && cuda::std::is_floating_point_v<L>>> {
-  /// The common type of the template parameters
+template <cuda::std::floating_point L, cudf::concepts::fixed_point R>
+struct binary_op_common_type<L, R> {
   using type = R;
 };
+/// @endcond
 
 /// Binary operation common type helper
 template <typename L, typename R>
 using binary_op_common_type_t = typename binary_op_common_type<L, R>::type;
 
-namespace detail {
-template <typename AlwaysVoid, typename L, typename R>
-struct binary_op_has_common_type_impl : std::false_type {};
-
-template <typename L, typename R>
-struct binary_op_has_common_type_impl<std::void_t<binary_op_common_type_t<L, R>>, L, R>
-  : std::true_type {};
-}  // namespace detail
-
-/// Checks if binary operation types have a common type
+/// @cond
 template <typename L, typename R>
 constexpr inline bool binary_op_has_common_type_v =
-  detail::binary_op_has_common_type_impl<void, L, R>::value;
+  requires { typename binary_op_common_type_t<L, R>; };
+/// @endcond
 
 /**
  * @brief Performs a binary operation between a scalar and a column.

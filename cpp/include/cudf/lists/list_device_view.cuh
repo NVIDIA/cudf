@@ -10,6 +10,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/utility>
 #include <cuda_runtime.h>
 
@@ -303,16 +304,14 @@ class list_device_view {
     }
 
    private:
-    template <typename R>
+    template <cuda::std::same_as<rep_type> R>
     __device__ inline rep_type get_rep(cudf::size_type i) const
-      requires(std::is_same_v<R, rep_type>)
     {
       return list.element<R>(i);
     }
 
     template <typename R>
     __device__ inline rep_type get_rep(cudf::size_type i) const
-      requires(not std::is_same_v<R, rep_type>)
     {
       return list.element<R>(i).value();
     }

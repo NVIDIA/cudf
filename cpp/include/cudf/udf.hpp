@@ -12,6 +12,11 @@
 namespace CUDF_EXPORT cudf {
 
 /**
+ * @addtogroup udfs
+ * @{
+ */
+
+/**
  * @brief The type of LTO Binary
  */
 enum class lto_binary_type : uint8_t {
@@ -32,5 +37,7 @@ struct lto_fragment {
 
 /// @brief Device modules linked into a JIT kernel.
 using lto_fragments = std::span<lto_fragment const>;
+
+/** @} */  // end of group
 
 }  // namespace CUDF_EXPORT cudf

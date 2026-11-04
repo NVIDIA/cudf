@@ -101,6 +101,11 @@ for version in "${VERSIONS[@]}"; do
     nproc; free -g; cat /proc/meminfo | head -5
     (while true; do nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu,pstate,clocks.sm,temperature.gpu,power.draw --format=csv,noheader; free -m | sed -n 2p; cat /proc/loadavg; sleep 30; done) > "${RAPIDS_TESTS_DIR:-/tmp}/../wsl-monitor.log" 2>&1 &
     WSL_MON_PID=$!
+    python ci/wsl_driver_probe.py
+    pushd python/cudf_polars
+    timeout 10m python -m pytest -v --durations=20 -p no:cacheprovider --no-cov tests/streaming/test_default_singleton_engine.py tests/expressions/test_agg.py -k "singleton or implode"
+    popd
+    exit 1
     # Fail fast (-x) rather than trying to continue because failed tests pollute the state
     ./ci/run_cudf_polars_pytests.sh \
         "${COVERAGE_ARGS[@]}" \

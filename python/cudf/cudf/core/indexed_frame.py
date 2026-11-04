@@ -61,7 +61,7 @@ from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import _Resampler
 from cudf.core.udf.strings_typing import ManagedStrArrayWrapper
 from cudf.core.udf.utils import (
-    _get_columns_tuple_from_frame,
+    _get_input_args_from_frame,
     _make_free_string_kernel,
     _mlir_string_array_to_column,
     _output_args_for_udf_kernel,
@@ -3722,8 +3722,8 @@ class IndexedFrame(Frame):
         ans_col = _return_arr_from_dtype(retty, len(self))
         ans_mask = as_column(True, length=len(self), dtype=np.dtype("bool"))
         output_args = _output_args_for_udf_kernel(ans_col, ans_mask, len(self))
-        columns = _get_columns_tuple_from_frame(self)
-        launch_args = output_args + [columns, tuple(args)]
+        input_args = _get_input_args_from_frame(self)
+        launch_args = output_args + input_args + list(args)
         try:
             with _CUDFNumbaConfig():
                 kernel.forall(len(self))(*launch_args)

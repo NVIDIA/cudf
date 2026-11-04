@@ -125,23 +125,17 @@ def _supported_cols_from_frame(frame, supported_types=JIT_SUPPORTED_TYPES):
     }
 
 
-def _column_data_type(col):
-    """The numba type of a column's data buffer as seen by a UDF kernel.
-
-    A C-contiguous array for fixed-width dtypes; a pointer to ``mlir_string``
-    for string columns.
-    """
-    if _is_string_dtype(col.dtype):
-        return CPointer(mlir_string)
-    return numpy_support.from_dtype(col.dtype)[::1]
-
-
 def _masked_array_type_from_col(col):
     """
     Return kernel arg type per column: Array for unmasked, Tuple(data, mask) for masked.
     Matches original numba extension: unmasked -> single array, masked -> unpacked (d, m).
     """
-    col_type = _column_data_type(col)
+    if _is_string_dtype(col.dtype):
+        col_type = CPointer(mlir_string)
+    else:
+        nb_scalar_ty = numpy_support.from_dtype(col.dtype)
+        col_type = nb_scalar_ty[::1]
+
     if col.mask is None:
         return col_type
     return Tuple((col_type, LIBCUDF_BITMASK_TYPE[::1]))
@@ -317,31 +311,6 @@ def _get_input_args_from_frame(fr: IndexedFrame) -> list:
         offsets.append(col.offset)
 
     return args + offsets
-
-
-def _get_columns_tuple_from_frame(fr: IndexedFrame) -> tuple:
-    """Build the ``columns`` kernel argument for the metaprogrammed kernels.
-
-    One ``(data, mask, offset)`` entry per supported column. ``mask`` is an
-    empty bitmask array for columns without a validity mask (the kernel checks
-    ``mask.size == 0``); ``offset`` carries the column's slice offset.
-    """
-    columns = []
-    for col in _supported_cols_from_frame(fr).values():
-        if _is_string_dtype(col.dtype):
-            data = ManagedStrArrayWrapper(
-                column_to_mlir_string_array_init_heap(col.plc_column)
-            )
-        else:
-            data = _buffer_as_dtyped_view(col.data, len(col), col.dtype)
-        if col.mask is not None:
-            mask_itemsize = np.dtype(SIZE_TYPE_DTYPE).itemsize
-            mask_n = col.mask.size // mask_itemsize
-            mask = _buffer_as_dtyped_view(col.mask, mask_n, SIZE_TYPE_DTYPE)
-        else:
-            mask = cp.empty(0, dtype=SIZE_TYPE_DTYPE)
-        columns.append((data, mask, col.offset))
-    return tuple(columns)
 
 
 def _output_args_for_udf_kernel(ans_col, ans_mask, n):

@@ -185,10 +185,8 @@ class MLIRStringArgHandler:
         ty : types.Type
             The numba type of the argument.
         val : object
-            The host-side argument value: a wrapper exposing ``.ptr``, or a
-            (possibly nested) tuple containing such wrappers. The metaprogrammed
-            apply kernels pass columns as a tuple of ``(data, mask, offset)``
-            triples, so string pointers can be nested two levels deep.
+            The host-side argument value (a wrapper exposing ``.ptr``, or a
+            tuple whose first element is one).
         **kwargs
             Additional launch context (unused).
 
@@ -196,30 +194,24 @@ class MLIRStringArgHandler:
         -------
         tuple
             ``(type, value)`` for the kernel: a bare ``CPointer(mlir_string)``
-            becomes ``(uint64, device_ptr)``; for tuples the declared type is
-            kept and every nested ``CPointer(mlir_string)`` wrapper is replaced
-            by its device address; other arguments pass through unchanged.
+            becomes ``(uint64, device_ptr)``; a ``(pointer, mask)`` tuple keeps
+            its type with the pointer replaced by its device address; other
+            arguments pass through unchanged.
         """
         if isinstance(ty, types.CPointer) and isinstance(
             ty.dtype, MLIRStringType
         ):
             return types.uint64, val.ptr
-        return ty, self._marshal_value(ty, val)
-
-    def _marshal_value(self, ty: types.Type, val):
-        """Replace every ``CPointer(mlir_string)`` wrapper in ``val`` with its
-        device address, recursing through (possibly nested) tuples. The numba
-        type tree is left unchanged; only the carried value is marshalled so the
-        C launcher receives a plain device pointer for each string column."""
-        if isinstance(ty, types.CPointer) and isinstance(
-            ty.dtype, MLIRStringType
-        ):
-            return val.ptr
-        if isinstance(ty, types.BaseTuple):
-            return tuple(
-                self._marshal_value(ty[i], val[i]) for i in range(len(ty))
-            )
-        return val
+        if isinstance(ty, types.Tuple) and len(ty) >= 1:
+            first_ty = ty[0]
+            if isinstance(first_ty, types.CPointer) and isinstance(
+                first_ty.dtype, MLIRStringType
+            ):
+                ptr_val = val[0].ptr
+                if len(ty) == 2:
+                    return ty, (ptr_val, val[1])
+                return ty, (ptr_val,)
+        return ty, val
 
 
 mlir_string_arg_handler = MLIRStringArgHandler()

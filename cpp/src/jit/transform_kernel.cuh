@@ -89,7 +89,7 @@ __device__ void transform_kernel(size_type row_size,
   } else {
     // Keep every lane in a warp on the same loop iteration when writing validity.
     auto const warp_padded_size =
-      util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
+      cudf::detail::round_up_safe<thread_index_type>(row_size, detail::warp_size);
 
     for (auto row_index = start; row_index < warp_padded_size; row_index += stride) {
       auto const active_mask = __ballot_sync(0xffff'ffffu, row_index < row_size);

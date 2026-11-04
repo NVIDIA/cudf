@@ -11,6 +11,7 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/reduction/detail/reduction_policy.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -50,14 +51,13 @@ namespace detail {
  */
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::fixed_width OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
-  requires(is_fixed_width<OutputType>() && not cudf::is_fixed_point<OutputType>())
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
@@ -76,14 +76,13 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
 
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::fixed_point OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
-  requires(is_fixed_point<OutputType>())
 {
   CUDF_FAIL(
     "This function should never be called. fixed_point reduce should always go through the reduce "
@@ -93,14 +92,13 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
 // @brief string_view specialization of simple reduction
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::string_view OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
                                rmm::device_async_resource_ref mr)
-  requires(std::is_same_v<OutputType, string_view>)
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());

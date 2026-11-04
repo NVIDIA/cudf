@@ -542,9 +542,9 @@ abstract class Aggregation {
      * Sum aggregation that also reports overflow. The result is a struct with
      * children {sum: same type as input, overflow: BOOL8}. The input may be any
      * signed integer type (INT8/16/32/64) or fixed-point decimal
-     * (DECIMAL32/64/128), for both column reductions and hash-based groupby.
-     * On overflow the sum value is unspecified; the boolean flag is the source of
-     * truth. Sort-based groupby, scan, segmented reduce, and rolling are not
+     * (DECIMAL32/64/128), for column reductions and both hash-based and
+     * sort-based groupby. On overflow the sum value is unspecified; the boolean
+     * flag is the source of truth. Scan, segmented reduce, and rolling are not
      * supported by cudf.
      */
     static SumOverflowAggregation sumOverflow() {

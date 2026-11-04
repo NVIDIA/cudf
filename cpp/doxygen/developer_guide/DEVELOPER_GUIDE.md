@@ -666,15 +666,14 @@ Prefer a trailing return type; it is the lightest and most readable. Fall back t
 
 ```c++
 // Fails: return type of a bare __device__ lambda is not visible to host code
-cudf::detail::copy_if(begin, end, output, [d] __device__(auto i) { return d[i] > 0; }, stream, mr);
+cudf::detail::copy_if(begin, end, output, [d] __device__(auto i) { return d[i] > 0; }, stream);
 
 // Preferred: trailing return type
-cudf::detail::copy_if(
-  begin, end, output, [d] __device__(auto i) -> bool { return d[i] > 0; }, stream, mr);
+cudf::detail::copy_if(begin, end, output, [d] __device__(auto i) -> bool { return d[i] > 0; }, stream);
 
 // Alternative: proclaim_return_type
 cudf::detail::copy_if(
-  begin, end, output, cuda::proclaim_return_type<bool>([d] __device__(auto i) { return d[i] > 0; }), stream, mr);
+  begin, end, output, cuda::proclaim_return_type<bool>([d] __device__(auto i) { return d[i] > 0; }), stream);
 ```
 
 ## Memory Allocation

@@ -169,8 +169,7 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                           cuda::counting_iterator<size_type>{input.size()},
                           scatter_map_storage.begin(),
                           is_null_index_predicate(input.size(), gather_map.begin<size_type>()),
-                          stream,
-                          cudf::get_current_device_resource_ref());
+                          stream);
 
   auto scatter_map = cudf::device_span<size_type>{
     scatter_map_storage.data(),

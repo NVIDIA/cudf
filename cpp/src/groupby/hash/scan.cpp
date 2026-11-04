@@ -54,13 +54,11 @@ void scan_result_functor::operator()<aggregation::SUM>(aggregation const& agg)
 {
   if (cache.has_result(values, agg)) return;
 
-  cache.add_result(values,
-                   agg,
-                   detail::sum_scan(get_grouped_values(),
-                                    helper.num_groups(stream, mr),
-                                    helper.group_labels(stream, mr),
-                                    stream,
-                                    mr.get_output_mr()));
+  cache.add_result(
+    values,
+    agg,
+    detail::sum_scan(
+      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
 }
 
 template <>
@@ -68,13 +66,11 @@ void scan_result_functor::operator()<aggregation::PRODUCT>(aggregation const& ag
 {
   if (cache.has_result(values, agg)) return;
 
-  cache.add_result(values,
-                   agg,
-                   detail::product_scan(get_grouped_values(),
-                                        helper.num_groups(stream, mr),
-                                        helper.group_labels(stream, mr),
-                                        stream,
-                                        mr.get_output_mr()));
+  cache.add_result(
+    values,
+    agg,
+    detail::product_scan(
+      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
 }
 
 template <>
@@ -82,13 +78,11 @@ void scan_result_functor::operator()<aggregation::MIN>(aggregation const& agg)
 {
   if (cache.has_result(values, agg)) return;
 
-  cache.add_result(values,
-                   agg,
-                   detail::min_scan(get_grouped_values(),
-                                    helper.num_groups(stream, mr),
-                                    helper.group_labels(stream, mr),
-                                    stream,
-                                    mr.get_output_mr()));
+  cache.add_result(
+    values,
+    agg,
+    detail::min_scan(
+      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
 }
 
 template <>
@@ -96,13 +90,11 @@ void scan_result_functor::operator()<aggregation::MAX>(aggregation const& agg)
 {
   if (cache.has_result(values, agg)) return;
 
-  cache.add_result(values,
-                   agg,
-                   detail::max_scan(get_grouped_values(),
-                                    helper.num_groups(stream, mr),
-                                    helper.group_labels(stream, mr),
-                                    stream,
-                                    mr.get_output_mr()));
+  cache.add_result(
+    values,
+    agg,
+    detail::max_scan(
+      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
 }
 
 template <>

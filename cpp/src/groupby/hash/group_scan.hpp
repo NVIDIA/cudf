@@ -21,13 +21,11 @@ namespace detail {
  * @brief Internal API to calculate groupwise cumulative sum
  *
  * @param values Grouped values to get sum of
- * @param num_groups Number of groups
  * @param group_labels ID of group that the corresponding value belongs to
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<column> sum_scan(column_view const& values,
-                                 size_type num_groups,
                                  device_span<size_type const> group_labels,
                                  cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
@@ -38,13 +36,11 @@ std::unique_ptr<column> sum_scan(column_view const& values,
  * Behaviour is undefined for signed integral types if any groupwise product overflows the type.
  *
  * @param values Grouped values to get product of
- * @param num_groups Number of groups
  * @param group_labels ID of group that the corresponding value belongs to
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<column> product_scan(column_view const& values,
-                                     size_type num_groups,
                                      device_span<size_type const> group_labels,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
@@ -53,13 +49,11 @@ std::unique_ptr<column> product_scan(column_view const& values,
  * @brief Internal API to calculate groupwise cumulative minimum value
  *
  * @param values Grouped values to get minimum from
- * @param num_groups Number of groups
  * @param group_labels ID of group that the corresponding value belongs to
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<column> min_scan(column_view const& values,
-                                 size_type num_groups,
                                  device_span<size_type const> group_labels,
                                  cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);
@@ -68,13 +62,11 @@ std::unique_ptr<column> min_scan(column_view const& values,
  * @brief Internal API to calculate groupwise cumulative maximum value
  *
  * @param values Grouped values to get maximum from
- * @param num_groups Number of groups
  * @param group_labels ID of group that the corresponding value belongs to
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<column> max_scan(column_view const& values,
-                                 size_type num_groups,
                                  device_span<size_type const> group_labels,
                                  cuda::stream_ref stream,
                                  rmm::device_async_resource_ref mr);

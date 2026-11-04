@@ -73,7 +73,7 @@ std::unique_ptr<column> sorted_order(table_view input,
     auto const single_col = input.column(0);
     auto const col_order  = column_order.empty() ? order::ASCENDING : column_order.front();
     auto const null_prec  = null_precedence.empty() ? null_order::BEFORE : null_precedence.front();
-    return sorted_order<method>(single_col, col_order, null_prec, stream, mr.get_output_mr());
+    return sorted_order<method>(single_col, col_order, null_prec, stream, mr);
   }
 
   std::unique_ptr<column> sorted_indices =

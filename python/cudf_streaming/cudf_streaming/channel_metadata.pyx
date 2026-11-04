@@ -198,7 +198,11 @@ cdef class RowOrdering:
 
 
 cdef class Ordering:
-    """A valid ordering description for order-partitioned data."""
+    """A valid ordering description for order-partitioned data.
+
+    With strict boundaries, rows equal to a boundary belong to the preceding
+    partition.
+    """
 
     def __init__(
         self,

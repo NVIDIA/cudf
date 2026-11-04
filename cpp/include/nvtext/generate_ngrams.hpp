@@ -43,15 +43,15 @@ namespace CUDF_EXPORT nvtext {
  * @param ngrams The ngram number to generate
  * @param separator The string to use for separating ngram tokens
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New strings columns of tokens
  */
 std::unique_ptr<cudf::column> generate_ngrams(
   cudf::strings_column_view const& input,
   cudf::size_type ngrams,
   cudf::string_scalar const& separator,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Generates ngrams of characters within each string
@@ -73,14 +73,14 @@ std::unique_ptr<cudf::column> generate_ngrams(
  * @param ngrams The ngram number to generate.
  *               Default is 2 = bigram.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Lists column of strings
  */
 std::unique_ptr<cudf::column> generate_character_ngrams(
   cudf::strings_column_view const& input,
-  cudf::size_type ngrams            = 2,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::size_type ngrams    = 2,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Hashes ngrams of characters within each string
@@ -109,15 +109,15 @@ std::unique_ptr<cudf::column> generate_character_ngrams(
  * @param ngrams The ngram number to generate. Default is 5.
  * @param seed The seed value to use with the hash algorithm. Default is 0.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory.
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return A lists column of hash values
  */
 std::unique_ptr<cudf::column> hash_character_ngrams(
   cudf::strings_column_view const& input,
-  cudf::size_type ngrams            = 5,
-  uint32_t seed                     = 0,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::size_type ngrams    = 5,
+  uint32_t seed             = 0,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

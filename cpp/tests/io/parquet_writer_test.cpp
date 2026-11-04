@@ -15,6 +15,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/detail/codec.hpp>
@@ -23,6 +24,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
@@ -47,10 +49,9 @@ namespace {
 /**
  * @brief Create a list column with `num_rows` rows of `rows_per_row` values each.
  */
-template <typename T>
+template <cudf::concepts::integral_not_bool T>
 std::unique_ptr<cudf::column> make_wide_list_column(cudf::size_type num_rows,
                                                     cudf::size_type rows_per_row)
-  requires(cudf::is_integral_not_bool<T>())
 {
   // Compute in int64_t and validate before narrowing to cudf::size_type to avoid overflow
   auto const total_values = static_cast<int64_t>(num_rows) * static_cast<int64_t>(rows_per_row);
@@ -242,7 +243,7 @@ TEST_F(ParquetWriterTest, BufferSource)
 
   // device buffer
   {
-    auto const d_input = cudf::detail::make_device_uvector(
+    auto const d_input = cudf::detail::make_device_buffer(
       cudf::host_span<uint8_t const>{reinterpret_cast<uint8_t const*>(out_buffer.data()),
                                      out_buffer.size()},
       cudf::get_default_stream(),

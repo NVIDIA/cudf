@@ -11,11 +11,21 @@
 #include <memory>
 #include <span>
 
+/**
+ * @file
+ * @brief APIs for compiling and sharing device code for user-defined functions
+ */
+
 namespace rtcx {
 struct blob_t;
 }
 
 namespace CUDF_EXPORT cudf {
+
+/**
+ * @addtogroup udf
+ * @{
+ */
 
 /// @brief Device-code formats accepted by LTO execution APIs.
 enum class lto_binary_type : uint8_t {
@@ -85,4 +95,5 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          std::span<char const* const> include_paths,
                                          bool use_pch = true);
 
+/** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

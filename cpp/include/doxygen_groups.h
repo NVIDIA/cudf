@@ -183,6 +183,7 @@
  * @{
  *   @defgroup label_bins Bin Labeling
  * @}
+ * @defgroup udf User-Defined Functions
  * @defgroup expressions Expression Evaluation
  * @defgroup tdigest tdigest APIs
  */

@@ -24,7 +24,6 @@ namespace CUDF_EXPORT cudf {
  * @brief An enumeration of error codes that can occur during operations.
  *
  * This enumeration is part of the cuDF UDF ABI and is of type `int32_t`.
- *
  */
 enum class [[nodiscard]] errc : cuda::std::int32_t {
   SUCCESS             = 0,

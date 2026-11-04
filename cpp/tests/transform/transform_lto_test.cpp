@@ -13,7 +13,6 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/transform.hpp>
-#include <cudf/utilities/error.hpp>
 
 #include <cudf_test_fragments.hpp>
 

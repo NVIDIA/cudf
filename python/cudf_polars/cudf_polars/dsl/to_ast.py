@@ -205,6 +205,13 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
             ),
         )
     c1, c2 = node.children
+    if node.op in expr.BinOp._NAN_AWARE_COMPARISONS and (
+        plc.traits.is_floating_point(c1.dtype.plc_type)
+        or plc.traits.is_floating_point(c2.dtype.plc_type)
+    ):
+        # AST comparisons follow IEEE 754, but Polars orders NaN above every
+        # other value and considers it equal to itself.
+        raise NotImplementedError("AST comparison of floating point values")
     if c1.dtype != c2.dtype:
         if isinstance(c1, expr.Literal):  # pragma: no cover
             c1 = c1.astype(c2.dtype)

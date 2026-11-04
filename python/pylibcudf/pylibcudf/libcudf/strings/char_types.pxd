@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from libc.stdint cimport uint8_t, uint32_t
+from libc.stdint cimport uint8_t, uint16_t, uint32_t
 from libcpp.memory cimport unique_ptr
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
@@ -14,6 +14,12 @@ cdef extern from "cudf/strings/char_types/char_types.hpp" \
         namespace "cudf::strings" nogil:
 
     cdef const uint8_t* get_character_flags_table(cudaStream_t stream) \
+        except +libcudf_exception_handler
+
+    cdef const uint16_t* get_character_cases_table(cudaStream_t stream) \
+        except +libcudf_exception_handler
+
+    cdef const void* get_special_case_mapping_table(cudaStream_t stream) \
         except +libcudf_exception_handler
 
     cpdef enum class string_character_types(uint32_t):

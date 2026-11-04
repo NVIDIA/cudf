@@ -12,11 +12,12 @@
 #include <cudf/copying.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
@@ -252,7 +253,8 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
         output_dtype, num_segments, cudf::mask_state::UNALLOCATED, stream);
 
       // Store row index if it is valid, otherwise store a negative value denoting a null row.
-      rmm::device_uvector<cudf::size_type> valid_idx(num_segments, stream);
+      cuda::device_buffer<cudf::size_type> valid_idx(
+        stream, cudf::get_current_device_resource_ref(), num_segments, cuda::no_init);
 
       thrust::transform(
         rmm::exec_policy_nosync(stream),
@@ -261,8 +263,8 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
         cuda::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),
         transform_fn{*input_dv_ptr, offsets, static_cast<OutputType>(init_value), null_handling});
 
-      auto const valid_idx_cv = cudf::column_view{
-        cudf::data_type{cudf::type_id::INT32}, num_segments, valid_idx.begin(), nullptr, 0};
+      auto const valid_idx_cv =
+        cudf::column_view{cudf::device_span<cudf::size_type const>{valid_idx}};
       return std::move(cudf::gather(cudf::table_view{{output->view()}},
                                     valid_idx_cv,
                                     cudf::out_of_bounds_policy::NULLIFY,

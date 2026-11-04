@@ -38,12 +38,15 @@ The jar bundles its native libraries, so it only runs on the platforms it was bu
 release includes a jar for each supported CUDA major version and CPU architecture, selected with a
 classifier:
 
-| Classifier     | CUDA version | Architecture |
-|----------------|--------------|--------------|
-| `cuda12`       | 12           | x86_64       |
-| `cuda12-arm64` | 12           | aarch64      |
-| `cuda13`       | 13           | x86_64       |
-| `cuda13-arm64` | 13           | aarch64      |
+| Classifier     | CUDA version | Minimum driver | Architecture |
+|----------------|--------------|----------------|--------------|
+| `cuda12`       | 12.2+        | 535            | x86_64       |
+| `cuda12-arm64` | 12.2+        | 535            | aarch64      |
+| `cuda13`       | 13.0+        | 580            | x86_64       |
+| `cuda13-arm64` | 13.0+        | 580            | aarch64      |
+
+See [Platform Support](https://docs.nvidia.com/datascience/platform-support/) for the CUDA toolkit
+versions, drivers and GPU architectures supported by each release.
 
 The jar without a classifier is the same as the `cuda12` jar. For example, to use the CUDA 13 jar
 on x86_64:

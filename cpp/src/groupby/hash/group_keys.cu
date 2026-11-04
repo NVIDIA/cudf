@@ -6,10 +6,11 @@
 #include "group_keys.hpp"
 #include "groupby/common/utils.hpp"
 #include "hash_csr_kernels.cuh"
-#include "helpers.cuh"
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>

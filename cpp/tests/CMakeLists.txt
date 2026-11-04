@@ -618,6 +618,7 @@ ConfigureTest(
   strings/format_lists_tests.cpp
   strings/integers_tests.cpp
   strings/ipv4_tests.cpp
+  strings/jit/regex_tests.cpp
   strings/like_tests.cpp
   strings/pad_tests.cpp
   strings/repeat_strings_tests.cpp

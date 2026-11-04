@@ -21,6 +21,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
@@ -70,11 +71,13 @@ dremel_data get_encoding(column_view h_col,
                          std::vector<uint8_t> nullability,
                          bool output_as_byte_array,
                          bool always_nullable,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto const temp_mr        = mr.get_temporary_mr();
-  auto get_list_level       = [](column_view col) {
+  auto const output_mr = mr.get_output_mr();
+  auto const temp_mr   = mr.get_temporary_mr();
+
+  auto get_list_level = [](column_view col) {
     while (col.type().id() == type_id::STRUCT) {
       col = col.child(0);
     }
@@ -209,8 +212,8 @@ dremel_data get_encoding(column_view h_col,
   }
 
   [[maybe_unused]] auto [device_view_owners, d_nesting_levels] =
-    create_column_device_views<column_device_view>(host_span<column_view const>{nesting_levels},
-                                                   stream);
+    create_column_device_views<column_device_view>(
+      host_span<column_view const>{nesting_levels}, stream, temp_mr);
 
   auto max_def_level = def_at_level.back();
   thrust::exclusive_scan(
@@ -219,11 +222,11 @@ dremel_data get_encoding(column_view h_col,
 
   // Sliced list column views only have offsets applied to top level. Get offsets for each level.
   cuda::device_buffer<size_type> d_column_offsets(
-    stream, cudf::get_current_device_resource_ref(), nesting_levels.size(), cuda::no_init);
+    stream, temp_mr, nesting_levels.size(), cuda::no_init);
   cuda::device_buffer<size_type> d_column_ends(
-    stream, cudf::get_current_device_resource_ref(), nesting_levels.size(), cuda::no_init);
+    stream, temp_mr, nesting_levels.size(), cuda::no_init);
 
-  auto d_col = column_device_view::create(h_col, stream);
+  auto d_col = column_device_view::create(h_col, stream, temp_mr);
   cudf::detail::device_single_thread(
     [offset_at_level  = d_column_offsets.data(),
      end_idx_at_level = d_column_ends.data(),
@@ -266,14 +269,14 @@ dremel_data get_encoding(column_view h_col,
 
   auto d_nullability = cudf::detail::make_device_buffer_async(nullability, stream, temp_mr);
 
-  rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream);
-  rmm::device_uvector<uint8_t> def_level(max_vals_size, stream);
+  rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream, temp_mr);
+  rmm::device_uvector<uint8_t> def_level(max_vals_size, stream, temp_mr);
 
   // Use max_vals_size only for nested lists; otherwise no temporary values are needed.
   auto const temp_vals_size = nesting_levels.size() > 2 ? max_vals_size : size_t{0};
-  rmm::device_uvector<uint8_t> temp_rep_vals(temp_vals_size, stream);
-  rmm::device_uvector<uint8_t> temp_def_vals(temp_vals_size, stream);
-  rmm::device_uvector<size_type> new_offsets(0, stream);
+  rmm::device_uvector<uint8_t> temp_rep_vals(temp_vals_size, stream, temp_mr);
+  rmm::device_uvector<uint8_t> temp_def_vals(temp_vals_size, stream, temp_mr);
+  rmm::device_uvector<size_type> new_offsets(0, stream, temp_mr);
   size_type curr_rep_values_size = 0;
   {
     // At this point, curr_col contains the leaf column. Max nesting level is
@@ -347,7 +350,7 @@ dremel_data get_encoding(column_view h_col,
                            scan_out.begin());
 
     // Add scan output to existing offsets to get new offsets into merged rep level values
-    new_offsets = rmm::device_uvector<size_type>(offset_size_at_level, stream);
+    new_offsets = rmm::device_uvector<size_type>(offset_size_at_level, stream, temp_mr);
     thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
@@ -436,7 +439,7 @@ dremel_data get_encoding(column_view h_col,
                            scan_out.begin());
 
     // Add scan output to existing offsets to get new offsets into merged rep level values
-    rmm::device_uvector<size_type> temp_new_offsets(offset_size_at_level, stream);
+    rmm::device_uvector<size_type> temp_new_offsets(offset_size_at_level, stream, temp_mr);
     thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
@@ -461,13 +464,22 @@ dremel_data get_encoding(column_view h_col,
   rep_level.resize(level_vals_size, stream);
   def_level.resize(level_vals_size, stream);
 
+  // Results were built in temp_mr buffers. If output_mr is a different resource, copy them into
+  // output_mr since the caller owns them; otherwise hand over the existing buffers.
+  auto const to_output = [&]<typename T>(rmm::device_uvector<T>& vec) {
+    return output_mr == temp_mr ? std::move(vec) : rmm::device_uvector<T>(vec, stream, output_mr);
+  };
+  auto output_offsets   = to_output(new_offsets);
+  auto output_rep_level = to_output(rep_level);
+  auto output_def_level = to_output(def_level);
+
   stream.sync();
 
   size_type leaf_data_size = column_ends.back() - column_offsets.back();
 
-  return dremel_data{std::move(new_offsets),
-                     std::move(rep_level),
-                     std::move(def_level),
+  return dremel_data{std::move(output_offsets),
+                     std::move(output_rep_level),
+                     std::move(output_def_level),
                      leaf_data_size,
                      max_def_level};
 }
@@ -476,17 +488,19 @@ dremel_data get_encoding(column_view h_col,
 dremel_data get_dremel_data(column_view h_col,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            memory_resources mr)
 {
-  return get_encoding(h_col, nullability, output_as_byte_array, false, stream);
+  return get_encoding(h_col, nullability, output_as_byte_array, false, stream, mr);
 }
 
 dremel_data get_comparator_data(column_view h_col,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                memory_resources mr)
 {
-  return get_encoding(h_col, nullability, output_as_byte_array, true, stream);
+  return get_encoding(h_col, nullability, output_as_byte_array, true, stream, mr);
 }
 
 }  // namespace cudf::detail

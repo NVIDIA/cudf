@@ -424,6 +424,16 @@ def test_cum_agg_reverse(engine: pl.GPUEngine, cum_agg, data, dtype):
 
 @pytest.mark.parametrize("cum_agg", ["cum_min", "cum_max"])
 @pytest.mark.parametrize("reverse", [False, True])
+def test_cum_min_max_float_nan(engine: pl.GPUEngine, cum_agg, reverse):
+    nan = float("nan")
+    values = [nan, 3.0, nan, 1.0, None, nan, 0.5, -float("inf"), nan]
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Float64())})
+    q = df.select(getattr(pl.col("a"), cum_agg)(reverse=reverse))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("cum_agg", ["cum_min", "cum_max"])
+@pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("descending", [False, True])
 @pytest.mark.parametrize("nulls_last", [False, True])
 def test_cum_min_max_sorted(
@@ -469,16 +479,20 @@ def test_cum_min_max_no_valid_or_one_row(engine: pl.GPUEngine, cum_agg, reverse,
 
 
 @pytest.mark.parametrize(
-    "reverse,descending,values",
+    "cum_agg,reverse,descending,values",
     [
-        (False, True, [float("nan"), 2.0, 1.0, None]),
-        (True, False, [None, 1.0, 2.0, float("nan")]),
+        ("cum_min", False, True, [float("nan"), 2.0, 1.0, None]),
+        ("cum_min", True, False, [None, 1.0, 2.0, float("nan")]),
+        ("cum_max", False, False, [None, 1.0, 2.0, float("nan")]),
+        ("cum_max", True, True, [float("nan"), 2.0, 1.0, None]),
     ],
 )
-def test_cum_min_sorted_float_nan(engine: pl.GPUEngine, reverse, descending, values):
+def test_cum_min_max_sorted_float_nan(
+    engine: pl.GPUEngine, cum_agg, reverse, descending, values
+):
     df = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Float64())})
     q = df.select(
-        pl.col("a").set_sorted(descending=descending).cum_min(reverse=reverse)
+        getattr(pl.col("a").set_sorted(descending=descending), cum_agg)(reverse=reverse)
     )
     assert_gpu_result_equal(q, engine=engine)
 

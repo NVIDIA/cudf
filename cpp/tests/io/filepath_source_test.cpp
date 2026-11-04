@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/table_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
@@ -73,3 +74,5 @@ TEST_F(FilepathSourceTest, KnownSizePlumbsThroughMakeDatasources)
   auto const result    = cudf::io::read_parquet(read_opts);
   CUDF_TEST_EXPECT_TABLES_EQUAL(table, result.tbl->view());
 }
+
+CUDF_TEST_PROGRAM_MAIN()

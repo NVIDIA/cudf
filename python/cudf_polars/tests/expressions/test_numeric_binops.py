@@ -332,3 +332,73 @@ def test_decimal_comparison_mixed_scale_overflow(
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Decimal(15, 2), pl.Decimal(38, 2)])
+@pytest.mark.parametrize("literal", [0, 24, -6, 10_000])
+def test_decimal_comparison_with_integer_literal(engine: pl.GPUEngine, dtype, literal):
+    # polars types an integer literal as Decimal(38, 0), but its value needs
+    # far fewer digits than that, so rescaling it cannot overflow.
+    biggest = "9" * (dtype.precision - dtype.scale) + "." + "9" * dtype.scale
+    df = pl.DataFrame({"a": ["-2.5", "0", "24", str(literal), biggest, None]}).cast(
+        dtype
+    )
+    a = pl.col("a")
+    q = df.lazy().select(
+        lt=a < literal,
+        le=a <= literal,
+        gt=a > literal,
+        ge=a >= literal,
+        eq=a == literal,
+        ne=a != literal,
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_of_expression_with_integer_literal(
+    engine: pl.GPUEngine,
+):
+    df = pl.DataFrame({"a": ["1.50", "2.25", "3.00"]}).cast(pl.Decimal(7, 2)).lazy()
+    q = df.select(gt=(pl.col("a") * 2).sum() > 0, lt=pl.col("a") * 2 < 5)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_with_literal_that_may_overflow(engine: pl.GPUEngine):
+    # The literal has a finer scale than the column, so rescaling the column
+    # to the literal's scale needs 36 + 3 digits.
+    df = pl.DataFrame({"a": ["1.00", "2.00"]}).cast(pl.Decimal(38, 2)).lazy()
+    q = df.select(gt=pl.col("a") > pl.lit(Decimal("1.005")))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_decimal_comparison_with_literal_of_maximum_precision(engine: pl.GPUEngine):
+    # Neither operand needs rescaling, so a literal of 38 digits is supported.
+    df = pl.DataFrame({"a": ["1", "9" * 38]}).cast(pl.Decimal(38, 0)).lazy()
+    q = df.select(lt=pl.col("a") < pl.lit(Decimal("9" * 38)))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("literal", [Decimal("27.5"), 27.5])
+def test_decimal_comparison_with_fractional_literal(engine: pl.GPUEngine, literal):
+    df = pl.DataFrame({"a": ["1.00", "27.50", "30.00", None]}).cast(pl.Decimal(15, 2))
+    q = df.lazy().select(lt=pl.col("a") < literal, ge=pl.col("a") >= literal)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Int64, pl.UInt64])
+@pytest.mark.parametrize("exponent", [2, pl.col("e")], ids=["literal", "column"])
+def test_integer_pow_is_exact_above_2_53(engine: pl.GPUEngine, dtype, exponent):
+    # A double holds only the integers up to 2**53, so squaring 100_000_001 in
+    # double rounds the result to 10_000_000_200_000_000.
+    df = pl.LazyFrame(
+        {"a": [100_000_001, 3_000_000_019, 2, 0, None, 7], "e": [2, 2, 62, 5, 2, 0]},
+        schema={"a": dtype, "e": dtype},
+    )
+    q = df.select(pl.col("a").pow(exponent))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_pow_with_a_float_exponent_stays_floating_point(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3, 4]}, schema={"a": pl.Int64})
+    q = df.select(pl.col("a").pow(2.0))
+    assert_gpu_result_equal(q, engine=engine)

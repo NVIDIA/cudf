@@ -946,12 +946,9 @@ def is_remote_path(path: os.PathLike | str) -> bool:
 
 
 def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:
-    """Drop the Linux page cache for all files under `path`."""
+    """Drop the Linux page cache for all local files under `path`."""
     if is_remote_path(path):
-        raise ValueError(
-            f"--io-mode cold cannot drop the page cache for the remote dataset {path!r}; "
-            "use --io-mode lukewarm or point --path at a local copy."
-        )
+        return
     try:
         import kvikio
     except ImportError as err:

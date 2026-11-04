@@ -18,6 +18,7 @@ import polars as pl
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import IRExecutionContext, Scan
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -181,6 +182,35 @@ def test_negative_slice_pushdown_raises(engine: pl.GPUEngine, tmp_path):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+def test_scan_cloud_storage_options_raises(in_memory_engine: pl.GPUEngine) -> None:
+    # libcudf/KvikIO cannot honor storage_options (endpoint, credentials, ...),
+    # so a cloud scan that sets them must fall back to the CPU.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options={"aws_region": "us-east-1"},
+        credential_provider=None,
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("storage_options", [None, {}])
+def test_scan_cloud_empty_storage_options_translates(
+    in_memory_engine, storage_options
+) -> None:
+    # Polars serializes an empty provider config (e.g. ``{"Aws": []}``) even
+    # when the user passes no storage_options; that must not force a CPU fallback.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options=storage_options,
+        credential_provider=None,
+    )
+    translator = Translator(q._ldf.visit(), in_memory_engine)
+    translator.translate_ir()
+    assert not translator.errors
+
+
 def test_scan_parquet_prefetch_file_metadata_in_memory_raises():
     with pytest.raises(
         NotImplementedError,
@@ -218,6 +248,7 @@ def test_scan_do_evaluate_missing_prefetch_metadata() -> None:
             parquet_options,
             None,
             [],
+            None,
             context=context,
         )
 
@@ -1148,37 +1179,29 @@ def test_scan_parquet_hive_partitioned_decimal_predicate(
 @pytest.mark.parametrize(
     "dtype",
     [
+        pl.Decimal(10, 2),
         pl.List(pl.Decimal(10, 2)),
+        pl.List(pl.Decimal(19, 2)),
         pl.Struct({"a": pl.Decimal(5, 1)}),
         pl.List(pl.Struct({"a": pl.Decimal(18, 1)})),
+        pl.Array(pl.Decimal(5, 1), 2),
+        pl.List(pl.Int64),
+        pl.Int8,
     ],
 )
-def test_scan_parquet_nested_narrow_decimal_raises(
-    engine: pl.GPUEngine, tmp_path, dtype
-):
-    # libcudf does not widen nested DECIMAL32/64 children to DECIMAL128.
-    path = tmp_path / "nested_decimal.parquet"
-    pl.DataFrame({"a": [None]}, schema={"a": dtype}).write_parquet(path)
-    q = pl.scan_parquet(path)
-    assert_ir_translation_raises(q, engine, NotImplementedError)
-
-
-@pytest.mark.parametrize(
-    "dtype",
-    [pl.Decimal(10, 2), pl.List(pl.Decimal(19, 2)), pl.List(pl.Int64), pl.Int8],
-)
-def test_scan_parquet_wide_or_top_level_decimal(engine: pl.GPUEngine, tmp_path, dtype):
+def test_scan_parquet_decimal(engine: pl.GPUEngine, tmp_path, dtype):
     path = tmp_path / "decimal.parquet"
     pl.DataFrame({"a": [None]}, schema={"a": dtype}).write_parquet(path)
     assert_gpu_result_equal(pl.scan_parquet(path), engine=engine)
 
 
-def test_has_nested_narrow_decimal_dtype_class():
-    from cudf_polars.dsl.ir import _has_nested_narrow_decimal
-
-    assert not _has_nested_narrow_decimal(pl.Decimal)
-    assert not _has_nested_narrow_decimal(pl.List(pl.Decimal))
-    assert _has_nested_narrow_decimal(pl.Array(pl.Decimal(5, 1), 2))
+def test_scan_parquet_nested_narrow_decimal(engine: pl.GPUEngine, tmp_path):
+    path = tmp_path / "nested_decimal.parquet"
+    pl.DataFrame(
+        {"l": [[Decimal("1.0"), None], [Decimal("2.5")]]},
+        schema={"l": pl.List(pl.Decimal(10, 1))},
+    ).write_parquet(path)
+    assert_gpu_result_equal(pl.scan_parquet(path), engine=engine)
 
 
 def test_scan_csv_quote_char_none(engine: pl.GPUEngine, tmp_path):

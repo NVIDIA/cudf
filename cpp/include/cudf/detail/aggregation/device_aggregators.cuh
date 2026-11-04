@@ -13,11 +13,12 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.cuh>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/numeric>
-#include <cuda/std/type_traits>
+#include <cuda/std/concepts>
 
 namespace cudf::detail {
 
@@ -32,9 +33,8 @@ struct update_target_element {
   }
 };
 
-template <typename Source>
-  requires(is_fixed_width<Source>() && cudf::has_atomic_support<Source>() &&
-           !is_fixed_point<Source>())
+template <cudf::concepts::fixed_width Source>
+  requires(cudf::has_atomic_support<Source>() and not cudf::concepts::fixed_point<Source>)
 struct update_target_element<Source, aggregation::MIN> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
@@ -47,8 +47,8 @@ struct update_target_element<Source, aggregation::MIN> {
   }
 };
 
-template <typename Source>
-  requires(is_fixed_point<Source>() && cudf::has_atomic_support<device_storage_type_t<Source>>())
+template <cudf::concepts::fixed_point Source>
+  requires(cudf::has_atomic_support<device_storage_type_t<Source>>())
 struct update_target_element<Source, aggregation::MIN> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
@@ -64,9 +64,8 @@ struct update_target_element<Source, aggregation::MIN> {
   }
 };
 
-template <typename Source>
-  requires(is_fixed_width<Source>() && cudf::has_atomic_support<Source>() &&
-           !is_fixed_point<Source>())
+template <cudf::concepts::fixed_width Source>
+  requires(cudf::has_atomic_support<Source>() and not cudf::concepts::fixed_point<Source>)
 struct update_target_element<Source, aggregation::MAX> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
@@ -79,8 +78,8 @@ struct update_target_element<Source, aggregation::MAX> {
   }
 };
 
-template <typename Source>
-  requires(is_fixed_point<Source>() && cudf::has_atomic_support<device_storage_type_t<Source>>())
+template <cudf::concepts::fixed_point Source>
+  requires(cudf::has_atomic_support<device_storage_type_t<Source>>())
 struct update_target_element<Source, aggregation::MAX> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
@@ -96,9 +95,9 @@ struct update_target_element<Source, aggregation::MAX> {
   }
 };
 
-template <typename Source>
-  requires(cudf::is_fixed_width<Source>() && cudf::has_atomic_support<Source>() &&
-           !cudf::is_fixed_point<Source>() && !cudf::is_timestamp<Source>())
+template <cudf::concepts::fixed_width Source>
+  requires(cudf::has_atomic_support<Source>() and not cudf::concepts::fixed_point<Source> and
+           not cudf::concepts::timestamp<Source>)
 struct update_target_element<Source, aggregation::SUM> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
@@ -111,8 +110,7 @@ struct update_target_element<Source, aggregation::SUM> {
   }
 };
 
-template <typename Source>
-  requires(is_fixed_point<Source>())
+template <cudf::concepts::fixed_point Source>
 struct update_target_element<Source, aggregation::SUM> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
@@ -129,10 +127,10 @@ struct update_target_element<Source, aggregation::SUM> {
 };
 
 template <typename Source>
-  requires(
-    (cudf::is_integral_not_bool<Source>() && cudf::is_signed<Source>()) ||
-    (cudf::is_fixed_point<Source>() && cudf::has_atomic_support<device_storage_type_t<Source>>()) ||
-    cuda::std::is_same_v<Source, numeric::decimal128>)
+  requires(cuda::std::signed_integral<Source> or
+           (cudf::concepts::fixed_point<Source> and
+            cudf::has_atomic_support<device_storage_type_t<Source>>()) or
+           cuda::std::same_as<Source, numeric::decimal128>)
 struct update_target_element<Source, aggregation::SUM_OVERFLOW> {
   using DeviceType = device_storage_type_t<Source>;
 
@@ -163,7 +161,7 @@ struct update_target_element<Source, aggregation::SUM_OVERFLOW> {
  * @brief Function object to update a single element in a target column using
  * the dictionary key addressed by the specific index.
  *
- * SFINAE is used to prevent recursion for dictionary type. Dictionary keys cannot be a
+ * Constraints are used to prevent recursion for dictionary type. Dictionary keys cannot be a
  * dictionary.
  *
  */
@@ -173,16 +171,14 @@ struct update_target_from_dictionary {
                              size_type target_index,
                              column_device_view source,
                              size_type source_index) const noexcept
-    requires(!is_dictionary<Source>())
   {
     update_target_element<Source, k>{}(target, target_index, source, source_index);
   }
-  template <typename Source, aggregation::Kind k>
+  template <cudf::concepts::dictionary Source, aggregation::Kind k>
   __device__ void operator()(mutable_column_device_view,
                              size_type,
                              column_device_view,
                              size_type) const noexcept
-    requires(is_dictionary<Source>())
   {
   }
 };
@@ -222,12 +218,11 @@ template <aggregation::Kind k>
   requires(k == aggregation::ARGMIN)
 struct update_target_element<dictionary32, k> {
   struct target_from_dictionary {
-    template <typename KeysType>
+    template <cudf::concepts::dictionary_key KeysType>
     __device__ void operator()(mutable_column_device_view target,
                                size_type target_index,
                                column_device_view source,
                                size_type source_index) const noexcept
-      requires(cudf::is_dictionary_key<KeysType>())
     {
       using Target = target_type_t<KeysType, aggregation::ARGMIN>;
       auto old     = cudf::detail::atomic_cas(
@@ -247,7 +242,6 @@ struct update_target_element<dictionary32, k> {
                                size_type,
                                column_device_view,
                                size_type) const noexcept
-      requires(not cudf::is_dictionary_key<KeysType>())
     {
     }
   };
@@ -266,12 +260,11 @@ template <aggregation::Kind k>
   requires(k == aggregation::ARGMAX)
 struct update_target_element<dictionary32, k> {
   struct target_from_dictionary {
-    template <typename KeysType>
+    template <cudf::concepts::dictionary_key KeysType>
     __device__ void operator()(mutable_column_device_view target,
                                size_type target_index,
                                column_device_view source,
                                size_type source_index) const noexcept
-      requires(cudf::is_dictionary_key<KeysType>())
     {
       using Target = target_type_t<KeysType, aggregation::ARGMAX>;
       auto old     = cudf::detail::atomic_cas(
@@ -291,7 +284,6 @@ struct update_target_element<dictionary32, k> {
                                size_type,
                                column_device_view,
                                size_type) const noexcept
-      requires(not cudf::is_dictionary_key<KeysType>())
     {
     }
   };
@@ -360,8 +352,7 @@ struct update_target_element<Source, aggregation::COUNT_ALL> {
   }
 };
 
-template <typename Source>
-  requires(cudf::is_dictionary_key<Source>())
+template <cudf::concepts::dictionary_key Source>
 struct update_target_element<Source, aggregation::ARGMAX> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
@@ -379,8 +370,7 @@ struct update_target_element<Source, aggregation::ARGMAX> {
   }
 };
 
-template <typename Source>
-  requires(cudf::is_dictionary_key<Source>())
+template <cudf::concepts::dictionary_key Source>
 struct update_target_element<Source, aggregation::ARGMIN> {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,

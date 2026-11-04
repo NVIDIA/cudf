@@ -29,9 +29,10 @@ if [[ "${CI:-false}" == "true" ]]; then
 fi
 TIMEOUT_TOOL_PATH="${SCRIPT_DIR}/timeout_with_stack.py"
 test_timeout=5400
-if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
-    test_timeout=1800
-fi
+# TEMPORARY: keep the nightly timeout on PR builds so this PR reproduces nightly.
+# if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+#     test_timeout=1800
+# fi
 DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections.txt"
 AARCH64_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections_aarch64.txt"
 INCOMPATIBLE_GLIBC_DESELECTED_TESTS_FILE="${SCRIPT_DIR}/cudf_polars/polars_test_deselections_incompatible_glibc.txt"

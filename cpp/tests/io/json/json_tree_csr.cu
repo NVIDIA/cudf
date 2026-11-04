@@ -7,6 +7,7 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/cudf_gtest.hpp>
+#include <cudf_test/testing_main.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/tokenize_json.hpp>
@@ -200,7 +201,8 @@ void run_test(std::string const& input, bool enable_lines = true)
                                                   gpu_row_offsets,
                                                   is_array_of_arrays,
                                                   row_array_parent_col_id,
-                                                  stream);
+                                                  stream,
+                                                  cudf::get_current_device_resource_ref());
 
   auto [d_column_tree_csr, d_column_tree_properties] =
     cudf::io::json::experimental::detail::reduce_to_column_tree(gpu_tree,
@@ -373,3 +375,5 @@ TEST_F(JsonColumnTreeTests, JSONL_CornerCase_SingleColumn)
 {})";
   run_test(json_string, true);
 }
+
+CUDF_TEST_PROGRAM_MAIN()

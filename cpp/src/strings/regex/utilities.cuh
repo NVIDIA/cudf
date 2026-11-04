@@ -51,12 +51,13 @@ template <typename ForEachFunction, typename ProgDevice>
 void launch_for_each_kernel(ForEachFunction fn,
                             ProgDevice& d_prog,
                             size_type size,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
-  auto d_buffer = cuda::device_buffer<std::byte>(
-    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
+  auto d_buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
@@ -91,12 +92,13 @@ void launch_transform_kernel(TransformFunction fn,
                              ProgDevice& d_prog,
                              OutputType* d_output,
                              size_type size,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
-  auto d_buffer = cuda::device_buffer<std::byte>(
-    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
+  auto d_buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();

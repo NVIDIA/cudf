@@ -11,6 +11,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/iterator.cuh>
@@ -20,18 +21,26 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
+#include <cudf/wrappers/timestamps.hpp>
 
 #include <rmm/cuda_stream.hpp>
 
 #include <cuda/iterator>
 
+#include <cudf_test_fragments.hpp>
+
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -58,6 +67,497 @@ TEST_F(JITExpressionTest, Coalesce)
   auto result    = cudf::compute_column_jit(table, coalesce);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+}
+
+namespace {
+
+// Device functions compiled ahead of time to LTO-IR (transform/fragments/ast_udf_callees.cu).
+std::span<uint8_t const> ast_udf_callees()
+{
+  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
+  return cudf_test_fragments::files.subspan(range[0], range[1]);
+}
+
+auto const int32_type = cudf::data_type{cudf::type_id::INT32};
+
+cudf::ast::jit::udf callee(char const* symbol,
+                           cudf::data_type output = int32_type,
+                           bool is_pure           = true)
+{
+  auto input = std::string_view{symbol} == "lto_week_start_ns" ? output : int32_type;
+  return {symbol, is_pure, output, {input}};
+}
+
+cudf::lto_fragments modules()
+{
+  static auto const fragments =
+    std::array{cudf::lto_fragment{cudf::lto_binary_type::FATBIN, ast_udf_callees()}};
+  return fragments;
+}
+
+auto run_column(cudf::table_view const& table, cudf::ast::expression const& expr)
+{
+  return cudf::compute_column_jit(
+    table, expr, modules(), cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+}
+
+auto run_table(cudf::table_view const& table,
+               std::span<std::reference_wrapper<cudf::ast::expression const> const> exprs)
+{
+  return cudf::compute_table_jit(
+    table, exprs, modules(), cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+}
+
+}  // namespace
+
+TEST_F(JITExpressionTest, UdfCall)
+{
+  auto a        = column_wrapper<int32_t>{{1, 2, 3, -4}};
+  auto expected = column_wrapper<int32_t>{{2, 3, 4, -3}};
+  auto table    = cudf::table_view{{a}};
+  auto tree     = cudf::ast::tree{};
+  auto a_ref    = cudf::ast::column_reference(0);
+  auto& call    = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
+  auto result   = run_column(table, call);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallWithoutArguments)
+{
+  // The table supplies the row count; its nullable column is not a UDF argument.
+  auto input = column_wrapper<int32_t>{{1, 2, 3}, {1, 0, 1}};
+  auto table = cudf::table_view{{input}};
+  for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+    SCOPED_TRACE(::testing::Message() << "nullify=" << (policy == cudf::error_policy::NULLIFY));
+    auto tree     = cudf::ast::tree{};
+    auto function = cudf::ast::jit::udf{"lto_constant", true, int32_type, {}};
+    auto& call    = cudf::ast::jit::call(tree, function, {}, policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+      column_wrapper<int32_t>{{42, 42, 42}}, run_column(table, call)->view(), VERBOSITY);
+
+    function.symbol        = "lto_nullable_constant";
+    function.is_null_aware = cudf::null_aware::YES;
+    auto& nullable         = cudf::ast::jit::call(tree, function, {}, policy);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(column_wrapper<int32_t>{{0, 0, 0}, {0, 0, 0}},
+                                        run_column(table, nullable)->view(),
+                                        VERBOSITY);
+  }
+}
+
+TEST_F(JITExpressionTest, UdfCallStringViewInputsAndOutput)
+{
+  std::vector<std::string> const values{"", "a", "é", "你好", "cudf", "🙂z"};
+  auto string_type = cudf::data_type{cudf::type_id::STRING};
+  for (bool has_nulls : {false, true}) {
+    std::vector<bool> const validity{true, true, true, true, true, !has_nulls};
+    auto input =
+      has_nulls ? cudf::test::strings_column_wrapper(values.begin(), values.end(), validity.begin())
+                : cudf::test::strings_column_wrapper(values.begin(), values.end());
+    auto table = cudf::table_view{{input}};
+    for (bool is_null_aware : {false, true}) {
+      for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+        SCOPED_TRACE(::testing::Message()
+                     << "has_nulls=" << has_nulls << ", is_null_aware=" << is_null_aware
+                     << ", nullify=" << (policy == cudf::error_policy::NULLIFY));
+        auto tree = cudf::ast::tree{};
+        auto ref  = cudf::ast::column_reference{0};
+        auto function =
+          cudf::ast::jit::udf{is_null_aware ? "lto_nullable_string_tail" : "lto_string_tail",
+                              true,
+                              string_type,
+                              {string_type},
+                              is_null_aware ? cudf::null_aware::YES : cudf::null_aware::NO};
+        auto& call  = cudf::ast::jit::call(tree, function, {ref}, policy);
+        auto result = run_column(table, call);
+
+        // Remove one Unicode character, including a multibyte character. The null-aware UDF
+        // converts null input to a valid empty string; the regular UDF propagates nulls.
+        std::vector<std::string> const expected_values{
+          "", "", "", "好", "udf", has_nulls ? "" : "z"};
+        std::vector<bool> const expected_validity{
+          true, true, true, true, true, !has_nulls || is_null_aware};
+        auto expected = cudf::test::strings_column_wrapper(
+          expected_values.begin(), expected_values.end(), expected_validity.begin());
+        CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), VERBOSITY);
+      }
+    }
+  }
+}
+
+TEST_F(JITExpressionTest, UdfCallFusesWithOperators)
+{
+  auto a        = column_wrapper<int32_t>{{1, 2, 3}};
+  auto b        = column_wrapper<int32_t>{{10, 20, 30}};
+  auto expected = column_wrapper<int32_t>{{22, 66, 132}};
+  auto table    = cudf::table_view{{a, b}};
+  auto tree     = cudf::ast::tree{};
+  auto a_ref    = cudf::ast::column_reference(0);
+  auto b_ref    = cudf::ast::column_reference(1);
+  auto& sum     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {a_ref, b_ref});
+  auto& plus_1  = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
+  // (a + 1) * (a + b): two expressions over the same column, one kernel.
+  auto& product = cudf::ast::jit::operation(tree, cudf::ast::jit::op::MUL, {plus_1, sum});
+  auto result   = run_column(table, product);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallNestsCallees)
+{
+  // Two functions from one fragment, one calling the result of the other: 2(a + 1).
+  auto a        = column_wrapper<int32_t>{{1, 2, 3}};
+  auto expected = column_wrapper<int32_t>{{4, 6, 8}};
+  auto table    = cudf::table_view{{a}};
+  auto tree     = cudf::ast::tree{};
+  auto a_ref    = cudf::ast::column_reference(0);
+  auto& plus_1  = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
+  auto& doubled = cudf::ast::jit::call(tree, callee("lto_twice", int32_type), {plus_1});
+  auto result   = run_column(table, doubled);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallIsNotHiddenByGeneratedNames)
+{
+  // The generated function has a parameter `in_0` and a local `tmp_0`: 2(a + 1).
+  auto a        = column_wrapper<int32_t>{{1, 2, 3}};
+  auto expected = column_wrapper<int32_t>{{4, 6, 8}};
+  auto table    = cudf::table_view{{a}};
+  auto tree     = cudf::ast::tree{};
+  auto a_ref    = cudf::ast::column_reference(0);
+  auto& plus_1  = cudf::ast::jit::call(tree, callee("in_0", int32_type), {a_ref});
+  auto& doubled = cudf::ast::jit::call(tree, callee("tmp_0", int32_type), {plus_1});
+  auto result   = run_column(table, doubled);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallCommonSubexpressions)
+{
+  // Equal pure calls across outputs share one evaluation, calls of different functions over the
+  // same argument stay apart, and separate impure calls are never merged. The generated code is
+  // checked in ROW_IR_TEST; this checks the results.
+  auto a        = column_wrapper<int32_t>{{1, 2, 3}};
+  auto table    = cudf::table_view{{a}};
+  auto tree     = cudf::ast::tree{};
+  auto a_ref    = cudf::ast::column_reference(0);
+  auto& one_a   = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
+  auto& one_b   = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
+  auto& two     = cudf::ast::jit::call(tree, callee("lto_twice", int32_type), {a_ref});
+  auto& sum     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {one_b, two});
+  auto& twice_a = cudf::ast::jit::call(tree, callee("lto_twice", int32_type, false), {a_ref});
+  auto& twice_b = cudf::ast::jit::call(tree, callee("lto_twice", int32_type, false), {a_ref});
+  auto& impure  = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {twice_a, twice_b});
+  auto expressions =
+    std::to_array<std::reference_wrapper<cudf::ast::expression const>>({one_a, sum, two});
+  auto result = run_table(table, expressions);
+
+  ASSERT_EQ(result->num_columns(), 3);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int32_t>{{2, 3, 4}}, result->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int32_t>{{4, 7, 10}}, result->view().column(1), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int32_t>{{2, 4, 6}}, result->view().column(2), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int32_t>{{4, 8, 12}}, run_column(table, impure)->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallImpureCalls)
+{
+  // lto_next_id returns a new number on every call. One call referred to twice is evaluated once
+  // per row, within an expression and across outputs. Separate impure calls are never merged, so
+  // their difference is never zero.
+  auto a         = column_wrapper<int32_t>{{1, 2, 3}};
+  auto table     = cudf::table_view{{a}};
+  auto tree      = cudf::ast::tree{};
+  auto a_ref     = cudf::ast::column_reference(0);
+  auto int64     = cudf::data_type{cudf::type_id::INT64};
+  auto& id       = cudf::ast::jit::call(tree, callee("lto_next_id", int64, false), {a_ref});
+  auto& other_id = cudf::ast::jit::call(tree, callee("lto_next_id", int64, false), {a_ref});
+  auto& same     = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {id, id});
+  auto& apart    = cudf::ast::jit::operation(tree, cudf::ast::jit::op::SUB, {id, other_id});
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int64_t>{{0, 0, 0}}, run_column(table, same)->view(), VERBOSITY);
+  auto const differences = cudf::test::to_host<int64_t>(run_column(table, apart)->view()).first;
+  EXPECT_TRUE(std::none_of(
+    differences.begin(), differences.end(), [](int64_t difference) { return difference == 0; }));
+
+  auto outputs = std::to_array<std::reference_wrapper<cudf::ast::expression const>>({id, id});
+  auto result  = run_table(table, outputs);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view().column(0), result->view().column(1), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallPropagatesNulls)
+{
+  // lto_add_one is null-unaware. PROPAGATE uses the regular kernel; NULLIFY forces the
+  // null-aware kernel. Both must preserve nulls without passing them to the UDF.
+  for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+    for (bool all_null : {false, true}) {
+      SCOPED_TRACE(::testing::Message() << "nullify=" << (policy == cudf::error_policy::NULLIFY)
+                                        << ", all_null=" << all_null);
+      auto a        = column_wrapper<int32_t>{{1, 2, 3}, {!all_null, false, !all_null}};
+      auto expected = column_wrapper<int32_t>{{2, 0, 4}, {!all_null, false, !all_null}};
+      auto table    = cudf::table_view{{a}};
+      auto tree     = cudf::ast::tree{};
+      auto a_ref    = cudf::ast::column_reference{0};
+      auto& call  = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref}, policy);
+      auto result = run_column(table, call);
+
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), VERBOSITY);
+    }
+  }
+}
+
+TEST_F(JITExpressionTest, UdfCallErrorPolicies)
+{
+  auto a          = column_wrapper<int32_t>{{8, -2, 6}};
+  auto table      = cudf::table_view{{a}};
+  auto tree       = cudf::ast::tree{};
+  auto a_ref      = cudf::ast::column_reference(0);
+  auto& halve     = cudf::ast::jit::call(tree, callee("lto_checked_halve", int32_type), {a_ref});
+  auto& try_halve = cudf::ast::jit::call(
+    tree, callee("lto_checked_halve", int32_type), {a_ref}, cudf::error_policy::NULLIFY);
+
+  try {
+    std::ignore = run_column(table, halve);
+    FAIL() << "expected cudf::evaluation_error";
+  } catch (cudf::evaluation_error const& e) {
+    EXPECT_EQ(e.error_code(), cudf::errc::ARITHMETIC_OVERFLOW);
+  }
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int32_t>{{4, 0, 3}, {1, 0, 1}}, run_column(table, try_halve)->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallNullifyWithInfallibleCallee)
+{
+  // NULLIFY adds no nulls when no row fails.
+  auto a        = column_wrapper<int32_t>{{1, 2, 3}};
+  auto nullable = column_wrapper<int32_t>{{1, 2, 3}, {1, 0, 1}};
+  auto tree     = cudf::ast::tree{};
+  auto a_ref    = cudf::ast::column_reference(0);
+  auto& call    = cudf::ast::jit::call(
+    tree, callee("lto_add_one", int32_type), {a_ref}, cudf::error_policy::NULLIFY);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    column_wrapper<int32_t>{{2, 3, 4}}, run_column(cudf::table_view{{a}}, call)->view(), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_wrapper<int32_t>{{2, 0, 4}, {1, 0, 1}},
+                                 run_column(cudf::table_view{{nullable}}, call)->view(),
+                                 VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallHighestErrorCodeWins)
+{
+  // Rows fail with ARITHMETIC_OVERFLOW before and after the row that fails with DIVISION_BY_ZERO.
+  auto a     = column_wrapper<int32_t>{{-1, 4, 0, -3}};
+  auto table = cudf::table_view{{a}};
+  auto tree  = cudf::ast::tree{};
+  auto a_ref = cudf::ast::column_reference(0);
+  auto& call = cudf::ast::jit::call(tree, callee("lto_checked_hundred_over", int32_type), {a_ref});
+
+  try {
+    std::ignore = run_column(table, call);
+    FAIL() << "expected cudf::evaluation_error";
+  } catch (cudf::evaluation_error const& e) {
+    EXPECT_EQ(e.error_code(), cudf::errc::DIVISION_BY_ZERO);
+  }
+}
+
+TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
+{
+  // lto_fail_with fails each row with the code it holds. The codes libcudf reserves for
+  // user-defined functions reach the caller unchanged, and as the highest codes they are reported
+  // over libcudf's own.
+  auto const code     = [](cudf::errc error) { return static_cast<int32_t>(error); };
+  auto const error_of = [](std::initializer_list<int32_t> codes) {
+    auto column = column_wrapper<int32_t>(codes.begin(), codes.end());
+    auto tree   = cudf::ast::tree{};
+    auto ref    = cudf::ast::column_reference(0);
+    auto& call  = cudf::ast::jit::call(tree, callee("lto_fail_with", int32_type), {ref});
+    try {
+      std::ignore = run_column(cudf::table_view{{column}}, call);
+    } catch (cudf::evaluation_error const& e) {
+      EXPECT_NE(std::string_view{e.what()}.find(cudf::to_string(e.error_code())),
+                std::string_view::npos);
+      return e.error_code();
+    }
+    return cudf::errc::SUCCESS;
+  };
+
+  EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED), 0}), cudf::errc::USER_RESERVED);
+  EXPECT_EQ(
+    error_of({code(static_cast<cudf::errc>(0x20000)), 0, code(static_cast<cudf::errc>(0x10005))}),
+    static_cast<cudf::errc>(0x20000));
+  EXPECT_EQ(error_of({code(cudf::errc::DIVISION_BY_ZERO),
+                      code(cudf::errc::USER_RESERVED),
+                      code(cudf::errc::ARITHMETIC_OVERFLOW)}),
+            cudf::errc::USER_RESERVED);
+  EXPECT_STREQ(cudf::to_string(static_cast<cudf::errc>(0x10011)), "Unknown Error");
+}
+
+TEST_F(JITExpressionTest, UdfCallDecimalInputsAndOutput)
+{
+  auto a =
+    cudf::test::fixed_point_column_wrapper<int32_t>{{125, -250, 0, 375}, numeric::scale_type{-2}};
+  auto b =
+    cudf::test::fixed_point_column_wrapper<int64_t>{{20, 15, -30, 0}, numeric::scale_type{-1}};
+  auto table = cudf::table_view{{a, b}};
+  for (auto output_scale : {-3, -1}) {
+    for (auto policy : {cudf::error_policy::PROPAGATE, cudf::error_policy::NULLIFY}) {
+      SCOPED_TRACE(::testing::Message() << "output_scale=" << output_scale
+                                        << ", nullify=" << (policy == cudf::error_policy::NULLIFY));
+      auto tree        = cudf::ast::tree{};
+      auto a_ref       = cudf::ast::column_reference{0};
+      auto b_ref       = cudf::ast::column_reference{1};
+      auto scale       = cudf::numeric_scalar<int32_t>{output_scale};
+      auto& scale_ref  = tree.push(cudf::ast::literal{scale});
+      auto output_type = cudf::data_type{cudf::type_id::DECIMAL64, output_scale};
+      auto function =
+        cudf::ast::jit::udf{"lto_decimal_add",
+                            true,
+                            output_type,
+                            {table.column(0).type(), table.column(1).type(), int32_type}};
+      auto& call  = cudf::ast::jit::call(tree, function, {a_ref, b_ref, scale_ref}, policy);
+      auto result = run_column(table, call);
+
+      // The inputs represent 1.25, -2.50, 0, 3.75 and 2.0, 1.5, -3.0, 0 respectively.
+      // The UDF rescales their sum explicitly, then returns its representation with scale zero.
+      // Only that representation is used; the result column takes its scale from output_type.
+      auto expected_values = output_scale == -3 ? std::array<int64_t, 4>{3250, -1000, -3000, 3750}
+                                                : std::array<int64_t, 4>{32, -10, -30, 37};
+      auto expected        = cudf::test::fixed_point_column_wrapper<int64_t>{
+        expected_values.begin(), expected_values.end(), numeric::scale_type{output_scale}};
+      EXPECT_EQ(result->type(), output_type);
+      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view(), VERBOSITY);
+    }
+  }
+}
+
+TEST_F(JITExpressionTest, UdfCallAtTwoDecimalScales)
+{
+  // Calls of one function in one kernel may declare different decimal scales, which the device
+  // types do not carry.
+  auto a =
+    cudf::test::fixed_point_column_wrapper<int32_t>{{125, -250, 0, 375}, numeric::scale_type{-2}};
+  auto b =
+    cudf::test::fixed_point_column_wrapper<int64_t>{{20, 15, -30, 0}, numeric::scale_type{-1}};
+  auto table       = cudf::table_view{{a, b}};
+  auto tree        = cudf::ast::tree{};
+  auto a_ref       = cudf::ast::column_reference{0};
+  auto b_ref       = cudf::ast::column_reference{1};
+  auto input_types = std::vector{table.column(0).type(), table.column(1).type(), int32_type};
+  auto milli_scale = cudf::numeric_scalar<int32_t>{-3};
+  auto deci_scale  = cudf::numeric_scalar<int32_t>{-1};
+  auto call_at     = [&](cudf::numeric_scalar<int32_t>& scale) -> cudf::ast::expression const& {
+    auto output_type = cudf::data_type{cudf::type_id::DECIMAL64, scale.value()};
+    auto function    = cudf::ast::jit::udf{"lto_decimal_add", true, output_type, input_types};
+    auto& scale_ref  = tree.push(cudf::ast::literal{scale});
+    return cudf::ast::jit::call(tree, function, {a_ref, b_ref, scale_ref});
+  };
+  auto expressions = std::to_array<std::reference_wrapper<cudf::ast::expression const>>(
+    {call_at(milli_scale), call_at(deci_scale)});
+  auto result = run_table(table, expressions);
+
+  auto milli = cudf::test::fixed_point_column_wrapper<int64_t>{{3250, -1000, -3000, 3750},
+                                                               numeric::scale_type{-3}};
+  auto deci =
+    cudf::test::fixed_point_column_wrapper<int64_t>{{32, -10, -30, 37}, numeric::scale_type{-1}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(milli, result->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(deci, result->view().column(1), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallOverTimestamps)
+{
+  using cudf::timestamp_ns;
+  using rep         = timestamp_ns::rep;
+  constexpr rep day = 86'400'000'000'000;
+  // Row 0: Monday 1970-01-05 and a day in its week; row 1: 1969-12-31 and 1969-12-29, both in the
+  // week starting Monday 1969-12-29.
+  auto a     = cudf::test::fixed_width_column_wrapper<timestamp_ns, rep>{{4 * day + 5, rep{-1}}};
+  auto b     = cudf::test::fixed_width_column_wrapper<timestamp_ns, rep>{{10 * day + 7, -3 * day}};
+  auto table = cudf::table_view{{a, b}};
+  auto tree  = cudf::ast::tree{};
+  auto a_ref = cudf::ast::column_reference(0);
+  auto b_ref = cudf::ast::column_reference(1);
+  auto type  = cudf::data_type{cudf::type_id::TIMESTAMP_NANOSECONDS};
+  auto& week_a = cudf::ast::jit::call(tree, callee("lto_week_start_ns", type), {a_ref});
+  auto& week_b = cudf::ast::jit::call(tree, callee("lto_week_start_ns", type), {b_ref});
+  auto& same   = cudf::ast::jit::operation(tree, cudf::ast::jit::op::EQUAL, {week_a, week_b});
+  auto result  = run_column(table, same);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_wrapper<bool>{{true, true}}, result->view(), VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallInTransformProgram)
+{
+  auto a     = column_wrapper<int32_t>{{1, 2, 3}};
+  auto table = cudf::table_view{{a}};
+  auto tree  = cudf::ast::tree{};
+  auto a_ref = cudf::ast::column_reference(0);
+  auto& call = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
+  std::reference_wrapper<cudf::ast::expression const> expressions[] = {call};
+  auto program                                                      = cudf::transform_program{table,
+                                         expressions,
+                                         modules(),
+                                         cudf::get_default_stream(),
+                                         cudf::get_current_device_resource_ref()};
+
+  auto other = column_wrapper<int32_t>{{10, 20}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    column_wrapper<int32_t>{{2, 3, 4}}, program.run(table)->view().column(0), VERBOSITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_wrapper<int32_t>{{11, 21}},
+                                 program.run(cudf::table_view{{other}})->view().column(0),
+                                 VERBOSITY);
+}
+
+TEST_F(JITExpressionTest, UdfCallInterpreterRejectsCall)
+{
+  auto a     = column_wrapper<int32_t>{{1}};
+  auto table = cudf::table_view{{a}};
+  auto tree  = cudf::ast::tree{};
+  auto a_ref = cudf::ast::column_reference(0);
+  auto& call = cudf::ast::jit::call(tree, callee("lto_add_one", int32_type), {a_ref});
+
+  EXPECT_THROW(std::ignore = cudf::compute_column(table, call), std::invalid_argument);
+}
+
+TEST_F(JITExpressionTest, UdfCallRejectsTwoSignaturesForOneSymbol)
+{
+  // Arguments must match the function declaration.
+  auto a           = column_wrapper<int32_t>{{1}};
+  auto b           = column_wrapper<int64_t>{{1}};
+  auto table       = cudf::table_view{{a, b}};
+  auto a_ref       = cudf::ast::column_reference(0);
+  auto b_ref       = cudf::ast::column_reference(1);
+  auto int64       = cudf::data_type{cudf::type_id::INT64};
+  auto by_argument = cudf::ast::tree{};
+  auto& narrow     = cudf::ast::jit::call(by_argument, callee("lto_add_one", int32_type), {a_ref});
+  auto& wide       = cudf::ast::jit::call(by_argument, callee("lto_add_one", int32_type), {b_ref});
+  auto& sum = cudf::ast::jit::operation(by_argument, cudf::ast::jit::op::ADD, {narrow, wide});
+  EXPECT_THROW(std::ignore = run_column(table, sum), std::invalid_argument);
+
+  // Calls of one symbol must declare one output type.
+  auto by_output = cudf::ast::tree{};
+  auto& as_int32 = cudf::ast::jit::call(by_output, callee("lto_add_one", int32_type), {a_ref});
+  auto& as_int64 = cudf::ast::jit::call(by_output, callee("lto_add_one", int64), {a_ref});
+  auto& as_int64s =
+    cudf::ast::jit::operation(by_output, cudf::ast::jit::op::CAST_TO_INT64, {as_int32});
+  auto& sum64 =
+    cudf::ast::jit::operation(by_output, cudf::ast::jit::op::ADD, {as_int64s, as_int64});
+  EXPECT_THROW(std::ignore = run_column(table, sum64), std::invalid_argument);
+
+  // They must also declare one list of input types. Only one declaration is emitted, so the INT64
+  // argument would otherwise be narrowed to the INT32 input of the first call.
+  auto by_input       = cudf::ast::tree{};
+  auto const of_int64 = cudf::ast::jit::udf{"lto_add_one", true, int32_type, {int64}};
+  auto& from_int32    = cudf::ast::jit::call(by_input, callee("lto_add_one", int32_type), {a_ref});
+  auto& from_int64    = cudf::ast::jit::call(by_input, of_int64, {b_ref});
+  auto& sum_of_inputs =
+    cudf::ast::jit::operation(by_input, cudf::ast::jit::op::ADD, {from_int32, from_int64});
+  EXPECT_THROW(std::ignore = run_column(table, sum_of_inputs), std::invalid_argument);
 }
 
 /// @brief Selects the fixture value type so integer and decimal cases share input factories.

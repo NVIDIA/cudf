@@ -85,8 +85,7 @@ auto gather_histogram(table_view const& input,
                         stream,
                         mr);
 
-  return std::make_unique<cudf::list_scalar>(
-    std::move(*output_structs.release()), true, stream, mr);
+  return std::make_unique<cudf::list_scalar>(std::move(*output_structs), true, stream, mr);
 }
 
 }  // namespace

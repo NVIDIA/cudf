@@ -1,7 +1,7 @@
 # cuDF for Java
 
-cuDF for Java provides Java bindings for NVIDIA cuDF, a library for GPU-accelerated structured data
-processing.
+This project provides Java bindings for NVIDIA cuDF, a library for GPU-accelerated structured
+data processing.
 
 The API reference is published with the rest of the cuDF documentation at
 https://docs.nvidia.com/cudf/latest/java/.

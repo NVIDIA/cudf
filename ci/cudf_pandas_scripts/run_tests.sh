@@ -11,7 +11,6 @@ RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
 RAPIDS_COVERAGE_DIR=${RAPIDS_COVERAGE_DIR:-"${PWD}/coverage-results"}
 mkdir -p "${RAPIDS_TESTS_DIR}" "${RAPIDS_COVERAGE_DIR}"
 
-# Keep the Jupyter directory layout consistent across CI images.
 # https://github.com/jupyter/jupyter_core/pull/292
 export JUPYTER_PLATFORM_DIRS=1
 

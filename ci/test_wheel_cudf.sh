@@ -45,7 +45,6 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     . libcudf-env/bin/activate
 
     rapids-uv-pip install \
-      -v \
       --constraint "${PIP_CONSTRAINT}" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
     python -c "import libcudf; assert libcudf.load_library() is not None"
@@ -64,7 +63,6 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     #     that environment variable is ignored if any other --constraint are passed via the CLI
     #
     rapids-uv-pip install \
-      -v \
       --constraint "${PIP_CONSTRAINT}" \
       "${CUPY_NIGHTLY_UV_ARGS[@]}" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
@@ -92,7 +90,6 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     rapids-logger "Install cudf, pylibcudf, and test requirements"
 
     rapids-uv-pip install \
-      -v \
       --constraint "${PIP_CONSTRAINT}" \
       "${CUPY_NIGHTLY_UV_ARGS[@]}" \
       "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
@@ -135,7 +132,6 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
   . libcudf-streaming-env/bin/activate
 
   rapids-uv-pip install \
-    -v \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
@@ -148,7 +144,6 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
   . cudf-streaming-env/bin/activate
 
   rapids-uv-pip install \
-    -v \
     --constraint "${PIP_CONSTRAINT}" \
     "${CUPY_NIGHTLY_UV_ARGS[@]}" \
     "$(echo "${CUDF_STREAMING_WHEELHOUSE}"/cudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \

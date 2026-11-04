@@ -32,7 +32,6 @@ rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt
 #     ignored if any other --constraint are passed via the CLI
 #
 rapids-uv-pip install \
-    -v \
     --constraint ./constraints.txt \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \
@@ -109,7 +108,6 @@ for version in "${versions[@]}"; do
     #     ignored if any other --constraint are passed via the CLI
     #
     rapids-uv-pip install \
-        -v \
         --constraint ./constraints.txt \
         --constraint "${PIP_CONSTRAINT}" \
         "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \

@@ -111,6 +111,13 @@ class HybridScanReader:
     def payload_column_chunks_byte_ranges(
         self, row_group_indices: list[int], options: ParquetReaderOptions
     ) -> list[ByteRangeInfo]: ...
+    def payload_pages_byte_ranges(
+        self,
+        row_group_indices: list[int],
+        row_mask: Column,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+    ) -> list[ByteRangeInfo]: ...
     def materialize_payload_columns(
         self,
         row_group_indices: list[int],
@@ -156,6 +163,17 @@ class HybridScanReader:
         row_mask: Column,
         mask_data_pages: UseDataPageMask,
         column_chunk_data: Sequence[Span],
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> None: ...
+    def setup_chunking_for_payload_pages(
+        self,
+        chunk_read_limit: int,
+        pass_read_limit: int,
+        row_group_indices: list[int],
+        row_mask: Column,
+        page_data: Sequence[Span | None],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,

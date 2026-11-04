@@ -126,9 +126,9 @@ Uses device-1, and the given memory resource. Note that the memory
 resource provided _must_ be valid for allocations on the specified
 device, no checking is performed.
 
-For debugging purposes, we can also pass undocumented keyword
-arguments, at the moment, `raise_on_fail` is also supported, which
-raises, rather than falling back, during translation:
+For debugging purposes, we can also pass `raise_on_fail` (see
+{doc}`options`), which raises, rather than falling back, during
+translation:
 
 ```python
 result = q.collect(engine=pl.GPUEngine(raise_on_fail=True))
@@ -245,15 +245,11 @@ into the `dsl` namespace via `expr.py`. They inherit
 from `Expr`.
 
 Expressions are evaluated by implementing a `do_evaluate` method that
-takes a `DataFrame` as context (this provides columns) along with an
-`ExecutionContext` parameter (indicating what context we're evaluating
-this expression in, currently unused) and a `mapping` from
-expressions to evaluated `Column`s. This approach enables a simple form of
-expression rewriting during evaluation of expressions that is used in
-evaluation of, for example, groupby-aggregations. To perform the
-evaluation, one should use the base class (generic) `evaluate` method
-which handles the boilerplate for looking up in the substitution
-`mapping`.
+takes a `DataFrame` as context (this provides columns) along with a
+keyword-only `context` parameter, an `ExecutionContext` indicating what
+context we're evaluating this expression in (for example `FRAME` or
+`GROUPBY`). To perform the evaluation, one should use the base class
+(generic) `evaluate` method rather than calling `do_evaluate` directly.
 
 To simplify state tracking, all columns should be considered immutable
 on construction. This matches the "functional" description coming from
@@ -508,12 +504,16 @@ that's downstream of both the original `stream` and `stream_b`.
 
 ```python
 from cudf_polars.containers import Column
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.cuda_stream import get_cuda_stream, get_joined_cuda_stream
 
 stream_b = Stream()
-col = Column(plc.Column.from_arrow(pa.array([1, 2, 3]), stream=stream_b), dtype=pl.Int64(), name="c")
+col = Column(
+    plc.Column.from_arrow(pa.array([1, 2, 3]), stream=stream_b),
+    dtype=DataType(pl.Int64()),
+    name="c",
+)
 
-new_stream = get_joined_cuda_stream(upstreams=(stream, stream_b))
+new_stream = get_joined_cuda_stream(get_cuda_stream, upstreams=(stream, stream_b))
 df2 = df.with_columns([col], stream=new_stream)
 ```
 
@@ -563,6 +563,46 @@ def test_whatever():
 ```
 
 This test will fail if translation does not raise.
+
+## Upstream Polars GPU test selection
+
+PR CI selects upstream nodes from `ci/cudf_polars/gpu_test_run_list.json`, keyed
+by the exact Polars version, engine, and blocksize. A test is added to the list
+only after its body has executed on the GPU; a translation attempt alone is
+insufficient. Queries run during fixture setup or teardown are ignored, because
+a shared fixture's queries run during whichever test first requests it. Tests
+that use both GPU and CPU are included. Passing selected items must still
+execute on the GPU during the test body. Existing skips and failures retain
+their normal behavior.
+
+Nightlies run the full suite with telemetry for in-memory, default-blocksize
+SPMD, and small-blocksize SPMD. Only default-blocksize SPMD has a maintained
+run list, matching PR CI. The audit job fails if a GPU-executing test is missing
+from that list, a listed test stops executing on the GPU, a test ID disappears,
+or a job or shard fails to finish and report its results. Other configurations
+remain diagnostic. Skipped tests and tests in unavailable optional modules stay
+on the list until they can be run again. The summary publishes an exact diff
+and candidate list before the audit job enforces the result, so
+failed audits retain their diagnostics.
+Each candidate entry records the source report path and SHA-256. CI reports
+also record their workflow run so a reviewed update can be traced to its
+telemetry artifact.
+
+A local regeneration cannot verify that every nightly producer job finished and
+reported. Use an artifact only if its published `run-list-drift.json` does not
+have status `incomplete`, or pass the run's producer-job inventory with
+`--expected-jobs`. To regenerate candidates from the downloaded nightly
+diagnostic artifact:
+
+```bash
+python ci/analyze_cudf_polars_fallbacks.py --diagnostics-file fallback-diagnostics.json \
+    --output-dir diagnostics --audit-run-list ci/cudf_polars/gpu_test_run_list.json \
+    --generate-run-list gpu-test-run-list-candidate.json
+```
+
+The command exits nonzero for drift or incomplete evidence. Review the diff
+before committing a replacement. New Polars versions require full discovery
+and matching list entries before selected PR runs can use them.
 
 # Debugging
 

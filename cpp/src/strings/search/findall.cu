@@ -4,7 +4,7 @@
  */
 
 #include "strings/count_matches.hpp"
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column.hpp>
@@ -22,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf {
@@ -129,8 +130,13 @@ std::unique_ptr<column> findall(strings_column_view const& input,
                                               mr);
     auto const d_offsets = offsets->view().template data<size_type>();
 
-    rmm::device_uvector<string_index_pair> indices(total_matches, stream);
-    launch_for_each_kernel(make_functor(d_offsets, indices.data()), d_prog, input.size(), stream);
+    cuda::device_buffer<string_index_pair> indices(
+      stream, cudf::get_current_device_resource_ref(), total_matches, cuda::no_init);
+    launch_for_each_kernel(make_functor(d_offsets, indices.data()),
+                           d_prog,
+                           input.size(),
+                           stream,
+                           cudf::get_current_device_resource_ref());
     return std::pair(std::move(offsets), std::move(indices));
   };
 
@@ -153,7 +159,8 @@ std::unique_ptr<column> findall(strings_column_view const& input,
     });
   }();
 
-  auto strings_output = cudf::make_strings_column(indices, stream, mr);
+  auto strings_output = cudf::make_strings_column(
+    cudf::device_span<string_index_pair const>{indices.data(), indices.size()}, stream, mr);
 
   // Build the lists column from the offsets and the strings
   return make_lists_column(input.size(),
@@ -199,10 +206,20 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(find_re_fn{*d_strings},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   } else {
     auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(find_re_fn{*d_strings},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   }
 
   return results;

@@ -42,26 +42,32 @@ void validate_ordering(ordering const& ordering)
 
 }  // namespace
 
+row_ordering::row_ordering(std::vector<order_key> order_keys,
+                           row_ordering_scope scope,
+                           std::vector<cudf::size_type> group_keys)
+  : order_keys{std::move(order_keys)}, scope{scope}, group_keys{std::move(group_keys)}
+{
+  RAPIDSMPF_EXPECTS(
+    !this->order_keys.empty(), "row_ordering: order_keys must not be empty", std::invalid_argument);
+  for (auto const& key : this->order_keys) {
+    RAPIDSMPF_EXPECTS(
+      std::ranges::find(this->group_keys, key.column_index) == this->group_keys.end(),
+      "row_ordering: order_keys and group_keys must not overlap",
+      std::invalid_argument);
+  }
+}
+
 ordering::ordering(std::vector<order_key> keys,
                    std::shared_ptr<table_chunk> boundaries,
-                   bool strict_boundaries,
-                   bool locally_ordered)
-  : keys{std::move(keys)},
-    boundaries{std::move(boundaries)},
-    strict_boundaries{strict_boundaries},
-    locally_ordered{locally_ordered}
+                   bool strict_boundaries)
+  : keys{std::move(keys)}, boundaries{std::move(boundaries)}, strict_boundaries{strict_boundaries}
 {
   validate_ordering(*this);
 }
 
 ordering ordering::with_keys(std::vector<order_key> new_keys) const
 {
-  return ordering{std::move(new_keys), boundaries, strict_boundaries, locally_ordered};
-}
-
-ordering ordering::with_locally_ordered(bool locally_ordered) const
-{
-  return ordering{keys, boundaries, strict_boundaries, locally_ordered};
+  return ordering{std::move(new_keys), boundaries, strict_boundaries};
 }
 
 ordering ordering::as_strict(rapidsmpf::BufferResource& br) const
@@ -79,10 +85,7 @@ ordering ordering::as_strict(rapidsmpf::BufferResource& br) const
                                         cudf::null_equality::EQUAL,
                                         stream,
                                         br.device_mr());
-  return ordering{keys,
-                  std::make_shared<table_chunk>(std::move(unique_boundaries), stream),
-                  true,
-                  locally_ordered};
+  return ordering{keys, std::make_shared<table_chunk>(std::move(unique_boundaries), stream), true};
 }
 
 bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferResource& br) const
@@ -122,10 +125,9 @@ bool ordering::boundaries_aligned_with(ordering const& other, rapidsmpf::BufferR
 
 order_scheme::order_scheme(std::vector<order_key> keys,
                            std::shared_ptr<table_chunk> boundaries,
-                           bool strict_boundaries,
-                           bool locally_ordered)
-  : order_scheme(std::vector<ordering>{
-      ordering{std::move(keys), std::move(boundaries), strict_boundaries, locally_ordered}})
+                           bool strict_boundaries)
+  : order_scheme(
+      std::vector<ordering>{ordering{std::move(keys), std::move(boundaries), strict_boundaries}})
 {
 }
 

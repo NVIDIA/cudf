@@ -129,14 +129,15 @@ struct key_pair {
 
 tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not input.is_empty(), "vocabulary must not be empty");
   CUDF_EXPECTS(not input.has_nulls(), "vocabulary must not have nulls");
 
   // need to hold a copy of the input
-  auto vocabulary   = std::make_unique<cudf::column>(input.parent(), stream, mr);
-  auto d_vocabulary = cudf::column_device_view::create(vocabulary->view(), stream);
+  auto const output_mr = mr.get_output_mr();
+  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, output_mr);
+  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, output_mr);
 
   auto vocab_map = std::make_unique<detail::vocabulary_map_type>(
     static_cast<size_t>(vocabulary->size() * 2),
@@ -146,7 +147,7 @@ tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
     detail::probe_scheme{detail::vocab_hasher{*d_vocabulary}},
     cuco::thread_scope_device,
     detail::cuco_storage{},
-    rmm::mr::polymorphic_allocator<char>{mr},
+    rmm::mr::polymorphic_allocator<char>{output_mr},
     stream.get());
 
   // the row index is the token id (value for each key in the map)
@@ -160,7 +161,7 @@ tokenize_vocabulary::~tokenize_vocabulary() { delete _impl; }
 
 std::unique_ptr<tokenize_vocabulary> load_vocabulary(cudf::strings_column_view const& input,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return std::make_unique<tokenize_vocabulary>(input, stream, mr);
@@ -350,7 +351,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
                                                        cudf::string_scalar const& delimiter,
                                                        cudf::size_type default_id,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
 
@@ -358,15 +359,16 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   if (input.size() == input.null_count()) { return cudf::make_empty_column(output_type); }
 
   // count the tokens per string and build the offsets from the counts
-  auto const d_strings   = cudf::column_device_view::create(input.parent(), stream);
+  auto const temp_mr     = mr.get_temporary_mr();
+  auto const d_strings   = cudf::column_device_view::create(input.parent(), stream, temp_mr);
   auto const d_delimiter = delimiter.value(stream);
   auto map_ref           = vocabulary._impl->get_map_ref();
 
   if ((input.chars_size(stream) / (input.size() - input.null_count())) < AVG_CHAR_BYTES_THRESHOLD) {
     auto const zero_itr = cuda::counting_iterator<cudf::size_type>{0};
-    auto d_sizes        = cuda::device_buffer<cudf::size_type>(
-      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    auto d_sizes =
+      cuda::device_buffer<cudf::size_type>(stream, temp_mr, input.size(), cuda::no_init);
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       zero_itr,
                       zero_itr + input.size(),
                       d_sizes.begin(),
@@ -376,15 +378,12 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
 
     // build the output column to hold all the token ids
     auto tokens = cudf::make_numeric_column(
-      output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
+      output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
     auto d_tokens  = tokens->mutable_view().data<cudf::size_type>();
     auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(token_offsets->view());
     vocabulary_tokenizer_fn<decltype(map_ref)> tokenizer{
       *d_strings, d_delimiter, map_ref, default_id, d_offsets, d_tokens};
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       zero_itr,
-                       input.size(),
-                       tokenizer);
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr), zero_itr, input.size(), tokenizer);
     return cudf::make_lists_column(input.size(),
                                    std::move(token_offsets),
                                    std::move(tokens),
@@ -404,10 +403,8 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   auto const chars_size    = last_offset - first_offset;
   auto const d_input_chars = input.chars_begin(stream) + first_offset;
 
-  cuda::device_buffer<cudf::size_type> d_token_counts(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-  cuda::device_buffer<int8_t> d_marks(
-    stream, cudf::get_current_device_resource_ref(), chars_size, cuda::no_init);
+  cuda::device_buffer<cudf::size_type> d_token_counts(stream, temp_mr, input.size(), cuda::no_init);
+  cuda::device_buffer<int8_t> d_marks(stream, temp_mr, chars_size, cuda::no_init);
 
   // mark position of all delimiters
   auto grid_chars = cudf::detail::grid_1d{chars_size, block_size};
@@ -424,7 +421,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   auto [token_offsets, total_count] = cudf::detail::make_offsets_child_column(
     d_token_counts.begin(), d_token_counts.end(), stream, mr);
 
-  auto d_tmp_offsets = rmm::device_uvector<int64_t>(total_count + 1, stream);
+  auto d_tmp_offsets = rmm::device_uvector<int64_t>(total_count + 1, stream, temp_mr);
   d_tmp_offsets.set_element(total_count, chars_size, stream);
   cudf::detail::copy_if_async(
     cuda::counting_iterator<int64_t>{0},
@@ -437,18 +434,20 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
     stream);
 
   auto tmp_offsets = std::make_unique<cudf::column>(
-    std::move(d_tmp_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+    std::move(d_tmp_offsets),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.as_temporary()),
+    0);
   auto const tmp_input = cudf::column_view(
     input.parent().type(), total_count, d_input_chars, nullptr, 0, 0, {tmp_offsets->view()});
 
-  auto const d_tmp_strings = cudf::column_device_view::create(tmp_input, stream);
+  auto const d_tmp_strings = cudf::column_device_view::create(tmp_input, stream, temp_mr);
 
-  auto tokens =
-    cudf::make_numeric_column(output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
+  auto tokens = cudf::make_numeric_column(
+    output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
   auto d_tokens = tokens->mutable_view().data<cudf::size_type>();
 
   transform_tokenizer_fn<decltype(map_ref)> tokenizer{d_delimiter, map_ref, default_id};
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                     d_tmp_strings->begin<cudf::string_view>(),
                     d_tmp_strings->end<cudf::string_view>(),
                     d_tokens,
@@ -468,7 +467,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
                                                        cudf::string_scalar const& delimiter,
                                                        cudf::size_type default_id,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::tokenize_with_vocabulary(input, vocabulary, delimiter, default_id, stream, mr);

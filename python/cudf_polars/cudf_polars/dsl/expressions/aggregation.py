@@ -155,6 +155,9 @@ class Agg(Expr):
                 raise NotImplementedError("Median with temporal data types")
             req = plc.aggregation.median()
         elif name == "n_unique":
+            if children[0].dtype.plc_type.id() == plc.TypeId.EMPTY:
+                # libcudf cannot reduce a column of the (EMPTY) Null dtype.
+                raise NotImplementedError("n_unique of a Null dtype column")
             # TODO: datatype of result
             req = plc.aggregation.nunique(
                 null_handling=plc.types.NullPolicy.EXCLUDE
@@ -186,6 +189,10 @@ class Agg(Expr):
                 null_handling=plc.types.NullPolicy.EXCLUDE
                 if not options
                 else plc.types.NullPolicy.INCLUDE
+            )
+        elif name == "corr":
+            req = plc.aggregation.correlation(
+                plc.aggregation.CorrelationType.PEARSON, 1
             )
         elif name == "m2":  # pragma: no cover; doesn't have a direct polars equivalent
             req = plc.aggregation.m2()
@@ -252,6 +259,7 @@ class Agg(Expr):
             "sum",
             "product",
             "count",
+            "corr",
             "std",
             "var",
             "quantile",

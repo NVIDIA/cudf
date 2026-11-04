@@ -9,9 +9,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -164,11 +164,11 @@ void labels_to_offsets(InputIterator labels_begin,
 
   // This stores the unique label values.
   // Given the example above, we will have this array containing [0, 1, 4].
-  auto list_indices = rmm::device_uvector<OutputType>(num_segments, stream, temp_mr);
+  auto list_indices = cuda::device_buffer<OutputType>(stream, temp_mr, num_segments, cuda::no_init);
 
   // Stores the non-zero segment sizes.
   // Given the example above, we will have this array containing [4, 2, 4].
-  auto list_sizes = rmm::device_uvector<OutputType>(num_segments, stream, temp_mr);
+  auto list_sizes = cuda::device_buffer<OutputType>(stream, temp_mr, num_segments, cuda::no_init);
 
   // Count the numbers of labels in the each segment.
   auto const end = cudf::detail::reduce_by_key(labels_begin,  // keys

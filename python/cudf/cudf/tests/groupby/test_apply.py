@@ -979,15 +979,15 @@ def test_groupby_apply_series_preserves_multiindex_names():
 def test_groupby_group_keys(group_keys, by):
     gdf = cudf.DataFrame(
         {
-            "A": "a a a a b b".split(),
-            "B": [1, 1, 2, 2, 3, 3],
-            "C": [4, 6, 5, 9, 8, 7],
+            "A": "b a b a a a".split(),
+            "B": [3, 1, 3, 1, 2, 2],
+            "C": [8, 4, 7, 6, 5, 9],
         }
     )
     pdf = gdf.to_pandas()
 
-    g_group = gdf.groupby(by, group_keys=group_keys)
-    p_group = pdf.groupby(by, group_keys=group_keys)
+    g_group = gdf.groupby(by, group_keys=group_keys, sort=False)
+    p_group = pdf.groupby(by, group_keys=group_keys, sort=False)
 
     actual = g_group[["B", "C"]].apply(lambda x: x / x.sum())
     expected = p_group[["B", "C"]].apply(lambda x: x / x.sum())

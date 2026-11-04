@@ -319,11 +319,16 @@ class UnaryFunction(Expr):
                 )
         if self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
-            if not plc.binaryop.is_supported_operation(
-                self.dtype.plc_type,
-                self.dtype.plc_type,
-                self.dtype.plc_type,
-                op,
+            # is_supported_operation reports False for STRING, but libcudf
+            # implements NULL_MIN/NULL_MAX for string columns.
+            if (
+                self.dtype.id() != plc.TypeId.STRING
+                and not plc.binaryop.is_supported_operation(
+                    self.dtype.plc_type,
+                    self.dtype.plc_type,
+                    self.dtype.plc_type,
+                    op,
+                )
             ):
                 raise NotImplementedError(
                     f"{self.name} is not supported for dtype {self.dtype.id().name}"

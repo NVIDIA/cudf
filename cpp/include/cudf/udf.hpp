@@ -23,14 +23,16 @@ struct blob_t;
 namespace CUDF_EXPORT cudf {
 
 /**
- * @addtogroup udf
+ * @addtogroup udfs
  * @{
  */
 
-/// @brief Device-code formats accepted by LTO execution APIs.
+/**
+ * @brief The type of LTO Binary
+ */
 enum class lto_binary_type : uint8_t {
-  LTO_IR = 0,  ///< LTO IR binary
-  FATBIN = 1   ///< FATBIN binary
+  LTO_IR = 0,  //< LTO-IR binary
+  FATBIN = 1   //< FATBIN binary
 };
 
 /**
@@ -38,14 +40,13 @@ enum class lto_binary_type : uint8_t {
  *
  * A module may define multiple functions and reference functions in other modules. Keep its bytes
  * alive until evaluation completes or a reusable transform program has been constructed.
- *
  */
 struct lto_fragment {
-  lto_binary_type type = lto_binary_type::LTO_IR;  ///< Device-code format
-  std::span<uint8_t const> data{};                 ///< Compiled bytes
+  lto_binary_type type          = lto_binary_type::LTO_IR;  ///< Binary format of the module
+  std::span<uint8_t const> data = {};                       ///< The module's bytes
 };
 
-/// @brief Non-owning collection of compiled device-code fragments.
+/// @brief Device modules linked into a JIT kernel.
 using lto_fragments = std::span<lto_fragment const>;
 
 /**
@@ -97,4 +98,5 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          bool use_pch = true);
 
 /** @} */  // end of group
+
 }  // namespace CUDF_EXPORT cudf

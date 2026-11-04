@@ -31,7 +31,7 @@ namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup transformation_transform
  *
- * See @ref udf for the device modules accepted by JIT transforms.
+ * See @ref udfs for the device modules accepted by JIT transforms.
  *
  * @{
  */

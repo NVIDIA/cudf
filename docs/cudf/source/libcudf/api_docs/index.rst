@@ -19,6 +19,6 @@ libcudf documentation
    nvtext_apis
    utility_apis
    labeling_apis
-   udf
    expressions
+   udfs
    tdigest

@@ -39,6 +39,53 @@ _TIMESTAMP_TO_DURATION = {
     plc.TypeId.TIMESTAMP_NANOSECONDS: plc.TypeId.DURATION_NANOSECONDS,
 }
 
+# libcudf reads the AM/PM strings and the weekday and month names for the
+# "%p", "%a", "%A", "%b" and "%B" specifiers from a 40 element names column
+# (it yields empty strings if the column is empty). Polars formats with chrono,
+# which always uses English names regardless of the process locale.
+_STRFTIME_NAMES = [
+    "AM",
+    "PM",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sun",
+    "Mon",
+    "Tue",
+    "Wed",
+    "Thu",
+    "Fri",
+    "Sat",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
+
 
 def _find_tzif_dir(zone: str | None) -> str | None:
     if zone is None or zone == "UTC":
@@ -1523,7 +1570,7 @@ class TemporalFunction(Expr):
                     column.obj,
                     format_string,
                     plc.Column.from_iterable_of_py(
-                        [], dtype=self.dtype.plc_type, stream=df.stream
+                        _STRFTIME_NAMES, dtype=self.dtype.plc_type, stream=df.stream
                     ),
                     stream=df.stream,
                 ),

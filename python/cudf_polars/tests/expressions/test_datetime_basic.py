@@ -168,6 +168,38 @@ def test_strftime_timestamp(engine: pl.GPUEngine, format):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def _name_dates() -> pl.Series:
+    # Every weekday and month, in both halves of the day.
+    return pl.Series(
+        [
+            datetime.datetime(2024, 1, 1, 0, 30) + datetime.timedelta(days=i * 17)
+            for i in range(24)
+        ]
+    )
+
+
+@pytest.mark.parametrize("format", ["%A", "%a", "%B", "%b", "%A, %d %B %Y"])
+@pytest.mark.parametrize(
+    "dtype", [pl.Date(), pl.Datetime("us"), pl.Datetime("ns", "UTC")]
+)
+def test_strftime_names(engine: pl.GPUEngine, format, dtype):
+    ldf = pl.LazyFrame({"dates": _name_dates().cast(dtype)})
+    q = ldf.select(pl.col("dates").dt.strftime(format))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("format", ["%p", "%a %b %d %I:%M %p"])
+@pytest.mark.parametrize("dtype", [pl.Datetime("us"), pl.Datetime("ns", "UTC")])
+def test_strftime_am_pm(engine: pl.GPUEngine, format, dtype):
+    # Half of the values fall before noon, half after.
+    values = _name_dates() + pl.Series(
+        [datetime.timedelta(hours=13 * (i % 2)) for i in range(24)]
+    )
+    ldf = pl.LazyFrame({"dates": values.cast(dtype)})
+    q = ldf.select(pl.col("dates").dt.strftime(format))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("format", ["iso", "polars"])
 def test_strftime_duration(engine: pl.GPUEngine, format):
     ldf = pl.LazyFrame(

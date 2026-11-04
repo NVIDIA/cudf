@@ -124,16 +124,19 @@ void binary_operation(mutable_column_view& out,
                       scalar const& lhs,
                       column_view const& rhs,
                       binary_operator op,
+                      nan_semantics semantics,
                       cuda::stream_ref stream);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       scalar const& rhs,
                       binary_operator op,
+                      nan_semantics semantics,
                       cuda::stream_ref stream);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       column_view const& rhs,
                       binary_operator op,
+                      nan_semantics semantics,
                       cuda::stream_ref stream);
 
 // Defined in util.cpp
@@ -178,6 +181,7 @@ void apply_binary_op(mutable_column_view& out,
                      column_view const& rhs,
                      bool is_lhs_scalar,
                      bool is_rhs_scalar,
+                     nan_semantics semantics,
                      cuda::stream_ref stream);
 /**
  * @brief Deploys single type or double type dispatcher that runs equality operation on each element
@@ -202,6 +206,7 @@ void dispatch_equality_op(mutable_column_view& out,
                           bool is_lhs_scalar,
                           bool is_rhs_scalar,
                           binary_operator op,
+                          nan_semantics semantics,
                           cuda::stream_ref stream);
 }  // namespace compiled
 }  // namespace binops

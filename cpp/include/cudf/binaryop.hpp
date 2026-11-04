@@ -178,6 +178,40 @@ std::unique_ptr<column> binary_operation(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Performs a binary operation between a scalar and a column, comparing floating-point NaN
+ * values as selected by @p semantics
+ *
+ * Same as the overload without @p semantics, which uses `nan_semantics::DEFAULT`.
+ *
+ * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
+ * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
+ * operations.
+ * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p rhs or @p output_type is a dictionary type
+ *
+ * @param lhs         The left operand scalar
+ * @param rhs         The right operand column
+ * @param op          The binary operator
+ * @param output_type The desired data type of the output column
+ * @param semantics   How floating-point NaN values compare in the comparison operators (EQUAL,
+ *                    NOT_EQUAL, LESS, GREATER, LESS_EQUAL, GREATER_EQUAL, NULL_EQUALS,
+ *                    NULL_NOT_EQUALS) and in NULL_MAX and NULL_MIN. It has no effect on other
+ *                    operators or on non-floating-point operands.
+ * @param stream      CUDA stream used for device memory operations and kernel launches
+ * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @return            Output column of `output_type` type containing the result of
+ *                    the binary operation
+ */
+std::unique_ptr<column> binary_operation(
+  scalar const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  nan_semantics semantics,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
  * @brief Performs a binary operation between a column and a scalar.
  *
  * The output contains the result of `op(lhs[i], rhs)` for all `0 <= i < lhs.size()`
@@ -212,6 +246,40 @@ std::unique_ptr<column> binary_operation(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Performs a binary operation between a column and a scalar, comparing floating-point NaN
+ * values as selected by @p semantics
+ *
+ * Same as the overload without @p semantics, which uses `nan_semantics::DEFAULT`.
+ *
+ * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
+ * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
+ * operations.
+ * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs or @p output_type is a dictionary type
+ *
+ * @param lhs         The left operand column
+ * @param rhs         The right operand scalar
+ * @param op          The binary operator
+ * @param output_type The desired data type of the output column
+ * @param semantics   How floating-point NaN values compare in the comparison operators (EQUAL,
+ *                    NOT_EQUAL, LESS, GREATER, LESS_EQUAL, GREATER_EQUAL, NULL_EQUALS,
+ *                    NULL_NOT_EQUALS) and in NULL_MAX and NULL_MIN. It has no effect on other
+ *                    operators or on non-floating-point operands.
+ * @param stream      CUDA stream used for device memory operations and kernel launches
+ * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @return            Output column of `output_type` type containing the result of
+ *                    the binary operation
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  scalar const& rhs,
+  binary_operator op,
+  data_type output_type,
+  nan_semantics semantics,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
  * @brief Performs a binary operation between two columns.
  *
  * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
@@ -241,6 +309,41 @@ std::unique_ptr<column> binary_operation(
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a binary operation between two columns, comparing floating-point NaN values as
+ * selected by @p semantics
+ *
+ * Same as the overload without @p semantics, which uses `nan_semantics::DEFAULT`.
+ *
+ * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
+ * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
+ * operations.
+ * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
+ * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs, @p rhs, or @p output_type is a dictionary type
+ *
+ * @param lhs         The left operand column
+ * @param rhs         The right operand column
+ * @param op          The binary operator
+ * @param output_type The desired data type of the output column
+ * @param semantics   How floating-point NaN values compare in the comparison operators (EQUAL,
+ *                    NOT_EQUAL, LESS, GREATER, LESS_EQUAL, GREATER_EQUAL, NULL_EQUALS,
+ *                    NULL_NOT_EQUALS) and in NULL_MAX and NULL_MIN. It has no effect on other
+ *                    operators or on non-floating-point operands.
+ * @param stream      CUDA stream used for device memory operations and kernel launches
+ * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @return            Output column of `output_type` type containing the result of
+ *                    the binary operation
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  nan_semantics semantics,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

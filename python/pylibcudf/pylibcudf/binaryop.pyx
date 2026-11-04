@@ -8,6 +8,7 @@ from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport binaryop as cpp_binaryop
 from pylibcudf.libcudf.binaryop cimport binary_operator
+from pylibcudf.libcudf.types cimport nan_semantics
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 
@@ -34,6 +35,7 @@ cpdef Column binary_operation(
     RightBinaryOperand rhs,
     binary_operator op,
     DataType output_type,
+    nan_semantics semantics = nan_semantics.DEFAULT,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -56,6 +58,12 @@ cpdef Column binary_operation(
         The operation to perform.
     output_type : DataType
         The data type to use for the output.
+    semantics : NanSemantics, default NanSemantics.DEFAULT
+        How floating-point NaN values compare in comparison operators and in
+        ``NULL_MAX`` and ``NULL_MIN``. ``IEEE754`` treats a NaN as unequal to
+        every value and unordered; ``ETL`` treats NaNs as equal to each other
+        and greater than every other value. ``DEFAULT`` is the libcudf default,
+        currently ``IEEE754``.
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -83,6 +91,7 @@ cpdef Column binary_operation(
                 c_rhs_column,
                 op,
                 output_type.c_obj,
+                semantics,
                 _cs,
                 mr.get_mr()
             )
@@ -94,6 +103,7 @@ cpdef Column binary_operation(
                 dereference(rhs.c_obj),
                 op,
                 output_type.c_obj,
+                semantics,
                 _cs,
                 mr.get_mr()
             )
@@ -105,6 +115,7 @@ cpdef Column binary_operation(
                 c_rhs_column,
                 op,
                 output_type.c_obj,
+                semantics,
                 _cs,
                 mr.get_mr()
             )

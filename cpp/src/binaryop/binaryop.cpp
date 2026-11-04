@@ -220,6 +220,7 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
                                          RhsType const& rhs,
                                          binary_operator op,
                                          data_type output_type,
+                                         nan_semantics semantics,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
@@ -258,8 +259,11 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
   if constexpr (std::is_same_v<RhsType, column_view>)
     if (rhs.is_empty()) return out;
 
+  // The libcudf default is currently IEEE 754
+  if (semantics == nan_semantics::DEFAULT) { semantics = nan_semantics::IEEE754; }
+
   auto out_view = out->mutable_view();
-  cudf::binops::compiled::binary_operation(out_view, lhs, rhs, op, stream);
+  cudf::binops::compiled::binary_operation(out_view, lhs, rhs, op, semantics, stream);
   // TODO: consider having the binary_operation count nulls instead
   out->set_null_count(cudf::detail::null_count(out_view.null_mask(), 0, out->size(), stream));
   return out;
@@ -363,31 +367,34 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
+                                         nan_semantics semantics,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   return binops::compiled::binary_operation<scalar, column_view>(
-    lhs, rhs, op, output_type, stream, mr);
+    lhs, rhs, op, output_type, semantics, stream, mr);
 }
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          scalar const& rhs,
                                          binary_operator op,
                                          data_type output_type,
+                                         nan_semantics semantics,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   return binops::compiled::binary_operation<column_view, scalar>(
-    lhs, rhs, op, output_type, stream, mr);
+    lhs, rhs, op, output_type, semantics, stream, mr);
 }
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
+                                         nan_semantics semantics,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
   return binops::compiled::binary_operation<column_view, column_view>(
-    lhs, rhs, op, output_type, stream, mr);
+    lhs, rhs, op, output_type, semantics, stream, mr);
 }
 
 std::unique_ptr<column> binary_operation(column_view const& lhs,
@@ -454,7 +461,19 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::binary_operation(lhs, rhs, op, output_type, stream, mr);
+  return detail::binary_operation(lhs, rhs, op, output_type, nan_semantics::DEFAULT, stream, mr);
+}
+
+std::unique_ptr<column> binary_operation(scalar const& lhs,
+                                         column_view const& rhs,
+                                         binary_operator op,
+                                         data_type output_type,
+                                         nan_semantics semantics,
+                                         cuda::stream_ref stream,
+                                         rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::binary_operation(lhs, rhs, op, output_type, semantics, stream, mr);
 }
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          scalar const& rhs,
@@ -464,7 +483,19 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::binary_operation(lhs, rhs, op, output_type, stream, mr);
+  return detail::binary_operation(lhs, rhs, op, output_type, nan_semantics::DEFAULT, stream, mr);
+}
+
+std::unique_ptr<column> binary_operation(column_view const& lhs,
+                                         scalar const& rhs,
+                                         binary_operator op,
+                                         data_type output_type,
+                                         nan_semantics semantics,
+                                         cuda::stream_ref stream,
+                                         rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::binary_operation(lhs, rhs, op, output_type, semantics, stream, mr);
 }
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
@@ -474,7 +505,19 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::binary_operation(lhs, rhs, op, output_type, stream, mr);
+  return detail::binary_operation(lhs, rhs, op, output_type, nan_semantics::DEFAULT, stream, mr);
+}
+
+std::unique_ptr<column> binary_operation(column_view const& lhs,
+                                         column_view const& rhs,
+                                         binary_operator op,
+                                         data_type output_type,
+                                         nan_semantics semantics,
+                                         cuda::stream_ref stream,
+                                         rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::binary_operation(lhs, rhs, op, output_type, semantics, stream, mr);
 }
 
 std::unique_ptr<column> binary_operation(scalar const& lhs,

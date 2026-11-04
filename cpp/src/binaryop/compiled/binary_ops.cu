@@ -327,48 +327,49 @@ void operator_dispatcher(mutable_column_view& out,
                          bool is_lhs_scalar,
                          bool is_rhs_scalar,
                          binary_operator op,
+                         nan_semantics semantics,
                          cuda::stream_ref stream)
 {
   // clang-format off
 switch (op) {
-case binary_operator::ADD:                  apply_binary_op<ops::Add>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::SUB:                  apply_binary_op<ops::Sub>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::MUL:                  apply_binary_op<ops::Mul>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::DIV:                  apply_binary_op<ops::Div>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::TRUE_DIV:             apply_binary_op<ops::TrueDiv>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::FLOOR_DIV:            apply_binary_op<ops::FloorDiv>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::MOD:                  apply_binary_op<ops::Mod>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::PYMOD:                apply_binary_op<ops::PyMod>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::POW:                  apply_binary_op<ops::Pow>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::INT_POW:               apply_binary_op<ops::IntPow>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
+case binary_operator::ADD:                  apply_binary_op<ops::Add>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::SUB:                  apply_binary_op<ops::Sub>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::MUL:                  apply_binary_op<ops::Mul>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::DIV:                  apply_binary_op<ops::Div>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::TRUE_DIV:             apply_binary_op<ops::TrueDiv>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::FLOOR_DIV:            apply_binary_op<ops::FloorDiv>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::MOD:                  apply_binary_op<ops::Mod>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::PYMOD:                apply_binary_op<ops::PyMod>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::POW:                  apply_binary_op<ops::Pow>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::INT_POW:               apply_binary_op<ops::IntPow>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
 case binary_operator::EQUAL:
 case binary_operator::NOT_EQUAL:
 if(out.type().id() != type_id::BOOL8) CUDF_FAIL("Output type of Comparison operator should be bool type");
-dispatch_equality_op(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, op, stream); break;
-case binary_operator::LESS:                 apply_binary_op<ops::Less>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::GREATER:              apply_binary_op<ops::Greater>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::LESS_EQUAL:           apply_binary_op<ops::LessEqual>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::GREATER_EQUAL:        apply_binary_op<ops::GreaterEqual>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::BITWISE_AND:          apply_binary_op<ops::BitwiseAnd>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::BITWISE_OR:           apply_binary_op<ops::BitwiseOr>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::BITWISE_XOR:          apply_binary_op<ops::BitwiseXor>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::LOGICAL_AND:          apply_binary_op<ops::LogicalAnd>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::LOGICAL_OR:           apply_binary_op<ops::LogicalOr>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
+dispatch_equality_op(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, op, semantics, stream); break;
+case binary_operator::LESS:                 apply_binary_op<ops::Less>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::GREATER:              apply_binary_op<ops::Greater>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::LESS_EQUAL:           apply_binary_op<ops::LessEqual>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::GREATER_EQUAL:        apply_binary_op<ops::GreaterEqual>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::BITWISE_AND:          apply_binary_op<ops::BitwiseAnd>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::BITWISE_OR:           apply_binary_op<ops::BitwiseOr>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::BITWISE_XOR:          apply_binary_op<ops::BitwiseXor>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::LOGICAL_AND:          apply_binary_op<ops::LogicalAnd>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::LOGICAL_OR:           apply_binary_op<ops::LogicalOr>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
 /*
 case binary_operator::GENERIC_BINARY:      // Cannot be compiled, should be called by jit::binary_operation
 */
-case binary_operator::SHIFT_LEFT:           apply_binary_op<ops::ShiftLeft>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::SHIFT_RIGHT:          apply_binary_op<ops::ShiftRight>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::SHIFT_RIGHT_UNSIGNED: apply_binary_op<ops::ShiftRightUnsigned>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::LOG_BASE:             apply_binary_op<ops::LogBase>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::ATAN2:                apply_binary_op<ops::ATan2>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::PMOD:                 apply_binary_op<ops::PMod>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::NULL_EQUALS:          apply_binary_op<ops::NullEquals>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::NULL_NOT_EQUALS:      apply_binary_op<ops::NullNotEquals>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::NULL_MAX:             apply_binary_op<ops::NullMax>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::NULL_MIN:             apply_binary_op<ops::NullMin>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::NULL_LOGICAL_AND:     apply_binary_op<ops::NullLogicalAnd>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
-case binary_operator::NULL_LOGICAL_OR:      apply_binary_op<ops::NullLogicalOr>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, stream); break;
+case binary_operator::SHIFT_LEFT:           apply_binary_op<ops::ShiftLeft>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::SHIFT_RIGHT:          apply_binary_op<ops::ShiftRight>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::SHIFT_RIGHT_UNSIGNED: apply_binary_op<ops::ShiftRightUnsigned>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::LOG_BASE:             apply_binary_op<ops::LogBase>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::ATAN2:                apply_binary_op<ops::ATan2>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::PMOD:                 apply_binary_op<ops::PMod>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::NULL_EQUALS:          apply_binary_op<ops::NullEquals>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::NULL_NOT_EQUALS:      apply_binary_op<ops::NullNotEquals>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::NULL_MAX:             apply_binary_op<ops::NullMax>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::NULL_MIN:             apply_binary_op<ops::NullMin>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::NULL_LOGICAL_AND:     apply_binary_op<ops::NullLogicalAnd>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
+case binary_operator::NULL_LOGICAL_OR:      apply_binary_op<ops::NullLogicalOr>(out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics, stream); break;
 default:;
 }
   // clang-format on
@@ -379,29 +380,32 @@ void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       column_view const& rhs,
                       binary_operator op,
+                      nan_semantics semantics,
                       cuda::stream_ref stream)
 {
-  operator_dispatcher(out, lhs, rhs, false, false, op, stream);
+  operator_dispatcher(out, lhs, rhs, false, false, op, semantics, stream);
 }
 // scalar_vector
 void binary_operation(mutable_column_view& out,
                       scalar const& lhs,
                       column_view const& rhs,
                       binary_operator op,
+                      nan_semantics semantics,
                       cuda::stream_ref stream)
 {
   auto [lhsv, aux] = scalar_to_column_view(lhs, stream);
-  operator_dispatcher(out, lhsv, rhs, true, false, op, stream);
+  operator_dispatcher(out, lhsv, rhs, true, false, op, semantics, stream);
 }
 // vector_scalar
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       scalar const& rhs,
                       binary_operator op,
+                      nan_semantics semantics,
                       cuda::stream_ref stream)
 {
   auto [rhsv, aux] = scalar_to_column_view(rhs, stream);
-  operator_dispatcher(out, lhs, rhsv, false, true, op, stream);
+  operator_dispatcher(out, lhs, rhsv, false, true, op, semantics, stream);
 }
 
 namespace detail {

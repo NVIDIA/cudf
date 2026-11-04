@@ -1181,6 +1181,30 @@ class TemporalFunction(Expr):
         options: tuple[Any, ...],
         *children: Expr,
     ) -> None:
+        """
+        Create a temporal function expression.
+
+        Parameters
+        ----------
+        dtype
+            Result dtype.
+        name
+            Temporal function to apply.
+        options
+            Options from the polars plan. For ``Round``, ``Truncate`` and
+            ``OffsetBy`` they are replaced by the plan for the device.
+        *children
+            Expressions the function applies to.
+
+        Raises
+        ------
+        NotImplementedError
+            If the function or its arguments are not supported.
+        SchemaError
+            If an argument has the wrong dtype.
+        InvalidOperationError
+            If an argument has an invalid value.
+        """
         self.dtype = dtype
         self.options = options
         self.name = name

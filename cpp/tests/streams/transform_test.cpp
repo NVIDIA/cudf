@@ -67,7 +67,7 @@ __device__ inline void    fdsf   (
 //
 
 .version 6.3
-.target sm_70
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__7add$241Ef

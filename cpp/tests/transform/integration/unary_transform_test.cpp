@@ -275,7 +275,7 @@ __device__ inline void    fdsf   (
 //
 
 .version 6.3
-.target sm_70
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__7add$241Ef
@@ -325,7 +325,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
   // ```py
   //
   // from numba import cuda, int32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -337,7 +337,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
   // arg_types = (int32, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 5))
   //
   //
   // # Print the PTX code
@@ -358,7 +358,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
 //
 
 .version 9.1
-.target sm_86
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEi
@@ -418,7 +418,7 @@ __device__ inline void f(
   // ```py
   //
   // from numba import cuda, int8
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -430,7 +430,7 @@ __device__ inline void f(
   // arg_types = (int8, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 5))
   //
   //
   // # Print the PTX code
@@ -451,7 +451,7 @@ __device__ inline void f(
 //
 
 .version 9.1
-.target sm_86
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEa
@@ -604,7 +604,7 @@ __device__ inline void decode(float * output, float input){
   // ```py
   //
   // from numba import cuda, float32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -616,7 +616,7 @@ __device__ inline void decode(float * output, float input){
   // arg_types = (float32, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 5))
   //
   //
   // # Print the PTX code
@@ -636,7 +636,7 @@ __device__ inline void decode(float * output, float input){
 //
 
 .version 9.2
-.target sm_86
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__3opxB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEf
@@ -829,7 +829,7 @@ __device__ inline void transform(
   // ```py
   //
   // from numba import cuda, float32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -841,7 +841,7 @@ __device__ inline void transform(
   // arg_types = (float32, float32, float32)
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 5))
   //
   //
   // # Print the PTX code
@@ -862,7 +862,7 @@ __device__ inline void transform(
 //
 
 .version 8.7
-.target sm_86
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEfff
@@ -1466,7 +1466,7 @@ struct NullTest : public cudf::test::BaseFixture {
   // ```py
   //
   // from numba import cuda, float32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -1478,7 +1478,7 @@ struct NullTest : public cudf::test::BaseFixture {
   // arg_types = (float32, float32, float32)
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 5))
   //
   //
   // # Print the PTX code
@@ -1499,7 +1499,7 @@ struct NullTest : public cudf::test::BaseFixture {
 //
 
 .version 8.8
-.target sm_86
+.target sm_75
 .address_size 64
 
 // .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEfff

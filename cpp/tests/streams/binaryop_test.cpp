@@ -74,7 +74,7 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
   ///     udf,
   ///     (int32, int64),
   ///     device=True,
-  ///     cc=(8, 0),  # Target sm_80
+  ///     cc=(7, 5),  # Target sm_75
   /// )
   ///
   /// print(ptx)
@@ -92,7 +92,7 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
 //
 
 .version 9.3
-.target sm_80
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix

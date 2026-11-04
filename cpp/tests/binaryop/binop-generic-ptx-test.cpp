@@ -49,7 +49,7 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_FP32_FP32_FP32)
 //
 
 .version 6.4
-.target sm_70
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__7add$241Eff
@@ -108,7 +108,7 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT32)
 //
 
 .version 6.4
-.target sm_70
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__7add$241Eii
@@ -167,7 +167,7 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT64)
 //
 
 .version 6.3
-.target sm_70
+.target sm_75
 .address_size 64
 
 	// .globl	_ZN8__main__7add$241Eix
@@ -218,7 +218,7 @@ TEST_F(BinaryOperationGenericPTXTest, PropagatesErrorStatus)
 {
   std::string const ptx = R"ptx(
 .version 6.3
-.target sm_70
+.target sm_75
 .address_size 64
 .visible .func (.param .b32 status) original(
   .param .b64 output, .param .b32 lhs, .param .b32 rhs)

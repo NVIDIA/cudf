@@ -44,8 +44,8 @@ jobs:
       package-name: cudf_polars_quent
       package-type: python
       append-cuda-suffix: false
-      # Same as build.yaml: one abi3 wheel per architecture (needed by arm64 test jobs).
-      matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+      # Same as build.yaml, but amd64 only: one abi3 wheel.
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
   wheel-build:
     needs: [build-details]
     permissions:
@@ -57,8 +57,8 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: ./.github/workflows/wheels-build-stage.yaml
     with:
-      # Same as build.yaml: a wheel for each CUDA x ARCH x minimum supported Python version.
-      matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
+      # Same as build.yaml, but amd64 only: a wheel for each CUDA x minimum supported Python version.
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       node_type: cpu16
@@ -96,9 +96,11 @@ jobs:
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/test_wheel_cudf_polars.sh"
-      # Same as test.yaml: the full nightly matrix (all CUDA/arch/deps/driver combos).
-      # https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      # Two configurations from the nightly matrix: amd64 with the oldest and the newest CUDA/Python.
+      matrix_filter: >-
+        map(select(.ARCH == "amd64")) |
+        sort_by([(.CUDA_VER | split(".") | map(tonumber)), (.PY_VER | split(".") | map(tonumber))]) |
+        [first, last]
       matrix_type: nightly
   # Mirrors `cudf-polars-polars-tests` in test.yaml.
   cudf-polars-polars-tests:
@@ -144,9 +146,11 @@ jobs:
         --run-slow
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
-      # Same as test.yaml: the full nightly matrix (all CUDA/arch/deps/driver combos).
-      # https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      # Two configurations from the nightly matrix: amd64 with the oldest and the newest CUDA/Python.
+      matrix_filter: >-
+        map(select(.ARCH == "amd64")) |
+        sort_by([(.CUDA_VER | split(".") | map(tonumber)), (.PY_VER | split(".") | map(tonumber))]) |
+        [first, last]
       matrix_type: nightly
   # Mirrors `tpc-tests-cudf-polars` in test.yaml.
   tpc-tests-cudf-polars:

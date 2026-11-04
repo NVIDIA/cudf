@@ -8,6 +8,7 @@
 
 #include <cudf/copying.hpp>
 #include <cudf/partitioning.hpp>
+#include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -402,7 +403,141 @@ void bench_hash_partition_all_keys_stress(nvbench::state& state)
   run_hash_partition(state, *input, num_columns, num_partitions);
 }
 
+// Keep map generation outside the timed region and record output plus temporary allocation peaks.
+void run_map_partition(nvbench::state& state,
+                       cudf::table const& input,
+                       cudf::column_view map,
+                       cudf::size_type partitions)
+{
+  // Invalid partition ids have undefined behavior; check generated INT32 maps before timing.
+  {
+    auto const [minimum, maximum] = cudf::minmax(map);
+    CUDF_EXPECTS(
+      static_cast<cudf::numeric_scalar<cudf::size_type> const&>(*minimum).value() >= 0 &&
+        static_cast<cudf::numeric_scalar<cudf::size_type> const&>(*maximum).value() < partitions,
+      "Generated partition map is out of range");
+  }
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.add_element_count(input.num_rows(), "rows");
+  state.add_buffer_size(input.alloc_size(), "input_size", "input_size");
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    [[maybe_unused]] auto output = cudf::partition(input.view(), map, partitions);
+  });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+// Measure partition-map materialization separately from hash computation.
+void bench_partition_map(nvbench::state& state)
+{
+  auto const rows       = get_size_type_axis(state, "num_rows");
+  auto const partitions = get_size_type_axis(state, "num_partitions");
+  auto const hot        = state.get_int64("hot_partition") != 0;
+  data_profile const profile =
+    data_profile_builder()
+      .distribution(cudf::type_id::INT32, distribution_id::UNIFORM, 0, hot ? 0 : partitions - 1)
+      .cardinality(0)
+      .avg_run_length(1)
+      .no_validity();
+  auto map          = create_random_column(cudf::type_id::INT32, row_count{rows}, profile);
+  auto const layout = state.get_string("layout");
+  std::unique_ptr<cudf::table> input;
+  if (layout == "int8") {
+    input = make_input_table(std::array{cudf::type_id::INT8}, {}, rows);
+  } else if (layout == "int8x2") {
+    input = make_input_table(std::array{cudf::type_id::INT8, cudf::type_id::INT8}, {}, rows);
+  } else if (layout == "int16") {
+    input = make_input_table(std::array{cudf::type_id::INT16}, {}, rows);
+  } else if (layout == "int32") {
+    input = make_input_table(std::array{cudf::type_id::INT32}, {}, rows);
+  } else if (layout == "int64") {
+    input = make_input_table(std::array{cudf::type_id::INT64}, {}, rows);
+  } else if (layout == "decimal128") {
+    input = make_input_table(std::array{cudf::type_id::DECIMAL128}, {}, rows);
+  } else if (layout == "strings10") {
+    input = make_input_table({}, std::vector<cudf::type_id>(10, cudf::type_id::STRING), rows);
+  } else if (layout == "mixed_nullable") {
+    input = make_input_table(std::array{cudf::type_id::INT64},
+                             std::array{cudf::type_id::STRING, cudf::type_id::INT32},
+                             rows,
+                             0.1,
+                             0.1);
+  } else {
+    state.skip("Unknown partition layout: " + layout);
+    return;
+  }
+  run_map_partition(state, *input, map->view(), partitions);
+}
+
+// Vary byte lengths independently from the 10-column scaling workload.
+void run_string_partition(nvbench::state& state,
+                          cudf::size_type rows,
+                          cudf::size_type min_length,
+                          cudf::size_type max_length,
+                          std::optional<double> null_probability)
+{
+  auto const partitions  = get_size_type_axis(state, "num_partitions");
+  auto const num_columns = get_size_type_axis(state, "num_columns");
+  data_profile const map_profile =
+    data_profile_builder()
+      .distribution(cudf::type_id::INT32, distribution_id::UNIFORM, 0, partitions - 1)
+      .cardinality(0)
+      .avg_run_length(1)
+      .no_validity();
+  data_profile const string_profile =
+    data_profile_builder()
+      .distribution(cudf::type_id::STRING, distribution_id::UNIFORM, min_length, max_length)
+      .cardinality(0)
+      .avg_run_length(1)
+      .null_probability(null_probability);
+  auto map = create_random_column(cudf::type_id::INT32, row_count{rows}, map_profile);
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  for (cudf::size_type seed = 0; seed < num_columns; ++seed) {
+    columns.push_back(create_ascii_string_column(string_profile, rows, seed));
+  }
+  auto input = cudf::table(std::move(columns));
+  run_map_partition(state, input, map->view(), partitions);
+}
+
+void bench_partition_strings(nvbench::state& state)
+{
+  run_string_partition(state, get_size_type_axis(state, "num_rows"), 16, 48, std::nullopt);
+}
+
+void bench_partition_string_lengths(nvbench::state& state)
+{
+  auto const nulls = state.get_int64("null_percent");
+  run_string_partition(state,
+                       1'000'000,
+                       0,
+                       get_size_type_axis(state, "max_length"),
+                       nulls == 0 ? std::nullopt : std::optional<double>{nulls / 100.0});
+}
+
 }  // namespace
+
+NVBENCH_BENCH(bench_partition_strings)
+  .set_name("partition_strings")
+  .add_int64_axis("num_rows", {1'000'000, 10'000'000})
+  .add_int64_axis("num_columns", {2, 10})
+  .add_int64_axis("num_partitions", {100, 200});
+
+NVBENCH_BENCH(bench_partition_string_lengths)
+  .set_name("partition_string_lengths")
+  .add_int64_axis("max_length", {0, 8, 16, 24, 32, 128, 256})
+  .add_int64_axis("num_columns", {2, 10})
+  .add_int64_axis("null_percent", {0, 10})
+  .add_int64_axis("num_partitions", {100, 200});
+
+NVBENCH_BENCH(bench_partition_map)
+  .set_name("partition_map")
+  .add_int64_axis("num_rows", {1024, 1 << 20, 1 << 23, 10'000'000})
+  .add_int64_axis("num_partitions", {2, 100, 200, 256, 257})
+  .add_int64_axis("hot_partition", {0, 1})
+  .add_string_axis(
+    "layout",
+    {"int8", "int8x2", "int16", "int32", "int64", "decimal128", "strings10", "mixed_nullable"});
 
 NVBENCH_BENCH_TYPES(bench_hash_partition_analytic,
                     NVBENCH_TYPE_AXES(nvbench::type_list<std::int32_t, std::int64_t>))

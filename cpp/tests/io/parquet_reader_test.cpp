@@ -4076,6 +4076,87 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipAllValid)
                                 result.tbl->view());
 }
 
+TEST_F(ParquetReaderTest, DeltaByteArrayFirstValueOutsideRowBounds)
+{
+  // Regression test for DELTA_BYTE_ARRAY reads with row bounds around the first value of a page,
+  // which is stored in the headers of the length streams rather than in their mini-blocks. The
+  // string size computation counted it in reads without any value of the page, and left it out of
+  // the size of the buffer for the strings before the read.
+  auto const long_string = std::string(300, 'a');
+  struct read_case {
+    std::vector<std::string> strings;
+    std::vector<bool> valids;
+    cudf::size_type skip_rows;
+    cudf::size_type num_rows;
+  };
+  std::vector<read_case> const cases{
+    // The only value of the page comes before the read.
+    {{long_string, "", "", ""}, {true, false, false, false}, 1, 3},
+    // The first value is longer than the others and comes before the read.
+    {{long_string, "b", "", "c", "d"}, {true, true, false, true, true}, 1, 4},
+    // The read has no value, and the first value comes after it.
+    {{"", "", "", "abc", "", "de"}, {false, false, false, true, false, true}, 0, 3},
+    // Long strings, which the decoder copies one at a time with the whole warp.
+    {{std::string(8000, 'a'), std::string(100, 'b'), std::string(100, 'c')},
+     {true, true, true},
+     1,
+     2}};
+
+  for (auto const& [strings, valids, skip_rows, num_rows] : cases) {
+    auto const col =
+      cudf::test::strings_column_wrapper(strings.begin(), strings.end(), valids.begin());
+    auto const expected = table_view({col});
+    cudf::io::table_input_metadata metadata(expected);
+    metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+
+    for (auto const is_v2 : {false, true}) {
+      for (auto const stats : {cudf::io::statistics_freq::STATISTICS_ROWGROUP,
+                               cudf::io::statistics_freq::STATISTICS_COLUMN}) {
+        SCOPED_TRACE("skip " + std::to_string(skip_rows) + (is_v2 ? ", V2" : ", V1") +
+                     (stats == cudf::io::statistics_freq::STATISTICS_COLUMN ? ", page index" : ""));
+        std::vector<char> buffer;
+        cudf::io::write_parquet(
+          cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+            .metadata(metadata)
+            .write_v2_headers(is_v2)
+            .stats_level(stats)
+            .build());
+
+        auto const result = cudf::io::read_parquet(
+          cudf::io::parquet_reader_options::builder(
+            cudf::io::source_info{cudf::host_span<std::byte const>{
+              reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+            .skip_rows(skip_rows)
+            .num_rows(num_rows)
+            .build());
+        auto const result_col = result.tbl->view().column(0);
+        EXPECT_FALSE(cudf::has_nonempty_nulls(result_col));
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::slice(col, {skip_rows, skip_rows + num_rows})[0],
+                                       result_col);
+      }
+    }
+  }
+
+  // A list leaf takes the decoder's other path for the strings before the read.
+  auto const lists =
+    cudf::test::lists_column_wrapper<cudf::string_view>{{long_string}, {"b"}, {"c", "d"}};
+  auto const expected_lists = table_view({lists});
+  cudf::io::table_input_metadata metadata(expected_lists);
+  metadata.column_metadata[0].child(1).set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected_lists)
+      .metadata(metadata)
+      .build());
+  auto const result =
+    cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                             cudf::io::source_info{cudf::host_span<std::byte const>{
+                               reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                             .skip_rows(1)
+                             .build());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::slice(lists, {1, 3})[0], result.tbl->view().column(0));
+}
+
 TEST_F(ParquetReaderTest, DeltaByteArrayAllNull)
 {
   // An all-null DELTA_BYTE_ARRAY column: the delta stream is empty while the page still carries a

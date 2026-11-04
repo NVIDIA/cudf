@@ -241,8 +241,8 @@ std::unique_ptr<column> fixed_point_segmented_reduction(
 
   return std::make_unique<column>(data_type{type_to_id<InputType>(), scale},
                                   size,
-                                  std::move(*(contents.data.release())),
-                                  std::move(*(contents.null_mask.release())),
+                                  std::move(*(contents.data)),
+                                  std::move(*(contents.null_mask)),
                                   null_count);
 }
 

@@ -7,13 +7,20 @@
 #include <benchmarks/join/join_common.hpp>
 #include <benchmarks/join/nvbench_helpers.hpp>
 
+#include <cudf/binaryop.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/filling.hpp>
+#include <cudf/hashing.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/key_remapping.hpp>
 #include <cudf/join/sort_merge_join.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/unary.hpp>
 #include <cudf/utilities/default_stream.hpp>
+
+#include <memory>
 
 /**
  * Sort-merge join benchmark with multiple data types.
@@ -119,3 +126,69 @@ NVBENCH_BENCH_TYPES(nvbench_sort_merge_inner_join,
   .add_int64_axis("right_size", {10'000, 100'000})
   .add_int64_axis("use_key_remap", {0, 1})
   .add_int64_axis("skip_large_sizes", {1});
+
+namespace {
+
+std::unique_ptr<cudf::column> int64_sequence(int64_t size)
+{
+  return cudf::sequence(size, cudf::numeric_scalar<int64_t>(0), cudf::numeric_scalar<int64_t>(1));
+}
+
+std::unique_ptr<cudf::column> int64_op(cudf::column_view const& column,
+                                       int64_t value,
+                                       cudf::binary_operator op)
+{
+  return cudf::binary_operation(
+    column, cudf::numeric_scalar<int64_t>(value), op, cudf::data_type{cudf::type_id::INT64});
+}
+
+}  // namespace
+
+/**
+ * Probe-only benchmark for sort_merge_join on one sorted int64 build key. The build keys are
+ * `row / build_multiplicity`, so they are unique when `build_multiplicity` is 1. The probe keys
+ * cover about two thirds of the build key range, either in sorted order or randomly shuffled.
+ */
+void nvbench_sort_merge_probe(nvbench::state& state)
+{
+  auto const build_rows         = state.get_int64("build_rows");
+  auto const probe_rows         = state.get_int64("probe_rows");
+  auto const build_multiplicity = state.get_int64("build_multiplicity");
+  auto const shuffled           = state.get_int64("shuffled") != 0;
+  auto const left               = state.get_int64("left") != 0;
+
+  auto const key_range = build_rows / build_multiplicity;
+  auto build_keys =
+    int64_op(int64_sequence(build_rows)->view(), build_multiplicity, cudf::binary_operator::DIV);
+  auto probe_order = int64_sequence(probe_rows);
+  if (shuffled) {
+    auto const hashes = cudf::hashing::murmurhash3_x86_32(cudf::table_view{{probe_order->view()}});
+    auto const hashes64  = cudf::cast(hashes->view(), cudf::data_type{cudf::type_id::INT64});
+    auto const remainder = int64_op(hashes64->view(), probe_rows, cudf::binary_operator::MOD);
+    auto const positive  = int64_op(remainder->view(), probe_rows, cudf::binary_operator::ADD);
+    probe_order          = int64_op(positive->view(), probe_rows, cudf::binary_operator::MOD);
+  }
+  auto const scaled = int64_op(probe_order->view(), 3 * key_range / 2, cudf::binary_operator::MUL);
+  auto probe_keys   = int64_op(scaled->view(), probe_rows, cudf::binary_operator::DIV);
+
+  cudf::table_view const build{{build_keys->view()}};
+  cudf::table_view const probe{{probe_keys->view()}};
+  cudf::sort_merge_join joiner(build, cudf::sorted::YES, cudf::null_equality::EQUAL);
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    if (left) {
+      [[maybe_unused]] auto result = joiner.left_join(probe);
+    } else {
+      [[maybe_unused]] auto result = joiner.inner_join(probe);
+    }
+  });
+}
+
+NVBENCH_BENCH(nvbench_sort_merge_probe)
+  .set_name("sort_merge_join_probe")
+  .add_int64_axis("build_rows", {8'000'000})
+  .add_int64_axis("probe_rows", {32'000'000})
+  .add_int64_axis("build_multiplicity", {1, 2})
+  .add_int64_axis("shuffled", {0, 1})
+  .add_int64_axis("left", {0, 1});

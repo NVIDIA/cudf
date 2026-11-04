@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>

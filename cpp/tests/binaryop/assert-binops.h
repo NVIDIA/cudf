@@ -27,11 +27,18 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 
+#include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cmath>
+#include <cstdint>
+#include <functional>
 #include <limits>
+#include <sstream>
+#include <string>
+#include <type_traits>
 #include <vector>
 
 // This is used to convert the expected binop result computed by the test utilities and the

@@ -5,7 +5,12 @@
 
 #include "jit/parser.hpp"
 
-#include <cudf_test/testing_main.hpp>
+#include <cudf_test/cudf_gtest.hpp>
+
+#include <cudf/utilities/error.hpp>
+
+#include <initializer_list>
+#include <string>
 
 struct JitParseTest : public ::testing::Test {};
 

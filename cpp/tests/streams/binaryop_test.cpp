@@ -64,7 +64,7 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
   ///
   /// ```cpp
   ///
-  /// from numba import cuda, float32
+  /// from numba import cuda, int32, int64
   ///
   /// def udf(a, b):
   ///     c = a*a*a + b*b
@@ -72,7 +72,7 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
   ///
   /// ptx, return_type = cuda.compile_ptx(
   ///     udf,
-  ///     (float32, float32),
+  ///     (int32, int64),
   ///     device=True,
   ///     cc=(8, 0),  # Target sm_80
   /// )
@@ -95,30 +95,32 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
 .target sm_80
 .address_size 64
 
-	// .globl	_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff
-.common .global .align 8 .u64 _ZN08NumbaEnv8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff;
+	// .globl	_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix
+.common .global .align 8 .u64 _ZN08NumbaEnv8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix;
 
-.visible .func  (.param .b32 func_retval0) _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff(
-	.param .b64 _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff_param_0,
-	.param .b32 _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff_param_1,
-	.param .b32 _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff_param_2
+.visible .func  (.param .b32 func_retval0) _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix(
+	.param .b64 _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix_param_0,
+	.param .b32 _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix_param_1,
+	.param .b64 _ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix_param_2
 )
 {
-	.reg .f32 	%f<6>;
-	.reg .b32 	%r<2>;
-	.reg .b64 	%rd<2>;
+	.reg .b32 	%r<3>;
+	.reg .b64 	%rd<8>;
 
 
-	ld.param.u64 	%rd1, [_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff_param_0];
-	ld.param.f32 	%f1, [_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff_param_1];
-	ld.param.f32 	%f2, [_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEff_param_2];
-	mul.f32 	%f3, %f1, %f1;
-	mul.f32 	%f4, %f2, %f2;
-	fma.rn.f32 	%f5, %f3, %f1, %f4;
-	st.f32 	[%rd1], %f5;
-	mov.u32 	%r1, 0;
-	st.param.b32 	[func_retval0+0], %r1;
+	ld.param.u64 	%rd1, [_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix_param_0];
+	ld.param.u32 	%r1, [_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix_param_1];
+	ld.param.u64 	%rd2, [_ZN8__main__3udfB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw0NRRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEix_param_2];
+	cvt.s64.s32 	%rd3, %r1;
+	mul.wide.s32 	%rd4, %r1, %r1;
+	mul.lo.s64 	%rd5, %rd4, %rd3;
+	mul.lo.s64 	%rd6, %rd2, %rd2;
+	add.s64 	%rd7, %rd5, %rd6;
+	st.u64 	[%rd1], %rd7;
+	mov.u32 	%r2, 0;
+	st.param.b32 	[func_retval0+0], %r2;
 	ret;
+
 }
 
 )***";

@@ -25,6 +25,9 @@
 #include <tests/binaryop/binop-fixture.hpp>
 
 #include <cudf/binaryop.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <string>
 
 // Exercise the deprecated PTX API until its removal.
 #pragma GCC diagnostic push

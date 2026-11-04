@@ -7,21 +7,28 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
-#include <cudf/detail/valid_if.cuh>
 #include <cudf/errc.hpp>
 #include <cudf/null_mask.hpp>
-#include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/detail/utilities.hpp>
+#include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <rmm/device_uvector.hpp>
+
+#include <cub/device/device_memcpy.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -33,12 +40,26 @@
 #include <jit/parser.hpp>
 #include <jit/reflect.hpp>
 #include <jit/row_ir.hpp>
-#include <jit/util.hpp>
+#include <rtcx/rtcx.hpp>
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <cstddef>
+#include <cstdint>
+#include <format>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <optional>
 #include <span>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <tuple>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace cudf {
 namespace {

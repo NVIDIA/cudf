@@ -5,18 +5,17 @@
 
 #include "helpers.hpp"
 
-#include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/utilities/type_dispatcher.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/iterator>
 
 #include <jit/cache.hpp>
 #include <rtcx/rtcx.hpp>
-#include <runtime/context.hpp>
 
 #include <algorithm>
 #include <format>
+#include <stdexcept>
 
 namespace cudf {
 namespace jit {

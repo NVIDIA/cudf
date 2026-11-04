@@ -39,7 +39,7 @@
 #include <ranges>
 #include <span>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using parquet::detail::chunk_page_info;
 using parquet::detail::ColumnChunkDesc;
@@ -1560,4 +1560,4 @@ simplified_expression_opt dictionary_literals_collector::simplify_comparison(
   return _tree.push(ast::operation{op, col_ref, literal});
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

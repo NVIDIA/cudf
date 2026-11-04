@@ -66,7 +66,8 @@ struct reflect_output_element_fn {
   }
 
   template <cudf::concepts::string_view T>
-  std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
+  std::string operator()(transform_output_spec const& spec,
+                         [[maybe_unused]] bool use_physical_type) const
   {
     return spec.has_string_offsets ? "cuda::std::span<char>"
                                    : "cudf::repr_element<cudf::string_view>";
@@ -293,6 +294,10 @@ std::vector<transform_output_spec> make_output_specs(
 
   std::vector<transform_output_spec> result;
   for (size_t i = 0; i < outputs.size(); ++i) {
+    CUDF_EXPECTS(outputs[i].type.id() == type_id::STRING || is_fixed_width(outputs[i].type),
+                 "Output type must be either STRING or fixed-width",
+                 std::invalid_argument);
+
     auto has_string_offsets = !string_offsets.empty() && string_offsets[i] != nullptr;
     transform_output_spec spec{.type               = outputs[i].type.id(),
                                .nullability        = outputs[i].nullability,

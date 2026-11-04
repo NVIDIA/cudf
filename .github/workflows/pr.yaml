@@ -1,20 +1,3 @@
-# ==============================================================================
-# TEMPORARY / DO NOT MERGE
-#
-# This is a stripped-down copy of pr.yaml that exists only to reproduce the
-# cudf-polars parts of the nightly `test.yaml` workflow on a PR. It:
-#
-#   * builds only what cudf-polars needs (amd64, latest CUDA, wheels),
-#   * runs the same cudf-polars jobs / scripts / arguments as test.yaml
-#     (wheel-tests-cudf-polars, cudf-polars-polars-tests, tpc-tests-cudf-polars,
-#     cudf-polars-test-summary, cudf-polars-test-audit),
-#   * uses the *nightly* test matrix, filtered down to a single configuration:
-#     amd64 / latest CUDA / latest Python.
-#
-# Everything else that normally runs on PRs (conda builds, C++ tests, docs,
-# Java, cudf/dask-cudf/pandas tests, pre-commit checks, ...) is intentionally
-# removed. Restore .github/workflows/pr.yaml from main before merging anything.
-# ==============================================================================
 name: pr
 on:
   push:
@@ -61,7 +44,8 @@ jobs:
       package-name: cudf_polars_quent
       package-type: python
       append-cuda-suffix: false
-      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+      # Same as build.yaml: one abi3 wheel per architecture (needed by arm64 test jobs).
+      matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
   wheel-build:
     needs: [build-details]
     permissions:
@@ -73,17 +57,12 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: ./.github/workflows/wheels-build-stage.yaml
     with:
-      # amd64 only, latest CUDA major only, minimum Python (the wheels are abi3).
-      matrix_filter: >-
-        map(select(.ARCH == "amd64")) |
-        (map(.CUDA_VER | split(".") | .[0] | tonumber) | max) as $m |
-        map(select((.CUDA_VER | split(".") | .[0] | tonumber) == $m)) |
-        group_by(.CUDA_VER) |
-        map(min_by(.PY_VER | split(".") | map(tonumber)))
+      # Same as build.yaml: a wheel for each CUDA x ARCH x minimum supported Python version.
+      matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       node_type: cpu16
-      matrix_type: pull-request
+      matrix_type: nightly
   wheel-python-build-noarch:
     needs: [build-details]
     permissions:
@@ -95,18 +74,13 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: ./.github/workflows/wheels-build-stage.yaml
     with:
-      # amd64, latest CUDA major only, latest Python.
-      matrix_filter: >-
-        map(select(.ARCH == "amd64")) |
-        (map(.CUDA_VER | split(".") | .[0] | tonumber) | max) as $m |
-        map(select((.CUDA_VER | split(".") | .[0] | tonumber) == $m)) |
-        group_by(.CUDA_VER) |
-        map(max_by(.PY_VER | split(".") | map(tonumber)))
+      # Same as build.yaml: amd64 + the latest supported Python + CUDA, per CUDA major.
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       node_type: cpu8
       pure-wheel: true
-      matrix_type: pull-request
+      matrix_type: nightly
   # Mirrors `wheel-tests-cudf-polars` in test.yaml.
   wheel-tests-cudf-polars:
     needs: [wheel-build, wheel-python-build-noarch, cudf-polars-quent]
@@ -122,8 +96,9 @@ jobs:
       build_type: pull-request
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/test_wheel_cudf_polars.sh"
-      # One job: nightly matrix, amd64, latest CUDA, latest Python.
-      matrix_filter: map(select(.ARCH == "amd64")) | [max_by([(.CUDA_VER | split(".") | map(tonumber)), (.PY_VER | split(".") | map(tonumber))])]
+      # Same as test.yaml: the full nightly matrix (all CUDA/arch/deps/driver combos).
+      # https://github.com/NVIDIA/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
       matrix_type: nightly
   # Mirrors `cudf-polars-polars-tests` in test.yaml.
   cudf-polars-polars-tests:
@@ -169,8 +144,9 @@ jobs:
         --run-slow
         --cudf-polars-shard-id ${{ matrix.shard_id }}
         --cudf-polars-num-shards ${{ matrix.num_shards }}
-      # One configuration: nightly matrix, amd64, latest CUDA, latest Python.
-      matrix_filter: map(select(.ARCH == "amd64")) | [max_by([(.CUDA_VER | split(".") | map(tonumber)), (.PY_VER | split(".") | map(tonumber))])]
+      # Same as test.yaml: the full nightly matrix (all CUDA/arch/deps/driver combos).
+      # https://github.com/NVIDIA/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
       matrix_type: nightly
   # Mirrors `tpc-tests-cudf-polars` in test.yaml.
   tpc-tests-cudf-polars:
@@ -185,7 +161,8 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
     with:
       build_type: pull-request
-      matrix_filter: map(select(.ARCH == "amd64")) | [max_by([(.CUDA_VER | split(".") | map(tonumber)), (.PY_VER | split(".") | map(tonumber))])]
+      # Same as test.yaml: amd64 + the latest supported Python + CUDA, per CUDA major.
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
       container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       script: "ci/run_cudf_polars_tpc.sh"
       matrix_type: nightly

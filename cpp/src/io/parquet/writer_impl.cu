@@ -25,6 +25,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/linked_column.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -1227,7 +1228,8 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
 
   // Now that we know the number of pages, allocate an array to hold per page size and get it
   // populated
-  cudf::detail::hostdevice_vector<size_type> page_sizes(num_pages, stream);
+  cudf::detail::hostdevice_vector<size_type> page_sizes(
+    num_pages, stream, cudf::get_current_device_resource_ref());
   InitEncoderPages(chunks,
                    {},
                    page_sizes,
@@ -1251,7 +1253,8 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
   page_sizes.device_to_host(stream);
 
   // Get per-page max compressed size
-  cudf::detail::hostdevice_vector<size_type> comp_page_sizes(num_pages, stream);
+  cudf::detail::hostdevice_vector<size_type> comp_page_sizes(
+    num_pages, stream, cudf::get_current_device_resource_ref());
   std::transform(
     page_sizes.begin(), page_sizes.end(), comp_page_sizes.begin(), [compression](auto page_size) {
       return max_compressed_size(compression, page_size);
@@ -1410,7 +1413,7 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
       if (nbits > MAX_DICT_BITS) { return {false, 0}; }
 
       auto rle_byte_size =
-        util::div_rounding_up_safe<size_t>(static_cast<size_t>(ck.num_values) * nbits, 8);
+        cudf::detail::div_rounding_up_safe<size_t>(static_cast<size_t>(ck.num_values) * nbits, 8);
       auto dict_enc_size = ck.uniq_data_size + rle_byte_size;
       if (ck.plain_data_size <= dict_enc_size) { return {false, 0}; }
 
@@ -1755,8 +1758,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   std::vector<SchemaElement> this_table_schema(schema_tree.begin(), schema_tree.end());
 
   // Initialize column description
-  cudf::detail::hostdevice_vector<parquet_column_device_view> col_desc(parquet_columns.size(),
-                                                                       stream);
+  cudf::detail::hostdevice_vector<parquet_column_device_view> col_desc(
+    parquet_columns.size(), stream, cudf::get_current_device_resource_ref());
   std::transform(
     parquet_columns.begin(), parquet_columns.end(), col_desc.host_ptr(), [&](auto const& pcol) {
       return pcol.get_device_view(stream);
@@ -1780,14 +1783,15 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                    [&](auto const& column) { return column_size(column, stream); });
 
     // adjust global fragment size if a single fragment will overrun a rowgroup
-    auto const table_size  = std::reduce(column_sizes.begin(), column_sizes.end());
-    auto const avg_row_len = util::div_rounding_up_safe<size_t>(table_size, input.num_rows());
+    auto const table_size = std::reduce(column_sizes.begin(), column_sizes.end());
+    auto const avg_row_len =
+      cudf::detail::div_rounding_up_safe<size_t>(table_size, input.num_rows());
     if (avg_row_len > 0) {
       // Ensure `rg_frag_size` is not bigger than size_type::max for default max_row_group_size
       // value (=uint64::max) to avoid a sign overflow when comparing
       auto const rg_frag_size =
         std::min<size_t>(std::numeric_limits<size_type>::max(),
-                         util::div_rounding_up_safe(max_row_group_size, avg_row_len));
+                         cudf::detail::div_rounding_up_safe(max_row_group_size, avg_row_len));
       // Safe comparison as rg_frag_size fits in size_type
       max_page_fragment_size =
         std::min<size_type>(static_cast<size_type>(rg_frag_size), max_page_fragment_size);
@@ -1800,10 +1804,11 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
     // compromise at smoothing things out without getting fragment sizes too small.
     auto frag_size_fn = [&](auto const& col, size_t col_size) {
       int const target_frags_per_page = col.is_fixed_width() ? 1 : 4;
-      auto const avg_len =
-        target_frags_per_page * util::div_rounding_up_safe<size_t>(col_size, input.num_rows());
+      auto const avg_len              = target_frags_per_page *
+                           cudf::detail::div_rounding_up_safe<size_t>(col_size, input.num_rows());
       if (avg_len > 0) {
-        auto const frag_size = util::div_rounding_up_safe<size_type>(max_page_size_bytes, avg_len);
+        auto const frag_size =
+          cudf::detail::div_rounding_up_safe<size_type>(max_page_size_bytes, avg_len);
         return std::min<size_type>(max_page_fragment_size, frag_size);
       } else {
         return max_page_fragment_size;
@@ -1833,7 +1838,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   auto part_frag_offset =
     cudf::detail::make_empty_pinned_vector<int>(partitions.size() + 1, stream);
-  auto row_group_fragments = cudf::detail::hostdevice_2dvector<PageFragment>(0, 0, stream);
+  auto row_group_fragments = cudf::detail::hostdevice_2dvector<PageFragment>(
+    0, 0, stream, cudf::get_current_device_resource_ref());
 
   // A fragment always ends up in a single page, so shrink the fragment row span and re-measure
   // until every fragment fits within the maximum page size.
@@ -1843,8 +1849,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                    partitions.end(),
                    std::back_inserter(num_frag_in_part),
                    [max_page_fragment_size](auto const& part) {
-                     return util::div_rounding_up_safe<size_type>(part.num_rows,
-                                                                  max_page_fragment_size);
+                     return cudf::detail::div_rounding_up_safe<size_type>(part.num_rows,
+                                                                          max_page_fragment_size);
                    });
 
     auto const num_fragments = std::reduce(num_frag_in_part.begin(), num_frag_in_part.end());
@@ -1860,8 +1866,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
     auto d_part_frag_offset = cudf::detail::make_device_buffer_async(
       part_frag_offset, stream, cudf::get_current_device_resource_ref());
 
-    row_group_fragments =
-      cudf::detail::hostdevice_2dvector<PageFragment>(num_columns, num_fragments, stream);
+    row_group_fragments = cudf::detail::hostdevice_2dvector<PageFragment>(
+      num_columns, num_fragments, stream, cudf::get_current_device_resource_ref());
 
     // Move column info to device
     col_desc.host_to_device_async(stream);
@@ -1998,7 +2004,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   // Initialize row groups and column chunks
   auto const num_chunks = num_rowgroups * num_columns;
-  hostdevice_2dvector<EncColumnChunk> chunks(num_rowgroups, num_columns, stream);
+  hostdevice_2dvector<EncColumnChunk> chunks(
+    num_rowgroups, num_columns, stream, cudf::get_current_device_resource_ref());
 
   // total fragments per column (in case they are non-uniform)
   std::vector<size_type> frags_per_column(num_columns, 0);
@@ -2010,7 +2017,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
       size_t global_r = global_rowgroup_base[p] + r;  // Number of rowgroups already in file/part
       auto& row_group = agg_meta->file(p).row_groups[global_r];
       auto const fragments_in_chunk =
-        util::div_rounding_up_safe<uint32_t>(row_group.num_rows, max_page_fragment_size);
+        cudf::detail::div_rounding_up_safe<uint32_t>(row_group.num_rows, max_page_fragment_size);
       row_group.total_byte_size = 0;
       row_group.columns.resize(num_columns);
       for (int c = 0; c < num_columns; c++) {
@@ -2052,7 +2059,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
         column_chunk_meta.codec          = Compression::UNCOMPRESSED;
         column_chunk_meta.num_values     = ck.num_values;
 
-        frags_per_column[c] += util::div_rounding_up_safe<size_type>(
+        frags_per_column[c] += cudf::detail::div_rounding_up_safe<size_type>(
           row_group.num_rows, std::min(column_frag_size[c], max_page_fragment_size));
       }
       f += fragments_in_chunk;
@@ -2075,7 +2082,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   cuda::device_buffer<statistics_chunk> frag_stats(
     stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
-  cudf::detail::hostdevice_vector<PageFragment> page_fragments(total_frags, stream);
+  cudf::detail::hostdevice_vector<PageFragment> page_fragments(
+    total_frags, stream, cudf::get_current_device_resource_ref());
 
   // update fragments and/or prepare for fragment statistics calculation if necessary
   if (total_frags != 0) {
@@ -2093,7 +2101,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
           auto const global_r   = global_rowgroup_base[p] + r;
           auto const& row_group = agg_meta->file(p).row_groups[global_r];
           auto const fragments_in_chunk =
-            util::div_rounding_up_safe<uint32_t>(row_group.num_rows, frag_size);
+            cudf::detail::div_rounding_up_safe<uint32_t>(row_group.num_rows, frag_size);
           EncColumnChunk& ck = chunks[r + first_rg_in_part[p]][c];
           ck.fragments       = page_fragments.device_ptr(frag_offset);
           ck.first_fragment  = frag_offset;
@@ -2187,12 +2195,12 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   cuda::device_buffer<std::uint8_t> uncomp_bfr(
     stream,
     cudf::get_current_device_resource_ref(),
-    cudf::util::round_up_safe(max_uncomp_bfr_size, BUFFER_PADDING_MULTIPLE),
+    cudf::detail::round_up_safe(max_uncomp_bfr_size, BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
   cuda::device_buffer<std::uint8_t> comp_bfr(
     stream,
     cudf::get_current_device_resource_ref(),
-    cudf::util::round_up_safe(max_comp_bfr_size, BUFFER_PADDING_MULTIPLE),
+    cudf::detail::round_up_safe(max_comp_bfr_size, BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
 
   cuda::device_buffer<std::uint8_t> col_idx_bfr(
@@ -2622,6 +2630,7 @@ void writer::impl::write_parquet_data_to_sink(
 
   if (num_rowgroups != 0) {
     std::vector<std::future<void>> write_tasks;
+    cudf::detail::futures_wait_guard write_tasks_guard{write_tasks};
 
     for (auto r = 0; r < static_cast<int>(num_rowgroups); r++) {
       int const p        = rg_to_part[r];

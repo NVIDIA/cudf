@@ -637,7 +637,7 @@ bool is_supported_write_parquet(compression_type compression)
 
 table_with_metadata read_parquet(parquet_reader_options const& options,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -652,7 +652,7 @@ table_with_metadata read_parquet(std::vector<std::unique_ptr<cudf::io::datasourc
                                  std::vector<parquet::FileMetaData>&& parquet_metadatas,
                                  parquet_reader_options const& options,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -762,7 +762,7 @@ chunked_parquet_reader::chunked_parquet_reader() = default;
 chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                parquet_reader_options const& options,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
   : reader{std::make_unique<detail_parquet::chunked_reader>(
       chunk_read_limit,
       detail_parquet::derive_pass_read_limit(chunk_read_limit),
@@ -783,7 +783,7 @@ chunked_parquet_reader::chunked_parquet_reader(
   std::vector<parquet::FileMetaData>&& parquet_metadatas,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
   : reader{std::make_unique<detail_parquet::chunked_reader>(
       chunk_read_limit,
       detail_parquet::derive_pass_read_limit(chunk_read_limit),
@@ -802,7 +802,7 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                std::size_t pass_read_limit,
                                                parquet_reader_options const& options,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
   : reader{std::make_unique<detail_parquet::chunked_reader>(chunk_read_limit,
                                                             pass_read_limit,
                                                             make_datasources(options.get_source()),
@@ -823,7 +823,7 @@ chunked_parquet_reader::chunked_parquet_reader(
   std::vector<parquet::FileMetaData>&& parquet_metadatas,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
   : reader{std::make_unique<detail_parquet::chunked_reader>(chunk_read_limit,
                                                             pass_read_limit,
                                                             std::move(datasources),

@@ -17,6 +17,7 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/detail/scatter.cuh>
 #include <cudf/strings/string_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -119,7 +120,7 @@ auto scatter_to_gather_complement(MapIterator scatter_map_begin,
   return gather_map;
 }
 
-template <typename Element, typename Enable = void>
+template <typename Element>
 struct column_scatterer_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
@@ -128,8 +129,8 @@ struct column_scatterer_impl {
   }
 };
 
-template <typename Element>
-struct column_scatterer_impl<Element, std::enable_if_t<cudf::is_fixed_width<Element>()>> {
+template <cudf::concepts::fixed_width Element>
+struct column_scatterer_impl<Element> {
   template <typename MapIterator>
   std::unique_ptr<column> operator()(column_view const& source,
                                      MapIterator scatter_map_begin,
@@ -196,7 +197,7 @@ struct column_scatterer_impl<dictionary32> {
                                      rmm::device_async_resource_ref mr) const
   {
     if (target_in.is_empty())  // empty begets empty
-      return make_empty_column(type_id::DICTIONARY32);
+      return empty_like(target_in);
     if (source_in.is_empty())  // no input, just make a copy
       return std::make_unique<column>(target_in, stream, mr);
 

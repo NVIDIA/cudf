@@ -45,7 +45,6 @@ from cudf_polars.utils.config import (
     configure_kvikio,
     resolve_kvikio_bounce_buffer_bytes,
     resolve_kvikio_nthreads,
-    resolve_kvikio_reactor_dispatch,
     resolve_kvikio_remote_io_backend,
     resolve_kvikio_task_size,
     resolve_quent_context,
@@ -385,12 +384,6 @@ def test_kvikio_resolvers_accept_enum_values(
     )
     assert resolve_kvikio_nthreads({}) == 32
     assert resolve_kvikio_task_size({}) == 64 * 1024 * 1024
-    assert (
-        resolve_kvikio_reactor_dispatch(
-            {"kvikio_reactor_dispatch": kvikio.RemoteReactorDispatch.PER_CHUNK}
-        )
-        == kvikio.RemoteReactorDispatch.PER_CHUNK
-    )
 
 
 @pytest.mark.parametrize(
@@ -427,10 +420,8 @@ def test_streaming_executor_normalizes_kvikio_enum_strings() -> None:
     executor = StreamingExecutor(
         cluster=Cluster.DEFAULT_SINGLETON,
         kvikio_remote_io_backend="EASY_THREADPOOL",
-        kvikio_reactor_dispatch="PER_CHUNK",
     )
     assert executor.kvikio_remote_io_backend == kvikio.RemoteIOBackend.EASY_THREADPOOL
-    assert executor.kvikio_reactor_dispatch == kvikio.RemoteReactorDispatch.PER_CHUNK
 
 
 def test_executor_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1306,7 +1297,6 @@ def test_configure_kvikio_multi_poll_defaults(
     configure_kvikio(42)
     reactor_settings = {
         "remote_io_num_reactors": 24,
-        "remote_io_reactor_dispatch": kvikio.RemoteReactorDispatch.PER_CHUNK,
         "remote_io_max_concurrent_requests": 256,
     }
     assert all(
@@ -1322,10 +1312,6 @@ def test_configure_kvikio_multi_poll_defaults(
             assert (key, value) in calls
     assert kvikio.defaults.get("remote_io_backend") == kvikio.RemoteIOBackend.MULTI_POLL
     assert kvikio.defaults.get("remote_io_num_reactors") == 24
-    assert (
-        kvikio.defaults.get("remote_io_reactor_dispatch")
-        == kvikio.RemoteReactorDispatch.PER_CHUNK
-    )
     assert kvikio.defaults.get("remote_io_max_concurrent_requests") == 256
     assert kvikio.defaults.get("bounce_buffer_size") == 16 * 1024 * 1024
     assert kvikio.defaults.get("task_size") == 16 * 1024 * 1024

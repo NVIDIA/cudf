@@ -523,11 +523,8 @@ std::unique_ptr<cudf::column> create_random_utf8_string_column(data_profile cons
                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)),
                   0};
 
-  return cudf::make_strings_column(num_rows,
-                                   std::move(offsets),
-                                   chars.release(),
-                                   null_count,
-                                   std::move(*result_bitmask.release()));
+  return cudf::make_strings_column(
+    num_rows, std::move(offsets), chars.release(), null_count, std::move(*result_bitmask));
 }
 
 // Forward declarations for create_rand_col_fn
@@ -632,7 +629,7 @@ std::unique_ptr<cudf::column> create_random_column(data_profile const& profile,
                   0};
 
   return std::make_unique<cudf::column>(
-    dtype, num_rows, data.release(), std::move(*result_bitmask.release()), null_count);
+    dtype, num_rows, data.release(), std::move(*result_bitmask), null_count);
 }
 
 /**
@@ -724,7 +721,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::struct_view>(data_profi
       current_child += children_to_adopt.size();
 
       *current_parent = cudf::make_structs_column(
-        num_rows, std::move(children_to_adopt), null_count, std::move(*null_mask.release()));
+        num_rows, std::move(children_to_adopt), null_count, std::move(*null_mask));
     }
 
     if (lvl == 1) {
@@ -812,7 +809,7 @@ std::unique_ptr<cudf::column> create_random_column<cudf::list_view>(data_profile
                                           std::move(offsets_column),
                                           std::move(current_child_column),
                                           null_count,
-                                          std::move(*null_mask.release()));
+                                          std::move(*null_mask));
 
     if (auto const cv = list_column->view();
         cudf::has_nonempty_nulls(cv, cudf::get_default_stream())) {
@@ -844,7 +841,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column(data_profile const& pr
     auto null_mask = valid_dist(engine, num_rows);
     auto [result_bitmask, null_count] =
       cudf::bools_to_mask(cudf::device_span<bool const>(null_mask), cudf::get_default_stream());
-    col->set_null_mask(std::move(*result_bitmask.release()), null_count);
+    col->set_null_mask(std::move(*result_bitmask), null_count);
   }
 
   return col;

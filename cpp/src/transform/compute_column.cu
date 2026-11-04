@@ -33,7 +33,7 @@ std::unique_ptr<column> compute_column(table_view const& table,
                                        cuda::stream_ref stream,
                                        rmm::device_async_resource_ref mr)
 {
-  if (get_context().use_jit()) { return compute_column_jit(table, expr, stream, mr); }
+  if (get_context().use_jit()) { return compute_column_jit(table, expr, {}, stream, mr); }
 
   // If evaluating the expression may produce null outputs we create a nullable
   // output column and follow the null-supporting expression evaluation code

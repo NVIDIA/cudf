@@ -2141,6 +2141,20 @@ class UnaryFunction(Expr):
                 if reverse:
                     result = plc.copying.reverse(result, stream=df.stream)
                 return Column(result, dtype=self.dtype)
+            if (
+                self.name in {"cum_min", "cum_max"}
+                and column.is_sorted == plc.types.Sorted.YES
+            ):
+                unchanged_order = (
+                    plc.types.Order.ASCENDING
+                    if (self.name == "cum_max") != reverse
+                    else plc.types.Order.DESCENDING
+                )
+                if column.order == unchanged_order and not (
+                    self.name == "cum_max"
+                    and plc.traits.is_floating_point(column.dtype.plc_type)
+                ):
+                    return column
             plc_col = column.obj
             if reverse:
                 # A reverse cumulative aggregation is a forward one over the

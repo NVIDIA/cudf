@@ -1378,8 +1378,12 @@ class dictionary_expression_converter final : public parquet_expression_simplifi
   dictionary_expression_converter(ast::expression const& expr,
                                   std::span<cudf::data_type const> output_dtypes,
                                   std::span<std::vector<ast::literal*> const> literals,
-                                  std::span<std::vector<ast::ast_operator> const> operators)
-    : parquet_expression_simplifier{output_dtypes}, _literals{literals}, _operators{operators}
+                                  std::span<std::vector<ast::ast_operator> const> operators,
+                                  cuda::stream_ref stream)
+    : parquet_expression_simplifier{output_dtypes},
+      _literals{literals},
+      _operators{operators},
+      _stream{stream}
   {
     // Compute and store columns literals offsets
     _col_literals_offsets.reserve(static_cast<cudf::size_type>(_output_dtypes.size()) + 1);
@@ -1428,6 +1432,10 @@ class dictionary_expression_converter final : public parquet_expression_simplifi
     // Unsupported comparisons and those in discarded OR branches were not collected
     if (literal_iter == literal_indices.end()) { return std::nullopt; }
 
+    // Dictionary values are matched with IEEE-754 equality, while whether `col == NaN` matches
+    // NaN rows depends on the AST's NaN ordering, so a NaN literal cannot prune
+    if (parquet::detail::is_nan_literal(literal, _stream)) { return std::nullopt; }
+
     auto const col_literal_offset =
       _col_literals_offsets[col_idx] + static_cast<cudf::size_type>(*literal_iter);
     auto const& value = _tree.push(ast::column_reference{col_literal_offset});
@@ -1448,6 +1456,7 @@ class dictionary_expression_converter final : public parquet_expression_simplifi
   std::vector<cudf::size_type> _col_literals_offsets;
   std::span<std::vector<ast::literal*> const> _literals;
   std::span<std::vector<ast::ast_operator> const> _operators;
+  cuda::stream_ref _stream;
   simplified_expression_opt _dictionary_expr;
 };
 
@@ -1471,7 +1480,7 @@ aggregate_reader_metadata::apply_dictionary_filter(
   // Convert AST to DictionaryAST expression with reference to dictionary membership
   // in above `dictionary_membership_table`
   dictionary_expression_converter dictionary_expr_converter{
-    filter.get(), output_dtypes, literals, operators};
+    filter.get(), output_dtypes, literals, operators, stream};
 
   // Dictionary membership cannot filter anything in the filter, all row groups survive
   auto const dictionary_expr = dictionary_expr_converter.get_dictionary_expr();

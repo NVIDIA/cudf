@@ -126,6 +126,19 @@ template <operator_transform mode>
                                            ast::literal const& literal);
 
 /**
+ * @brief Whether a literal may hold a floating-point `NaN`
+ *
+ * Statistics, bloom filters and dictionary pages cannot prune a comparison against a `NaN`
+ * literal: whether `col == NaN` (or `col < NaN`) matches a `NaN` row depends on the `NaN` ordering
+ * the AST applies, which the pruning logic does not assume.
+ *
+ * @param literal Literal to check
+ * @param stream CUDA stream used to read the literal's value
+ * @return true if the literal is a floating-point `NaN` or its value cannot be inspected
+ */
+[[nodiscard]] bool is_nan_literal(ast::literal const& literal, cuda::stream_ref stream);
+
+/**
  * @brief Collects column names from the expression ignoring the `skip_names`
  */
 class names_from_expression : public ast::detail::expression_transformer {

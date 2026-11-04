@@ -14,12 +14,14 @@
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <cmath>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -135,6 +137,20 @@ bool is_membership_queryable(cudf::data_type column_type, ast::literal const& li
   // A decimal literal with a different scale cannot be queried
   return not cudf::is_fixed_point(column_type) or
          column_type.scale() == literal.get_data_type().scale();
+}
+
+bool is_nan_literal(ast::literal const& literal, cuda::stream_ref stream)
+{
+  auto const dtype = literal.get_data_type();
+  if (not cudf::is_floating_point(dtype)) { return false; }
+  // A literal backed by a scalar column view cannot be inspected here, so it may be a NaN
+  if (literal.is_scalar_column_view()) { return true; }
+  auto const& scalar = literal.get_scalar();
+  if (not scalar.is_valid(stream)) { return false; }
+  if (dtype.id() == cudf::type_id::FLOAT32) {
+    return std::isnan(static_cast<cudf::numeric_scalar<float> const&>(scalar).value(stream));
+  }
+  return std::isnan(static_cast<cudf::numeric_scalar<double> const&>(scalar).value(stream));
 }
 
 unary_operand extract_unary_operand(ast::operation const& expr)

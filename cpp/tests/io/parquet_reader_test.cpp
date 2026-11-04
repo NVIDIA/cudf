@@ -3678,6 +3678,69 @@ TEST_F(ParquetReaderTest, FilterFloatNAN)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected1->view(), result1);
 }
 
+// Stats pruning for float columns must hold whether or not a NaN row satisfies a comparison, as
+// some writers leave NaNs out of the stats
+TEST_F(ParquetReaderTest, FilterFloatStatsPruning)
+{
+  constexpr auto num_rows       = 20'000;
+  constexpr auto rows_per_group = 5'000;
+  auto elements = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto col0     = cudf::test::fixed_width_column_wrapper<float>(elements, elements + num_rows);
+  auto col1     = cudf::test::fixed_width_column_wrapper<double>(elements, elements + num_rows);
+
+  auto const written_table = table_view{{col0, col1}};
+  auto const filepath      = temp_env->get_temp_filepath("FilterFloatStatsPruning.parquet");
+  {
+    cudf::io::parquet_writer_options const out_opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written_table)
+        .row_group_size_rows(rows_per_group)
+        .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP);
+    cudf::io::write_parquet(out_opts);
+  }
+  auto constexpr num_row_groups = num_rows / rows_per_group;
+
+  auto f_value   = cudf::numeric_scalar<float>(12'500.f);
+  auto f_literal = cudf::ast::literal(f_value);
+  auto f_nan     = cudf::numeric_scalar<float>(NAN);
+  auto f_nan_lit = cudf::ast::literal(f_nan);
+  auto d_value   = cudf::numeric_scalar<double>(12'500.);
+  auto d_literal = cudf::ast::literal(d_value);
+  auto d_nan     = cudf::numeric_scalar<double>(NAN);
+  auto d_nan_lit = cudf::ast::literal(d_nan);
+  auto col_ref_f = cudf::ast::column_reference(0);
+  auto col_ref_d = cudf::ast::column_reference(1);
+  using op       = cudf::ast::ast_operator;
+
+  auto test_pruning = [&](cudf::ast::expression const& filter, int expected_row_groups) {
+    auto predicate = cudf::compute_column(written_table, filter);
+    auto expected  = cudf::apply_retention_mask(written_table, *predicate);
+    auto options =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
+    auto result = cudf::io::read_parquet(options);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+    EXPECT_EQ(result.metadata.num_input_row_groups, num_row_groups);
+    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), expected_row_groups);
+  };
+
+  for (auto [col_ref, literal, nan_literal] : {std::tuple{&col_ref_f, &f_literal, &f_nan_lit},
+                                               std::tuple{&col_ref_d, &d_literal, &d_nan_lit}}) {
+    // A NaN satisfies none of these for a non-NaN literal, so they prune
+    test_pruning(cudf::ast::operation(op::LESS, *col_ref, *literal), 3);
+    test_pruning(cudf::ast::operation(op::LESS_EQUAL, *col_ref, *literal), 3);
+    test_pruning(cudf::ast::operation(op::EQUAL, *col_ref, *literal), 1);
+
+    // A NaN is greater than any other value under a total ordering, so these do not prune
+    test_pruning(cudf::ast::operation(op::GREATER, *col_ref, *literal), num_row_groups);
+    test_pruning(cudf::ast::operation(op::GREATER_EQUAL, *col_ref, *literal), num_row_groups);
+    test_pruning(cudf::ast::operation(op::NOT_EQUAL, *col_ref, *literal), num_row_groups);
+
+    // Comparisons against a NaN literal depend on the NaN ordering, so they do not prune
+    for (auto nan_op : {op::EQUAL, op::LESS, op::LESS_EQUAL, op::GREATER, op::GREATER_EQUAL}) {
+      test_pruning(cudf::ast::operation(nan_op, *col_ref, *nan_literal), num_row_groups);
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, RepeatedNoAnnotations)
 {
   constexpr std::array<unsigned char, 662> repeated_bytes{

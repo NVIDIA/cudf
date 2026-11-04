@@ -198,6 +198,20 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
                                                  cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr);
 
+/**
+ * @brief Scatter groupwise ranks from grouped order back to the input order
+ *
+ * @param rank Groupwise rank column of type INT32 or FLOAT64 without nulls
+ * @param scatter_map Input row of each rank
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return Column of rank values in input order
+ */
+std::unique_ptr<column> scatter_rank(column_view const& rank,
+                                     column_view const& scatter_map,
+                                     cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr);
+
 }  // namespace detail
 }  // namespace groupby
 }  // namespace cudf

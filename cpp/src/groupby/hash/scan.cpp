@@ -13,7 +13,6 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/detail/null_mask.hpp>
-#include <cudf/detail/scatter.hpp>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/structs/utilities.hpp>
@@ -183,12 +182,9 @@ void scan_result_functor::operator()<aggregation::RANK>(aggregation const& agg)
                                               helper.group_labels(stream, mr),
                                               helper.group_offsets(stream, mr),
                                               stream,
-                                              mr.get_output_mr());
+                                              mr.get_temporary_mr());
   }
-  result = std::move(
-    cudf::detail::scatter(
-      table_view{{*result}}, *gather_map, table_view{{*result}}, stream, mr.get_output_mr())
-      ->release()[0]);
+  result = detail::scatter_rank(*result, *gather_map, stream, mr.get_output_mr());
   if (rank_agg._null_handling == null_policy::EXCLUDE) {
     auto const values = get_grouped_values();
     result->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr), values.null_count());

@@ -216,7 +216,7 @@ class BinOp(Expr):
             plc.traits.is_floating_point(left.dtype.plc_type)
             and plc.traits.is_floating_point(right.dtype.plc_type)
         ):
-            result = self._with_polars_nan_semantics(lop, rop, result, df.stream)
+            result = self._with_polars_nan_semantics(left, right, result, df.stream)
         if self.op == plc.binaryop.BinaryOperator.DIV and plc.traits.is_fixed_point(
             self.dtype.plc_type
         ):
@@ -225,8 +225,8 @@ class BinOp(Expr):
 
     def _with_polars_nan_semantics(
         self,
-        lop: plc.Column | plc.Scalar,
-        rop: plc.Column | plc.Scalar,
+        left: Column,
+        right: Column,
         result: plc.Column,
         stream: Stream,
     ) -> plc.Column:
@@ -242,22 +242,21 @@ class BinOp(Expr):
         binop = plc.binaryop.BinaryOperator
         bool_type = plc.DataType(plc.TypeId.BOOL8)
 
-        def is_nan(operand: plc.Column | plc.Scalar) -> plc.Column | plc.Scalar:
-            if isinstance(operand, plc.Scalar):
-                column = plc.Column.from_scalar(operand, 1, stream=stream)
-                return plc.unary.is_nan(column, stream=stream).to_scalar(stream=stream)
-            return plc.unary.is_nan(operand, stream=stream)
+        def is_nan(operand: Column, other: Column) -> plc.Column | plc.Scalar:
+            flags = plc.unary.is_nan(operand.obj, stream=stream)
+            # A scalar is broadcast against a longer column, as in do_evaluate.
+            if operand.is_scalar and operand.size != other.size:
+                return flags.to_scalar(stream=stream)
+            return flags
 
         def combine(
             op: plc.binaryop.BinaryOperator,
-            left: plc.Column | plc.Scalar,
-            right: plc.Column | plc.Scalar,
+            lhs: plc.Column | plc.Scalar,
+            rhs: plc.Column | plc.Scalar,
         ) -> plc.Column:
-            return plc.binaryop.binary_operation(
-                left, right, op, bool_type, stream=stream
-            )
+            return plc.binaryop.binary_operation(lhs, rhs, op, bool_type, stream=stream)
 
-        left_nan, right_nan = is_nan(lop), is_nan(rop)
+        left_nan, right_nan = is_nan(left, right), is_nan(right, left)
         # NaN flags are never null, so nulls in the result still come from the
         # operands.
         if self.op == binop.GREATER:

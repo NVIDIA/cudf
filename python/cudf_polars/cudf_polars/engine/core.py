@@ -464,7 +464,7 @@ class StreamingEngine(pl.GPUEngine):
         -------
         A :class:`kvikio.Summary` per rank, keyed by rank index and in rank
         order. A rank that is not counting is absent, so the result is empty
-        unless the ``statistics`` option is enabled.
+        unless the ``kvikio_statistics`` option is enabled.
 
         Examples
         --------

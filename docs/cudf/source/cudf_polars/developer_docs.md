@@ -628,17 +628,24 @@ tests worth investigating; they do not establish equivalent behavior.
 
 ### Initial behavioral review candidates
 
-The Polars 2.0 coverage run identified one close behavioral match. Its local
-in-memory case and upstream case cover 829 of the same source lines; the 17
-local-only lines are all in the local assertion helper. The upstream node
-appears in the maintained GPU-execution list and asserts the expected values
-for the same grouped literal expressions. This is a candidate for a later
-pruning PR, not an approved deletion: it still needs passing upstream runs and
-confirmation on both supported Polars versions.
+The Polars 2.0 coverage run identified four close in-memory behavioral matches.
+Each local case has only 17 local-only lines, all in the local assertion helper.
+All four upstream nodes appear in the maintained GPU-execution lists for both
+Polars 2.0 and 2.1, and their public assertions cover the same operations.
+These are candidates for a later pruning PR, not approved deletions: the
+upstream nodes still need current strict GPU validation on both versions.
 
 | Local test | Upstream lazy counterpart | Review finding |
 | --- | --- | --- |
 | `tests/test_groupby.py::test_groupby_has_nulls_literal[in-memory]` | `tests/unit/operations/test_has_nulls.py::test_has_nulls_group_by_literal` | Candidate: both group the same input and assert null/non-null literal results. |
+| `tests/expressions/test_replace.py::test_replace_strict_many_to_null[in-memory]` | `tests/unit/operations/test_replace_strict.py::test_replace_strict_fast_path_many_to_one_null` | Candidate: both map the same values to null with the same default. |
+| `tests/expressions/test_replace.py::test_replace_only_null_to_one[in-memory]` | `tests/unit/operations/test_replace.py::test_replace_fast_path_one_null_to_one` | Candidate: both replace null with 100 while leaving ordinary values unchanged. |
+| `tests/expressions/test_replace.py::test_replace_many_with_null_to_one[in-memory]` | `tests/unit/operations/test_replace.py::test_replace_fast_path_many_with_null_to_one` | Candidate: both replace one value and null with 100. |
+
+Each local function also runs under SPMD-small, Dask, and Ray, which the
+upstream suite does not cover in this comparison. Even if the upstream
+in-memory and default-SPMD nodes pass strictly, deleting the whole local
+function would lose those backend checks; any later pruning must preserve them.
 
 Other apparent overlaps did not pass assertion review. In Polars 2.0,
 `tests/test_groupby.py::test_groupby_count_distinct_sql[in-memory]` pairs with

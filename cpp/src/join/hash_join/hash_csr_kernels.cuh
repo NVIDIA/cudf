@@ -15,12 +15,20 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/span.hpp>
+
+#include <rmm/device_uvector.hpp>
+#include <rmm/resource_ref.hpp>
 
 #include <cub/block/block_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/std/algorithm>
 #include <cuda/std/cstdint>
 #include <cuda/std/utility>
 #include <cuda/stream>
+
+#include <memory>
+#include <utility>
 
 namespace cudf::detail {
 
@@ -252,7 +260,7 @@ void launch_hash_csr_probe_count_kernel(size_type num_rows,
 {
   if (num_rows == 0) { return; }
   auto const config = grid_1d{num_rows, hash_csr_block_size};
-  // Keep reduction registers and shared memory out of the kernels used by match contexts and
+  // Keep reduction registers and shared memory out of the probes that need no total, such as
   // retrieval. A device-side null check still reserves those resources for every probe.
   dispatch_bool(total_matches != nullptr, [&](auto compute_sum) {
     hash_csr_probe_count_kernel<IsOuter, decltype(compute_sum)::value>
@@ -325,24 +333,30 @@ CUDF_EXTERN_HASH_CSR_PROBE_COUNT(true, hash_csr_nested_equal, hash_csr_row_hashe
 
 #undef CUDF_EXTERN_HASH_CSR_PROBE_COUNT
 
-void launch_hash_csr_inner_retrieve_kernel(cuda::std::int64_t output_size,
-                                           size_type num_probe_rows,
-                                           cuda::std::int64_t const* offsets,
-                                           size_type const* probe_groups,
-                                           csr_ref csr,
-                                           size_type left_index_offset,
-                                           size_type* left_indices,
-                                           size_type* right_indices,
-                                           cuda::stream_ref stream);
+/**
+ * @brief Computes the output offset of each probe row from its match count
+ *
+ * @return One offset per probe row plus the end offset, and the total number of output pairs
+ */
+std::pair<cuda::device_buffer<cuda::std::int64_t>, std::size_t> hash_csr_match_offsets(
+  device_span<size_type const> match_counts, cuda::stream_ref stream);
 
-void launch_hash_csr_outer_retrieve_kernel(cuda::std::int64_t output_size,
-                                           size_type num_probe_rows,
-                                           cuda::std::int64_t const* offsets,
-                                           size_type const* probe_groups,
-                                           csr_ref csr,
-                                           size_type left_index_offset,
-                                           size_type* left_indices,
-                                           size_type* right_indices,
-                                           cuda::stream_ref stream);
+/**
+ * @brief Emits the row index pairs of the probe rows from their output offsets and matching
+ * groups
+ *
+ * Each output holds `output_size` pairs and has room for `extra_capacity` more elements.
+ */
+std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+          std::unique_ptr<rmm::device_uvector<size_type>>>
+hash_csr_retrieve(bool is_outer,
+                  std::size_t output_size,
+                  device_span<cuda::std::int64_t const> offsets,
+                  device_span<size_type const> probe_groups,
+                  csr_ref csr,
+                  size_type left_index_offset,
+                  std::size_t extra_capacity,
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::detail

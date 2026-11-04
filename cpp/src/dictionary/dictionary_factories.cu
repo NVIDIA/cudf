@@ -141,7 +141,7 @@ std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys,
     if (new_type == indices_type || cudf::size_of(new_type) == cudf::size_of(indices_type)) {
       return std::make_unique<column>(new_type,
                                       indices_size,
-                                      std::move(*(contents.data.release())),
+                                      std::move(*(contents.data)),
                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                       0);
     }
@@ -150,10 +150,8 @@ std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys,
     return cudf::detail::cast(cast_view, new_type, stream, mr);
   }();
 
-  return make_dictionary_column(std::move(keys),
-                                std::move(indices_column),
-                                std::move(*(contents.null_mask.release())),
-                                null_count);
+  return make_dictionary_column(
+    std::move(keys), std::move(indices_column), std::move(*(contents.null_mask)), null_count);
 }
 
 }  // namespace cudf

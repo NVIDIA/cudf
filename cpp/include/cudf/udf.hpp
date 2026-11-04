@@ -34,9 +34,10 @@ enum class lto_binary_type : uint8_t {
 };
 
 /**
- * @brief Non-owning device-code fragment.
+ * @brief A compiled device module to link into a JIT kernel.
  *
- * Keep the bytes alive throughout the calling operation.
+ * A module may define multiple functions and reference functions in other modules. Keep its bytes
+ * alive until evaluation completes or a reusable transform program has been constructed.
  *
  */
 struct lto_fragment {

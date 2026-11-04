@@ -197,9 +197,9 @@ struct null_considering_binop {
                         RhsViewT const& rhsv,
                         cudf::size_type col_size,
                         cuda::stream_ref stream,
-                        cudf::memory_resources mr,
                         CompareFunc cfunc,
-                        OutT* out_col) const
+                        OutT* out_col,
+                        cudf::memory_resources mr) const
   {
     // Create binop functor instance
     compare_functor<LhsViewT, RhsViewT, OutT, CompareFunc> binop_func{lhsv, rhsv, cfunc};
@@ -254,7 +254,7 @@ struct null_considering_binop {
 
     // Populate output column
     populate_out_col(
-      lhs_dev_view, rhs_dev_view, col_size, stream, mr, minmax_func, out_col_strings.data());
+      lhs_dev_view, rhs_dev_view, col_size, stream, minmax_func, out_col_strings.data(), mr);
 
     // Create an output column with the resultant strings
     return cudf::make_strings_column(out_col_strings, invalid_str, stream, mr);

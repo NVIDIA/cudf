@@ -25,6 +25,11 @@ EXITCODE=0
 trap "EXITCODE=1" ERR
 set +e
 
+# Run the large-memory tests (skipped by default) in nightlies; they skip themselves on small GPUs
+if [[ "${RAPIDS_BUILD_TYPE:-}" == "nightly" ]]; then
+    export GTEST_CUDF_LARGE_MEMORY_TESTS=1
+fi
+
 # Run gtests from the libcudf-tests and libcudf-streaming-tests packages
 export GTEST_OUTPUT=xml:${RAPIDS_TESTS_DIR}/
 
@@ -34,17 +39,6 @@ if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf gtests"
     timeout 30m ./ci/run_cudf_ctests.sh -j20
     SUITEERROR=$?
-fi
-
-# Run the ~20GB tests that are DISABLED_ by default, in nightlies on GPUs that can hold them
-if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_TESTS}" == "true" && "${RAPIDS_BUILD_TYPE:-}" == "nightly" ]]; then
-    gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n1)
-    if (( gpu_mib >= 24576 )); then
-        rapids-logger "Run large-memory libcudf gtests"
-        timeout 10m "${INSTALL_PREFIX:-${CONDA_PREFIX:-/usr}}/bin/gtests/libcudf/JOIN_TEST" \
-            --gtest_also_run_disabled_tests --gtest_filter='*DISABLED_*LargeExtentOverflowPrevention*'
-        SUITEERROR=$?
-    fi
 fi
 
 if (( SUITEERROR == 0 )) && [[ "${RUN_EXAMPLES_TESTS}" == "true" ]]; then

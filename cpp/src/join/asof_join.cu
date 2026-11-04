@@ -45,13 +45,14 @@ struct is_group_start {
   __device__ bool operator()(size_type row) const { return row == 0 || !row_equal(row - 1, row); }
 };
 
-template <typename T>
+template <typename T, typename RowEqual>
 struct backward_probe {
   column_device_view left_on;
   column_device_view right_on;
   size_type const* group_offsets;
   size_type const* group_positions;
   size_type num_groups;
+  RowEqual row_equal;
 
   __device__ size_type operator()(size_type left_row) const
   {
@@ -60,6 +61,10 @@ struct backward_probe {
     // A null group_positions pointer means an ungrouped join: every row uses group zero.
     auto const group = group_positions ? group_positions[left_row] : size_type{0};
     if (group < 0 || group >= num_groups) { return JoinNoMatch; }
+    if (group_positions && !row_equal(cudf::detail::row::lhs_index_type{group_offsets[group]},
+                                      cudf::detail::row::rhs_index_type{left_row})) {
+      return JoinNoMatch;
+    }
 
     auto const first = cuda::counting_iterator<size_type>{group_offsets[group]};
     auto const last  = cuda::counting_iterator<size_type>{group_offsets[group + 1]};
@@ -73,6 +78,7 @@ struct backward_probe {
   }
 };
 
+template <typename RowEqual>
 struct probe_dispatch {
   column_device_view left_on;
   column_device_view right_on;
@@ -82,17 +88,18 @@ struct probe_dispatch {
   size_type* output;
   cuda::stream_ref stream;
   rmm::device_async_resource_ref temp_mr;
+  RowEqual row_equal;
 
   template <typename T>
     requires(cudf::is_integral_not_bool<T>() || cudf::is_chrono<T>())
   void operator()() const
   {
-    thrust::transform(
-      rmm::exec_policy_nosync(stream, temp_mr),
-      cuda::counting_iterator<size_type>{0},
-      cuda::counting_iterator<size_type>{left_on.size()},
-      output,
-      backward_probe<T>{left_on, right_on, group_offsets, group_positions, num_groups});
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                      cuda::counting_iterator<size_type>{0},
+                      cuda::counting_iterator<size_type>{left_on.size()},
+                      output,
+                      backward_probe<T, RowEqual>{
+                        left_on, right_on, group_offsets, group_positions, num_groups, row_equal});
   }
 
   template <typename T>
@@ -189,11 +196,24 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
     return result;
   }
 
-  // Grouped probes map each left row to a right group, or JoinNoMatch.
-  std::unique_ptr<cuda::device_buffer<size_type>> group_positions;
+  auto const left_on_device  = column_device_view::create(left_on, stream, temp_mr);
+  auto const right_on_device = column_device_view::create(_right_on, stream, temp_mr);
+  // Validate the candidate group and search its ordered keys in the same probe.
+  auto const launch_probe = [&](size_type const* group_positions, auto row_equal) {
+    cudf::type_dispatcher(left_on.type(),
+                          probe_dispatch{*left_on_device,
+                                         *right_on_device,
+                                         _right_group_offsets.data(),
+                                         group_positions,
+                                         _num_right_groups,
+                                         result.data(),
+                                         stream,
+                                         temp_mr,
+                                         row_equal});
+  };
+
   if (left_by.num_columns() > 0) {
-    group_positions = std::make_unique<cuda::device_buffer<size_type>>(
-      stream, temp_mr, left_on.size(), cuda::no_init);
+    cuda::device_buffer<size_type> group_positions(stream, temp_mr, left_on.size(), cuda::no_init);
     auto const has_nulls = cudf::has_nested_nulls(_right_by) || cudf::has_nested_nulls(left_by);
     // Binary-search group representatives for the first by key not less than the left key.
     auto left_lex = cudf::detail::row::lexicographic::preprocessed_table::create(
@@ -209,7 +229,7 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
                         right_group_rows + _num_right_groups,
                         cudf::detail::row::rhs_iterator(0),
                         cudf::detail::row::rhs_iterator(0) + left_on.size(),
-                        group_positions->begin(),
+                        group_positions.begin(),
                         row_less.less<false>(nullate::DYNAMIC{has_nulls}));
 
     // lower_bound gives only a candidate: reject missing/unequal groups and null grouping keys.
@@ -219,34 +239,13 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
       cudf::detail::row::equality::two_table_comparator{_right_eq_preprocessed, std::move(left_eq)};
     auto const equal =
       row_equal.equal_to<false>(nullate::DYNAMIC{has_nulls}, null_equality::UNEQUAL);
-    thrust::transform(
-      rmm::exec_policy_nosync(stream, temp_mr),
-      group_positions->begin(),
-      group_positions->end(),
-      cuda::counting_iterator<size_type>{0},
-      group_positions->begin(),
-      [group_rows = _right_group_offsets.data(), num_groups = _num_right_groups, equal] __device__(
-        size_type group, size_type left_row) {
-        return group < num_groups && equal(cudf::detail::row::lhs_index_type{group_rows[group]},
-                                           cudf::detail::row::rhs_index_type{left_row})
-                 ? group
-                 : JoinNoMatch;
+    launch_probe(group_positions.data(), equal);
+  } else {
+    launch_probe(
+      nullptr, [] __device__(cudf::detail::row::lhs_index_type, cudf::detail::row::rhs_index_type) {
+        return true;
       });
   }
-
-  // Within each matched group, find the last row with right_on <= left_on.
-  // Return one right-row index (or JoinNoMatch) per left row, preserving left input order.
-  auto const left_on_device  = column_device_view::create(left_on, stream, temp_mr);
-  auto const right_on_device = column_device_view::create(_right_on, stream, temp_mr);
-  cudf::type_dispatcher(left_on.type(),
-                        probe_dispatch{*left_on_device,
-                                       *right_on_device,
-                                       _right_group_offsets.data(),
-                                       group_positions ? group_positions->data() : nullptr,
-                                       _num_right_groups,
-                                       result.data(),
-                                       stream,
-                                       temp_mr});
   return result;
 }
 

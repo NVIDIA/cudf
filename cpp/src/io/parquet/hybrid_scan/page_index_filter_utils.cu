@@ -50,7 +50,7 @@
 #include <span>
 #include <vector>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 namespace {
 
@@ -795,4 +795,4 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   return std::move(row_mask->release().front());
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

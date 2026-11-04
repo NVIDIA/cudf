@@ -29,7 +29,10 @@
 #include <utility>
 #include <vector>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
+
+using cudf::io::parquet::experimental::read_columns_mode;
+using cudf::io::parquet::experimental::use_data_page_mask;
 
 using cudf::io::parquet::detail::ColumnChunkDesc;
 using cudf::io::parquet::detail::PageInfo;
@@ -115,7 +118,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<std::vector<size_type> const> row_group_indices) const;
 
   /**
-   * @copydoc cudf::io::parquet::experimental::hybrid_scan::reset_column_selection
+   * @copydoc cudf::io::parquet::experimental::hybrid_scan_reader::reset_column_selection
    */
   void reset_column_selection();
 
@@ -154,7 +157,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                bool include_unbounded = false);
 
   /**
-   * @copydoc cudf::io::parquet::experimental::hybrid_scan::filter_row_groups_with_dictionary_pages
+   * @copydoc
+   * cudf::io::parquet::experimental::hybrid_scan_reader::filter_row_groups_with_dictionary_pages
    */
   [[nodiscard]] std::vector<std::vector<size_type>> filter_row_groups_with_dictionary_pages(
     std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
@@ -163,7 +167,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     cuda::stream_ref stream);
 
   /**
-   * @copydoc cudf::io::parquet::experimental::hybrid_scan::filter_row_groups_with_bloom_filters
+   * @copydoc
+   * cudf::io::parquet::experimental::hybrid_scan_reader::filter_row_groups_with_bloom_filters
    */
   [[nodiscard]] std::vector<std::vector<size_type>> filter_row_groups_with_bloom_filters(
     std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
@@ -628,4 +633,4 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   std::optional<read_columns_mode> _selected_columns_mode;
 };
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

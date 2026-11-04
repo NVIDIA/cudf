@@ -358,7 +358,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   // build the strings columns from the chars and offsets
   return make_strings_column(strings_count,
                              std::move(offsets),
-                             std::move(chars_data.release()[0]),
+                             std::move(*chars_data),
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }

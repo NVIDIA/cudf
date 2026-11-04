@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Lowerings for CooperativeArrayType operations.
 
@@ -23,17 +26,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from numba_cuda_mlir._mlir import ir
-from numba_cuda_mlir._mlir.extras import types as T
 from numba_cuda_mlir._mlir.dialects import arith, func, llvm, memref
-
+from numba_cuda_mlir._mlir.extras import types as T
+from numba_cuda_mlir.extending import lowering_registry as registry
 from numba_cuda_mlir.lowering_utilities import (
     DeferredMethodCall,
     get_or_insert_function,
 )
-from numba_cuda_mlir.extending import lowering_registry as registry
-from cudf.core.udf.mlir_backend.cooperative_types import CooperativeArrayType
-from cudf.core.udf.mlir_backend.cooperative_device_funcs import func_name
 from numba_cuda_mlir.numba_cuda import types as nb_types
+
+from cudf.core.udf.mlir_backend.cooperative_device_funcs import func_name
+from cudf.core.udf.mlir_backend.cooperative_types import CooperativeArrayType
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,6 +48,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # MLIR type / constant helpers
 # ---------------------------------------------------------------------------
+
 
 def _ptr() -> ir.Type:
     return llvm.PointerType.get()
@@ -70,6 +74,7 @@ def _dtype_mlir_type(dtype) -> ir.Type:
 # CooperativeArray struct accessors
 # ---------------------------------------------------------------------------
 
+
 def _ca_struct_type() -> ir.Type:
     return llvm.StructType.get_literal([_ptr(), _ptr(), T.i64(), _ptr()])
 
@@ -85,19 +90,23 @@ def build_cooperative_array(
         index_data = llvm.ZeroOp(_ptr())
     undef = llvm.UndefOp(ty)
     with_mi = llvm.insertvalue(
-        container=undef, value=meminfo,
+        container=undef,
+        value=meminfo,
         position=ir.DenseI64ArrayAttr.get([0]),
     )
     with_data = llvm.insertvalue(
-        container=with_mi, value=data,
+        container=with_mi,
+        value=data,
         position=ir.DenseI64ArrayAttr.get([1]),
     )
     with_size = llvm.insertvalue(
-        container=with_data, value=size_i64,
+        container=with_data,
+        value=size_i64,
         position=ir.DenseI64ArrayAttr.get([2]),
     )
     return llvm.insertvalue(
-        container=with_size, value=index_data,
+        container=with_size,
+        value=index_data,
         position=ir.DenseI64ArrayAttr.get([3]),
     )
 
@@ -129,13 +138,19 @@ def _shm_base_ptr(builder: MLIRLower) -> ir.Value:
 
 
 # Dtypes with cooperative reduction support.
-_SUPPORTED_DTYPES = (nb_types.float64, nb_types.float32, nb_types.int64, nb_types.int32)
+_SUPPORTED_DTYPES = (
+    nb_types.float64,
+    nb_types.float32,
+    nb_types.int64,
+    nb_types.int32,
+)
 
 
 # ---------------------------------------------------------------------------
 # Reduction call sites: a thin declaration + func.call to the outlined shim
 # function _coop_<op>_<dtype>. The shared memory base is always the last operand.
 # ---------------------------------------------------------------------------
+
 
 def _call_reduction(
     builder: MLIRLower,
@@ -151,12 +166,16 @@ def _call_reduction(
     """
     ft = ir.FunctionType.get([o.type for o in operands], [result_ty])
     callee = get_or_insert_function(
-        func_name(op, dtype), ft, builder.mlir_gpu_module)
+        func_name(op, dtype), ft, builder.mlir_gpu_module
+    )
     return func.call(
-        result=[result_ty], callee=callee.name.value, operands_=operands)
+        result=[result_ty], callee=callee.name.value, operands_=operands
+    )
 
 
-def _reduction_operands(builder: MLIRLower, ca_val: ir.Value) -> list[ir.Value]:
+def _reduction_operands(
+    builder: MLIRLower, ca_val: ir.Value
+) -> list[ir.Value]:
     """(data, size, shm) \u2014 operands shared by the single-array reductions."""
     return [
         ca_extract_data(ca_val),
@@ -169,65 +188,100 @@ def _self_dtype(builder: MLIRLower, self_var: Var):
     return builder.get_numba_type(self_var.name).dtype
 
 
-def _lower_sum(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_sum(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     ca_val = builder.load_var(args[0])
     dtype = _self_dtype(builder, args[0])
     # pandas promotes integer sums to int64 (overflow-safe); floats keep width.
-    acc_ty = T.i64() if isinstance(dtype, nb_types.Integer) else _dtype_mlir_type(dtype)
+    acc_ty = (
+        T.i64()
+        if isinstance(dtype, nb_types.Integer)
+        else _dtype_mlir_type(dtype)
+    )
     result = _call_reduction(
-        builder, "sum", dtype, _reduction_operands(builder, ca_val), acc_ty)
+        builder, "sum", dtype, _reduction_operands(builder, ca_val), acc_ty
+    )
     builder.store_var(target, result)
 
 
-def _lower_mean(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_mean(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     ca_val = builder.load_var(args[0])
     dtype = _self_dtype(builder, args[0])
     result = _call_reduction(
-        builder, "mean", dtype, _reduction_operands(builder, ca_val),
-        ir.F64Type.get())
+        builder,
+        "mean",
+        dtype,
+        _reduction_operands(builder, ca_val),
+        ir.F64Type.get(),
+    )
     # pandas mean of float32 stays float32; truncate the f64 accumulator.
     if dtype == nb_types.float32:
         result = arith.truncf(ir.F32Type.get(), result)
     builder.store_var(target, result)
 
 
-def _lower_minmax(builder: MLIRLower, target: Var, args: list[Var], op: str) -> None:
+def _lower_minmax(
+    builder: MLIRLower, target: Var, args: list[Var], op: str
+) -> None:
     ca_val = builder.load_var(args[0])
     dtype = _self_dtype(builder, args[0])
     result = _call_reduction(
-        builder, op, dtype, _reduction_operands(builder, ca_val),
-        _dtype_mlir_type(dtype))
+        builder,
+        op,
+        dtype,
+        _reduction_operands(builder, ca_val),
+        _dtype_mlir_type(dtype),
+    )
     builder.store_var(target, result)
 
 
-def _lower_min(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_min(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     _lower_minmax(builder, target, args, "min")
 
 
-def _lower_max(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_max(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     _lower_minmax(builder, target, args, "max")
 
 
-def _lower_std_var(builder: MLIRLower, target: Var, args: list[Var], op: str) -> None:
+def _lower_std_var(
+    builder: MLIRLower, target: Var, args: list[Var], op: str
+) -> None:
     ca_val = builder.load_var(args[0])
     dtype = _self_dtype(builder, args[0])
     result = _call_reduction(
-        builder, op, dtype, _reduction_operands(builder, ca_val),
-        ir.F64Type.get())
+        builder,
+        op,
+        dtype,
+        _reduction_operands(builder, ca_val),
+        ir.F64Type.get(),
+    )
     if dtype == nb_types.float32:
         result = arith.truncf(ir.F32Type.get(), result)
     builder.store_var(target, result)
 
 
-def _lower_std(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_std(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     _lower_std_var(builder, target, args, "std")
 
 
-def _lower_var(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_var(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     _lower_std_var(builder, target, args, "var")
 
 
-def _lower_corr(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_corr(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     lhs_val = builder.load_var(args[0])
     rhs_val = builder.load_var(args[1])
     dtype = _self_dtype(builder, args[0])
@@ -237,11 +291,15 @@ def _lower_corr(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> Non
         ca_extract_size(lhs_val),
         _shm_base_ptr(builder),
     ]
-    result = _call_reduction(builder, "corr", dtype, operands, ir.F64Type.get())
+    result = _call_reduction(
+        builder, "corr", dtype, operands, ir.F64Type.get()
+    )
     builder.store_var(target, result)
 
 
-def _lower_idx(builder: MLIRLower, target: Var, args: list[Var], op: str) -> None:
+def _lower_idx(
+    builder: MLIRLower, target: Var, args: list[Var], op: str
+) -> None:
     ca_val = builder.load_var(args[0])
     dtype = _self_dtype(builder, args[0])
     operands = [
@@ -254,11 +312,15 @@ def _lower_idx(builder: MLIRLower, target: Var, args: list[Var], op: str) -> Non
     builder.store_var(target, result)
 
 
-def _lower_idxmax(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_idxmax(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     _lower_idx(builder, target, args, "idxmax")
 
 
-def _lower_idxmin(builder: MLIRLower, target: Var, args: list[Var], kwargs) -> None:
+def _lower_idxmin(
+    builder: MLIRLower, target: Var, args: list[Var], kwargs
+) -> None:
     _lower_idx(builder, target, args, "idxmin")
 
 
@@ -282,6 +344,7 @@ _REDUCTIONS: tuple[tuple[str, Callable], ...] = (
 # Extracts the base pointer from the memref (including slice offset)
 # and builds a non-owning view (meminfo=null).
 # ---------------------------------------------------------------------------
+
 
 def _get_base_ptr_from_memref(array_val: ir.Value) -> ir.Value:
     """Extract the data pointer from a (possibly sliced) memref.
@@ -313,13 +376,16 @@ def _get_base_ptr_from_memref(array_val: ir.Value) -> ir.Value:
 
 
 def _register_cooperative_array_constructor() -> None:
-    from cudf.core.udf.mlir_backend.cooperative_typing import CooperativeArray as _ctor
+    from cudf.core.udf.mlir_backend.cooperative_typing import (
+        CooperativeArray as _ctor,
+    )
 
     @registry.lower(_ctor, nb_types.Array, nb_types.Integer)
     def _lower_ctor(builder, target, args, kwargs):
         array_val = builder.load_var(args[0])
         size_val = builder.load_var(args[1])
         from numba_cuda_mlir.lowering_utilities import convert
+
         size_i64 = convert(size_val, T.i64())
         data_ptr = _get_base_ptr_from_memref(array_val)
         null_ptr = llvm.ZeroOp(_ptr())
@@ -332,6 +398,7 @@ def _register_cooperative_array_constructor() -> None:
         size_val = builder.load_var(args[1])
         index_val = builder.load_var(args[2])
         from numba_cuda_mlir.lowering_utilities import convert
+
         size_i64 = convert(size_val, T.i64())
         data_ptr = _get_base_ptr_from_memref(array_val)
         index_ptr = _get_base_ptr_from_memref(index_val)
@@ -345,6 +412,7 @@ def _register_cooperative_array_constructor() -> None:
 # ---------------------------------------------------------------------------
 # Registration (single entry point so its cost can be measured/deferred)
 # ---------------------------------------------------------------------------
+
 
 def _register_size(ca_type: CooperativeArrayType) -> None:
     @registry.lower_getattr(ca_type, "size")

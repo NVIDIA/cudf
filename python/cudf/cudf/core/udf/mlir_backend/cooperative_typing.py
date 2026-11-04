@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Typing for CooperativeArrayType: reduction attributes.
 
 Grouped columns are modelled as ``CooperativeArrayType`` views. Only
@@ -8,9 +10,6 @@ applied directly to a grouped column are rejected (see below).
 
 from __future__ import annotations
 
-from cudf.core.udf._ops import arith_ops, bitwise_ops, comparison_ops, unary_ops
-from cudf.core.udf.mlir_backend.cooperative_types import CooperativeArrayType
-from cudf.core.udf.utils import UDFError
 from numba_cuda_mlir.extending import typing_registry as registry
 from numba_cuda_mlir.numba_cuda import types
 from numba_cuda_mlir.numba_cuda.typing import signature as nb_signature
@@ -19,17 +18,28 @@ from numba_cuda_mlir.numba_cuda.typing.templates import (
     AttributeTemplate,
 )
 
+from cudf.core.udf._ops import (
+    arith_ops,
+    bitwise_ops,
+    comparison_ops,
+    unary_ops,
+)
+from cudf.core.udf.mlir_backend.cooperative_types import CooperativeArrayType
+from cudf.core.udf.utils import UDFError
+
 _UDF_DOC_URL = "https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/"
 
 
 class CooperativeArray:
     """Sentinel for constructing CooperativeArrayType from array + size."""
+
     pass
 
 
 # ---------------------------------------------------------------------------
 # Constructor: CooperativeArray(array, size) -> CooperativeArrayType(dtype)
 # ---------------------------------------------------------------------------
+
 
 @registry.register_global(CooperativeArray)
 class CooperativeArrayConstructorTemplate(AbstractTemplate):
@@ -40,10 +50,10 @@ class CooperativeArrayConstructorTemplate(AbstractTemplate):
             return None
         if len(args) == 2:
             arr, size = args
-            if isinstance(arr, types.Array) and isinstance(size, types.Integer):
-                return nb_signature(
-                    CooperativeArrayType(arr.dtype), arr, size
-                )
+            if isinstance(arr, types.Array) and isinstance(
+                size, types.Integer
+            ):
+                return nb_signature(CooperativeArrayType(arr.dtype), arr, size)
         elif len(args) == 3:
             arr, size, index = args
             if (
@@ -59,6 +69,7 @@ class CooperativeArrayConstructorTemplate(AbstractTemplate):
 # ---------------------------------------------------------------------------
 # Attribute typing: .size, .sum()
 # ---------------------------------------------------------------------------
+
 
 def _mean_like_result(dtype):
     # pandas mean/var/std of float32 stays float32; everything else -> float64.
@@ -84,7 +95,9 @@ class CoopMeanTemplate(AbstractTemplate):
 
     def generic(self, args, kws):
         if len(args) == 0 and not kws:
-            return nb_signature(_mean_like_result(self.this.dtype), recvr=self.this)
+            return nb_signature(
+                _mean_like_result(self.this.dtype), recvr=self.this
+            )
 
 
 class CoopMinTemplate(AbstractTemplate):
@@ -108,7 +121,9 @@ class CoopStdTemplate(AbstractTemplate):
 
     def generic(self, args, kws):
         if len(args) == 0 and not kws:
-            return nb_signature(_mean_like_result(self.this.dtype), recvr=self.this)
+            return nb_signature(
+                _mean_like_result(self.this.dtype), recvr=self.this
+            )
 
 
 class CoopVarTemplate(AbstractTemplate):
@@ -116,7 +131,9 @@ class CoopVarTemplate(AbstractTemplate):
 
     def generic(self, args, kws):
         if len(args) == 0 and not kws:
-            return nb_signature(_mean_like_result(self.this.dtype), recvr=self.this)
+            return nb_signature(
+                _mean_like_result(self.this.dtype), recvr=self.this
+            )
 
 
 class CoopCorrTemplate(AbstractTemplate):
@@ -155,7 +172,6 @@ class CoopIdxMinTemplate(AbstractTemplate):
     def generic(self, args, kws):
         if len(args) == 0 and not kws:
             return nb_signature(types.int64, recvr=self.this)
-
 
 
 _SUPPORTED_DTYPES = (types.float64, types.float32, types.int64, types.int32)
@@ -233,6 +249,7 @@ class CooperativeArrayAttr(AttributeTemplate):
 # meaning and is rejected with a UDFError, matching the legacy backend. The
 # array-returning operators are intentionally not implemented.
 # ---------------------------------------------------------------------------
+
 
 def _make_unsupported_op_template(op):
     class UnsupportedCoopOpTemplate(AbstractTemplate):

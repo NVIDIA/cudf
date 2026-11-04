@@ -9,6 +9,7 @@
 #include <cudf/column/scalar_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -34,6 +35,9 @@ namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup transformation_transform
+ *
+ * See @ref udfs for the device modules accepted by JIT transforms.
+ *
  * @{
  */
 
@@ -162,11 +166,13 @@ struct transform_program {
    *
    * @param table A table whose schema is used to lower the expression and retrieve its kernel
    * @param expressions The AST expressions to lower and construct the program from
+   * @param fragments Device modules defining the called functions; linked together
    * @param stream CUDA stream used for device memory operations during construction
    * @param mr Device memory resource used for device memory allocations during construction
    */
   transform_program(table_view const& table,
                     std::span<std::reference_wrapper<ast::expression const> const> expressions,
+                    cudf::lto_fragments fragments     = {},
                     cuda::stream_ref stream           = cudf::get_default_stream(),
                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -291,15 +297,6 @@ std::unique_ptr<table> transform(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief The type of LTO Binary
- */
-enum class lto_binary_type : uint8_t {
-  LTO_IR,  //< LTO-IR binary
-  FATBIN,  //< FATBIN binary
-  PTX      //< PTX source
-};
-
-/**
  * @brief Creates a new table by applying a transform function against every
  * element of the input columns.
  *
@@ -403,6 +400,7 @@ std::unique_ptr<column> compute_column(
  *
  * @param table The table used for expression evaluation
  * @param expr The root of the expression tree
+ * @param fragments Device modules defining the called functions; linked together
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource
  * @return Output column
@@ -410,6 +408,7 @@ std::unique_ptr<column> compute_column(
 std::unique_ptr<column> compute_column_jit(
   table_view const& table,
   ast::expression const& expr,
+  cudf::lto_fragments fragments     = {},
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -431,6 +430,7 @@ std::unique_ptr<column> compute_column_jit(
  *
  * @param table The table used for expression evaluation
  * @param expressions Non-empty collection of expression-tree roots, one per output column
+ * @param fragments Device modules defining the called functions; linked together
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource
  * @return Table containing one output column per expression, in the same order as `expressions`
@@ -438,6 +438,7 @@ std::unique_ptr<column> compute_column_jit(
 std::unique_ptr<table> compute_table_jit(
   table_view const& table,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  cudf::lto_fragments fragments     = {},
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

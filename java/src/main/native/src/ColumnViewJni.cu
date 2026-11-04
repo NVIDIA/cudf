@@ -136,7 +136,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
       overlap_result->set_null_mask(std::move(null_mask), null_count);
     } else {
       // Just set the output nullmask as the new nullmask.
-      overlap_result->set_null_mask(std::move(*new_null_mask.release()), new_null_count);
+      overlap_result->set_null_mask(std::move(*new_null_mask), new_null_count);
     }
   }
 }

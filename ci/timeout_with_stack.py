@@ -39,6 +39,10 @@ if TYPE_CHECKING:
     from types import FrameType
 
 
+# Time to give a command that has timed out to exit after SIGINT.
+DEFAULT_GRACE_PERIOD = 30.0
+
+
 class StackType(IntEnum):
     """Enum representing the type of stack trace to capture."""
 
@@ -260,6 +264,66 @@ def terminate_process_tree(pid: int) -> None:
         pass
 
 
+def is_alive(proc: psutil.Process) -> bool:
+    """Whether a process is still running (a zombie counts as exited)."""
+    try:
+        return proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
+
+
+def interrupt_process(process: subprocess.Popen, grace_period: float) -> bool:
+    """
+    Ask a process to stop by sending it SIGINT, and wait for it to do so.
+
+    SIGINT is what pressing Ctrl-C sends. A Python program such as pytest turns
+    it into a ``KeyboardInterrupt``, which lets it report the tests that ran,
+    write its reports, and shut down its own children (for example pytest-xdist
+    workers) before exiting. Only ``process`` itself is signalled: it is
+    responsible for forwarding the request to anything it started.
+
+    This returns once ``process`` and every process it had started when this
+    function was called have exited, or after ``grace_period`` seconds,
+    whichever is first.
+
+    Parameters
+    ----------
+    process
+        The process to interrupt.
+    grace_period
+        Maximum time in seconds to wait for the processes to exit.
+
+    Returns
+    -------
+    True if the process and all of its descendants exited within the grace
+    period, False if any of them is still running.
+
+    See Also
+    --------
+    terminate_process_tree : For forcefully stopping a process tree.
+    """
+    deadline = time.monotonic() + grace_period
+    # Take the list now. Once the parent exits, its children are re-parented
+    # and can no longer be found from it.
+    descendants = get_child_pids(process.pid)
+    with suppress(ProcessLookupError):
+        process.send_signal(signal.SIGINT)
+    try:
+        process.wait(timeout=grace_period)
+    except subprocess.TimeoutExpired:
+        return False
+
+    remaining = []
+    for pid in descendants:
+        with suppress(psutil.NoSuchProcess):
+            remaining.append(psutil.Process(pid))
+    while any(is_alive(proc) for proc in remaining):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+    return True
+
+
 def install_signal_handler(pid: int, *signals: signal.Signals) -> None:
     """
     Install signal handler that terminates the given pid on receiving any of signals
@@ -275,14 +339,28 @@ def install_signal_handler(pid: int, *signals: signal.Signals) -> None:
 
 
 def run_with_timeout(
-    cmd: Sequence[str], timeout: float, *, enable_python: bool = False
+    cmd: Sequence[str],
+    timeout: float,
+    *,
+    enable_python: bool = False,
+    grace_period: float = DEFAULT_GRACE_PERIOD,
 ) -> int:
     """
     Run a command with a timeout and capture stack traces if it exceeds the timeout.
 
     This function runs a command with a specified timeout. If the command exceeds
-    the timeout, it captures stack traces of the process and its children before
-    terminating them. It handles keyboard interrupts gracefully.
+    the timeout, it captures stack traces of the process and its children, then
+    stops it in stages:
+
+    1. Send SIGINT to the command, as Ctrl-C would, and give it ``grace_period``
+       seconds to exit. A Python program such as pytest handles this by
+       reporting the tests that ran and shutting down its own child processes
+       (e.g. pytest-xdist workers).
+    2. If the command, or anything it started, is still running after that,
+       terminate the whole process tree with SIGTERM and, after a short wait,
+       SIGKILL.
+
+    It handles keyboard interrupts gracefully.
 
     Parameters
     ----------
@@ -292,6 +370,9 @@ def run_with_timeout(
         Maximum time in seconds to allow the command to run.
     enable_python
         Whether to capture Python stack traces.
+    grace_period
+        Seconds to wait for the command to exit after SIGINT before
+        terminating its process tree.
 
     Returns
     -------
@@ -337,9 +418,25 @@ def run_with_timeout(
         # Capture stacks for parent and all children
         capture_all_stacks(process.pid, enable_python=enable_python)
 
-        # Terminate the entire process tree
-        print("\nTerminating process tree...")
-        terminate_process_tree(process.pid)
+        # Ask the command to stop first, so that it can clean up after itself.
+        print(
+            f"\nSending SIGINT to process {process.pid}, "
+            f"waiting up to {grace_period} seconds for it to exit..."
+        )
+        if interrupt_process(process, grace_period):
+            print("Process exited after SIGINT")
+        else:
+            print(
+                f"Process tree still running {grace_period} seconds after SIGINT"
+            )
+            print("\nTerminating process tree...")
+            terminate_process_tree(process.pid)
+        # Sweep up anything left in the process group created for the command
+        # above, whether or not SIGINT was enough. This includes processes that
+        # were re-parented away from the tree, or started after the descendant
+        # snapshot in interrupt_process was taken.
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
     except KeyboardInterrupt:
         print("\nReceived keyboard interrupt")
         terminate_process_tree(process.pid)
@@ -359,6 +456,15 @@ if __name__ == "__main__":
         help="Enable Python stack trace capture",
     )
     parser.add_argument(
+        "--grace-period",
+        type=float,
+        default=DEFAULT_GRACE_PERIOD,
+        help=(
+            "Seconds to wait for the command to exit after it is sent SIGINT "
+            "on timeout, before its process tree is terminated"
+        ),
+    )
+    parser.add_argument(
         "command", nargs=argparse.REMAINDER, help="Command to run"
     )
 
@@ -368,6 +474,9 @@ if __name__ == "__main__":
         parser.error("No command specified")
 
     exit_code = run_with_timeout(
-        args.command, args.timeout, enable_python=args.enable_python
+        args.command,
+        args.timeout,
+        enable_python=args.enable_python,
+        grace_period=args.grace_period,
     )
     sys.exit(exit_code)

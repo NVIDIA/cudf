@@ -225,7 +225,8 @@ class mark_join {
                                                right_key_type const* right_rows,
                                                cudf::size_type num_right_rows,
                                                bitmask_type const* right_row_bitmask,
-                                               cuda::stream_ref stream);
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr);
 
   template <typename Comparator>
   cudf::size_type mark_probe_with_prefilter(storage_ref_type storage_ref,

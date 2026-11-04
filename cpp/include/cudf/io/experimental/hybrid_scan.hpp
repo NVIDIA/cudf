@@ -27,7 +27,7 @@
  * @brief Experimental Hybrid Scan Parquet reader optimized for highly selective filters.
  */
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 /**
  * @brief Internal experimental Parquet reader optimized for highly selective filters, called a
  *        Hybrid Scan operation.
@@ -38,7 +38,7 @@ class hybrid_scan_reader_impl;
  * @brief Internal parsed Parquet file metadata for the Hybrid Scan reader.
  */
 class aggregate_reader_metadata;
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail
 
 //! Using `byte_range_info` from cudf::io::text
 using cudf::io::text::byte_range_info;
@@ -168,7 +168,7 @@ class hybrid_scan_metadata {
   [[nodiscard]] FileMetaData const& parquet_metadata() const;
 
  private:
-  std::shared_ptr<detail::aggregate_reader_metadata> _metadata;
+  std::shared_ptr<hybrid_scan::detail::aggregate_reader_metadata> _metadata;
   friend class hybrid_scan_reader;
 };
 
@@ -928,7 +928,7 @@ class hybrid_scan_reader {
   [[nodiscard]] bool has_next_table_chunk();
 
  private:
-  std::unique_ptr<detail::hybrid_scan_reader_impl> _impl;
+  std::unique_ptr<hybrid_scan::detail::hybrid_scan_reader_impl> _impl;
 };
 
 /** @} */  // end of group

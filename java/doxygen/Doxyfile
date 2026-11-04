@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-License-Identifier: Apache-2.0
+
+# Doxygen configuration for generating XML from the cuDF Java sources.
+# The XML is consumed by Breathe to render the cuDF Java API reference in the
+# Sphinx documentation (docs/cudf/source/java).
+
+PROJECT_NAME           = "cuDF Java"
+OUTPUT_DIRECTORY       = .
+INPUT                  = ../src/main/java
+FILE_PATTERNS          = *.java
+RECURSIVE              = YES
+OPTIMIZE_OUTPUT_JAVA   = YES
+JAVADOC_AUTOBRIEF      = YES
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+EXTRACT_PACKAGE        = NO
+EXTRACT_STATIC         = YES
+HIDE_UNDOC_CLASSES     = NO
+INLINE_INHERITED_MEMB  = NO
+SHOW_NAMESPACES        = YES
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+XML_PROGRAMLISTING     = NO
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO

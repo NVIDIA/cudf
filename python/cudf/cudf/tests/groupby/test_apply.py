@@ -12,7 +12,9 @@ import pytest
 import cudf
 from cudf import DataFrame
 from cudf.core.udf._ops import arith_ops, comparison_ops, unary_ops
-from cudf.core.udf.groupby_typing import SUPPORTED_GROUPBY_NUMPY_TYPES
+from cudf.core.udf.mlir_backend.groupby_typing import (
+    SUPPORTED_GROUPBY_NUMPY_TYPES,
+)
 from cudf.core.udf.utils import UDFError, precompiled
 from cudf.testing import assert_eq, assert_groupby_results_equal
 from cudf.testing._utils import expect_warning_if
@@ -232,10 +234,13 @@ JIT_UNARY_REDUCTION_SPECIAL_VALUE_DTYPES = {"float32", "float64"}
 
 
 def _nans_unary_reduction_xfails(func, dtype):
+    # NaN skipping (pandas skipna=True) is now implemented for min/max/sum and
+    # for integer mean/var/std via the MLIR backend. The remaining gaps in
+    # https://github.com/NVIDIA/cudf/issues/14860 are floating-point
+    # mean/var/std and idxmin/idxmax.
     return (
-        func in {"var", "std", "mean"}
-        and str(dtype) in {"int64", "float32", "float64"}
-    ) or (func in {"idxmax", "idxmin", "sum"} and dtype.kind == "f")
+        func in {"var", "std", "mean"} and str(dtype) in {"float32", "float64"}
+    ) or (func in {"idxmax", "idxmin"} and dtype.kind == "f")
 
 
 NANS_UNARY_REDUCTION_XFAIL_PARAMS = [

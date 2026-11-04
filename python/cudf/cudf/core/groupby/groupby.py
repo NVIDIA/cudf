@@ -48,7 +48,7 @@ from cudf.core.join._join_helpers import _match_join_keys
 from cudf.core.mixins import GetAttrGetItemMixin, Reducible, Scannable
 from cudf.core.multiindex import MultiIndex
 from cudf.core.reshape import concat
-from cudf.core.udf.groupby_utils import _can_be_jitted, jit_groupby_apply
+from cudf.core.udf.groupby_function import _can_be_jitted, jit_groupby_apply
 from cudf.options import get_option
 from cudf.utils.dtypes import (
     SIZE_TYPE_DTYPE,

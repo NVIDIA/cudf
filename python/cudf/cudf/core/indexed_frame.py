@@ -29,7 +29,6 @@ import pyarrow as pa
 import pylibcudf as plc
 
 import cudf
-from cudf._lib import strings_udf
 from cudf.api.extensions import no_default
 from cudf.api.types import (
     is_dict_like,
@@ -60,9 +59,12 @@ from cudf.core.index import Index, RangeIndex, _index_from_data, ensure_index
 from cudf.core.missing import NA
 from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import _Resampler
+from cudf.core.udf.strings_typing import ManagedStrArrayWrapper
 from cudf.core.udf.utils import (
     _get_input_args_from_frame,
     _make_free_string_kernel,
+    _mlir_string_array_to_column,
+    _output_args_for_udf_kernel,
     _return_arr_from_dtype,
 )
 from cudf.core.window import ExponentialMovingWindow, Rolling
@@ -3719,7 +3721,7 @@ class IndexedFrame(Frame):
         # Mask and data column preallocated
         ans_col = _return_arr_from_dtype(retty, len(self))
         ans_mask = as_column(True, length=len(self), dtype=np.dtype("bool"))
-        output_args = [(ans_col, ans_mask), len(self)]
+        output_args = _output_args_for_udf_kernel(ans_col, ans_mask, len(self))
         input_args = _get_input_args_from_frame(self)
         launch_args = output_args + input_args + list(args)
         try:
@@ -3729,13 +3731,14 @@ class IndexedFrame(Frame):
             raise RuntimeError("UDF kernel execution failed.") from e
 
         if is_dtype_obj_string(retty):
-            plc_col = strings_udf.column_from_managed_udf_string_array(ans_col)
+            plc_col = _mlir_string_array_to_column(ans_col, len(self))
             col = ColumnBase.create(
                 plc_col, dtype=dtype_from_pylibcudf_column(plc_col)
             )
             free_kernel = _make_free_string_kernel()
+            wrapped_col = ManagedStrArrayWrapper(ans_col)
             with _CUDFNumbaConfig():
-                free_kernel.forall(len(col))(ans_col, len(col))
+                free_kernel.forall(len(col))(wrapped_col, len(col))
         else:
             col = as_column(ans_col, retty)
 

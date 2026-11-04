@@ -484,6 +484,14 @@ def _make_lower_masked_unary(op: Callable) -> Callable:
         m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
         m_val = convert(m_val, builder.get_mlir_type(operand_inner_ty))
 
+        if op is abs and isinstance(operand_inner_ty, types.Boolean):
+            # abs(bool) == int(bool) (0 or 1). The scalar abs builder has no
+            # boolean overload and otherwise triggers a compiler ICE.
+            result_val = convert(m_val, builder.get_mlir_type(result_inner_ty))
+            packed = _pack_masked(builder, target_type, result_val, m_valid)
+            builder.store_var(target, packed)
+            return
+
         sig = result_inner_ty(operand_inner_ty)
         cg = builder.get_registered_builder(op, sig)
         if cg is None:
@@ -614,12 +622,15 @@ def _const_mlir_for_membership(
 ) -> mlir_ir.Value:
     """Materialize a Python numeric constant as an MLIR value of ``mlir_ty`` for
     comparison against a masked payload in a membership test.
+
+    The constant is materialized to match the *payload* MLIR type, not the
+    Python literal's type: ``x in (1, 2, 3)`` where ``x`` is a float must build
+    float constants, because ``arith.constant(f64, value=<int>)`` is a malformed
+    ``llvm.mlir.constant`` ("expected integer type").
     """
-    if isinstance(py_const, float):
-        return float_of(py_const, mlir_ty)
-    if isinstance(py_const, bool):
+    if isinstance(mlir_ty, mlir_ir.IntegerType):
         return int_of(int(py_const), mlir_ty)
-    return int_of(py_const, mlir_ty)
+    return float_of(float(py_const), mlir_ty)
 
 
 def _lower_masked_literal_tuple_contains(

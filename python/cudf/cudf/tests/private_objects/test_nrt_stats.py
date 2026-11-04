@@ -6,12 +6,12 @@ from numba.cuda import config
 from numba.cuda.memory_management.nrt import rtsys
 
 import cudf
-from cudf._lib import strings_udf
 from cudf.core.column import ColumnBase, as_column
 from cudf.core.udf.scalar_function import SeriesApplyKernel
 from cudf.core.udf.utils import (
     _get_input_args_from_frame,
     _make_free_string_kernel,
+    _mlir_string_array_to_column,
     _return_arr_from_dtype,
 )
 from cudf.utils._numba import _CUDFNumbaConfig
@@ -79,7 +79,7 @@ def test_string_udf_free_kernel(monkeypatch):
     with _CUDFNumbaConfig():
         kernel.forall(len(sr))(*launch_args)
     col = ColumnBase.create(
-        strings_udf.column_from_managed_udf_string_array(ans_col),
+        _mlir_string_array_to_column(ans_col, len(sr)),
         dtype=np.dtype(object),
     )
 

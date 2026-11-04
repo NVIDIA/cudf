@@ -3,10 +3,8 @@
 
 import math
 import operator
-from collections.abc import Callable
-from typing import Any
 
-arith_ops: list[Callable[..., Any]] = [
+arith_ops = [
     operator.add,
     operator.sub,
     operator.mul,
@@ -23,13 +21,9 @@ arith_ops: list[Callable[..., Any]] = [
     operator.imod,
 ]
 
-bitwise_ops: list[Callable[..., Any]] = [
-    operator.and_,
-    operator.or_,
-    operator.xor,
-]
+bitwise_ops = [operator.and_, operator.or_, operator.xor]
 
-unary_ops: list[Callable[..., Any]] = [
+unary_ops = [
     math.acos,
     math.acosh,
     math.asin,
@@ -63,7 +57,7 @@ unary_ops: list[Callable[..., Any]] = [
     operator.invert,
 ]
 
-comparison_ops: list[Callable[..., Any]] = [
+comparison_ops = [
     operator.eq,
     operator.ne,
     operator.lt,

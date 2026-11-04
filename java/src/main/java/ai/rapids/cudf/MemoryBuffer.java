@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -192,8 +192,8 @@ abstract public class MemoryBuffer implements AutoCloseable {
    * slices must be closed along with the original buffer before the memory is released.
    * So use this with some caution.
    *
-   * Note that [[DeviceMemoryBuffer]] and [[HostMemoryBuffer]] support slicing, and override this
-   * function.
+   * Note that {@link DeviceMemoryBuffer} and {@link HostMemoryBuffer} support slicing, and override
+   * this function.
    *
    * @param offset where to start the slice at.
    * @param len how many bytes to slice

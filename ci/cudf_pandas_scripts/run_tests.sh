@@ -4,8 +4,8 @@
 
 set -eoxu pipefail
 
-# shellcheck source=ci/init_uv.sh
-source ./ci/init_uv.sh
+source rapids-init-pip
+source rapids-init-uv
 
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
 RAPIDS_COVERAGE_DIR=${RAPIDS_COVERAGE_DIR:-"${PWD}/coverage-results"}

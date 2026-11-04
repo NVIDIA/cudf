@@ -8,8 +8,8 @@ source ./ci/build_parallel.sh
 if [[ "${RAPIDS_WHEEL_COMMON_INITIALIZED:-}" != "true" ]]; then
   source rapids-configure-sccache
   source rapids-datetime-string
-  # shellcheck source=ci/init_uv.sh
-  source ./ci/init_uv.sh
+  source rapids-init-pip
+  source rapids-init-uv
 
   export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
 

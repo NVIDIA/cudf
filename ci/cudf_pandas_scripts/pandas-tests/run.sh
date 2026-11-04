@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-# shellcheck source=ci/init_uv.sh
-source ./ci/init_uv.sh
+source rapids-init-pip
+source rapids-init-uv
 
 EXITCODE=0
 trap "EXITCODE=1" ERR

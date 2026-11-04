@@ -3983,6 +3983,7 @@ TEST_F(ParquetReaderTest, DeltaSkipRowsWithNulls)
     cudf::io::parquet_writer_options out_opts2 =
       cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&out_buffer},
                                                 result.tbl->view())
+        .metadata(input_metadata)
         .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
         .compression(cudf::io::compression_type::NONE)
         .dictionary_policy(cudf::io::dictionary_policy::NEVER)

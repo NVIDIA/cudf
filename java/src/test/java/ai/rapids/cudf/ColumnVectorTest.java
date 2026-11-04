@@ -68,7 +68,7 @@ public class ColumnVectorTest extends CudfTestBase {
   // arg_types = (int32, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 5))
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 0))
   //
   //
   // # Print the PTX code
@@ -90,7 +90,7 @@ public class ColumnVectorTest extends CudfTestBase {
       "//\n" +
       "\n" +
       ".version 9.1\n" +
-      ".target sm_75\n" +
+      ".target sm_70\n" +
       ".address_size 64\n" +
       "\n" +
       "	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEi\n" +

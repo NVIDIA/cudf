@@ -1,9 +1,9 @@
 cuDF for Java
 =============
 
-cuDF for Java provides Java bindings for :doc:`libcudf <../libcudf/index>`,
-for processing large amounts of tabular data on the GPU from the JVM. It is
-published to Maven Central as ``ai.rapids:cudf``:
+cuDF for Java provides Java bindings for NVIDIA cuDF, a library for
+GPU-accelerated structured data processing. It is published to Maven Central
+as ``ai.rapids:cudf``:
 
 .. code-block:: xml
 

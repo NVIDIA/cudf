@@ -141,6 +141,8 @@ void expect_column_meta_equal(ColumnChunkMetaData const& e, ColumnChunkMetaData 
   EXPECT_EQ(e.dictionary_page_offset, a.dictionary_page_offset);
   EXPECT_EQ(e.statistics.null_count, a.statistics.null_count);
   EXPECT_EQ(e.statistics.nan_count, a.statistics.nan_count);
+  EXPECT_EQ(e.bloom_filter_offset, a.bloom_filter_offset);
+  EXPECT_EQ(e.bloom_filter_length, a.bloom_filter_length);
 }
 
 void expect_column_chunk_equal(ColumnChunk const& e, ColumnChunk const& a)
@@ -153,6 +155,8 @@ void expect_column_chunk_equal(ColumnChunk const& e, ColumnChunk const& a)
   EXPECT_EQ(e.column_index_length, a.column_index_length);
   if (e.offset_index_length != 0) { EXPECT_EQ(e.offset_index_offset, a.offset_index_offset); }
   if (e.column_index_length != 0) { EXPECT_EQ(e.column_index_offset, a.column_index_offset); }
+  EXPECT_EQ(e.crypto_metadata, a.crypto_metadata);
+  EXPECT_EQ(e.encrypted_column_metadata, a.encrypted_column_metadata);
 }
 
 void expect_row_group_equal(RowGroup const& e, RowGroup const& a)
@@ -207,6 +211,9 @@ void expect_footer_semantic_equal(FileMetaData const& e, FileMetaData const& a)
       EXPECT_EQ(e.column_orders.value()[i].type, a.column_orders.value()[i].type);
     }
   }
+
+  EXPECT_EQ(e.encryption_algorithm, a.encryption_algorithm);
+  EXPECT_EQ(e.footer_signing_key_metadata, a.footer_signing_key_metadata);
 }
 
 // Writes a small two-column table to a parquet host buffer and fills `out` with its parsed footer.
@@ -341,6 +348,53 @@ TEST_F(ParquetFooterFacadeTest, EmptyFooterRoundTrip)
   EXPECT_TRUE(parsed.key_value_metadata.empty());
   EXPECT_TRUE(parsed.created_by.empty());
   EXPECT_FALSE(parsed.column_orders.has_value());
+}
+
+// Bloom filter locations and encryption markers survive write -> read -> write byte-identically, so
+// a pruned footer keeps bloom-filter pruning and still reports its columns as encrypted.
+TEST_F(ParquetFooterFacadeTest, BloomFilterAndEncryptionFieldsRoundTrip)
+{
+  auto meta                                = make_test_footer();
+  auto& columns                            = meta.row_groups[0].columns;
+  columns[0].meta_data.bloom_filter_offset = 1500;
+  columns[0].meta_data.bloom_filter_length = 128;
+  // ColumnCryptoMetaData: ENCRYPTION_WITH_FOOTER_KEY (field 1, empty struct)
+  columns[1].crypto_metadata           = std::vector<uint8_t>{0x1c, 0x00};
+  columns[1].encrypted_column_metadata = std::vector<uint8_t>{0x01, 0x02, 0x03};
+  // EncryptionAlgorithm: AES_GCM_V1 (field 1) with aad_file_unique (field 2) = {0xab, 0xcd}
+  meta.encryption_algorithm        = std::vector<uint8_t>{0x1c, 0x28, 0x02, 0xab, 0xcd, 0x00};
+  meta.footer_signing_key_metadata = std::vector<uint8_t>{0x09, 0x08};
+
+  auto const bytes    = experimental::write_parquet_footer_bytes(meta);
+  auto const reparsed = experimental::read_parquet_footer_bytes(bytes);
+  expect_footer_semantic_equal(meta, reparsed);
+  EXPECT_EQ(experimental::write_parquet_footer_bytes(reparsed), bytes);
+}
+
+// The file-level encryption markers are read from their wire layout and rewritten unchanged.
+TEST_F(ParquetFooterFacadeTest, EncryptionFieldBytesRoundTrip)
+{
+  // clang-format off
+  std::vector<uint8_t> const footer{
+    0x15, 0x02,              // field 1 (version) i32 = 1
+    0x19, 0x0c,              // field 2 (schema): empty LIST<STRUCT>
+    0x16, 0x00,              // field 3 (num_rows) i64 = 0
+    0x19, 0x0c,              // field 4 (row_groups): empty LIST<STRUCT>
+    0x4c,                    // field 8 (encryption_algorithm) STRUCT
+    0x1c,                    //   EncryptionAlgorithm field 1 (AES_GCM_V1) STRUCT
+    0x28, 0x02, 0xab, 0xcd,  //     AesGcmV1 field 2 (aad_file_unique) binary, 2 bytes
+    0x00,                    //   AesGcmV1 STOP
+    0x00,                    // EncryptionAlgorithm STOP
+    0x18, 0x03, 0x01, 0x02, 0x03,  // field 9 (footer_signing_key_metadata) binary, 3 bytes
+    0x00};                   // FileMetaData STOP
+  // clang-format on
+  auto const parsed = experimental::read_parquet_footer_bytes(footer);
+  ASSERT_TRUE(parsed.encryption_algorithm.has_value());
+  EXPECT_EQ(parsed.encryption_algorithm.value(),
+            (std::vector<uint8_t>{0x1c, 0x28, 0x02, 0xab, 0xcd, 0x00}));
+  ASSERT_TRUE(parsed.footer_signing_key_metadata.has_value());
+  EXPECT_EQ(parsed.footer_signing_key_metadata.value(), (std::vector<uint8_t>{0x01, 0x02, 0x03}));
+  EXPECT_EQ(experimental::write_parquet_footer_bytes(parsed), footer);
 }
 
 // Regression: the facade stops at the struct terminator, so an over-length buffer reparses to the

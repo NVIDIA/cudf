@@ -125,19 +125,22 @@ void binary_operation(mutable_column_view& out,
                       column_view const& rhs,
                       binary_operator op,
                       nan_semantics semantics,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       scalar const& rhs,
                       binary_operator op,
                       nan_semantics semantics,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       column_view const& rhs,
                       binary_operator op,
                       nan_semantics semantics,
-                      cuda::stream_ref stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 
 // Defined in util.cpp
 /**

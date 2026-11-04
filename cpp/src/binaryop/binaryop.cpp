@@ -177,7 +177,7 @@ void binary_operation(mutable_column_view& out,
                                                          "cudf::binops::jit::UserDefinedOp");
 
   auto kernel = cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/binaryop/jit/kernel.cu", kernel_reflection, cuda_source);
+    "cudf/cpp/src/binaryop/jit/kernel.cu", kernel_reflection, cuda_source, {});
   auto cfg = kernel.max_occupancy_config(0, 0);
 
   kernel.launch_with({cfg.min_grid_size},
@@ -263,7 +263,8 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
   if (semantics == nan_semantics::DEFAULT) { semantics = nan_semantics::IEEE754; }
 
   auto out_view = out->mutable_view();
-  cudf::binops::compiled::binary_operation(out_view, lhs, rhs, op, semantics, stream);
+  cudf::binops::compiled::binary_operation(
+    out_view, lhs, rhs, op, semantics, stream, cudf::get_current_device_resource_ref());
   // TODO: consider having the binary_operation count nulls instead
   out->set_null_count(cudf::detail::null_count(out_view.null_mask(), 0, out->size(), stream));
   return out;

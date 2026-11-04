@@ -10,6 +10,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
@@ -30,8 +31,8 @@ enum class direction : bool {
  * @brief Wrapper for preprocessed group information from sorted group keys.
  */
 struct preprocessed_group_info {
-  rmm::device_uvector<size_type> const& labels;   ///< Mapping from row index to group label
-  rmm::device_uvector<size_type> const& offsets;  ///< Mapping from group label to row offsets
+  device_span<size_type const> labels;   ///< Mapping from row index to group label
+  device_span<size_type const> offsets;  ///< Mapping from group label to row offsets
   rmm::device_uvector<size_type> const&
     nulls_per_group;  ///< Mapping from group label to null count in the group
 };
@@ -47,9 +48,7 @@ struct preprocessed_group_info {
  * @return device_uvector containing the null count per group.
  */
 [[nodiscard]] rmm::device_uvector<cudf::size_type> nulls_per_group(
-  column_view const& orderby,
-  rmm::device_uvector<size_type> const& offsets,
-  cuda::stream_ref stream);
+  column_view const& orderby, device_span<size_type const> offsets, cuda::stream_ref stream);
 
 /**
  * @copydoc std::unique_ptr<column> rolling_window(

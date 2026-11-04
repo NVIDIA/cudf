@@ -31,13 +31,10 @@ namespace cudf {
 namespace groupby {
 namespace detail {
 /**
- * @brief Functor to dispatch aggregation with
+ * @brief Functor to compute groupby scans with `aggregation_dispatcher`
  *
- * This functor is to be used with `aggregation_dispatcher` to compute the
- * appropriate aggregation. If the values on which to run the aggregation are
- * unchanged, then this functor should be re-used. This is because it stores
- * memoised sorted and/or grouped values and re-using will save on computation
- * of these values.
+ * Reuse one instance for every scan on the same values so that they share the memoized grouped
+ * values.
  */
 struct scan_result_functor final : store_result_functor {
   using store_result_functor::store_result_functor;

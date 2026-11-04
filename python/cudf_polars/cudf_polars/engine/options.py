@@ -141,7 +141,7 @@ class StreamingOptions:
     num_streaming_threads
         Threads used to execute coroutines.
         Env: ``RAPIDSMPF_NUM_STREAMING_THREADS``.
-        Default: ``1``.
+        Default: ``4``.
         Category: rapidsmpf.
     num_streams
         CUDA streams for concurrent GPU execution.
@@ -172,7 +172,8 @@ class StreamingOptions:
     pinned_memory
         Enable pinned host memory.
         Env: ``RAPIDSMPF_PINNED_MEMORY``.
-        Default: ``True``.
+        Default: ``True`` if the system supports pinned memory resources,
+        otherwise ``False``.
         Category: rapidsmpf.
     pinned_initial_pool_size
         Initial pinned memory pool size (bytes).
@@ -675,7 +676,7 @@ class StreamingOptions:
             type=int,
             help=textwrap.dedent("""\
                 Number of threads used to execute coroutines. Must be > 0.
-                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 1."""),
+                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 4."""),
         )
         g.add_argument(
             "--num-streams",
@@ -730,7 +731,7 @@ class StreamingOptions:
             action=argparse.BooleanOptionalAction,
             help=textwrap.dedent("""\
                 Enable pinned host memory if available on the system.
-                Env: RAPIDSMPF_PINNED_MEMORY. Default: true."""),
+                Env: RAPIDSMPF_PINNED_MEMORY. Default: true if supported."""),
         )
         g.add_argument(
             "--pinned-initial-pool-size",

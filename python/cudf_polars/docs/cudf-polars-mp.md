@@ -9,15 +9,14 @@ such as shuffles, all-gathers, and joins to produce a globally correct result.
 The entry point in all cases is the Polars `GPUEngine` with `executor="streaming"`.
 The `cluster` option selects the execution model:
 
-| `cluster`       | Description                                          | Status            |
-| --------------- | ---------------------------------------------------- | ----------------- |
-| `"single"`      | Single-GPU, in-process execution                     | Stable (legacy)   |
-| `"distributed"` | Multi-GPU via [Dask Distributed][dask-distributed]   | Stable (legacy)   |
-| `"ray"`         | Multi-GPU via [Ray][ray-docs] actors                 | Preview (new API) |
-| `"dask"`        | Multi-GPU via [Dask Distributed][dask-distributed]   | Preview (new API) |
-| `"spmd"`        | Multi-GPU via [SPMD][spmd-wiki] launched with `rrun` | Preview (new API) |
+| `cluster`             | Description                                          |
+| --------------------- | ---------------------------------------------------- |
+| `"default_singleton"` | Single-GPU, in-process execution                     |
+| `"ray"`               | Multi-GPU via [Ray][ray-docs] actors                 |
+| `"dask"`              | Multi-GPU via [Dask Distributed][dask-distributed]   |
+| `"spmd"`              | Multi-GPU via [SPMD][spmd-wiki] launched with `rrun` |
 
-Three preview execution modes are available:
+Three multi-GPU execution modes are available:
 
 * **Ray mode** — a single-client model where a driver program coordinates GPU
   workers implemented as Ray actors.

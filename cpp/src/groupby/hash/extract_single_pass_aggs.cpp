@@ -43,9 +43,8 @@ simple_aggregation_collector::operator()<aggregation::MIN>(data_type col_type,
                                                            aggregation const&) const
 {
   std::vector<std::unique_ptr<aggregation>> aggs;
-  aggs.push_back(col_type.id() == type_id::STRING || cudf::is_nested(col_type)
-                   ? make_argmin_aggregation()
-                   : make_min_aggregation());
+  aggs.push_back(is_minmax_through_argminmax(col_type) ? make_argmin_aggregation()
+                                                       : make_min_aggregation());
   return aggs;
 }
 
@@ -56,9 +55,8 @@ simple_aggregation_collector::operator()<aggregation::MAX>(data_type col_type,
                                                            aggregation const&) const
 {
   std::vector<std::unique_ptr<aggregation>> aggs;
-  aggs.push_back(col_type.id() == type_id::STRING || cudf::is_nested(col_type)
-                   ? make_argmax_aggregation()
-                   : make_max_aggregation());
+  aggs.push_back(is_minmax_through_argminmax(col_type) ? make_argmax_aggregation()
+                                                       : make_max_aggregation());
   return aggs;
 }
 

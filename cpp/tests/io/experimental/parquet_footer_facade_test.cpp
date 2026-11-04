@@ -464,7 +464,7 @@ TEST_F(ParquetFooterFacadeTest, OversizedSkippedListCountThrows)
 {
   // clang-format off
   std::vector<uint8_t> const bomb{
-    0x89,  // FileMetaData field 8 (unknown id), type LIST -> skip path
+    0xa9,  // FileMetaData field 10 (unknown id), type LIST -> skip path
     0xfc,  // list header: long-form size prefix, STRUCT elements
     0xff, 0xff, 0xff, 0xff, 0x07};  // size varint = 0x7fffffff
   // clang-format on
@@ -477,7 +477,7 @@ TEST_F(ParquetFooterFacadeTest, OversizedMapCountThrows)
 {
   // clang-format off
   std::vector<uint8_t> const bomb{
-    0x8b,  // FileMetaData field 8 (unknown id), type MAP -> skip path
+    0xab,  // FileMetaData field 10 (unknown id), type MAP -> skip path
     0xff, 0xff, 0xff, 0xff, 0x07};  // map size varint = 0x7fffffff, no pairs follow
   // clang-format on
   EXPECT_THROW((void)experimental::read_parquet_footer_bytes(bomb), cudf::logic_error);
@@ -485,12 +485,12 @@ TEST_F(ParquetFooterFacadeTest, OversizedMapCountThrows)
 
 // An unknown top-level MAP field with one scalar key/value pair is skipped and the parse stays in
 // sync. The following known field uses long-form (absolute) field-id encoding, since an unknown
-// FileMetaData id exceeds every known id (1-7) and field-id deltas cannot go backwards.
+// FileMetaData id exceeds every known id (1-9) and field-id deltas cannot go backwards.
 TEST_F(ParquetFooterFacadeTest, UnknownMapFieldIsSkipped)
 {
   // clang-format off
   std::vector<uint8_t> const footer{
-    0x8b,        // FileMetaData field 8 (unknown id), type MAP -> skip path
+    0xab,        // FileMetaData field 10 (unknown id), type MAP -> skip path
     0x01,        //   map size = 1 key/value pair
     0x55,        //   key type i32 (high nibble) / value type i32 (low nibble)
     0x2a,        //   key varint (value immaterial, skipped)
@@ -510,7 +510,7 @@ TEST_F(ParquetFooterFacadeTest, UnknownMapFieldWithBoolValueIsSkipped)
 {
   // clang-format off
   std::vector<uint8_t> const footer{
-    0x8b,        // FileMetaData field 8 (unknown id), type MAP -> skip path
+    0xab,        // FileMetaData field 10 (unknown id), type MAP -> skip path
     0x01,        //   map size = 1 key/value pair
     0x51,        //   key type i32 (high nibble) / value type bool (low nibble)
     0x2a,        //   key i32 varint (value immaterial, skipped)
@@ -528,7 +528,7 @@ TEST_F(ParquetFooterFacadeTest, UnknownUuidFieldIsSkipped)
 {
   // clang-format off
   std::vector<uint8_t> const footer{
-    0x8d,        // FileMetaData field 8 (unknown id), type UUID -> skip path
+    0xad,        // FileMetaData field 10 (unknown id), type UUID -> skip path
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 16-byte UUID payload
     0x05, 0x02,  // long-form field header: type i32, zigzag field id = 1 (version)
     0x54,        // version i32 = 42

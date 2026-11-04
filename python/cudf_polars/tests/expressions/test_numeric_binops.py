@@ -402,3 +402,37 @@ def test_pow_with_a_float_exponent_stays_floating_point(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3, 4]}, schema={"a": pl.Int64})
     q = df.select(pl.col("a").pow(2.0))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
+@pytest.mark.parametrize(
+    "op",
+    [pl.Expr.eq, pl.Expr.ne, pl.Expr.lt, pl.Expr.le, pl.Expr.gt, pl.Expr.ge],
+    ids=lambda op: op.__name__,
+)
+@pytest.mark.parametrize("other", [1.0, float("nan"), pl.col("b")], ids=str)
+def test_float_comparison_orders_nan_above_everything(
+    engine: pl.GPUEngine, dtype, op, other
+):
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "a": [nan, 0.0, 1.0, 2.0, None, nan, 1.0],
+            "b": [nan, nan, 1.0, 0.0, 1.0, None, None],
+        },
+        schema={"a": dtype, "b": dtype},
+    )
+    right = other if isinstance(other, pl.Expr) else pl.lit(other, dtype=dtype)
+    q = df.select(op(pl.col("a"), right).alias("r"), op(right, pl.col("a")).alias("s"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("op", [pl.Expr.gt, pl.Expr.ge, pl.Expr.eq, pl.Expr.ne])
+def test_parquet_filter_on_float_keeps_nan(engine: pl.GPUEngine, tmp_path, op):
+    nan = float("nan")
+    pl.DataFrame({"a": [nan, 0.0, 1.0, None]}).write_parquet(tmp_path / "a.parquet")
+    pl.DataFrame({"a": [nan]}).write_parquet(tmp_path / "b.parquet")
+    q = pl.scan_parquet([tmp_path / "a.parquet", tmp_path / "b.parquet"]).filter(
+        op(pl.col("a"), 1.0)
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

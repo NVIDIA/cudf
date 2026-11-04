@@ -721,8 +721,7 @@ sort_merge_join::sort_merge_join(table_view const& right,
                std::invalid_argument);
 
   // The run index is owned by this object, which takes no caller-provided resource.
-  auto const object_mr   = cudf::get_current_device_resource_ref();
-  auto const mr          = cudf::memory_resources{object_mr, object_mr};
+  cudf::memory_resources const mr{cudf::get_current_device_resource_ref()};
   auto const& right_view = preprocessed_right._null_processed_table_view;
   auto run_index         = [&] {
     if (preprocessed_right._null_processed_table_sorted_order.has_value()) {
@@ -794,8 +793,7 @@ auto sort_merge_join::invoke_merge(table_view right_view,
   auto const right_offsets = device_span<size_type const>{
     right_run_offsets->data(), static_cast<std::size_t>(num_right_runs) + 1};
   // The merge object is a temporary; this class takes no caller-provided temporary resource.
-  auto const temp_mr           = cudf::get_current_device_resource_ref();
-  auto const merge_mr          = cudf::memory_resources{temp_mr, temp_mr};
+  cudf::memory_resources const merge_mr{cudf::get_current_device_resource_ref()};
   auto has_right_sorting_order = preprocessed_right._null_processed_table_sorted_order.has_value();
   if (has_right_sorting_order) {
     auto r_view = preprocessed_right._null_processed_table_sorted_order.value()->view();

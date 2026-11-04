@@ -200,6 +200,20 @@ def test_strftime_am_pm(engine: pl.GPUEngine, format, dtype):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("format", ["%A", "%b", "%H", "%A %H:%M"])
+@pytest.mark.parametrize("tz", ["America/Los_Angeles", "Asia/Tokyo"])
+def test_strftime_non_utc_time_zone(engine: pl.GPUEngine, format, tz):
+    # 2023-12-31 16:30 in Los Angeles is already 2024-01-01 in UTC.
+    values = pl.Series(
+        [datetime.datetime(2023, 12, 31, 16, 30), datetime.datetime(2024, 7, 4, 1, 15)]
+    )
+    ldf = pl.LazyFrame(
+        {"dates": values.cast(pl.Datetime("us")).dt.replace_time_zone(tz)}
+    )
+    q = ldf.select(pl.col("dates").dt.strftime(format))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("format", ["iso", "polars"])
 def test_strftime_duration(engine: pl.GPUEngine, format):
     ldf = pl.LazyFrame(

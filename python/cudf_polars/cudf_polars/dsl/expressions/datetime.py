@@ -1221,6 +1221,11 @@ class TemporalFunction(Expr):
                 "pl.Datetime", self.children[0].dtype.polars_type
             ).time_zone
             self.tz_descs = (_get_tz_desc(from_zone), _get_tz_desc(self.options[0]))
+        elif self.name is TemporalFunction.Name.ToString:
+            # polars formats time zone aware datetimes in local wall time.
+            child_dtype = self.children[0].dtype.polars_type
+            if isinstance(child_dtype, pl.Datetime):
+                self.tz_descs = (_get_tz_desc(child_dtype.time_zone), None)
         elif self.name is TemporalFunction.Name.Time:
             child_dtype = self.children[0].dtype.polars_type
             if isinstance(child_dtype, pl.Datetime):
@@ -1567,7 +1572,7 @@ class TemporalFunction(Expr):
                 )
             return Column(
                 plc.strings.convert.convert_datetime.from_timestamps(
-                    column.obj,
+                    _local_wall_clock(column.obj, self.tz_descs[0], df.stream),
                     format_string,
                     plc.Column.from_iterable_of_py(
                         _STRFTIME_NAMES, dtype=self.dtype.plc_type, stream=df.stream

@@ -1598,8 +1598,12 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
   auto const d_srcs = cudf::detail::make_device_buffer_async(h_srcs, stream, mr);
   auto const d_dsts = cudf::detail::make_device_buffer_async(h_dsts, stream, mr);
   auto const d_lens = cudf::detail::make_device_buffer_async(h_lens, stream, mr);
-  cudf::detail::batched_memcpy_async(
-    d_srcs.begin(), d_dsts.begin(), d_lens.begin(), d_srcs.size(), stream);
+  cudf::detail::batched_memcpy_async(d_srcs.begin(),
+                                     d_dsts.begin(),
+                                     d_lens.begin(),
+                                     d_srcs.size(),
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
 
   auto file_stats_merge =
     cudf::detail::make_host_vector<statistics_merge_group>(num_file_blobs, stream);

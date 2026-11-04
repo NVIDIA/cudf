@@ -47,6 +47,7 @@ namespace detail {
  * @param op             The reduction operator
  * @param initial_value  Initial value of the reduction
  * @param stream         CUDA stream used for device memory operations and kernel launches
+ * @param mr             Memory resources whose temporary resource is used for scratch allocations
  *
  */
 template <typename InputIterator,
@@ -60,20 +61,21 @@ void segmented_reduce(InputIterator d_in,
                       OutputIterator d_out,
                       BinaryOp op,
                       OutputType initial_value,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
   requires(not cudf::concepts::fixed_point<OutputType>)
 {
   auto const num_segments = static_cast<size_type>(std::distance(d_offset_begin, d_offset_end)) - 1;
   auto const binary_op    = cudf::detail::cast_functor<OutputType>(op);
-  CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Reduce(
-    d_in,
-    d_out,
-    num_segments,
-    d_offset_begin,
-    d_offset_begin + 1,
-    binary_op,
-    initial_value,
-    cudf::detail::make_env(stream, cudf::get_current_device_resource_ref())));
+  CUDF_CUDA_TRY(
+    cub::DeviceSegmentedReduce::Reduce(d_in,
+                                       d_out,
+                                       num_segments,
+                                       d_offset_begin,
+                                       d_offset_begin + 1,
+                                       binary_op,
+                                       initial_value,
+                                       cudf::detail::make_env(stream, mr.get_temporary_mr())));
 }
 
 template <typename InputIterator,
@@ -87,7 +89,8 @@ void segmented_reduce(InputIterator,
                       OutputIterator,
                       BinaryOp,
                       OutputType,
-                      cuda::stream_ref)
+                      cuda::stream_ref,
+                      cudf::memory_resources)
 {
   CUDF_FAIL(
     "Unsupported data types called on segmented_reduce. Only numeric and chrono types are "
@@ -114,6 +117,7 @@ void segmented_reduce(InputIterator,
  * @param ddof           Delta degrees of freedom used for standard deviation and variance
  * @param d_valid_counts Number of valid values per segment
  * @param stream         CUDA stream used for device memory operations and kernel launches
+ * @param mr             Memory resources whose temporary resource is used for scratch allocations
  */
 template <typename Op, typename InputIterator, typename OffsetIterator, typename OutputIterator>
 void segmented_reduce(InputIterator d_in,
@@ -123,7 +127,8 @@ void segmented_reduce(InputIterator d_in,
                       op::compound_op<Op> op,
                       size_type ddof,
                       size_type* d_valid_counts,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
 {
   using OutputType       = cuda::std::iter_value_t<OutputIterator>;
   using IntermediateType = cuda::std::iter_value_t<InputIterator>;
@@ -131,22 +136,20 @@ void segmented_reduce(InputIterator d_in,
   auto const initial_value = op.template get_identity<IntermediateType>();
   auto const binary_op     = cudf::detail::cast_functor<IntermediateType>(op.get_binary_op());
 
-  cuda::device_buffer<IntermediateType> intermediate_result{stream,
-                                                            cudf::get_current_device_resource_ref(),
-                                                            static_cast<std::size_t>(num_segments),
-                                                            cuda::no_init};
+  cuda::device_buffer<IntermediateType> intermediate_result{
+    stream, mr.get_temporary_mr(), static_cast<std::size_t>(num_segments), cuda::no_init};
 
   auto const env = [&] {
     if constexpr (std::is_same_v<Op, op::variance> || std::is_same_v<Op, op::standard_deviation>) {
       return cudf::detail::make_env(
         stream,
-        cudf::get_current_device_resource_ref(),
+        mr.get_temporary_mr(),
         cuda::execution::tune(
           variance_segmented_reduce_policy<IntermediateType,
                                            cuda::std::iter_value_t<OffsetIterator>,
                                            std::remove_cv_t<decltype(binary_op)>>{}));
     } else {
-      return cudf::detail::make_env(stream, cudf::get_current_device_resource_ref());
+      return cudf::detail::make_env(stream, mr.get_temporary_mr());
     }
   }();
   CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Reduce(d_in,
@@ -160,7 +163,7 @@ void segmented_reduce(InputIterator d_in,
 
   // compute the result value from intermediate value in device
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_segments},
     d_out,

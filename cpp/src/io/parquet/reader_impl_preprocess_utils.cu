@@ -619,8 +619,12 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                                      c.level_bits[level_type::DEFINITION]);
     }));
   // max level data bit size.
-  auto const max_level_bits = cudf::detail::reduce(
-    level_bit_size, level_bit_size + pass.chunks.size(), int{0}, cuda::maximum<int>{}, stream, mr.as_temporary());
+  auto const max_level_bits = cudf::detail::reduce(level_bit_size,
+                                                   level_bit_size + pass.chunks.size(),
+                                                   int{0},
+                                                   cuda::maximum<int>{},
+                                                   stream,
+                                                   mr.as_temporary());
   pass.level_type_size =
     std::max<int32_t>(1, cudf::detail::div_rounding_up_safe(max_level_bits, 8));
 

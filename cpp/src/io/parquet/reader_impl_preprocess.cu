@@ -87,7 +87,7 @@ void reader_impl::build_string_dict_indices()
 {
   CUDF_FUNC_RANGE();
 
-  auto& pass   = *_pass_itm_data;
+  auto& pass = *_pass_itm_data;
 
   // compute number of indices per chunk and a summed total
   cuda::device_buffer<size_t> str_dict_index_count(

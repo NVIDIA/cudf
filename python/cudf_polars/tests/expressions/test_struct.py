@@ -105,6 +105,7 @@ def test_value_counts_normalize_div_by_zero(engine: pl.GPUEngine):
 @pytest.mark.parametrize("sort", [False, True])
 @pytest.mark.parametrize("descending", [False, True])
 @pytest.mark.parametrize("nulls_last", [False, True])
+@pytest.mark.parametrize("set_sorted_on", ["frame", "expr"])
 def test_value_counts_sorted(
     engine: pl.GPUEngine,
     *,
@@ -114,6 +115,7 @@ def test_value_counts_sorted(
     sort: bool,
     descending: bool,
     nulls_last: bool,
+    set_sorted_on: str,
 ) -> None:
     if dtype == "float":
         nan = float("nan")
@@ -129,9 +131,19 @@ def test_value_counts_sorted(
     ldf = pl.LazyFrame(
         {"a": values + nulls if nulls_last else nulls + values},
         schema={"a": polars_dtype},
-    ).with_columns(pl.col("a").set_sorted(descending=descending))
-    q = ldf.select(pl.col("a").value_counts(sort=sort))
+    )
+    sorted_a = pl.col("a").set_sorted(descending=descending)
+    if set_sorted_on == "frame":
+        q = ldf.with_columns(sorted_a).select(pl.col("a").value_counts(sort=sort))
+    else:
+        q = ldf.select(sorted_a.value_counts(sort=sort))
     assert_gpu_result_equal(q, engine=engine, check_row_order=sort)
+
+
+def test_value_counts_derived_expression(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": [1, 2, 2, 3, 3, 3]})
+    q = ldf.select((pl.col("a") + 1).value_counts(sort=True))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_groupby_value_counts_notimplemented(engine: pl.GPUEngine):

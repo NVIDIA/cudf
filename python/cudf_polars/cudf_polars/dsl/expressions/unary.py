@@ -1311,14 +1311,14 @@ class UnaryFunction(Expr):
         elif self.name == "value_counts":
             (sort, _, _, normalize) = self.options
             count_agg = [plc.aggregation.count(plc.types.NullPolicy.INCLUDE)]
+            keys = tuple(child.evaluate(df, context=context) for child in self.children)
             gb_requests = [
-                plc.groupby.GroupByRequest(
-                    child.evaluate(df, context=context).obj, count_agg
-                )
-                for child in self.children
+                plc.groupby.GroupByRequest(key.obj, count_agg) for key in keys
             ]
             (keys_table, (counts_table,)) = _make_groupby(
-                df.table, df.columns, plc.types.NullPolicy.INCLUDE
+                plc.Table([key.obj for key in keys]),
+                keys,
+                plc.types.NullPolicy.INCLUDE,
             ).aggregate(gb_requests, stream=df.stream)
             if sort:
                 sort_indices = plc.sorting.stable_sorted_order(

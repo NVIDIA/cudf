@@ -383,3 +383,22 @@ def test_decimal_comparison_with_fractional_literal(engine: pl.GPUEngine, litera
     df = pl.DataFrame({"a": ["1.00", "27.50", "30.00", None]}).cast(pl.Decimal(15, 2))
     q = df.lazy().select(lt=pl.col("a") < literal, ge=pl.col("a") >= literal)
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Int64, pl.UInt64])
+@pytest.mark.parametrize("exponent", [2, pl.col("e")], ids=["literal", "column"])
+def test_integer_pow_is_exact_above_2_53(engine: pl.GPUEngine, dtype, exponent):
+    # A double holds only the integers up to 2**53, so squaring 100_000_001 in
+    # double rounds the result to 10_000_000_200_000_000.
+    df = pl.LazyFrame(
+        {"a": [100_000_001, 3_000_000_019, 2, 0, None, 7], "e": [2, 2, 62, 5, 2, 0]},
+        schema={"a": dtype, "e": dtype},
+    )
+    q = df.select(pl.col("a").pow(exponent))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_pow_with_a_float_exponent_stays_floating_point(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3, 4]}, schema={"a": pl.Int64})
+    q = df.select(pl.col("a").pow(2.0))
+    assert_gpu_result_equal(q, engine=engine)

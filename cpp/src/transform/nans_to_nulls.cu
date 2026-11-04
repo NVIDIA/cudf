@@ -88,11 +88,8 @@ std::unique_ptr<column> column_nans_to_nulls(column_view const& input,
     cudf::type_dispatcher(input.type(), dispatch_nan_to_null{}, input, stream, mr);
 
   auto data = cudf::type_dispatcher(input.type(), copy_float_data_fn{input, stream, mr});
-  return std::make_unique<column>(input.type(),
-                                  input.size(),
-                                  std::move(*data.release()),
-                                  std::move(*null_mask.release()),
-                                  null_count);
+  return std::make_unique<column>(
+    input.type(), input.size(), std::move(*data), std::move(*null_mask), null_count);
 }
 }  // namespace detail
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +13,9 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @pytest.fixture
@@ -138,6 +142,15 @@ def test_min_horizontal_string_literal(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"a": ["x", None, "z"]})
     q = df.select(pl.min_horizontal(pl.col("a"), pl.lit("UTC")))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("fn", [pl.min_horizontal, pl.max_horizontal])
+def test_min_max_horizontal_unsupported_dtype(
+    engine: pl.GPUEngine, fn: Callable[..., pl.Expr]
+) -> None:
+    df = pl.LazyFrame({"a": [[1], [2]], "b": [[3], [4]]})
+    q = df.select(fn("a", "b"))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("ignore_nulls", [True, False])

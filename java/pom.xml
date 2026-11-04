@@ -14,7 +14,7 @@
 
     <name>cudfjni</name>
     <description>
-        Java bindings for NVIDIA cuDF, a GPU-accelerated DataFrame library for tabular data processing.
+        Java bindings for NVIDIA cuDF, a library for GPU-accelerated structured data processing.
     </description>
     <url>https://docs.nvidia.com/cudf/</url>
 

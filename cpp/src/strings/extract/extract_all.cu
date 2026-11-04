@@ -134,8 +134,11 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
   cuda::device_buffer<string_index_pair> indices(
     stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
 
-  launch_for_each_kernel(
-    extract_fn{*d_strings, d_offsets, indices.data()}, *d_prog, strings_count, stream);
+  launch_for_each_kernel(extract_fn{*d_strings, d_offsets, indices.data()},
+                         *d_prog,
+                         strings_count,
+                         stream,
+                         cudf::get_current_device_resource_ref());
 
   auto strings_output = cudf::make_strings_column(
     cudf::device_span<string_index_pair const>{indices.data(), indices.size()}, stream, mr);

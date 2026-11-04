@@ -4,7 +4,7 @@
  */
 
 #pragma once
-#include "ast/jit/expressions.hpp"
+#include <ast/jit/expressions.hpp>
 
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>

@@ -17,7 +17,7 @@ import org.slf4j.LoggerFactory;
  * whether to build a reader at all, then build one with
  * {@link HybridScanReader#HybridScanReader(HybridScanMetadata, ParquetOptions)} without parsing
  * the footer again. Native code can read the parsed footer in place through
- * {@link #getParquetMetadataAddress(int)}.
+ * {@link #getParquetMetadataAddress()}.
  *
  * <p>The APIs in this file are experimental and subject to change.
  */

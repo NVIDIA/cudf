@@ -8,10 +8,10 @@
 #include "jni_utils.hpp"
 
 #include <cudf/io/experimental/hybrid_scan.hpp>
-#include <cudf/utilities/span.hpp>
 
 #include <cstdint>
 #include <memory>
+#include <span>
 
 using namespace cudf::jni::hybrid_scan;
 
@@ -33,7 +33,7 @@ Java_ai_rapids_cudf_HybridScanMetadata_createFromFooter(JNIEnv* env,
     auto const opts        = build_options(env, j_column_names, time_unit_type_id);
     auto const* footer_ptr = reinterpret_cast<uint8_t const*>(footer_address);
     auto metadata          = std::make_unique<exp_pq::hybrid_scan_metadata>(
-      cudf::host_span<uint8_t const>{footer_ptr, len}, opts);
+      std::span<uint8_t const>{footer_ptr, len}, opts);
     return reinterpret_cast<jlong>(metadata.release());
   }
   JNI_CATCH(env, 0);

@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace cudf {
@@ -48,7 +49,7 @@ struct hybrid_scan_reader_wrapper {
   // nullptr outside of an active chunked-filter session.
   std::unique_ptr<cudf::column> chunked_filter_row_mask;
 
-  hybrid_scan_reader_wrapper(cudf::host_span<uint8_t const> footer_bytes,
+  hybrid_scan_reader_wrapper(std::span<uint8_t const> footer_bytes,
                              cudf::io::parquet_reader_options opts)
     : options(opts),
       base_options(std::move(opts)),

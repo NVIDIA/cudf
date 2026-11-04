@@ -117,7 +117,7 @@ class hybrid_scan_metadata {
    * @param footer_bytes Host span of Parquet file footer bytes
    * @param options Parquet reader options
    */
-  hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
+  hybrid_scan_metadata(std::span<uint8_t const> footer_bytes,
                        parquet_reader_options const& options);
 
   /**
@@ -430,7 +430,7 @@ class hybrid_scan_reader {
    * @param footer_bytes Host span of parquet file footer bytes
    * @param options Parquet reader options
    */
-  explicit hybrid_scan_reader(cudf::host_span<uint8_t const> footer_bytes,
+  explicit hybrid_scan_reader(std::span<uint8_t const> footer_bytes,
                               parquet_reader_options const& options);
 
   /**
@@ -496,7 +496,7 @@ class hybrid_scan_reader {
    *
    * @param page_index_bytes Host span of Parquet page index buffer bytes
    */
-  void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes) const;
+  void setup_page_index(std::span<uint8_t const> page_index_bytes) const;
 
   /**
    * @brief Get all available row groups from the parquet file

@@ -28,7 +28,7 @@ struct sizes_output {
   }
 };
 
-/** Recompute destinations from retained tile prefixes instead of storing N indices. */
+/** Recompute into an on-chip tile map instead of storing N global indices. */
 template <typename MapType>
 CUDF_KERNEL void copy_recomputed(MapType const* map,
                                  size_type const* prefixes,
@@ -39,11 +39,12 @@ CUDF_KERNEL void copy_recomputed(MapType const* map,
 {
   namespace plans = partition_map_plan;
   __shared__ int histogram[plans::warps][plans::bins], base[plans::bins];
+  __shared__ int destinations[plans::tile_rows];
   if (threadIdx.x < partitions) {
     base[threadIdx.x] = prefixes[std::size_t{threadIdx.x} * gridDim.x + blockIdx.x];
   }
   __syncthreads();
-  int ranks[4], keys[4], destinations[4];
+  int ranks[4], keys[4];
   int const start = blockIdx.x * plans::tile_rows;
   plans::local_tile<true>(map, rows, start, partitions, histogram, ranks, keys);
   if (threadIdx.x < partitions) {
@@ -55,24 +56,23 @@ CUDF_KERNEL void copy_recomputed(MapType const* map,
     }
   }
   __syncthreads();
-  int const lane = threadIdx.x % 32, warp = threadIdx.x / 32;
 #pragma unroll
   for (int item = 0; item < 4; ++item) {
-    int const row = start + warp * 128 + item * 32 + lane;
-    destinations[item] =
-      row < rows ? base[keys[item]] + histogram[warp][keys[item]] + ranks[item] : 0;
+    int const local = (threadIdx.x / 32) * 128 + item * 32 + threadIdx.x % 32;
+    destinations[local] =
+      start + local < rows
+        ? base[keys[item]] + histogram[threadIdx.x / 32][keys[item]] + ranks[item]
+        : 0;
   }
+  __syncthreads();
+  // Shared targets let register ranks/keys die before copying variable-length
+  // data. Keep this loop rolled to avoid retaining all targets in registers.
   for (size_type c = 0; c < count; ++c) {
-#pragma unroll
-    for (int item = 0; item < 4; ++item) {
-      int const row = start + warp * 128 + item * 32 + lane;
-#pragma unroll
-      for (int batch = 0; batch < 4; ++batch) {
-        auto const owner       = lane / 4 + batch * 8;
-        auto const source      = __shfl_sync(0xffffffffu, row, owner);
-        auto const destination = __shfl_sync(0xffffffffu, destinations[item], owner);
-        copy_group(columns[c], source, destination, rows);
-      }
+    auto const col = columns[c];
+#pragma unroll 1
+    for (int batch = 0; batch < plans::tile_rows / 64; ++batch) {
+      int const local = batch * 64 + threadIdx.x / 4;
+      copy_group<false>(col, start + local, destinations[local], rows);
     }
   }
 }
@@ -239,7 +239,7 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> partiti
       stream);
     output.scan(stream);
     auto const blocks = std::min<std::size_t>(65'535, (static_cast<std::size_t>(rows) + 63) / 64);
-    copy_characters<<<dim3(blocks, input.num_columns()), 256, 0, stream.get()>>>(
+    copy_characters<false><<<dim3(blocks, input.num_columns()), 256, 0, stream.get()>>>(
       output.device_columns.data(), scatter_map.data(), rows);
     CUDF_CUDA_TRY(cudaPeekAtLastError());
   }

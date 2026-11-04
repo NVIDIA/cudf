@@ -34,6 +34,7 @@ __device__ void copy_vector(
 }
 
 /** All warp lanes participate, including groups beyond the last row. */
+template <bool RebalanceMedium = false>
 __device__ inline void copy_group(partition_string_column col,
                                   std::size_t source_row,
                                   size_type destination,
@@ -50,9 +51,36 @@ __device__ inline void copy_group(partition_string_column col,
   // This device-side split balances individual strings. It does not change the
   // CPU-selected partition method or require a size/skew sampling pass.
   auto long_rows = __ballot_sync(0xffffffffu, lane == 0 && length > 128);
-  if (length <= 128) {
-    for (size_type byte = lane; byte < length; byte += lanes) {
-      col.output_chars[int64_t{target} + byte] = col.input_chars[int64_t{begin} + byte];
+  if constexpr (RebalanceMedium) {
+    auto medium_rows = __ballot_sync(0xffffffffu, lane == 0 && length > 8 && length <= 128);
+    if (length <= 8) {
+      for (size_type byte = lane; byte < length; byte += lanes) {
+        col.output_chars[int64_t{target} + byte] = col.input_chars[int64_t{begin} + byte];
+      }
+    }
+    // Two 16-lane groups copy medium strings; every lane also participates
+    // when the last queue entry occupies only one half warp.
+    auto const warp_lane = threadIdx.x % 32;
+    while (medium_rows) {
+      auto const first = __ffs(medium_rows) - 1;
+      medium_rows &= medium_rows - 1;
+      bool const has_second = medium_rows != 0;
+      auto const second     = has_second ? __ffs(medium_rows) - 1 : first;
+      if (has_second) { medium_rows &= medium_rows - 1; }
+      auto const owner  = warp_lane < 16 ? first : second;
+      auto const source = __shfl_sync(0xffffffffu, begin, owner);
+      auto const output = __shfl_sync(0xffffffffu, target, owner);
+      auto count        = __shfl_sync(0xffffffffu, length, owner);
+      if (warp_lane >= 16 && !has_second) { count = 0; }
+      for (size_type byte = warp_lane % 16; byte < count; byte += 16) {
+        col.output_chars[int64_t{output} + byte] = col.input_chars[int64_t{source} + byte];
+      }
+    }
+  } else {
+    if (length <= 128) {
+      for (size_type byte = lane; byte < length; byte += lanes) {
+        col.output_chars[int64_t{target} + byte] = col.input_chars[int64_t{begin} + byte];
+      }
     }
   }
   while (long_rows) {
@@ -65,6 +93,7 @@ __device__ inline void copy_group(partition_string_column col,
   }
 }
 
+template <bool RebalanceMedium = false>
 CUDF_KERNEL void copy_characters(partition_string_column const* columns,
                                  size_type const* scatter_map,
                                  size_type rows)
@@ -74,7 +103,7 @@ CUDF_KERNEL void copy_characters(partition_string_column const* columns,
        base += std::size_t{gridDim.x} * 64) {
     auto const source = base + threadIdx.x / 4;
     auto const target = source < static_cast<std::size_t>(rows) ? scatter_map[source] : 0;
-    copy_group(col, source, target, rows);
+    copy_group<RebalanceMedium>(col, source, target, rows);
   }
 }
 

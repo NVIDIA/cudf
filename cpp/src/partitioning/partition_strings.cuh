@@ -157,8 +157,8 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
     invert_partition_map<<<(static_cast<std::size_t>(rows) + 255) / 256, 256, 0, stream.get()>>>(
       gather_map.data(), scatter_map.data(), rows);
     auto const blocks = std::min<std::size_t>(65'535, (static_cast<std::size_t>(rows) + 63) / 64);
-    partition_strings_plan::
-      copy_characters<<<dim3(blocks, copy_columns.size()), 256, 0, stream.get()>>>(
+    partition_strings_plan::copy_characters<true>
+      <<<dim3(blocks, copy_columns.size()), 256, 0, stream.get()>>>(
         device_columns.data(), scatter_map.data(), rows);
     CUDF_CUDA_TRY(cudaPeekAtLastError());
   }

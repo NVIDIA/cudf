@@ -96,7 +96,7 @@ class SparseExchange:
         routes: Sequence[SliceRoute],
     ) -> None:
         """Insert remote row slices without consuming an available chunk."""
-        if self._finish_task is not None or self._closed:
+        if self._finish_task is not None or self._finished or self._closed:
             raise RuntimeError("Cannot insert after finishing a sparse exchange")
         if not routes:
             return
@@ -136,7 +136,7 @@ class SparseExchange:
 
     async def insert_chunk(self, destination: int, chunk: TableChunk) -> None:
         """Consume and send one whole chunk to a remote rank."""
-        if self._finish_task is not None or self._closed:
+        if self._finish_task is not None or self._finished or self._closed:
             raise RuntimeError("Cannot insert after finishing a sparse exchange")
         if destination not in self.destinations:
             raise ValueError(f"Unexpected destination rank {destination}")

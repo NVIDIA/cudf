@@ -104,7 +104,9 @@ def test_sparse_exchange_sends_slice_and_chunk(spmd_engine) -> None:
     asyncio.run(run())
 
 
-def test_sparse_exchange_close_survives_cancellation(monkeypatch) -> None:
+def test_sparse_exchange_close_survives_cancellation(
+    monkeypatch, timeout_seconds: int
+) -> None:
     """Finish before releasing the exchange despite repeated cancellation."""
 
     async def run() -> None:
@@ -129,7 +131,7 @@ def test_sparse_exchange_close_survives_cancellation(monkeypatch) -> None:
 
         task = asyncio.create_task(exchange.aclose())
         try:
-            await asyncio.wait_for(started.wait(), timeout=5)
+            await asyncio.wait_for(started.wait(), timeout=timeout_seconds)
             task.cancel()
             await asyncio.sleep(0)
             task.cancel()

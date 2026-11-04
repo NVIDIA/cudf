@@ -29,6 +29,10 @@ EXCLUDED_LOCAL_PATHS = (
     "tests/streaming/",
     "tests/testing/",
     "tests/utils/",
+    "tests/test_parquet_filters.py",
+    "tests/test_sink.py",
+    "tests/test_mapfunction.py",
+    "tests/test_cache.py",
 )
 EXCLUDED_LOCAL_TERMS = (
     "dtype",

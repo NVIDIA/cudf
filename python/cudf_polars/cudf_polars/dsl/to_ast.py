@@ -208,6 +208,13 @@ def _with_polars_nan_semantics(
 
     def is_nan(operand: plc_expr.Expression) -> plc_expr.Expression:
         # NaN is the only value that is not equal to itself.
+        if op == binop.NULL_EQUALS:
+            # A null-aware comparison is never null, so a null must not make
+            # the NaN test null. Nulls are equal to themselves here.
+            return plc_expr.Operation(
+                plc_expr.ASTOperator.NOT,
+                plc_expr.Operation(plc_expr.ASTOperator.NULL_EQUAL, operand, operand),
+            )
         return plc_expr.Operation(plc_expr.ASTOperator.NOT_EQUAL, operand, operand)
 
     def logical(
@@ -230,7 +237,7 @@ def _with_polars_nan_semantics(
     if op == binop.LESS_EQUAL:
         return logical(OR, result, right_nan)
     both_nan = logical(AND, left_nan, right_nan)
-    if op == binop.EQUAL:
+    if op in {binop.EQUAL, binop.NULL_EQUALS}:
         return logical(OR, result, both_nan)
     assert op == binop.NOT_EQUAL
     return logical(AND, result, logical(NOT, both_nan))

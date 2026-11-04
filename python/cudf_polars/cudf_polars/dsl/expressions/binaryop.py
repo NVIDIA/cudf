@@ -118,7 +118,9 @@ class BinOp(Expr):
         frozenset(
             {
                 plc.binaryop.BinaryOperator.EQUAL,
+                plc.binaryop.BinaryOperator.NULL_EQUALS,
                 plc.binaryop.BinaryOperator.NOT_EQUAL,
+                plc.binaryop.BinaryOperator.NULL_NOT_EQUALS,
                 plc.binaryop.BinaryOperator.LESS,
                 plc.binaryop.BinaryOperator.LESS_EQUAL,
                 plc.binaryop.BinaryOperator.GREATER,
@@ -271,9 +273,9 @@ class BinOp(Expr):
         if self.op == binop.LESS_EQUAL:
             return combine(binop.LOGICAL_OR, result, right_nan)
         both_nan = combine(binop.LOGICAL_AND, left_nan, right_nan)
-        if self.op == binop.EQUAL:
+        if self.op in {binop.EQUAL, binop.NULL_EQUALS}:
             return combine(binop.LOGICAL_OR, result, both_nan)
-        assert self.op == binop.NOT_EQUAL
+        assert self.op in {binop.NOT_EQUAL, binop.NULL_NOT_EQUALS}
         return combine(binop.GREATER, result, both_nan)
 
     @staticmethod

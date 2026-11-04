@@ -8,13 +8,13 @@
 
 #include <cuda/std/functional>
 namespace cudf::groupby::detail {
-std::pair<cuda::device_buffer<std::byte>, size_type> make_mask_from_validity(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_validity(
   bool* begin, bool* end, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   return cudf::detail::valid_if(begin, end, cuda::std::identity{}, stream, mr);
 }
 
-std::pair<cuda::device_buffer<std::byte>, size_type> make_mask_from_counts(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_counts(
   size_type const* begin, size_type const* end, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   return cudf::detail::valid_if(

@@ -146,9 +146,9 @@ using owned_columns_t = std::vector<std::unique_ptr<cudf::column>>;
  * @brief functor for a custom deleter to a unique_ptr of table_view
  *
  * When converting from an ArrowDeviceArray, there are cases where data can't
- * be zero-copy (i.e. bools or non-UINT32 dictionary indices). This custom deleter
- * is used to maintain ownership over the data allocated since a `cudf::table_view`
- * doesn't hold ownership.
+ * be zero-copy (i.e. bools or unsigned dictionary indices that must be widened to fit
+ * the number of keys). This custom deleter is used to maintain ownership over the data
+ * allocated since a `cudf::table_view` doesn't hold ownership.
  */
 template <typename ViewType>
 struct custom_view_deleter {

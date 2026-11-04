@@ -13,6 +13,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -31,6 +32,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/optional>
 #include <cuda/std/utility>
 #include <thrust/tuple.h>
@@ -644,7 +646,7 @@ class path_state : private parser {
  * @param stream Cuda stream to perform any gpu actions on
  * @returns A pair containing the command buffer, and maximum stack depth required.
  */
-std::pair<cuda::std::optional<rmm::device_uvector<path_operator>>, int> build_command_buffer(
+std::pair<cuda::std::optional<cuda::device_buffer<path_operator>>, int> build_command_buffer(
   cudf::string_scalar const& json_path, cuda::stream_ref stream)
 {
   std::string h_json_path = json_path.to_string(stream);
@@ -679,7 +681,7 @@ std::pair<cuda::std::optional<rmm::device_uvector<path_operator>>, int> build_co
 
   auto const is_empty = h_operators.size() == 1 && h_operators[0].type == path_operator_type::END;
   return is_empty ? std::pair(cuda::std::nullopt, 0)
-                  : std::pair(cuda::std::make_optional(cudf::detail::make_device_uvector(
+                  : std::pair(cuda::std::make_optional(cudf::detail::make_device_buffer(
                                 h_operators, stream, cudf::get_current_device_resource_ref())),
                               max_stack_depth);
 }
@@ -993,8 +995,8 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   }
 
   // compute output sizes
-  auto sizes =
-    rmm::device_uvector<size_type>(col.size(), stream, cudf::get_current_device_resource_ref());
+  cuda::device_buffer<size_type> sizes(
+    stream, cudf::get_current_device_resource_ref(), col.size(), cuda::no_init);
   auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(col.offsets());
 
   constexpr int block_size = 512;
@@ -1022,7 +1024,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
 
   // potential optimization : if we know that all outputs are valid, we could skip creating
   // the validity mask altogether
-  cuda::device_buffer<std::byte> validity =
+  cuda::device_buffer<cudf::bitmask_type> validity =
     cudf::detail::create_null_mask(col.size(), mask_state::UNINITIALIZED, stream, mr);
 
   // compute results
@@ -1036,7 +1038,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
       sizes.data(),
       d_offsets,
       chars.data(),
-      reinterpret_cast<bitmask_type*>(validity.data()),
+      validity.data(),
       d_valid_count.data(),
       options);
   CUDF_CUDA_TRY(cudaGetLastError());

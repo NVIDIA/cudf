@@ -40,14 +40,14 @@ namespace CUDF_EXPORT nvtext {
  * for row `i` in the output column.
  *
  * @param input Strings column to normalize
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return New strings columns of normalized strings.
  */
 std::unique_ptr<cudf::column> normalize_spaces(
   cudf::strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Flags providing more control of nvtext::normalize_characters output
@@ -138,12 +138,13 @@ struct character_normalizer {
    * @param special_tokens Each row is a token including the `[]` brackets.
    *        For example: `[BOS]`, `[EOS]`, `[UNK]`, `[SEP]`, `[PAD]`, `[CLS]`, `[MASK]`
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @param mr Memory resources used for temporary allocations and the returned object's device
+   * memory
    */
   character_normalizer(bool do_lower_case,
                        cudf::strings_column_view const& special_tokens,
-                       cuda::stream_ref stream           = cudf::get_default_stream(),
-                       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                       cuda::stream_ref stream   = cudf::get_default_stream(),
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref());
   ~character_normalizer();
 
   struct character_normalizer_impl;
@@ -164,7 +165,7 @@ struct character_normalizer {
  * @param special_tokens Individual tokens including `[]` brackets.
  *        Default is no special tokens.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned object's device memory
  * @return Object to be used with nvtext::normalize_characters
  */
 std::unique_ptr<character_normalizer> create_character_normalizer(
@@ -172,7 +173,7 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
   cudf::strings_column_view const& special_tokens = cudf::strings_column_view(cudf::column_view{
     cudf::data_type{cudf::type_id::STRING}, 0, nullptr, nullptr, 0}),
   cuda::stream_ref stream                         = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr               = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr                       = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Normalizes the text in input strings column
@@ -196,14 +197,14 @@ std::unique_ptr<character_normalizer> create_character_normalizer(
  * @param input The input strings to normalize
  * @param normalizer Normalizer to use for this function
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resource to allocate any returned objects
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Normalized strings column
  */
 std::unique_ptr<cudf::column> normalize_characters(
   cudf::strings_column_view const& input,
   character_normalizer const& normalizer,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Normalizes the text in input strings column with explicit behavioral flags.
@@ -230,15 +231,15 @@ std::unique_ptr<cudf::column> normalize_characters(
  * @param normalizer Normalizer to use for this function
  * @param flags Combination of nvtext::normalize_flags values
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resource to allocate any returned objects
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Normalized strings column
  */
 std::unique_ptr<cudf::column> normalize_characters(
   cudf::strings_column_view const& input,
   character_normalizer const& normalizer,
   normalize_flags flags,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

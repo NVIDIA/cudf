@@ -9,6 +9,7 @@
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -176,16 +177,16 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
             case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
             case Type::FIXED_LEN_BYTE_ARRAY:
               if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-                gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+                *reinterpret_cast<int32_t*>(dst) =
+                  decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
                 break;
               } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-                gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+                *reinterpret_cast<int64_t*>(dst) =
+                  decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
                 break;
               } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-                gpuOutputSplitFixedLenByteArrayAsInt(
-                  reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+                *reinterpret_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(
+                  src, s->output_cvt.dtype_len_in, num_values);
                 break;
               }
               // unsupported decimal precision
@@ -409,13 +410,14 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
         if (dtype == Type::BYTE_ARRAY) {
           if (is_decimal) {
             auto const [ptr, len]        = gpuGetStringData(s, sb, val_src_pos);
+            auto const bytes             = reinterpret_cast<uint8_t const*>(ptr);
             auto const decimal_precision = s->setup.col.logical_type->precision();
             if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-              gpuOutputByteArrayAsInt(ptr, len, static_cast<int32_t*>(dst));
+              *static_cast<int32_t*>(dst) = decode_big_endian_decimal<int32_t>(bytes, len);
             } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-              gpuOutputByteArrayAsInt(ptr, len, static_cast<int64_t*>(dst));
+              *static_cast<int64_t*>(dst) = decode_big_endian_decimal<int64_t>(bytes, len);
             } else {
-              gpuOutputByteArrayAsInt(ptr, len, static_cast<__int128_t*>(dst));
+              *static_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(bytes, len);
             }
           } else {
             gpuOutputString(s, sb, val_src_pos, dst);
@@ -572,16 +574,16 @@ void write_final_offsets(host_span<size_type const> offsets,
                          cuda::stream_ref stream)
 {
   // Copy offsets to device and create an iterator
-  auto d_src_data = cudf::detail::make_device_uvector_async(
+  auto d_src_data = cudf::detail::make_device_buffer_async(
     offsets, stream, cudf::get_current_device_resource_ref());
   // Iterator for the source (scalar) data
   auto src_iter = cuda::transform_iterator(
     cuda::counting_iterator<std::size_t>{0},
     cuda::proclaim_return_type<cudf::size_type*>(
-      [src = d_src_data.begin()] __device__(std::size_t i) { return src + i; }));
+      [src = d_src_data.data()] __device__(std::size_t i) { return src + i; }));
 
   // Copy buffer addresses to device and create an iterator
-  auto d_dst_addrs = cudf::detail::make_device_uvector_async(
+  auto d_dst_addrs = cudf::detail::make_device_buffer_async(
     buff_addrs, stream, cudf::get_current_device_resource_ref());
   // size_iter is simply a constant iterator of sizeof(size_type) bytes.
   auto size_iter = cuda::make_constant_iterator(sizeof(size_type));

@@ -20,11 +20,13 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -162,7 +164,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   } else {
     cuda::counting_iterator<cudf::size_type> stencil(0);
     auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, temp_mr);
-    row_is_valid pred{reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data())};
+    row_is_valid pred{row_bitmask.data()};
 
     // insert valid rows
     row_set.insert_if_async(iter, iter + right_num_rows, stencil, pred, stream.get());
@@ -179,7 +181,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   hash_set_ref_type const row_set_ref = row_set.ref(cuco::contains).rebind_hash_function(hash_left);
 
   // Vector used to indicate indices from the left table which are present in output
-  auto left_table_keep_mask = rmm::device_uvector<bool>(left.num_rows(), stream, temp_mr);
+  auto left_table_keep_mask =
+    cuda::device_buffer<bool>(stream, temp_mr, left.num_rows(), cuda::no_init);
 
   launch_mixed_join_semi(has_nulls,
                          *left_conditional_view,

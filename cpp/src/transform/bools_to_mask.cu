@@ -20,13 +20,13 @@
 
 namespace cudf {
 namespace detail {
-std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> bools_to_mask(
+std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, cudf::size_type> bools_to_mask(
   column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   CUDF_EXPECTS(input.type().id() == type_id::BOOL8, "Input is not of type bool");
 
   if (input.is_empty()) {
-    return std::pair(std::make_unique<cuda::device_buffer<std::byte>>(
+    return std::pair(std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)),
                      0);
   }
@@ -40,20 +40,22 @@ std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> bool
 
     auto mask = detail::valid_if(input_begin, input_begin + input.size(), pred, stream, mr);
 
-    return std::pair(std::make_unique<cuda::device_buffer<std::byte>>(std::move(mask.first)),
-                     mask.second);
+    return std::pair(
+      std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(std::move(mask.first)),
+      mask.second);
   } else {
     auto mask = detail::valid_if(
       input_device_view.begin<bool>(), input_device_view.end<bool>(), pred, stream, mr);
 
-    return std::pair(std::make_unique<cuda::device_buffer<std::byte>>(std::move(mask.first)),
-                     mask.second);
+    return std::pair(
+      std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(std::move(mask.first)),
+      mask.second);
   }
 }
 
 }  // namespace detail
 
-std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, cudf::size_type> bools_to_mask(
+std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, cudf::size_type> bools_to_mask(
   column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();

@@ -5,9 +5,9 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
@@ -84,10 +84,12 @@ struct sort_radix_fn {
   void operator()()
     requires(cudf::is_floating_point<T>())
   {
-    auto pair_in  = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_in     = pair_in.begin();
-    auto pair_out = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_out    = pair_out.begin();
+    auto pair_in = cuda::device_buffer<float_pair<T>>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    auto d_in     = pair_in.data();
+    auto pair_out = cuda::device_buffer<float_pair<T>>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    auto d_out = pair_out.data();
 
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<size_type>{0},

@@ -9,6 +9,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/io/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -32,7 +33,7 @@ extern "C" {
 // Two-step materialize (filter + payload)
 // ----------------------------------------------------------------------
 
-// Returns: [row_mask_col_handle, filter_table_col0_handle, ..., filter_table_colN_handle]
+// Returns: [row_mask_col_handle, table_with_metadata_handle]
 JNIEXPORT jlongArray JNICALL
 Java_ai_rapids_cudf_HybridScanReader_materializeFilterColumns(JNIEnv* env,
                                                               jclass,
@@ -60,27 +61,22 @@ Java_ai_rapids_cudf_HybridScanReader_materializeFilterColumns(JNIEnv* env,
                           : wrapper->reader->build_all_true_row_mask(holder.span(), stream, mr);
     auto mut_view     = row_mask_col->mutable_view();
     auto mode         = to_data_page_mask(use_page_level_pruning);
-    auto result       = wrapper->reader->materialize_filter_columns(
-      holder.span(), spans, mut_view, mode, wrapper->options, stream, mr);
-    // Pack: [row_mask_handle, table_col0, ..., table_colN]
-    // Hold row_mask_col owned until after convert_table_for_return + the table-cols
-    // SetLongArrayRegion succeed; if either throws, the unique_ptr's destructor frees the
-    // row mask normally. Release only at the final SetLongArrayRegion, which has known-valid
-    // bounds and is the last possible throw point.
-    jsize n_table_cols = static_cast<jsize>(result.tbl->num_columns());
-    jlongArray out     = env->NewLongArray(1 + n_table_cols);
-    if (out == nullptr) { return nullptr; }
-    auto table_handles = cudf::jni::convert_table_for_return(env, result.tbl);
-    cudf::jni::native_jlongArray table_arr(env, table_handles);
-    env->SetLongArrayRegion(out, 1, n_table_cols, table_arr.data());
-    jlong row_mask_handle = cudf::jni::release_as_jlong(std::move(row_mask_col));
-    env->SetLongArrayRegion(out, 0, 1, &row_mask_handle);
-    return out;
+    auto result =
+      std::make_unique<cudf::io::table_with_metadata>(wrapper->reader->materialize_filter_columns(
+        holder.span(), spans, mut_view, mode, wrapper->options, stream, mr));
+    // Hold both owned until the output array exists and its elements are pinned, so that the
+    // only throw points come before either is released.
+    cudf::jni::native_jlongArray out(env, 2);
+    auto* const out_data = out.data();
+    out_data[0]          = cudf::jni::release_as_jlong(row_mask_col);
+    out_data[1]          = cudf::jni::release_as_jlong(result);
+    return out.get_jArray();
   }
   JNI_CATCH(env, nullptr);
 }
 
-JNIEXPORT jlongArray JNICALL
+// Returns: table_with_metadata_handle
+JNIEXPORT jlong JNICALL
 Java_ai_rapids_cudf_HybridScanReader_materializePayloadColumns(JNIEnv* env,
                                                                jclass,
                                                                jlong handle,
@@ -90,9 +86,9 @@ Java_ai_rapids_cudf_HybridScanReader_materializePayloadColumns(JNIEnv* env,
                                                                jlong row_mask_view_handle,
                                                                jboolean use_page_level_pruning)
 {
-  JNI_NULL_CHECK(env, handle, "handle is null", nullptr);
-  JNI_NULL_CHECK(env, j_row_groups, "row groups is null", nullptr);
-  JNI_NULL_CHECK(env, row_mask_view_handle, "row mask view handle is null", nullptr);
+  JNI_NULL_CHECK(env, handle, "handle is null", 0);
+  JNI_NULL_CHECK(env, j_row_groups, "row groups is null", 0);
+  JNI_NULL_CHECK(env, row_mask_view_handle, "row mask view handle is null", 0);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
@@ -101,17 +97,17 @@ Java_ai_rapids_cudf_HybridScanReader_materializePayloadColumns(JNIEnv* env,
     auto spans     = make_device_spans(env, j_addrs, j_lens);
     auto* row_mask = reinterpret_cast<cudf::column_view const*>(row_mask_view_handle);
     auto mode      = to_data_page_mask(use_page_level_pruning);
-    auto result =
+    auto result    = std::make_unique<cudf::io::table_with_metadata>(
       wrapper->reader->materialize_payload_columns(holder.span(),
                                                    spans,
                                                    *row_mask,
                                                    mode,
                                                    wrapper->options,
                                                    cudf::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+                                                   cudf::get_current_device_resource_ref()));
+    return cudf::jni::release_as_jlong(result);
   }
-  JNI_CATCH(env, nullptr);
+  JNI_CATCH(env, 0);
 }
 
 // ----------------------------------------------------------------------

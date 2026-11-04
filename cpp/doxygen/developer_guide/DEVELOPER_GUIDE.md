@@ -398,6 +398,10 @@ Use `cudf::host_span<T>` only when one of the following applies:
 2. The function must accept a libcudf-specific container that `std::span` cannot be constructed
    from directly.
 
+`cudf::host_span` converts implicitly to `std::span`, which silently drops `is_device_accessible()`
+(e.g. a downstream host-device copy then takes the pageable path). Ensure the whole API chain where
+this property is useful takes `cudf::host_span` consistently.
+
 ## cudf::scalar
 
 A `cudf::scalar` is an object that can represent a singular, nullable value of any of the types
@@ -1420,12 +1424,12 @@ types, respectively.
 ```c++
 struct integral_or_floating_point {
 template <typename ColumnType,
-          std::enable_if_t<not std::is_integral<ColumnType>::value and
+          std::enable_if_t<not cuda::std::is_integral_v<ColumnType> and
                            not std::is_floating_point<ColumnType>::value>* = nullptr>
 void operator()() { std::cout << "neither integral nor floating point\n"; }
 
 template <typename ColumnType,
-          std::enable_if_t<std::is_integral<ColumnType>::value>* = nullptr>
+          std::enable_if_t<cuda::std::is_integral_v<ColumnType>>* = nullptr>
 void operator()() { std::cout << "integral\n"; }
 
 template < typename ColumnType,

@@ -30,6 +30,12 @@ module = ["polars.*"]
 # aren't skipped and assumed to be `Any`.
 follow_imports = "normal"
 
+[[tool.mypy.overrides]]
+module = ["polars._plr"]
+# The stub only declares part of the polars-python API (e.g. no `_expr_nodes`).
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [tool.codespell]
 # note: pre-commit passes explicit lists of files here, which this skip file list doesn't override -
 # this is only to allow you to run codespell interactively

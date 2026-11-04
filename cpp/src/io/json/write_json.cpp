@@ -25,6 +25,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -211,16 +212,13 @@ struct column_to_strings_fn {
 
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const&, host_span<column_name_info const>) const
-    requires(!std::is_same_v<column_type, cudf::list_view> &&
-             !std::is_same_v<column_type, cudf::struct_view>)
   {
     CUDF_FAIL("Only nested columns should use this overload.");
   }
 
-  template <typename column_type>
+  template <cudf::concepts::list_view column_type>
   std::unique_ptr<column> operator()(column_view const& column,
                                      host_span<column_name_info const> children_names) const
-    requires(std::is_same_v<column_type, cudf::list_view>)
   {
     auto child_view            = lists_column_view(column).get_sliced_child(stream_);
     auto constexpr child_index = lists_column_view::child_column_index;
@@ -254,10 +252,9 @@ struct column_to_strings_fn {
                                 mr_);
   }
 
-  template <typename column_type>
+  template <cudf::concepts::struct_view column_type>
   std::unique_ptr<column> operator()(column_view const& column,
                                      host_span<column_name_info const> children_names) const
-    requires(std::is_same_v<column_type, cudf::struct_view>)
   {
     auto structs_view   = structs_column_view{column};
     auto const child_it = cudf::detail::make_counting_transform_iterator(

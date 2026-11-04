@@ -9,8 +9,10 @@
 
 #include <cudf/concatenate.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -22,7 +24,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/cuda_stream_pool.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
@@ -754,6 +755,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
   // delimiter.
   auto constexpr num_delimiter_chars = 1;
   std::vector<std::future<std::size_t>> thread_tasks;
+  cudf::detail::futures_wait_guard thread_tasks_guard{thread_tasks};
 
   auto delimiter_map = cudf::detail::make_empty_host_vector<std::size_t>(sources.size(), stream);
   std::vector<std::size_t> prefsum_source_sizes(sources.size());
@@ -812,7 +814,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
     static_assert(num_delimiter_chars == 1,
                   "Currently only single-character delimiters are supported");
     auto const delimiter_source = cuda::make_constant_iterator(delimiter);
-    auto const d_delimiter_map  = cudf::detail::make_device_uvector_async(
+    auto const d_delimiter_map  = cudf::detail::make_device_buffer_async(
       delimiter_map, stream, cudf::get_current_device_resource_ref());
     thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     delimiter_source,
@@ -861,6 +863,7 @@ table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> so
 
   std::vector<std::unique_ptr<datasource>> compressed_sources;
   std::vector<std::future<std::unique_ptr<compressed_host_buffer_source>>> thread_tasks;
+  cudf::detail::futures_wait_guard thread_tasks_guard{thread_tasks};
   auto& thread_pool = pools::tpool();
   for (auto& src : sources) {
     thread_tasks.emplace_back(thread_pool.submit_task([&reader_opts, &src] {

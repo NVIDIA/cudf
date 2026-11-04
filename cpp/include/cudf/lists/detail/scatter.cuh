@@ -227,7 +227,7 @@ std::unique_ptr<column> scatter(scalar const& slr,
 
   auto lv        = static_cast<list_scalar const*>(&slr);
   bool slr_valid = slr.is_valid(stream);
-  cuda::device_buffer<std::byte> null_mask =
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
     slr_valid ? cudf::create_null_mask(1, mask_state::UNALLOCATED, stream, mr)
               : cudf::create_null_mask(1, mask_state::ALL_NULL, stream, mr);
   auto offset_column =
@@ -240,7 +240,7 @@ std::unique_ptr<column> scatter(scalar const& slr,
   auto wrapped = column_view(data_type{type_id::LIST},
                              1,
                              nullptr,
-                             reinterpret_cast<bitmask_type const*>(null_mask.data()),
+                             null_mask.data(),
                              slr_valid ? 0 : 1,
                              0,
                              {offset_column->view(), lv->view()});

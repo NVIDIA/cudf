@@ -81,7 +81,10 @@ class arg_minmax_binop_generator {
   // Contains data used in the returned binop, thus needs to be kept alive as a member variable.
   cudf::detail::row::lexicographic::self_comparator row_comparator;
 
-  arg_minmax_binop_generator(column_view const& input_, bool is_min_op_, cuda::stream_ref stream_)
+  arg_minmax_binop_generator(column_view const& input_,
+                             bool is_min_op_,
+                             cuda::stream_ref stream_,
+                             cudf::memory_resources mr)
     : input_tview{cudf::table_view{{input_}}},
       has_nulls{cudf::has_nested_nulls(input_tview)},
       is_min_op{is_min_op_},
@@ -92,7 +95,7 @@ class arg_minmax_binop_generator {
         std::vector<null_order>{DEFAULT_NULL_ORDER},
         cudf::structs::detail::column_nullability::MATCH_INCOMING,
         stream,
-        cudf::get_current_device_resource_ref())},
+        mr.get_temporary_mr())},
       row_comparator{[&input_,
                       &input_tview     = input_tview,
                       &flattened_input = flattened_input,
@@ -151,23 +154,28 @@ class arg_minmax_binop_generator {
   auto binop() const { return row_arg_minmax_fn(input_tview.num_rows(), less(), is_min_op); }
 
   template <typename BinOp>
-  static auto create(column_view const& input, cuda::stream_ref stream)
+  static auto create(column_view const& input,
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");
     return arg_minmax_binop_generator(input,
                                       std::is_same_v<BinOp, cudf::reduction::detail::op::min> ||
                                         std::is_same_v<BinOp, cudf::DeviceMin>,
-                                      stream);
+                                      stream,
+                                      mr);
   }
 
   template <cudf::aggregation::Kind K>
-  static auto create(column_view const& input, cuda::stream_ref stream)
+  static auto create(column_view const& input,
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     CUDF_EXPECTS(cudf::is_nested(input.type()),
                  "This utility class is designed exclusively for nested input types.");
     return arg_minmax_binop_generator(
-      input, K == cudf::aggregation::MIN || K == cudf::aggregation::ARGMIN, stream);
+      input, K == cudf::aggregation::MIN || K == cudf::aggregation::ARGMIN, stream, mr);
   }
 };
 

@@ -166,6 +166,7 @@ impl CudfPolarsUiAnalyzer {
                     start_time_unix_ns: Some(event.timestamp),
                     duration_s: None,
                     instance_name: Some(instance_name),
+                    custom_attributes: Vec::new(),
                     implementation: Some(quent_query_engine_ui::EngineImplementationAttributes {
                         name: Some(implementation.name),
                         version: Some(implementation.version),

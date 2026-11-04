@@ -18,6 +18,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -128,14 +129,13 @@ class column_buffer_base {
   // input column, including same type, nullability, name, and user_data.
   static string_policy empty_like(string_policy const& input);
 
-  void set_null_mask(cuda::device_buffer<std::byte>&& mask) { _null_mask = std::move(mask); }
-
-  template <typename T = uint32_t>
-  auto null_mask()
+  void set_null_mask(cuda::device_buffer<cudf::bitmask_type>&& mask)
   {
-    return reinterpret_cast<T*>(_null_mask.data());
+    _null_mask = std::move(mask);
   }
-  auto null_mask_size() { return _null_mask.size(); }
+
+  auto null_mask() { return _null_mask.data(); }
+  auto null_mask_size() { return _null_mask.size() * sizeof(bitmask_type); }
   auto& null_count() { return _null_count; }
 
   auto data() { return static_cast<string_policy*>(this)->data_impl(); }
@@ -152,7 +152,7 @@ class column_buffer_base {
 
  protected:
   rmm::device_buffer _data{};
-  cuda::device_buffer<std::byte> _null_mask =
+  cuda::device_buffer<cudf::bitmask_type> _null_mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
   rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
@@ -206,7 +206,7 @@ class gather_column_buffer : public column_buffer_base<gather_column_buffer> {
   std::unique_ptr<column> make_string_column_impl(cuda::stream_ref stream);
 
  public:
-  std::unique_ptr<rmm::device_uvector<string_index_pair>> _strings;
+  std::unique_ptr<cuda::device_buffer<string_index_pair>> _strings;
 };
 
 // column buffer that stores string data internally which can be passed directly when

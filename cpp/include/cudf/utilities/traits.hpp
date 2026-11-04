@@ -41,7 +41,7 @@ using void_t [[deprecated("Use cuda::std::void_t instead.")]] = void;
  * Example:
  * \code{cpp}
  * // This function will participate in overload resolution only if T is an integral type
- * template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T> )>
+ * template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T> )>
  * void foo();
  * \endcode
  *
@@ -192,7 +192,7 @@ bool is_numeric(data_type type);
 template <typename T>
 constexpr inline bool is_index_type()
 {
-  return concepts::integral_not_bool<T>;
+  return concepts::index_type<T>;
 }
 
 /**

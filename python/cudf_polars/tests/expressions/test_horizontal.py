@@ -52,7 +52,7 @@ def test_max_horizontal_string(engine: pl.GPUEngine) -> None:
         {
             "a": ["x", None, None, "b", "m"],
             "b": ["y", "z", None, None, "c"],
-            "c": ["w", "q", None, "a", None],
+            "c": ["w", "q", None, "a", "ü"],
         }
     )
     q = df.select(pl.max_horizontal("a", "b", "c"))
@@ -131,7 +131,7 @@ def test_min_horizontal_string(engine: pl.GPUEngine) -> None:
         {
             "a": ["x", None, None, "b", "m"],
             "b": ["y", "z", None, None, "c"],
-            "c": ["w", "q", None, "a", None],
+            "c": ["w", "q", None, "a", "ü"],
         }
     )
     q = df.select(pl.min_horizontal("a", "b", "c"))

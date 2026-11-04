@@ -36,17 +36,12 @@ nproc; free -g; cat /proc/meminfo | head -5
 WSL_MON_PID=$!
 
 if [[ "${RUN_LIBCUDF_TESTS}" == "true" ]]; then
-    rapids-logger "TEMP: driver probe"
-    python ci/wsl_driver_probe.py
-    gtest_dir="${CONDA_PREFIX}/bin/gtests/libcudf"
-    rapids-logger "TEMP: GROUPBY_TEST per-test timing"
-    timeout 10m "${gtest_dir}/GROUPBY_TEST" 2>&1 | grep -E '^\[ +OK +\]' | sed -E 's/.*\] (.*) \(([0-9]+) ms\)/\2 \1/' | sort -rn | head -25
-    rapids-logger "TEMP: ORC_TEST with 5m timeout"
-    timeout 5m "${gtest_dir}/ORC_TEST" 2>&1 | grep -E '^\[ +(OK|RUN|FAILED) +\]' | tail -15
-    echo "TEMP: ORC_TEST exit $?"
-    kill "${WSL_MON_PID}" || true
-    cat "${RAPIDS_TESTS_DIR:-/tmp}/../wsl-monitor.log" | tail -40
-    exit 1
+    rapids-logger "TEMP: run slow tests alone"
+    for t in REDUCTIONS_TEST GROUPBY_TEST ORC_TEST; do
+        start=$(date +%s)
+        timeout 10m ./ci/run_cudf_ctests.sh -R "^${t}$"
+        echo "TEMP-TIMING ${t} alone: $(( $(date +%s) - start ))s"
+    done
     rapids-logger "Run libcudf gtests"
     timeout 30m ./ci/run_cudf_ctests.sh -j20
     SUITEERROR=$?

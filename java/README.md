@@ -4,7 +4,7 @@ cuDF Java provides Java bindings for libcudf, the C++ library behind cuDF, for p
 amounts of tabular data on the GPU from the JVM.
 
 The API reference is published with the rest of the cuDF documentation at
-https://docs.rapids.ai/api/cudf/stable/java/.
+https://docs.nvidia.com/cudf/latest/java/.
 
 ## Behavior on Systems with Multiple GPUs
 

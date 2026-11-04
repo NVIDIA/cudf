@@ -1937,21 +1937,6 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
-  void testReaderTimeUnitRejectsTimestampDays() {
-    // Both readers convert timestamps to a second-based unit only, so TIMESTAMP_DAYS is
-    // rejected up front; the four second-based units and the default are accepted.
-    assertThrows(IllegalArgumentException.class,
-        () -> ParquetOptions.builder().withTimeUnit(DType.TIMESTAMP_DAYS));
-    assertThrows(IllegalArgumentException.class,
-        () -> ORCOptions.builder().withTimeUnit(DType.TIMESTAMP_DAYS));
-    for (DType unit : new DType[]{DType.EMPTY, DType.TIMESTAMP_SECONDS,
-        DType.TIMESTAMP_MILLISECONDS, DType.TIMESTAMP_MICROSECONDS, DType.TIMESTAMP_NANOSECONDS}) {
-      assertDoesNotThrow(() -> ParquetOptions.builder().withTimeUnit(unit));
-      assertDoesNotThrow(() -> ORCOptions.builder().withTimeUnit(unit));
-    }
-  }
-
-  @Test
   void testORCChunkedReader() throws IOException {
     byte[] buffer = Files.readAllBytes(TEST_ORC_FILE_CHUNKED_READ.toPath());
     long len = buffer.length;

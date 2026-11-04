@@ -73,17 +73,15 @@ public class ORCOptions extends ColumnFilterOptions {
 
     /**
      * Specify the time unit to use when returning timestamps.
-     * DType.EMPTY (the default), TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
-     * TIMESTAMP_MICROSECONDS and TIMESTAMP_NANOSECONDS are valid; for TIMESTAMP_DAYS,
-     * cast the returned column instead.
+     * TIMESTAMP_DAYS resolution is not supported; cast the returned column to get it.
      * @param unit default unit of time specified by the user
      * @return builder for chaining
-     * @throws IllegalArgumentException if {@code unit} is not one of those types
+     * @throws IllegalArgumentException if {@code unit} is TIMESTAMP_DAYS or neither
+     *     DType.EMPTY nor a timestamp type
      */
     public ORCOptions.Builder withTimeUnit(DType unit) {
       if (unit == null || (unit != DType.EMPTY && !unit.hasTimeResolution())) {
-        throw new IllegalArgumentException(
-            "Time unit must be EMPTY or a second-based timestamp type, got " + unit);
+        throw new IllegalArgumentException("Unsupported time unit: " + unit);
       }
       this.unit = unit;
       return this;

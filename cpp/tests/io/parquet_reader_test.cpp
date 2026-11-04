@@ -1027,13 +1027,13 @@ TEST_F(ParquetReaderTest, TimestampTypeMustHaveSecondBasedUnit)
   }
   for (auto const id :
        {cudf::type_id::TIMESTAMP_DAYS, cudf::type_id::DURATION_SECONDS, cudf::type_id::INT64}) {
-    EXPECT_THROW(options.set_timestamp_type(cudf::data_type{id}), cudf::logic_error);
+    EXPECT_THROW(options.set_timestamp_type(cudf::data_type{id}), std::invalid_argument);
   }
   // A rejected type leaves the previous one in place.
   EXPECT_EQ(options.get_timestamp_type().id(), cudf::type_id::TIMESTAMP_NANOSECONDS);
   EXPECT_THROW(cudf::io::parquet_reader_options_builder{}.timestamp_type(
                  cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}),
-               cudf::logic_error);
+               std::invalid_argument);
 }
 
 TEST_F(ParquetReaderTest, ReadTimestampsAsSeconds)

@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from functools import cache
-
 import cupy as cp
 import numpy as np
 from numba_cuda_mlir import cuda, types
+from numba_cuda_mlir.cuda.experimental import consteval
 from numba_cuda_mlir.numba_cuda.core.errors import (
     TypingError as CoreTypingError,
     TypingError as CudaTypingError,
@@ -28,12 +27,11 @@ from cudf.core.udf.mlir_backend.groupby_typing import (
     _group_slot,
     register_group_slot,
 )
-from cudf.core.udf.mlir_backend.templates import groupby_apply_kernel_template
 from cudf.core.udf.mlir_backend.udf_kernel_base import ApplyKernelBase
-from cudf.core.udf.templates import group_initializer_template
 from cudf.core.udf.utils import (
     UDFError,
     _all_dtypes_from_frame,
+    _buffer_as_dtyped_view,
     _get_extensionty_size,
     _supported_cols_from_frame,
     set_malloc_heap_size,
@@ -122,17 +120,19 @@ def jit_groupby_apply(offsets, grouped_values, function, *args):
 
     output = column_empty(ngroups, dtype=return_type)
     output = output.set_mask(None, 0)
+    columns = tuple(
+        _buffer_as_dtyped_view(col.data, len(col), col.dtype)
+        for col in _supported_cols_from_frame(
+            grouped_values, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES
+        ).values()
+    )
     launch_args = [
         offsets,
         output,
         grouped_values.index,
+        columns,
+        tuple(args),
     ]
-    launch_args += list(
-        _supported_cols_from_frame(
-            grouped_values, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES
-        ).values()
-    )
-    launch_args += list(args)
 
     max_group_size = cp.diff(offsets).max()
 
@@ -211,44 +211,41 @@ class GroupByApplyKernel(ApplyKernelBase):
             self.frame.index.dtype,
         )
 
-    def _get_kernel_string(self):
-        # Create argument list for kernel
-        frame = _supported_cols_from_frame(
-            self.frame, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES
-        )
-        input_columns = self._format_arg_list("input_col", len(frame))
-        extra_args = self._format_arg_list("extra_arg", len(self.args))
+    def _make_kernel(self):
+        """Build the GroupBy.apply kernel by metaprogramming (``consteval``).
 
-        # Generate the initializers for each device function argument
-        initializers = []
-        for i, colname in enumerate(frame.keys()):
-            initializers.append(group_initializer_template.format(idx=i))
-
-        return groupby_apply_kernel_template.format(
-            input_columns=input_columns,
-            extra_args=extra_args,
-            group_initializers="\n".join(initializers),
-        )
-
-    @cache
-    def _get_kernel_string_exec_context(self):
+        ``consteval(range(num_columns))`` unrolls the per-column loop and
+        ``consteval(column_names[c])`` folds each column name to a literal
+        Record key; ``*consteval(extra)`` splats the UDF's extra arguments. No
+        string templates or ``exec``.
+        """
         dataframe_group_type = self._get_frame_type()
         register_group_slot(dataframe_group_type)
         register_group_slot_lowering(dataframe_group_type)
-        col_names = tuple(
+        column_names = tuple(
             _supported_cols_from_frame(
                 self.frame, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES
             ).keys()
         )
-        global_exec_context = {
-            "cuda": cuda,
-            "CooperativeArray": CooperativeArray,
-            "dataframe_group_type": dataframe_group_type,
-            "types": types,
-            "_group_slot": _group_slot,
-            "_col_names": col_names,
-        }
-        return global_exec_context
+        num_columns = len(column_names)
+        device_func = self.device_func
+
+        def _kernel(offset, out, index, columns, extra):
+            block_id = cuda.blockIdx.x
+            dataframe_group = _group_slot()
+            if block_id < (len(offset) - 1):
+                size = offset[block_id + 1] - offset[block_id]
+                index_slice = index[offset[block_id] : offset[block_id + 1]]
+                for c in consteval(range(num_columns)):
+                    arr = columns[c][offset[block_id] : offset[block_id + 1]]
+                    dataframe_group[consteval(column_names[c])] = (
+                        CooperativeArray(arr, size, index_slice)
+                    )
+                result = device_func(dataframe_group, *consteval(extra))
+                if cuda.threadIdx.x == 0:
+                    out[block_id] = result
+
+        return _kernel
 
     def _construct_signature(self, return_type):
         return None

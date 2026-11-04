@@ -22,9 +22,9 @@ from cudf.core.udf.mlir_backend.masked_typing import MaskedType
 from cudf.core.udf.mlir_backend.strings_typing import mlir_string_arg_handler
 from cudf.core.udf.nrt_utils import CaptureNRTUsage
 from cudf.core.udf.utils import (
+    LIBCUDF_BITMASK_TYPE,
+    _column_data_type,
     _generate_cache_key,
-    _mask_get,
-    _masked_array_type_from_col,
     _supported_cols_from_frame,
     precompiled as kernel_cache,
 )
@@ -66,30 +66,24 @@ class ApplyKernelBase(ABC):
         """
 
     @abstractmethod
-    def _get_kernel_string(self):
-        """
-        Generate executable string of python that defines a
-        kernel we may retrieve from the context and compile
-        with numba.
-        """
+    def _make_kernel(self):
+        """Build and return the kernel function to JIT.
 
-    @abstractmethod
-    def _get_kernel_string_exec_context(self):
+        Returns a plain Python function (a closure capturing the device UDF and
+        the column names). It is metaprogrammed with ``consteval`` loop unrolling
+        and star-splat (no string templates / ``exec``), and compiled with
+        ``experimental_ast_transforms=True``.
         """
-        Get a dict of globals needed to exec the kernel
-        string.
-        """
-
-    @staticmethod
-    def _format_arg_list(prefix, count):
-        """Build a comma-separated parameter list like 'prefix_0, prefix_1, ...'."""
-        return ", ".join(f"{prefix}_{i}" for i in range(count))
 
     def _construct_signature(self, return_type):
         """
-        Build the signature of numba types that will be used to
-        actually JIT the kernel itself later, accounting for types
-        and offsets. Skips columns with unsupported dtypes.
+        Build the numba signature of the kernel: ``void(retval, size, columns,
+        extra)``.
+
+        ``retval`` is ``(out_data, out_mask)``; ``columns`` is a tuple with one
+        ``(data, mask, offset)`` entry per supported column (``mask`` is an empty
+        bitmask array for columns without a validity mask); ``extra`` is a tuple
+        of the UDF's additional scalar arguments.
         """
         if not return_type.is_internal:
             return_type = CPointer(return_type)
@@ -99,18 +93,14 @@ class ApplyKernelBase(ABC):
         # int8 (not boolean): released numba-cuda-mlir's array marshaller has
         # no bitwidth for its Boolean type; int8 has identical byte layout.
         return_type = Tuple((return_type, int8[::1]))
-        supported_cols = _supported_cols_from_frame(self.frame)
-        offsets = [int64] * len(supported_cols)
-        sig = (
-            [return_type, int64]
-            + [
-                _masked_array_type_from_col(col)
-                for col in supported_cols.values()
-            ]
-            + offsets
-            + [typeof(arg) for arg in self.args]
+        columns_ty = Tuple(
+            tuple(
+                Tuple((_column_data_type(col), LIBCUDF_BITMASK_TYPE[::1], int64))
+                for col in _supported_cols_from_frame(self.frame).values()
+            )
         )
-        return void(*sig)
+        extra_ty = Tuple(tuple(typeof(arg) for arg in self.args))
+        return void(return_type, int64, columns_ty, extra_ty)
 
     @_performance_tracking
     def _get_udf_return_type(self):
@@ -155,10 +145,12 @@ class ApplyKernelBase(ABC):
             return_type = self._get_udf_return_type()
 
         self.sig = self._construct_signature(return_type)
-        kernel_string = self._get_kernel_string()
-        kernel = self.compile_kernel_string(
-            kernel_string, nrt=capture_nrt_usage.use_nrt
-        )
+        kernel = cuda.jit(
+            self.sig,
+            extensions=[mlir_string_arg_handler],
+            link=self._extra_link(),
+            experimental_ast_transforms=True,
+        )(self._make_kernel())
 
         return kernel, return_type
 
@@ -169,18 +161,6 @@ class ApplyKernelBase(ABC):
         cooperative reduction PTX shim.
         """
         return []
-
-    def compile_kernel_string(self, kernel_string, nrt=False):
-        global_exec_context = self._get_kernel_string_exec_context()
-        global_exec_context["f_"] = self.device_func
-        global_exec_context.update({"cuda": cuda, "_mask_get": _mask_get})
-        exec(kernel_string, global_exec_context)
-        _kernel = global_exec_context["_kernel"]
-        return cuda.jit(
-            self.sig,
-            extensions=[mlir_string_arg_handler],
-            link=self._extra_link(),
-        )(_kernel)
 
     def get_kernel(self):
         return self._compile_or_get_kernel()

@@ -1,29 +1,26 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import math
-from functools import cache
 
 import numpy as np
 from numba_cuda_mlir import cuda, types
+from numba_cuda_mlir.cuda.experimental import consteval
 from numba_cuda_mlir.extending import lowering_registry, typing_registry
 from numba_cuda_mlir.numba_cuda.np import numpy_support
 from numba_cuda_mlir.numba_cuda.typing.templates import AbstractTemplate
 from numba_cuda_mlir.typing import signature as nb_signature
 
+from cudf.api.types import is_string_dtype as _is_string_dtype
 from cudf.core.udf.api import Masked, pack_return
 from cudf.core.udf.mlir_backend.masked_typing import MaskedType
 from cudf.core.udf.mlir_backend.strings_typing import mlir_string
-from cudf.core.udf.mlir_backend.templates import row_kernel_template
 from cudf.core.udf.mlir_backend.udf_kernel_base import ApplyKernelBase
-from cudf.core.udf.templates import (
-    masked_input_initializer_template,
-    row_initializer_template,
-    unmasked_input_initializer_template,
-)
 from cudf.core.udf.utils import (
+    JIT_SUPPORTED_TYPES,
     Row,
     _all_dtypes_from_frame,
     _get_extensionty_size,
+    _mask_get,
     _supported_cols_from_frame,
 )
 
@@ -84,7 +81,7 @@ def _register_row_slot():
 _register_row_slot_typing = _register_row_slot
 
 
-def _get_frame_row_type(dtype):
+def _get_frame_row_type(dtype, poison_fields=frozenset()):
     """
     Get the Numba type of a row in a frame. Models each column and its mask as
     a MaskedType and models the row as a dictionary like data structure
@@ -92,6 +89,11 @@ def _get_frame_row_type(dtype):
     comments from the Numba internals and slightly modified to account for
     validity bools to be present in the final struct. See
     numba.np.numpy_support.from_struct_dtype for details.
+
+    Columns whose names are in ``poison_fields`` have a dtype that the JIT
+    engine does not support (e.g. decimal, categorical, list). They are modeled
+    as ``Poison`` so a UDF that never touches them still compiles, while any use
+    of such a column raises a ``TypingError`` (see ``_get_udf_return_type``).
     """
 
     # Create the numpy structured type corresponding to the numpy dtype.
@@ -114,11 +116,12 @@ def _get_frame_row_type(dtype):
         elemdtype = info[0]
         title = info[2] if len(info) == 3 else None
 
-        ty = (
-            mlir_string
-            if elemdtype == np.dtype("O")
-            else numpy_support.from_dtype(elemdtype)
-        )
+        if name in poison_fields:
+            ty = types.Poison(mlir_string)
+        elif elemdtype == np.dtype("O"):
+            ty = mlir_string
+        else:
+            ty = numpy_support.from_dtype(elemdtype)
         infos = {
             "type": MaskedType(ty),
             "offset": offset,
@@ -161,54 +164,51 @@ class DataFrameApplyKernel(ApplyKernelBase):
         return "dataframe_apply"
 
     def _get_frame_type(self):
+        poison_fields = {
+            name
+            for name, col in self.frame._column_labels_and_values
+            if str(col.dtype) not in JIT_SUPPORTED_TYPES
+            and not _is_string_dtype(col.dtype)
+        }
         return _get_frame_row_type(
-            np.dtype(list(_all_dtypes_from_frame(self.frame).items()))
+            np.dtype(list(_all_dtypes_from_frame(self.frame).items())),
+            poison_fields,
         )
 
-    def _get_kernel_string(self):
-        frame = _supported_cols_from_frame(self.frame)
+    def _make_kernel(self):
+        """Build the DataFrame.apply kernel by metaprogramming (``consteval``).
 
-        input_columns = ", ".join(
-            [f"input_col_{i}" for i in range(len(frame))]
-        )
-        input_offsets = ", ".join([f"offset_{i}" for i in range(len(frame))])
-        extra_args = ", ".join(
-            [f"extra_arg_{i}" for i in range(len(self.args))]
-        )
-
-        initializers = []
-        row_initializers = []
-        for i, (colname, col) in enumerate(frame.items()):
-            idx = str(i)
-            template = (
-                masked_input_initializer_template
-                if col.mask is not None
-                else unmasked_input_initializer_template
-            )
-            initializers.append(template.format(idx=idx))
-            row_initializers.append(row_initializer_template.format(idx=idx))
-
-        return row_kernel_template.format(
-            input_columns=input_columns,
-            input_offsets=input_offsets,
-            extra_args=extra_args,
-            masked_input_initializers="\n".join(initializers),
-            row_initializers="\n".join(row_initializers),
-        )
-
-    @cache
-    def _get_kernel_string_exec_context(self):
+        ``consteval(range(num_columns))`` unrolls the per-column loop and
+        ``consteval(column_names[idx])`` folds each column name to a literal
+        Record key; ``*consteval(extra)`` splats the UDF's extra arguments. No
+        string templates or ``exec`` are involved.
+        """
         row_type = self._get_frame_type()
         register_row_slot(row_type)
-        col_names = tuple(_supported_cols_from_frame(self.frame).keys())
-        return {
-            "cuda": cuda,
-            "Masked": Masked,
-            "pack_return": pack_return,
-            "row_type": row_type,
-            "_row_slot": _row_slot,
-            "_col_names": col_names,
-        }
+        column_names = tuple(_supported_cols_from_frame(self.frame).keys())
+        num_columns = len(column_names)
+        device_func = self.device_func
+
+        def _kernel(retval, size, columns, extra):
+            i = cuda.grid(1)
+            ret_data_arr, ret_mask_arr = retval
+            if i < size:
+                row = _row_slot()
+                for idx in consteval(range(num_columns)):
+                    d, m, off = columns[idx]
+                    if m.size == 0:
+                        valid = True
+                    else:
+                        valid = _mask_get(m, i + off)
+                    row[consteval(column_names[idx])] = Masked(
+                        d[i + off], valid
+                    )
+                ret = device_func(row, *consteval(extra))
+                ret_masked = pack_return(ret)
+                ret_data_arr[i] = ret_masked.value
+                ret_mask_arr[i] = ret_masked.valid
+
+        return _kernel
 
 
 _register_row_slot()

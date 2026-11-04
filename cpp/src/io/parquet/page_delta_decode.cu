@@ -13,6 +13,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cub/warp/warp_exchange.cuh>
 #include <cuda/std/algorithm>
 
 namespace cudf::io::parquet::detail {
@@ -30,8 +31,8 @@ constexpr int decode_delta_binary_block_size = 96;
 // warp_size; anything smaller lets the level decoder wrap onto entries the consumer is reading.
 constexpr int delta_nz_buf_size = 4 * delta_max_batch_size;
 
-// One producer warp and one writer warp
-constexpr int decode_delta_binary_with_nz_map_block_size = 64;
+// One warp decodes and writes each mapped page.
+constexpr int decode_delta_binary_with_nz_map_block_size = cudf::detail::warp_size;
 
 // DELTA_BYTE_ARRAY encoding (incremental encoding or front compression), is used for BYTE_ARRAY
 // columns. For each element in a sequence of strings, a prefix length from the preceding string
@@ -524,6 +525,132 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
   if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
 }
 
+struct nz_direct_delta_decoder : delta_binary_decoder {
+  // Per-lane snapshot: advancing the shared parser must not change the pending pass.
+  struct pass_input {
+    uint8_t const* data;
+    zigzag128_t min_delta;
+    uint32_t bitwidth;
+    uint32_t bit_offset;
+    uint32_t first_byte;
+    bool valid;
+  };
+
+  inline __device__ pass_input
+  load_pass_input(cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
+  {
+    auto const lane     = warp.thread_rank();
+    uint32_t const bits = cur_bitwidths[cur_mb];
+    // Keep the pass offset in bytes: a bit offset could overflow for a large mini-block.
+    uint32_t const bit_pos = lane * bits;
+    auto const* p =
+      cur_mb_start + cur_pass * (cudf::detail::warp_size * bits / CHAR_BIT) + bit_pos / CHAR_BIT;
+    bool const valid =
+      current_value_idx + cur_pass * cudf::detail::warp_size + lane < value_count && p < block_end;
+    return {p, cur_min_delta, bits, bit_pos % CHAR_BIT, valid ? *p : 0u, valid};
+  }
+
+  inline __device__ void advance_pass(
+    cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
+  {
+    // Finish all readers of the current parser state before lane 0 advances it.
+    warp.sync();
+    if (warp.thread_rank() == 0) {
+      if (++cur_pass == values_per_mb / cudf::detail::warp_size) {
+        cur_pass = 0;
+        setup_next_mini_block(true);
+      }
+    }
+    warp.sync();
+  }
+
+  static constexpr int items_per_lane = 4;
+  using exchange_type = cub::WarpExchange<uint64_t, items_per_lane, cudf::detail::warp_size>;
+  typename exchange_type::TempStorage exchange_storage;
+  struct tile_input {
+    pass_input values[items_per_lane];
+  };
+  struct tile_values {
+    uint64_t values[items_per_lane];
+  };
+
+  inline __device__ tile_input
+  load_tile(uint32_t remaining,
+            cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
+  {
+    tile_input result{};
+#pragma unroll
+    for (int item = 0; item < items_per_lane; ++item) {
+      if (remaining > item * cudf::detail::warp_size) {
+        result.values[item] = load_pass_input(warp);
+        advance_pass(warp);
+      }
+    }
+    return result;
+  }
+
+  inline __device__ uint64_t unpack_input(pass_input const& input)
+  {
+    uint64_t delta = 0;
+    if (input.valid) {
+      auto const* p = input.data + 1;
+      uint32_t c    = CHAR_BIT - input.bit_offset;
+      delta         = input.first_byte >> input.bit_offset;
+      while (c < input.bitwidth && p < block_end) {
+        delta |= static_cast<uint64_t>(*p++) << c;
+        c += CHAR_BIT;
+      }
+      if (input.bitwidth < 64) { delta &= (uint64_t{1} << input.bitwidth) - 1; }
+    }
+    return delta + static_cast<uint64_t>(input.min_delta);
+  }
+
+  inline __device__ tile_values
+  decode_tile(tile_input const& input,
+              uint32_t remaining,
+              cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
+  {
+    uint64_t values[items_per_lane];
+#pragma unroll
+    for (int item = 0; item < items_per_lane; ++item) {
+      // Inactive entries must be zero, including their minimum-delta contribution.
+      values[item] = item * cudf::detail::warp_size + warp.thread_rank() < remaining
+                       ? unpack_input(input.values[item])
+                       : uint64_t{0};
+    }
+    // Keep payload loads and final stores striped, but scan consecutive values per lane.
+    exchange_type(exchange_storage).StripedToBlocked(values, values);
+    warp.sync();
+#pragma unroll
+    for (int item = 1; item < items_per_lane; ++item) {
+      values[item] += values[item - 1];
+    }
+    uint64_t const lane_total  = values[items_per_lane - 1];
+    uint64_t const prefix      = cg::inclusive_scan(warp, lane_total, cg::plus<uint64_t>{});
+    uint64_t const lane_offset = prefix - lane_total;
+    uint64_t const tile_total  = warp.shfl(prefix, cudf::detail::warp_size - 1);
+    uint64_t const carry       = static_cast<uint64_t>(last_value);
+    // Finish all reads of the previous tile carry before publishing the next one.
+    warp.sync();
+    if (warp.thread_rank() == cudf::detail::warp_size - 1) {
+      last_value = static_cast<zigzag128_t>(carry + tile_total);
+    }
+    warp.sync();
+#pragma unroll
+    for (int item = 0; item < items_per_lane; ++item) {
+      values[item] += carry + lane_offset;
+    }
+    exchange_type(exchange_storage).BlockedToStriped(values, values);
+    warp.sync();
+    tile_values result{};
+#pragma unroll
+    for (int item = 0; item < items_per_lane; ++item) {
+      result.values[item] = values[item];
+    }
+    return result;
+  }
+};
+
 // Decodes flat DELTA_BINARY_PACKED pages, like `decode_delta_binary_kernel`, but places values
 // using the nz map's rank map instead of decoding definition levels itself.
 CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
@@ -534,7 +661,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
                                          cudf::device_span<bool const> page_mask,
                                          kernel_error::pointer error_code)
 {
-  __shared__ __align__(16) delta_binary_decoder db_state;
+  __shared__ __align__(16) nz_direct_delta_decoder db_state;
   __shared__ __align__(16) full_page_decode_state state_g;
 
   auto* const s      = &state_g;
@@ -565,10 +692,10 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
 
   auto& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
   cg::invoke_one(block, [&] {
-    // A sliced page keeps the valid values preceding `first_row` in its map, so the null count for
-    // the rows this page contributes has to skip them. The map is ascending, so that prefix is the
-    // distance to `first_row`'s lower bound. Only the first page of a read is sliced, so skip the
-    // search when there is no prefix to find.
+    // A sliced page keeps the valid values preceding `first_row` in its map, so the null count
+    // for the rows this page contributes has to skip them. The map is ascending, so that prefix
+    // is the distance to `first_row`'s lower bound. Only the first page of a read is sliced, so
+    // skip the search when there is no prefix to find.
     auto const prefix_valid_count =
       (process_nulls && s->setup.first_row > 0)
         ? static_cast<int>(cuda::std::lower_bound(nz_idx,
@@ -595,79 +722,58 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
   // classifier selects only such pages, so there is no resume to handle here. The decode index is
   // the rank itself: `nz_count` counts from page position 0, so it already spans any prefix below
   // `first_row`.
-  uint32_t const batch_size = min(db->values_per_mb, static_cast<uint32_t>(delta_max_batch_size));
-  uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
-
-  // This is a two-warp version of delta binary decoding using a delta producer warp and a value
-  // writer warp. The writer trails the producer by one batch to allow the two to run concurrently
-  // in a single phase. `next_pass_start_idx()` is the first stream index the producer has not
-  // decoded yet. Every index below it is decoded, and is still resident because
-  // `delta_rolling_buf_size` holds two batches, the one in flight plus the one trailing. Reading
-  // `next_pass_start_idx()` only at the barrier keeps the concurrent region free of any access to
-  // the decoder's mutable scalars. `value_at()` touches `value[]` and `first_value`, and the
-  // producer writes neither below that index.
-  //
-  // Hoisted: the store below writes through `data_out`, which the compiler cannot prove does not
-  // alias `ni`, so in place these reload once per value.
   auto* const data_out = ni.data_out;
   auto const dtype_len = s->output_cvt.dtype_len;
   auto const first_row = s->setup.first_row;
-  uint32_t produced    = db->next_pass_start_idx();
-  while (s->setup.error == 0 && s->progress.src_pos < s->progress.nz_count) {
-    uint32_t const src_pos = s->progress.src_pos;
-    // Capped at one batch so the writer trails the producer by exactly one, never more: the
-    // rolling buffer holds two batches, so a writer that fell two behind would read values the
-    // producer had already overwritten.
-    uint32_t const target_pos =
-      min(static_cast<uint32_t>(s->progress.nz_count), min(produced, src_pos + batch_size));
-    block.sync();
-
-    if (warp.meta_group_rank() == 0) {
-      for (uint32_t i = 0; i < passes_per_batch; ++i) {
-        if (i > 0) { warp.sync(); }
-        db->decode_next_pass(warp);
+  auto const lane      = warp.thread_rank();
+  auto const value_limit =
+    min(static_cast<uint32_t>(nz_count_in), static_cast<uint32_t>(db->value_count));
+  auto write_value = [=] __device__(uint32_t sp, zigzag128_t val) {
+    auto dst_pos = process_nulls ? static_cast<int32_t>(nz_idx[sp]) : static_cast<int32_t>(sp);
+    dst_pos -= first_row;
+    if (dst_pos >= 0) {
+      void* const dst = data_out + dst_pos * dtype_len;
+      switch (dtype_len) {
+        case 1: *static_cast<int8_t*>(dst) = val; break;
+        case 2: *static_cast<int16_t*>(dst) = val; break;
+        case 4: *static_cast<int32_t*>(dst) = val; break;
+        case 8: *static_cast<int64_t*>(dst) = val; break;
       }
-    } else if (warp.meta_group_rank() == 1 && src_pos < target_pos) {
-      for (uint32_t sp = src_pos + warp.thread_rank(); sp < target_pos; sp += warp.size()) {
-        auto dst_pos = process_nulls ? static_cast<int32_t>(nz_idx[sp]) : static_cast<int32_t>(sp);
-        dst_pos -= first_row;
-        if (dst_pos >= 0) {
-          void* const dst = data_out + dst_pos * dtype_len;
-          auto const val  = db->value_at(sp);
-          switch (dtype_len) {
-            case 1: *static_cast<int8_t*>(dst) = val; break;
-            case 2: *static_cast<int16_t*>(dst) = val; break;
-            case 4: *static_cast<int32_t*>(dst) = val; break;
-            case 8: *static_cast<int64_t*>(dst) = val; break;
-          }
-        }
-      }
-      if (warp.thread_rank() == 0) { s->progress.src_pos = target_pos; }
     }
-    block.sync();
+  };
 
-    // Stop once neither warp advances: a malformed page whose delta stream is shorter than its
-    // definition levels imply never reaches `nz_count`.
-    //
-    // Both halves are needed: the producer finishes first and the writer still has a batch to
-    // drain, and on the first iteration the writer has not run at all.
-    uint32_t const prev_produced = produced;
-    produced                     = db->next_pass_start_idx();
-    if (produced == prev_produced && s->progress.src_pos <= src_pos) { break; }
+  // The first value lives in the header, outside the packed delta passes.
+  if (lane == 0 && value_limit > 0) { write_value(0, db->first_value); }
+  warp.sync();
+  uint32_t src_pos = min(value_limit, 1u);
+  nz_direct_delta_decoder::tile_input current{};
+  if (s->setup.error == 0 && src_pos < value_limit) {
+    db->advance_past_first_value(warp);
+    current = db->load_tile(value_limit - src_pos, warp);
   }
-
-  // The loop's barrier is inside its body, so a straggler may still be evaluating the loop
-  // condition -- which reads s->progress.nz_count -- when a later write lands on that field.
-  block.sync();
-
-  // Values still outstanding means the loop stopped above rather than finishing: the delta stream
-  // held fewer values than the definition levels call for. Those rows are already marked valid, so
-  // without an error the read would return whatever their output slots happened to contain.
-  cg::invoke_one(block, [&] {
-    if (s->setup.error == 0 and s->progress.src_pos < s->progress.nz_count) {
+  while (s->setup.error == 0 && src_pos < value_limit) {
+    auto const next_pos =
+      src_pos + min(nz_direct_delta_decoder::items_per_lane * uint32_t{cudf::detail::warp_size},
+                    value_limit - src_pos);
+    nz_direct_delta_decoder::tile_input next{};
+    if (next_pos < value_limit) { next = db->load_tile(value_limit - next_pos, warp); }
+    auto const values = db->decode_tile(current, value_limit - src_pos, warp);
+#pragma unroll
+    for (int item = 0; item < nz_direct_delta_decoder::items_per_lane; ++item) {
+      uint32_t const sp = src_pos + item * cudf::detail::warp_size + lane;
+      if (sp < value_limit) { write_value(sp, static_cast<zigzag128_t>(values.values[item])); }
+    }
+    src_pos = next_pos;
+    current = next;
+    warp.sync();
+  }
+  warp.sync();
+  if (lane == 0) {
+    s->progress.src_pos = src_pos;
+    if (s->setup.error == 0 && src_pos < static_cast<uint32_t>(nz_count_in)) {
       s->setup.error |= static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
     }
-  });
+  }
 
   if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
 }
@@ -1146,8 +1252,8 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 dim_block(decode_delta_binary_block_size, 1);
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
   dim3 dim_block_nz_map(decode_delta_binary_with_nz_map_block_size, 1);
-  static_assert(decode_delta_binary_with_nz_map_block_size == 2 * cudf::detail::warp_size,
-                "The nz map consumer runs one producer warp and one writer warp");
+  static_assert(decode_delta_binary_with_nz_map_block_size == cudf::detail::warp_size,
+                "The nz map consumer uses one warp per page");
 
   // On the producer's stream, so it is ordered behind the producer without an event. The
   // level-decoding kernel below needs no such ordering: it reads only host-set fields.

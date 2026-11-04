@@ -234,6 +234,71 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   }
 }
 
+// Exercise the mapped delta consumer with required, nullable and optional-all-valid columns.
+// Check both page versions, page tails, slices and output chunks.
+TEST_F(ParquetReaderTest, NzMapDeltaMixedColumns)
+{
+  constexpr cudf::size_type rows = 6003;
+  auto const values              = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<int64_t>(i) * 1073741827LL + (i % 11) * 100003LL; });
+  auto const valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 0; });
+  auto const all_valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto) { return true; });
+  cudf::test::fixed_width_column_wrapper<int64_t> const required(values, values + rows);
+  cudf::test::fixed_width_column_wrapper<int64_t> const nullable(values, values + rows, valid);
+  cudf::test::fixed_width_column_wrapper<int64_t> const optional(values, values + rows, all_valid);
+  auto const small_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 3 - 7; });
+  cudf::test::fixed_width_column_wrapper<int32_t> const small(small_values, small_values + rows);
+  auto const expected = table_view({required, nullable, optional, small});
+  auto metadata       = cudf::io::table_input_metadata{expected};
+  for (auto& column : metadata.column_metadata) {
+    column.set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+  }
+  metadata.column_metadata[0].set_nullability(false);
+  metadata.column_metadata[1].set_nullability(true);
+  metadata.column_metadata[2].set_nullability(true);
+  metadata.column_metadata[3].set_nullability(false);
+  for (bool v2 : {false, true}) {
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .metadata(metadata)
+        .write_v2_headers(v2)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .max_page_fragment_size(1000)
+        .max_page_size_rows(1000)
+        .build());
+    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+    for (auto const* enabled : {"0", "1"}) {
+      tmp_env_var const env{"LIBCUDF_PARQUET_NZ_MAP", enabled};
+      auto const options = cudf::io::parquet_reader_options::builder(source).build();
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, cudf::io::read_parquet(options).tbl->view());
+      for (auto const [start, count] :
+           {std::pair{1, 129}, std::pair{127, 258}, std::pair{1500, 4321}, std::pair{5999, 4}}) {
+        auto const trimmed =
+          cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
+                                   .skip_rows(start)
+                                   .num_rows(count)
+                                   .build());
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::slice(expected, {start, start + count}),
+                                           trimmed.tbl->view());
+      }
+      auto reader            = cudf::io::chunked_parquet_reader(1024, 8192, options);
+      cudf::size_type offset = 0;
+      while (reader.has_next()) {
+        auto const chunk = reader.read_chunk().tbl;
+        auto const end   = offset + chunk->num_rows();
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::slice(expected, {offset, end}), chunk->view());
+        offset = end;
+      }
+      EXPECT_EQ(offset, rows);
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBounds)
 {
   // trying to read more rows than there are should result in

@@ -125,10 +125,6 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
       popd
     fi
 
-    rapids-logger "TEMP: bloom filter alignment test"
-    pushd python/cudf/cudf/tests
-    python -m pytest -v input_output/test_parquet.py -k bloom_filters_alignment
-    popd
     rapids-logger "pytest cudf"
     pushd python/cudf/cudf/tests
     timeout "${cudf_timeout}" python -m pytest \

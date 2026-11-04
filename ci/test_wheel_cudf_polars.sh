@@ -97,10 +97,6 @@ for version in "${VERSIONS[@]}"; do
         COVERAGE_ARGS=(--no-cov)
     fi
 
-# TEMP: WSL diagnostics
-    nproc; free -g; cat /proc/meminfo | head -5
-    (while true; do nvidia-smi --query-gpu=timestamp,memory.used,memory.total,utilization.gpu,pstate,clocks.sm,temperature.gpu,power.draw --format=csv,noheader; free -m | sed -n 2p; cat /proc/loadavg; sleep 30; done) > "${RAPIDS_TESTS_DIR:-/tmp}/../wsl-monitor.log" 2>&1 &
-    WSL_MON_PID=$!
     # Fail fast (-x) rather than trying to continue because failed tests pollute the state
     ./ci/run_cudf_polars_pytests.sh \
         "${COVERAGE_ARGS[@]}" \
@@ -111,8 +107,6 @@ for version in "${VERSIONS[@]}"; do
         --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-${version}.xml"
 
     test_exitcode=$?
-    kill "${WSL_MON_PID}" || true
-    cat "${RAPIDS_TESTS_DIR:-/tmp}/../wsl-monitor.log"
     deactivate
     rm -rf "${env_name}" "${polars_requirements_txt}"
 

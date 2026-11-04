@@ -20,8 +20,7 @@ namespace CUDF_EXPORT cudf {
 /// @brief Device-code formats accepted by LTO execution APIs.
 enum class lto_binary_type : uint8_t {
   LTO_IR = 0,  ///< LTO IR binary
-  FATBIN = 1,  ///< FATBIN binary
-  PTX    = 2   ///< Null-terminated PTX text
+  FATBIN = 1  ///< FATBIN binary
 };
 
 /**
@@ -48,17 +47,14 @@ struct [[nodiscard]] compiled_fragment {
   /// @brief Returns a non-owning view of the compiled fragment
   [[nodiscard]] lto_fragment view() const noexcept;
 
-  /// @brief Returns a non-owning view of the compiled fragment
-  [[nodiscard]] operator lto_fragment() const noexcept { return view(); }
-
  private:
   std::shared_ptr<rtcx::blob_t> blob_;
 
   compiled_fragment(std::shared_ptr<rtcx::blob_t> blob) : blob_(std::move(blob)) {}
 
   friend compiled_fragment compile_cuda_to_lto_ir(char const*,
-                                                  std::span<char const*>,
-                                                  std::span<char const*>,
+                                                  std::span<char const* const>,
+                                                  std::span<char const* const>,
                                                   std::span<char const* const>,
                                                   bool);
 };
@@ -83,8 +79,8 @@ struct [[nodiscard]] compiled_fragment {
  * @throws std::runtime_error if compilation fails
  */
 compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
-                                         std::span<char const*> include_names,
-                                         std::span<char const*> includes,
+                                         std::span<char const* const> include_names,
+                                         std::span<char const* const> includes,
                                          std::span<char const* const> include_paths,
                                          bool use_pch = true);
 

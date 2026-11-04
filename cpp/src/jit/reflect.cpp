@@ -58,15 +58,6 @@ std::string get_element_type_name(transform_input_spec const& spec, bool use_phy
     data_type{spec.type}, element_type_name_fn{}, spec, use_physical_type);
 }
 
-}  // namespace
-
-std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type)
-{
-  return get_element_type_name(spec, use_physical_type);
-}
-
-namespace {
-
 std::string reflect_output_element(transform_output_spec const& spec, bool use_physical_type)
 {
   if (spec.type == type_id::STRING) {
@@ -74,19 +65,6 @@ std::string reflect_output_element(transform_output_spec const& spec, bool use_p
   }
   return get_element_type_name(transform_input_spec{.type = spec.type}, use_physical_type);
 }
-
-}  // namespace
-
-std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type)
-{
-  if (spec.type == type_id::DICTIONARY32) {
-    return reflect_input_value_type(spec.children.at(dictionary_keys_column_index),
-                                    use_physical_type);
-  }
-  return reflect_input_element(spec, use_physical_type);
-}
-
-namespace {
 
 std::string reflect_output_value_type(transform_output_spec const& spec, bool use_physical_type)
 {
@@ -97,34 +75,6 @@ std::string reflect_input_column(transform_input_spec const&)
 {
   return "cudf::column_device_view_core";
 }
-
-}  // namespace
-
-std::string reflect_output_column(transform_output_spec const& spec)
-{
-  if (spec.type == type_id::STRING) {
-    return spec.has_string_offsets ? "cudf::jit::mutable_strings_column_device_view"
-                                   : "cudf::jit::mutable_vector_device_view";
-  }
-  return "cudf::mutable_column_device_view_core";
-}
-
-transform_input_spec make_input_spec(column_view const& column, bool is_scalar)
-{
-  transform_input_spec result{.type = column.type().id(), .is_scalar = is_scalar};
-  if (is_dictionary(column.type())) {
-    for (size_type i = 0; i < column.num_children(); ++i) {
-      result.children.push_back(make_input_spec(column.child(i), false));
-    }
-  } else if (column.type().id() == type_id::STRING &&
-             column.num_children() > strings_column_view::offsets_column_index) {
-    result.children.push_back(
-      make_input_spec(column.child(strings_column_view::offsets_column_index), false));
-  }
-  return result;
-}
-
-namespace {
 
 transform_input_spec make_input_spec(transform_input const& input)
 {
@@ -156,12 +106,49 @@ transform_output_spec make_output_spec(mutable_strings_column const& output)
 
 }  // namespace
 
+std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type)
+{
+  return get_element_type_name(spec, use_physical_type);
+}
+
+std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type)
+{
+  if (spec.type == type_id::DICTIONARY32) {
+    return reflect_input_value_type(spec.children.at(dictionary_keys_column_index),
+                                    use_physical_type);
+  }
+  return reflect_input_element(spec, use_physical_type);
+}
+
+std::string reflect_output_column(transform_output_spec const& spec)
+{
+  if (spec.type == type_id::STRING) {
+    return spec.has_string_offsets ? "cudf::jit::mutable_strings_column_device_view"
+                                   : "cudf::jit::mutable_vector_device_view";
+  }
+  return "cudf::mutable_column_device_view_core";
+}
+
+transform_input_spec make_input_spec(column_view const& column, bool is_scalar)
+{
+  transform_input_spec result{.type = column.type().id(), .is_scalar = is_scalar};
+  if (is_dictionary(column.type())) {
+    for (size_type i = 0; i < column.num_children(); ++i) {
+      result.children.push_back(make_input_spec(column.child(i), false));
+    }
+  } else if (column.type().id() == type_id::STRING &&
+             column.num_children() > strings_column_view::offsets_column_index) {
+    result.children.push_back(
+      make_input_spec(column.child(strings_column_view::offsets_column_index), false));
+  }
+  return result;
+}
+
 rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
 {
   switch (type) {
     case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
     case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
-    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
   }
   CUDF_FAIL(std::format("Unrecognized LTO binary type {}", static_cast<int>(type)),
             std::invalid_argument);

@@ -469,8 +469,8 @@ rtcx::blob get_user_fragment(char const* name,
 }
 
 compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
-                                         std::span<char const*> include_names,
-                                         std::span<char const*> includes,
+                                         std::span<char const* const> include_names,
+                                         std::span<char const* const> includes,
                                          std::span<char const* const> include_paths,
                                          bool use_pch)
 {

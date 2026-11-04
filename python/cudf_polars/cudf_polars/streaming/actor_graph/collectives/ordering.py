@@ -98,7 +98,7 @@ def _extract_boundaries_from_endpoint_rows(
     -------
     The boundaries table and whether they are strict.
     """
-    # Boundaries are the first endpoint of all partitions except the first.
+    # Boundaries are the last endpoint of all partitions except the last.
     # Strictness compares each partition end with the following partition start.
     previous_partition_ends = plc.concatenate.concatenate(
         plc.copying.slice(
@@ -140,7 +140,7 @@ def _extract_boundaries_from_endpoint_rows(
         plc.DataType(plc.TypeId.BOOL8),
         stream=stream,
     ).to_py(stream=stream)
-    return next_partition_starts, strict
+    return previous_partition_ends, strict
 
 
 def _metadata_has_ordering(metadata: ChannelMetadata, keys: Sequence[OrderKey]) -> bool:
@@ -535,7 +535,7 @@ def _split_points(
     if boundary_table.num_rows() == 0:
         return []
     key_table = plc.Table([table.columns()[key.column_index] for key in ordering.keys])
-    split_col = plc.search.lower_bound(
+    split_col = plc.search.upper_bound(
         key_table,
         boundary_table,
         [key.order for key in ordering.keys],
@@ -626,20 +626,26 @@ def _source_output_range(
     input_npartitions = input_ordering.num_boundaries + 1
     output_npartitions = output_ordering.num_boundaries + 1
     output_prefix_only = len(output_ordering.keys) < len(input_ordering.keys)
-    # Prefix/non-strict boundaries can overlap the equal-boundary run above them.
-    include_upper_boundary = output_prefix_only or not input_ordering.strict_boundaries
+    # Prefix/non-strict boundaries may have equal keys on the following rank.
+    include_boundary = output_prefix_only or not input_ordering.strict_boundaries
     input_start, input_stop = partition_range(source_rank, nranks, input_npartitions)
     if input_start == input_stop:
         return 0, 0
-    output_start = 0 if input_start == 0 else upper_positions[input_start - 1]
+    output_start = (
+        0
+        if input_start == 0
+        else (
+            lower_positions[input_start - 1]
+            if include_boundary
+            else upper_positions[input_start - 1]
+        )
+    )
+    # The input boundary is an upper bound even when it is non-strict or
+    # projected onto a prefix. Equal values belong to the lower output partition.
     output_stop = (
         output_npartitions
         if input_stop == input_npartitions
-        else (
-            upper_positions[input_stop - 1] + 1
-            if include_upper_boundary
-            else lower_positions[input_stop - 1] + 1
-        )
+        else lower_positions[input_stop - 1] + 1
     )
     return output_start, output_stop
 

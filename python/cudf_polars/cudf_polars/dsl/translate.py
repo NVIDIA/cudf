@@ -37,6 +37,7 @@ from cudf_polars.dsl.utils.replace import replace
 from cudf_polars.dsl.utils.rolling import rewrite_rolling
 from cudf_polars.typing import Schema
 from cudf_polars.utils import config, sorting
+from cudf_polars.utils.uri import strip_file_uri
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -97,16 +98,6 @@ def _contains_categorical_key(keys: Sequence[expr.NamedExpr]) -> bool:
         _contains_dtype(k.value.dtype.polars_type, (pl.Categorical, pl.Enum))
         for k in keys
     )
-
-
-def _strip_file_uri(path: str) -> str:
-    # file:///foo/path is treated as a local path. Polars
-    # rejects file:// URIs with any non-empty host, so
-    # we don't need to handle file://host/foo/path paths
-    prefix = "file://"
-    if path.startswith(prefix):
-        return path[len(prefix) :]
-    return path
 
 
 def _check_compression(data: bytes) -> str | None:
@@ -591,7 +582,7 @@ def _(node: plrs._ir_nodes.Scan, translator: Translator, schema: Schema) -> ir.I
         for dtype in schema.values()
     ):
         raise NotImplementedError("Reading Categorical/Enum columns is not supported")
-    paths = [_strip_file_uri(p) for p in node.paths]
+    paths = [strip_file_uri(p) for p in node.paths]
     # Polars can produce a Scan with an empty ``node.paths`` (eg. the native
     # Iceberg reader on a table with no data files yet). In this case, polars returns an
     # empty DataFrame with the declared schema. Mirror that here by
@@ -855,9 +846,35 @@ def _translate_cross_and_filter(
 
     The join type is ``(<how>, "cross_and_filter")`` and ``node.predicate`` is the
     condition that is applied to the cross product, for example from
-    ``x NOT IN (SELECT ...)`` in SQL. Not supported yet, so it falls back to the CPU.
+    ``x NOT IN (SELECT ...)`` in SQL. A cross join followed by a filter is supported;
+    Left and Right joins need outer join semantics and fall back to the CPU, see
+    https://github.com/NVIDIA/cudf/issues/24693.
     """
-    raise NotImplementedError(f"Unsupported join type {node.options[0]}")
+    how, nulls_equal, zlice, suffix, coalesce, maintain_order = node.options
+    if how[0] != "Cross":
+        raise NotImplementedError(f"Unsupported join type {how}")
+    if zlice is not None:  # pragma: no cover
+        # polars does not push a slice into this join
+        raise NotImplementedError("Slice in a nested loop join")
+    mask = translate_predicate(
+        translator,
+        n=node.predicate.node,
+        output_name=node.predicate.output_name,
+        schema=schema,
+    )
+    if mask is None:  # pragma: no cover
+        # polars does not put dynamic predicate hints in a join predicate
+        raise NotImplementedError("Dynamic predicate hint in a nested loop join")
+    cross = ir.Join(
+        schema,
+        left_on,
+        right_on,
+        ("Cross", nulls_equal, None, suffix, coalesce, maintain_order),
+        None,
+        inp_left,
+        inp_right,
+    )
+    return ir.Filter(schema, mask, cross)
 
 
 def _translate_fused_predicate(
@@ -1484,7 +1501,22 @@ def _translate_function(
                 expr.Literal(dtype, base.value),
             )
         elif name == "pow":
-            return expr.BinOp(dtype, plc.binaryop.BinaryOperator.POW, *children)
+            base, exponent = children
+            # POW computes in double, which cannot hold every integer above
+            # 2**53. Polars multiplies in the base's integer type, as INT_POW does.
+            integer_pow = (
+                dtype == base.dtype
+                and plc.traits.is_integral_not_bool(dtype.plc_type)
+                and plc.traits.is_integral_not_bool(exponent.dtype.plc_type)
+            )
+            return expr.BinOp(
+                dtype,
+                plc.binaryop.BinaryOperator.INT_POW
+                if integer_pow
+                else plc.binaryop.BinaryOperator.POW,
+                base,
+                exponent,
+            )
         elif name == "decimal_mul":
             return expr.BinOp(dtype, plc.binaryop.BinaryOperator.MUL, *children)
         elif name == "product":

@@ -8,6 +8,7 @@ Each test launches a single cooperative block over a device array, constructs a
 scalar result on the host. This mirrors the per-group reduction the JIT GroupBy
 backend performs for one group.
 """
+
 from __future__ import annotations
 
 import cupy as cp
@@ -15,7 +16,7 @@ import numpy as np
 import pytest
 from numba_cuda_mlir import cuda, types
 
-import cudf.core.udf.mlir_backend.cooperative_lowering  # noqa: F401 registers lowerings
+import cudf.core.udf.mlir_backend.cooperative_lowering
 import cudf.core.udf.mlir_backend.cooperative_typing  # noqa: F401 registers typing
 from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
     cooperative_reductions_linkable,
@@ -52,6 +53,7 @@ def _nb1(dtype):
 # Kernel bodies, one per reduction. numba cannot JIT a dynamic
 # ``getattr(group, method)()`` (the method must be known at trace time), so each
 # reduction gets its own small kernel and the helpers dispatch by name.
+
 
 def _k_min(o, a):
     r = CooperativeArray(a, a.size).min()
@@ -178,14 +180,20 @@ _VALS = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3]
 @pytest.mark.parametrize("dtype", ["int32", "int64", "float32", "float64"])
 def test_min(dtype, tpb):
     arr = cp.asarray(np.array(_VALS, dtype=dtype))
-    assert _reduce(arr, "min", dtype, tpb=tpb) == np.array(_VALS, dtype=dtype).min()
+    assert (
+        _reduce(arr, "min", dtype, tpb=tpb)
+        == np.array(_VALS, dtype=dtype).min()
+    )
 
 
 @pytest.mark.parametrize("tpb", _TPBS)
 @pytest.mark.parametrize("dtype", ["int32", "int64", "float32", "float64"])
 def test_max(dtype, tpb):
     arr = cp.asarray(np.array(_VALS, dtype=dtype))
-    assert _reduce(arr, "max", dtype, tpb=tpb) == np.array(_VALS, dtype=dtype).max()
+    assert (
+        _reduce(arr, "max", dtype, tpb=tpb)
+        == np.array(_VALS, dtype=dtype).max()
+    )
 
 
 @pytest.mark.parametrize("tpb", _TPBS)
@@ -284,7 +292,9 @@ def test_corr(dtype, tpb):
 def test_corr_float_unsupported():
     # Correlation of floating types is not supported (#13839); rejected in typing.
     with pytest.raises(UDFError, match="corr"):
-        cuda.jit(types.void(types.float64[::1], types.float64[::1]))(_k_corr_self)
+        cuda.jit(types.void(types.float64[::1], types.float64[::1]))(
+            _k_corr_self
+        )
 
 
 def test_corr_dtype_mismatch_rejected():

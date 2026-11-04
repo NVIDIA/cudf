@@ -366,6 +366,9 @@ if hasArg cudf_polars_quent; then
         if [[ -n "${VERBOSE_FLAG}" ]]; then
             QUENT_PIP_ARGS+=(-vv)
         fi
+        if hasArg --pydevelop; then
+            QUENT_PIP_ARGS+=(-e)
+        fi
         python -m pip install "${QUENT_PIP_ARGS[@]}" .
     else
         cargo clean -p cudf-polars-quent

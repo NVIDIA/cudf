@@ -12,6 +12,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <memory>
 #include <optional>
@@ -624,19 +625,16 @@ class parquet_reader_options {
    * column's own resolution. For a coarser resolution such as TIMESTAMP_DAYS, cast the output
    * column instead.
    *
-   * @throws cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
+   * @throw cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
    * TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS
    *
    * @param type The timestamp data_type to which all timestamp columns need to be cast
    */
   void set_timestamp_type(data_type type)
   {
-    CUDF_EXPECTS(type.id() == type_id::EMPTY or type.id() == type_id::TIMESTAMP_SECONDS or
-                   type.id() == type_id::TIMESTAMP_MILLISECONDS or
-                   type.id() == type_id::TIMESTAMP_MICROSECONDS or
-                   type.id() == type_id::TIMESTAMP_NANOSECONDS,
-                 "timestamp_type must be EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS, "
-                 "TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS");
+    CUDF_EXPECTS(type.id() == type_id::EMPTY or
+                   (cudf::is_timestamp(type) and type.id() != type_id::TIMESTAMP_DAYS),
+                 "timestamp_type must be EMPTY or a second-based TIMESTAMP type");
     _timestamp_type = type;
   }
 
@@ -917,7 +915,7 @@ class parquet_reader_options_builder {
   /**
    * @brief timestamp_type used to cast timestamp columns.
    *
-   * @throws cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
+   * @throw cudf::logic_error if `type` is not EMPTY, TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
    * TIMESTAMP_MICROSECONDS or TIMESTAMP_NANOSECONDS
    *
    * @param type The timestamp data_type to which all timestamp columns need to be cast

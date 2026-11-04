@@ -48,8 +48,9 @@ public class ParquetOptions extends ColumnFilterOptions {
 
     /**
      * Specify the time unit to use when returning timestamps.
-     * Only TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS, TIMESTAMP_MICROSECONDS and
-     * TIMESTAMP_NANOSECONDS are valid; for TIMESTAMP_DAYS, cast the returned column instead.
+     * DType.EMPTY (the default), TIMESTAMP_SECONDS, TIMESTAMP_MILLISECONDS,
+     * TIMESTAMP_MICROSECONDS and TIMESTAMP_NANOSECONDS are valid; for TIMESTAMP_DAYS,
+     * cast the returned column instead.
      * @param unit default unit of time specified by the user
      * @return builder for chaining
      */

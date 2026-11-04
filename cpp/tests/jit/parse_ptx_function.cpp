@@ -6,6 +6,7 @@
 #include "jit/parser.hpp"
 
 #include <cudf_test/cudf_gtest.hpp>
+#include <cudf_test/testing_main.hpp>
 
 #include <cudf/utilities/error.hpp>
 
@@ -82,3 +83,5 @@ TEST_F(JitParseTest, PTXForwardDeclaration)
     ".visible .func transform() { call helper; ret; }";
   EXPECT_EQ(cudf::jit::parse_single_function_ptx(source), expected);
 }
+
+CUDF_TEST_PROGRAM_MAIN()

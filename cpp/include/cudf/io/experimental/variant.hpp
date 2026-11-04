@@ -8,6 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/io/experimental/variant_spec.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -155,6 +156,52 @@ namespace io::parquet::experimental {
   column_view const& values,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Parse each row of a strings column as one JSON document and encode it as a VARIANT.
+ *
+ * The output is byte-identical to Spark's `parse_json` (Spark 4.0 `VariantBuilder`):
+ *   - Integers use the narrowest of INT8/INT16/INT32/INT64. Numbers that do not fit, or that have
+ *     a fraction, become DECIMAL4/8/16 when written without an exponent and with precision and
+ *     scale of at most 38; all other numbers become correctly rounded FLOAT64 values.
+ *   - Strings of up to 63 bytes are short strings; longer strings are LONG_STRING primitives.
+ *   - Each row has its own metadata dictionary, in order of first use. Object fields are sorted by
+ *     key in UTF-16 code unit order.
+ *   - Content after the first complete JSON value in a row is ignored.
+ *
+ * Rows that do not convert are null in the output, and `status` records why:
+ *   - `ROW_NULL`: the input row is null.
+ *   - `INVALID_JSON`: the row is not valid JSON under Jackson's default rules, including its limits
+ *     on nesting depth (1000), number length (1000), string length, and field name length.
+ *   - `DUPLICATE_KEY`: an object repeats a key and `allow_duplicate_keys` is false. When it is
+ * true, the last occurrence of the key is kept.
+ *   - `SIZE_LIMIT`: the encoded value or metadata of the row exceeds 128 MiB.
+ *   - `UNSUPPORTED_INPUT`: the row is valid, but cannot be converted on the GPU. This happens when
+ *     arrays and objects nest more than 127 levels deep, counting each object twice, or when a
+ *     top-level `true`, `false`, or `null` is followed directly by a non-ASCII character. Callers
+ *     that need a result for such rows must convert them on the CPU.
+ *
+ * Input strings are assumed to be valid UTF-8.
+ *
+ * @param input Strings column with one JSON document per row
+ * @param allow_duplicate_keys Whether objects may repeat a key, keeping the last occurrence
+ * @param status Optional. When provided, filled with `variant_operation_status` values, one per
+ *               row. Must be non-nullable, `UINT8`, and have the same row count as `input`
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return Struct column with `metadata` and `value` children, each `list<uint8>`
+ *
+ * @throws std::invalid_argument if `status` is provided but is nullable, not `UINT8`, or has a
+ *         different row count than `input`
+ * @throws std::overflow_error if the encoded metadata or values of a batch of rows exceed the
+ *         `size_type` limit
+ */
+[[nodiscard]] std::unique_ptr<column> parse_json_to_variant(
+  strings_column_view const& input,
+  bool allow_duplicate_keys,
+  std::optional<mutable_column_view> status = std::nullopt,
+  cuda::stream_ref stream                   = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
 
 /** @} */
 }  // namespace io::parquet::experimental

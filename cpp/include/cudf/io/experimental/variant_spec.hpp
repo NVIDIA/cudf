@@ -50,14 +50,18 @@ enum class variant_primitive_type : uint8_t {
  * @brief VARIANT status types.
  */
 enum class variant_operation_status : uint8_t {
-  SUCCESS            = 0,  ///< operation completed successfully
-  ROW_NULL           = 1,  ///< the SQL row itself was null (no VARIANT data to decode)
-  MISSING_PATH       = 2,  ///< the requested path does not exist in the VARIANT
-  VARIANT_NULL       = 3,  ///< the value at the path is a VARIANT null
-  TYPE_MISMATCH      = 4,  ///< the value's type does not match the requested type
-  MALFORMED_VARIANT  = 5,  ///< the VARIANT binary encoding is invalid
-  OVERFLOW           = 6,  ///< the value overflows the target numeric type
-  INVALID_CONVERSION = 7,  ///< the value cannot be converted to the requested type
+  SUCCESS            = 0,   ///< operation completed successfully
+  ROW_NULL           = 1,   ///< the SQL row itself was null (no VARIANT data to decode)
+  MISSING_PATH       = 2,   ///< the requested path does not exist in the VARIANT
+  VARIANT_NULL       = 3,   ///< the value at the path is a VARIANT null
+  TYPE_MISMATCH      = 4,   ///< the value's type does not match the requested type
+  MALFORMED_VARIANT  = 5,   ///< the VARIANT binary encoding is invalid
+  OVERFLOW           = 6,   ///< the value overflows the target numeric type
+  INVALID_CONVERSION = 7,   ///< the value cannot be converted to the requested type
+  INVALID_JSON       = 8,   ///< the input row is not valid JSON
+  DUPLICATE_KEY      = 9,   ///< a JSON object repeats a key and duplicates are not allowed
+  SIZE_LIMIT         = 10,  ///< the encoded value or metadata exceeds the VARIANT size limit
+  UNSUPPORTED_INPUT  = 11,  ///< the row is valid but cannot be converted on the GPU
 };
 
 /**

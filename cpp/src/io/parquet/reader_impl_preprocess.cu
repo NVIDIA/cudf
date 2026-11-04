@@ -849,13 +849,16 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // Decode definition and repetition levels for all subpass pages
   // so they're available to compute_page_sizes and decode kernels.
   // We can't determine subpass skip_rows & num_rows yet, so we use the pass values.
-  detail::preprocess_levels(subpass.pages,
-                            pass.chunks,
-                            subpass_page_mask_span(),
-                            pass.skip_rows,
-                            pass.num_rows,
-                            pass.level_type_size,
-                            _stream);
+  // Only launch kernel if there are levels to decode.
+  if (subpass.level_decode_data.size() != 0) {
+    detail::preprocess_levels(subpass.pages,
+                              pass.chunks,
+                              subpass_page_mask_span(),
+                              pass.skip_rows,
+                              pass.num_rows,
+                              pass.level_type_size,
+                              _stream);
+  }
 
   // iterate over all input columns and determine if they contain lists.
   // TODO: we could do this once at the file level instead of every time we get in here. the set of

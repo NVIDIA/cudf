@@ -662,6 +662,23 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
                "columns with bloom filters and an equality predicate",
                std::invalid_argument);
 
+  // Each bitset must be header-stripped and 32-byte aligned, as returned by
+  // `fetch_bloom_filters_to_device`. A raw bloom filter byte range also holds the Thrift header,
+  // which would be read as part of the bitset and wrongly prune row groups holding a match.
+  // TODO(NVIDIA/cuCollections#829): replace with a cuco-provided block-size / alignment accessor.
+  auto constexpr bloom_filter_block_bytes = std::size_t{32};
+  CUDF_EXPECTS(
+    std::ranges::all_of(
+      bloom_filter_data,
+      [](auto const& data) {
+        return data.empty() or
+               (reinterpret_cast<std::uintptr_t>(data.data()) % bloom_filter_block_bytes == 0 and
+                data.size() % bloom_filter_block_bytes == 0);
+      }),
+    "Bloom filter data must be header-stripped bitsets that are 32-byte aligned and a "
+    "multiple of 32 bytes long, as returned by `fetch_bloom_filters_to_device`",
+    std::invalid_argument);
+
   // Transform bloom filter data to cuda::std::byte type for apply_bloom_filters
   std::vector<cudf::device_span<cuda::std::byte const>> transformed_bloom_filter_data;
   transformed_bloom_filter_data.reserve(bloom_filter_data.size());

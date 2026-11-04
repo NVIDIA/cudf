@@ -289,16 +289,13 @@ class hybrid_scan_metadata {
  * auto bloom_filtered_row_group_indices = std::vector<size_type>{};
  *
  * if (bloom_filter_byte_ranges.size()) {
- *   // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
- *   auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
- *   auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
- *   auto [bloom_filter_buffers, bloom_filter_data, bloom_filter_tasks] =
- *     parquet::fetch_byte_ranges_to_device_async(datasource,
- *                                                bloom_filter_byte_ranges,
- *                                                parquet::io_submission_policy::SERIALIZE,
- *                                                stream,
- *                                                aligned_mr);
- *   bloom_filter_tasks.get();
+ *   // Fetch the header-stripped, 32-byte aligned bloom filter bitsets from the input file
+ *   auto [bloom_filter_buffers, bloom_filter_data] =
+ *     parquet::fetch_bloom_filters_to_device(datasource,
+ *                                            bloom_filter_byte_ranges,
+ *                                            parquet::io_submission_policy::SERIALIZE,
+ *                                            stream,
+ *                                            mr);
  *
  *   // Prune row groups using bloom filters
  *   bloom_filtered_row_group_indices = reader->filter_row_groups_with_bloom_filters(
@@ -543,8 +540,9 @@ class hybrid_scan_reader {
   /**
    * @brief Get byte ranges of bloom filters for row group pruning
    *
-   * @note Device buffers for bloom filter byte ranges must be allocated using a 32 byte
-   *       aligned memory resource
+   * @note Each byte range spans a complete bloom filter, including its header. Use
+   *       `cudf::io::parquet::fetch_bloom_filters_to_device` to fetch the header-stripped, 32-byte
+   *       aligned bitsets that `filter_row_groups_with_bloom_filters` expects
    *
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
@@ -557,6 +555,9 @@ class hybrid_scan_reader {
    * @brief Filter the row groups using column chunk bloom filters
    *
    * @note The `bloom_filter_data` device spans must point to 32-byte aligned addresses
+   *
+   * @throws std::invalid_argument if a non-empty bitset is not 32-byte aligned or its size is not
+   *         a multiple of 32 bytes
    *
    * @param bloom_filter_data Device spans of header-stripped bloom filter bitsets of column chunks
    *                          with an equality predicate, ordered to match the bloom filter byte

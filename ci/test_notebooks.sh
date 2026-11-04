@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -28,7 +28,7 @@ rapids-dependency-file-generator \
 
 rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n test
 
-# Conda activation hooks can read optional variables before defining them.
+# Temporarily allow unbound variables for conda activation.
 set +u
 conda activate test
 set -u

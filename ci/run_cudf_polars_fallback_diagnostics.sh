@@ -4,6 +4,7 @@
 
 set -euo pipefail
 
+source rapids-init-pip
 
 report_dir=$(mktemp -d)
 audit_args=()

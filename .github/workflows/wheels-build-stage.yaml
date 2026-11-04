@@ -87,7 +87,6 @@ jobs:
         continue-on-error: true
         with:
           enable-apt: true
-          # This exports the PyPI proxy URL that rapids-init-uv maps to uv.
           enable-pip: true
           enable-pypi-anaconda: true
       - name: Setup sccache-dist

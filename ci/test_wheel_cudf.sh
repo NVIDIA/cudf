@@ -17,11 +17,30 @@ CUPY_NIGHTLY="${CUPY_NIGHTLY:-false}"
 CUPY_NIGHTLY_UV_ARGS=()
 CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
 if [[ "${CUPY_NIGHTLY}" == "true" ]]; then
+  # Keep the RAPIDS nightly index and any caller-provided indexes.
+  export UV_EXTRA_INDEX_URL="${UV_EXTRA_INDEX_URL} ${NV_GHA_RUNNERS_PYPI_ANACONDA_CACHE_URL:-https://pypi.anaconda.org}/scientific-python-nightly-wheels/simple/"
   CUPY_NIGHTLY_UV_ARGS=(
-    --extra-index-url "${NV_GHA_RUNNERS_PYPI_ANACONDA_CACHE_URL:-https://pypi.anaconda.org}/scientific-python-nightly-wheels/simple/"
+    --prerelease-package "cupy-cuda${CUDA_MAJOR}x=allow"
+    --upgrade-package "cupy-cuda${CUDA_MAJOR}x"
     "cupy-cuda${CUDA_MAJOR}x>=0.0.0a0"
   )
 fi
+
+check_cupy_nightly() {
+  if [[ "${CUPY_NIGHTLY}" == "true" ]]; then
+    # A compatible stable release must not silently replace the nightly coverage.
+    python - "${CUDA_MAJOR}" <<'PY'
+from importlib.metadata import version
+import sys
+
+from packaging.version import Version
+
+installed = version(f"cupy-cuda{sys.argv[1]}x")
+if not Version(installed).is_prerelease:
+    raise RuntimeError(f"Expected nightly CuPy, installed {installed}")
+PY
+  fi
+}
 
 pylibcudf_timeout=30m
 cudf_timeout=30m
@@ -68,6 +87,8 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
       "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]"
 
+    check_cupy_nightly
+
     rapids-logger "pytest pylibcudf without optional dependencies"
     pushd python/pylibcudf/tests
     timeout "${pylibcudf_timeout}" python -m pytest \
@@ -95,6 +116,8 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
       "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
       "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test, pyarrow, numpy]"
+
+    check_cupy_nightly
 
     if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" ]]; then
       rapids-logger "pytest pylibcudf"
@@ -150,6 +173,8 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
     "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+
+  check_cupy_nightly
 
   rapids-logger "pytest cudf_streaming"
   pushd python/cudf_streaming/cudf_streaming/tests

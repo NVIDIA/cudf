@@ -171,7 +171,6 @@ void reader_impl::setup_next_pass(read_mode mode)
     // decompressed dictionary data. we will subtract this from the available total memory for the
     // subpasses
     cudf::memory_resources mrs(_mr);
-    auto temp_mr    = mrs.get_temporary_mr();
     auto chunk_iter = cuda::transform_iterator(pass.chunks.d_begin(), get_chunk_compressed_size{});
     pass.base_mem_size =
       decomp_dict_data_size + cudf::detail::reduce(chunk_iter,

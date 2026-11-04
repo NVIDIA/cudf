@@ -436,3 +436,15 @@ def test_parquet_filter_on_float_keeps_nan(engine: pl.GPUEngine, tmp_path, op):
         op(pl.col("a"), 1.0)
     )
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("op", [pl.Expr.gt, pl.Expr.ge, pl.Expr.lt, pl.Expr.le])
+@pytest.mark.skip_on_streaming_engine(
+    "ConditionalJoin not supported for multiple partitions"
+)
+def test_conditional_join_on_float_comparison_with_nan(engine: pl.GPUEngine, op):
+    nan = float("nan")
+    left = pl.LazyFrame({"a": [nan, 0.0, 1.0, 2.0, None]})
+    right = pl.LazyFrame({"b": [1.0, nan, 5.0, None]})
+    q = left.join_where(right, op(pl.col("a"), pl.col("b")))
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

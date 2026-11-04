@@ -235,6 +235,8 @@ class BinOp(Expr):
         itself, but libcudf follows IEEE 754, where every comparison with NaN
         except ``!=`` is false.
         """
+        # TODO: Use NaN-aware comparison operators once libcudf has them, and
+        # remove this workaround. https://github.com/NVIDIA/cudf/issues/18930
         binop = plc.binaryop.BinaryOperator
         bool_type = plc.DataType(plc.TypeId.BOOL8)
 

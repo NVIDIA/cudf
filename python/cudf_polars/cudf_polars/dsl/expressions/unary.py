@@ -169,6 +169,8 @@ class UnaryFunction(Expr):
         "bit_invert": plc.unary.UnaryOperator.BIT_INVERT,
         "not": plc.unary.UnaryOperator.NOT,
         "negate": plc.unary.UnaryOperator.NEGATE,
+        # Not a polars function, only built by cudf-polars (round half to even)
+        "rint": plc.unary.UnaryOperator.RINT,
     }
     _supported_misc_fns = frozenset(
         {

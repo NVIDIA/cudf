@@ -6,7 +6,7 @@ from __future__ import annotations
 import warnings
 from decimal import Decimal
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 import numpy as np
 import pyarrow as pa
@@ -19,6 +19,7 @@ from cudf.api.types import is_scalar
 from cudf.core._internals import binaryop
 from cudf.core.column.column import ColumnBase, as_column
 from cudf.core.column.numerical_base import NumericalBaseColumn
+from cudf.core.column.utils import access_columns
 from cudf.core.dtypes import (
     Decimal32Dtype,
     Decimal64Dtype,
@@ -295,6 +296,122 @@ class DecimalColumn(NumericalBaseColumn):
                 f"{op} not supported for the following dtypes: "
                 f"{self.dtype}, {other_cudf_dtype}"
             )
+
+    def divide_decimal(
+        self,
+        other: DecimalColumn | int | Decimal | None,
+        rounding_mode: Literal["HALF_UP", "HALF_EVEN"] = "HALF_UP",
+    ) -> Self:
+        """
+        Perform decimal division preserving the dividend's scale.
+
+        This method divides the current column by another decimal value while
+        maintaining the scale of the dividend (this column), similar to Java's
+        BigDecimal.divide(divisor, roundingMode).
+
+        A result row is null if either input is null, if the divisor is zero,
+        or if the rounded quotient does not fit in the result type.
+
+        Parameters
+        ----------
+        other : DecimalColumn, int, Decimal, or None
+            The divisor. It may have a different scale from this column.
+            A decimal column of a different width is cast to the width of
+            this column. ``None`` gives an all-null result.
+        rounding_mode : str, optional
+            The rounding mode to use. Options are:
+            - "HALF_UP": Round half away from zero (default)
+            - "HALF_EVEN": Round half to even (banker's rounding)
+
+        Returns
+        -------
+        DecimalColumn
+            Result column with the same scale as this column
+
+        Raises
+        ------
+        TypeError
+            If ``other`` is not a supported divisor, or is a decimal column
+            whose precision does not fit in the width of this column.
+        ValueError
+            If ``rounding_mode`` is not supported.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> from decimal import Decimal
+        >>> s1 = cudf.Series([Decimal('1.23'), Decimal('4.56')])
+        >>> s2 = cudf.Series([Decimal('2.0'), Decimal('3.0')])
+        >>> # Standard division changes scale
+        >>> standard_result = s1 / s2
+        >>> # divide_decimal preserves scale
+        >>> decimal_result = s1._column.divide_decimal(s2._column)
+        """
+        if rounding_mode == "HALF_UP":
+            rounding = plc.round.RoundingMethod.HALF_UP
+        elif rounding_mode == "HALF_EVEN":
+            rounding = plc.round.RoundingMethod.HALF_EVEN
+        else:
+            raise ValueError(f"Invalid rounding mode: {rounding_mode}")
+
+        dtype = cast("DecimalDtype", self.dtype)
+        dtype_class = type(dtype)
+        divisor: ColumnBase | plc.Scalar
+        if isinstance(other, DecimalColumn):
+            other_dtype = cast("DecimalDtype", other.dtype)
+            if not isinstance(other_dtype, dtype_class):
+                if other_dtype.precision > dtype_class.MAX_PRECISION:
+                    raise TypeError(
+                        f"Cannot divide {dtype} by {other_dtype}: the "
+                        f"divisor's precision exceeds {dtype_class.__name__}"
+                    )
+                other_dtype = dtype_class(
+                    other_dtype.precision, other_dtype.scale
+                )
+                other = cast("DecimalColumn", other.astype(other_dtype))
+            divisor = other
+        elif isinstance(other, (int, Decimal)) and not isinstance(other, bool):
+            other_dtype = dtype_class._from_decimal(Decimal(other))
+            divisor = _to_plc_scalar(other, other_dtype)
+        elif is_na_like(other):
+            other_dtype = dtype_class(dtype.precision, 0)
+            divisor = pa_scalar_to_plc_scalar(
+                pa.scalar(None, type=cudf_dtype_to_pa_type(dtype))
+            )
+        else:
+            raise TypeError(
+                "divide_decimal only supports decimal columns, int, "
+                f"Decimal or None divisors, got {type(other).__name__}"
+            )
+
+        # Python decimal scales count digits after the decimal point, so
+        # dividing by the smallest nonzero divisor, 10**-other_dtype.scale,
+        # adds other_dtype.scale integer digits to the dividend.
+        result_dtype = dtype_class(
+            min(
+                max(dtype.precision + other_dtype.scale, abs(dtype.scale), 1),
+                dtype_class.MAX_PRECISION,
+            ),
+            dtype.scale,
+        )
+
+        with access_columns(self, divisor, mode="read", scope="internal") as (
+            lhs,
+            rhs,
+        ):
+            output_type = lhs.plc_column.type()
+            if isinstance(rhs, ColumnBase):
+                plc_result = plc.decimal_division.divide_decimal(
+                    lhs.plc_column, rhs.plc_column, output_type, rounding
+                )
+            else:
+                plc_result = plc.decimal_division.divide_decimal_column_scalar(
+                    lhs.plc_column, rhs, output_type, rounding
+                )
+        return cast("Self", ColumnBase.create(plc_result, result_dtype))
+
+    # Add alias
+    div_decimal = divide_decimal
 
     def _cast_setitem_value(self, value: Any) -> plc.Scalar | ColumnBase:
         if isinstance(value, np.integer):

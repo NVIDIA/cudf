@@ -16,6 +16,7 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/datetime.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/json/json.hpp>
 #include <cudf/lists/combine.hpp>
 #include <cudf/lists/contains.hpp>
@@ -1797,6 +1798,58 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_binaryOpVS(
     }
 
     return release_as_jlong(cudf::binary_operation(*lhs, *rhs, op, n_data_type));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_divideDecimalVV(JNIEnv* env,
+                                                                       jclass,
+                                                                       jlong lhs_view,
+                                                                       jlong rhs_view,
+                                                                       jint out_dtype,
+                                                                       jint scale,
+                                                                       jint round_mode,
+                                                                       jint intermediate)
+{
+  JNI_NULL_CHECK(env, lhs_view, "lhs is null", 0);
+  JNI_NULL_CHECK(env, rhs_view, "rhs is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const lhs = reinterpret_cast<cudf::column_view const*>(lhs_view);
+    auto const rhs = reinterpret_cast<cudf::column_view const*>(rhs_view);
+    return release_as_jlong(
+      cudf::divide_decimal(*lhs,
+                           *rhs,
+                           cudf::jni::make_data_type(out_dtype, scale),
+                           static_cast<cudf::rounding_method>(round_mode),
+                           static_cast<cudf::decimal_intermediate>(intermediate)));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_divideDecimalVS(JNIEnv* env,
+                                                                       jclass,
+                                                                       jlong lhs_view,
+                                                                       jlong rhs_ptr,
+                                                                       jint out_dtype,
+                                                                       jint scale,
+                                                                       jint round_mode,
+                                                                       jint intermediate)
+{
+  JNI_NULL_CHECK(env, lhs_view, "lhs is null", 0);
+  JNI_NULL_CHECK(env, rhs_ptr, "rhs is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const lhs = reinterpret_cast<cudf::column_view const*>(lhs_view);
+    auto const rhs = reinterpret_cast<cudf::scalar const*>(rhs_ptr);
+    return release_as_jlong(
+      cudf::divide_decimal(*lhs,
+                           *rhs,
+                           cudf::jni::make_data_type(out_dtype, scale),
+                           static_cast<cudf::rounding_method>(round_mode),
+                           static_cast<cudf::decimal_intermediate>(intermediate)));
   }
   JNI_CATCH(env, 0);
 }

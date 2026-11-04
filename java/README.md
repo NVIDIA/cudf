@@ -1,6 +1,6 @@
-# cuDF Java
+# cuDF for Java
 
-cuDF Java provides Java bindings for NVIDIA cuDF, a library for GPU-accelerated structured data
+cuDF for Java provides Java bindings for NVIDIA cuDF, a library for GPU-accelerated structured data
 processing.
 
 The API reference is published with the rest of the cuDF documentation at
@@ -8,20 +8,20 @@ https://docs.nvidia.com/cudf/latest/java/.
 
 ## Behavior on Systems with Multiple GPUs
 
-cuDF Java works with a single GPU per process. The CUDA runtime assigns the default GPU to each new
-operating system thread when the thread first interacts with CUDA. In a multi-threaded environment,
-which is typical for Java processes, using a GPU other than the default one can lead to
+The Java bindings work with a single GPU per process. The CUDA runtime assigns the default GPU to
+each new operating system thread when the thread first interacts with CUDA. In a multi-threaded
+environment, which is typical for Java processes, using a GPU other than the default one can lead to
 hard-to-debug problems, including resource leaks, invalid states, application crashes and poor
 performance.
 
-To prevent this, cuDF Java remembers the device that was used to initialize NVIDIA RMM and, when
-needed, automatically sets the active device of the calling thread to that device. It does not
+To prevent this, the Java bindings remember the device that was used to initialize NVIDIA RMM and,
+when needed, automatically set the active device of the calling thread to that device. They do not
 restore the previous device when the cuDF call completes. This differs from most CUDA libraries and
-can cause unexpected behavior if you mix them with cuDF Java on the same thread.
+can cause unexpected behavior if you mix them with the Java bindings on the same thread.
 
 ## Dependency
 
-cuDF Java is published to Maven Central as [`ai.rapids:cudf`](https://central.sonatype.com/artifact/ai.rapids/cudf):
+cuDF for Java is published to Maven Central as [`ai.rapids:cudf`](https://central.sonatype.com/artifact/ai.rapids/cudf):
 
 ```xml
 <dependency>

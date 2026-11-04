@@ -330,7 +330,7 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param out_metadata The output table metadata
    * @param out_columns The columns for building the output table
-   * @param mr Memory resources for the columns before the filter is applied
+   * @param mr Memory resources for the decoded columns
    * @return The output table along with columns' metadata
    */
   table_with_metadata finalize_output(read_mode mode,
@@ -344,7 +344,7 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param skip_rows Crop all rows below skip_rows
    * @param num_rows Number of rows to read
-   * @param mr Memory resources for the columns before the filter is applied
+   * @param mr Memory resources for the decoded columns
    */
   void allocate_columns(read_mode mode,
                         size_t skip_rows,
@@ -357,14 +357,23 @@ class reader_impl {
    * A buffer that the reader copies again, by the decimal cast or by the dictionary encode, is
    * allocated on the temporary resource.
    *
-   * @param mr Memory resources for the columns before the filter is applied
-   * @param type Data type of the column buffer
-   * @param is_top_level Whether the column buffer is a top-level column
+   * @param mr Memory resources for the decoded columns
+   * @param buffer Column buffer
+   * @param top_level_index Index of the top-level output column, or `std::nullopt` if nested
    * @return Memory resources for the column buffer
    */
-  [[nodiscard]] cudf::memory_resources column_mr(cudf::memory_resources mr,
-                                                 data_type type,
-                                                 bool is_top_level) const;
+  [[nodiscard]] cudf::memory_resources column_mr(
+    cudf::memory_resources mr,
+    cudf::io::detail::inline_column_buffer const& buffer,
+    std::optional<size_t> top_level_index) const;
+
+  /**
+   * @brief Schema used to build the top-level output column from its buffer.
+   *
+   * @param index Index of the top-level output column
+   * @return Reader column schema, if any
+   */
+  [[nodiscard]] std::optional<reader_column_schema> output_column_schema(size_t index) const;
 
   /**
    * @brief Calculate per-page offsets for string data
@@ -530,7 +539,7 @@ class reader_impl {
    * @brief Cast any fixed-point output columns to the decimal width specified in options.
    *
    * @param out_columns Output columns to cast
-   * @param mr Memory resources for the columns before the filter is applied
+   * @param mr Memory resources for the decoded columns
    */
   void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns,
                                 cudf::memory_resources mr);

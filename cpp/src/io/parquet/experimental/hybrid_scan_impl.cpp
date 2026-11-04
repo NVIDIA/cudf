@@ -1191,13 +1191,13 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
         io::detail::empty_like(_output_buffers[i],
                                &col_name,
                                _stream,
-                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
+                               column_mr(mr, _output_buffers[i], i).get_output_mr()));
     } else {
       out_columns.emplace_back(
         io::detail::empty_like(_output_buffers[i],
                                nullptr,
                                _stream,
-                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
+                               column_mr(mr, _output_buffers[i], i).get_output_mr()));
     }
   }
 

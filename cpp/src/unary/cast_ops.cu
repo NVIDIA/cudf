@@ -335,13 +335,13 @@ struct dispatch_unary_cast_to {
     using SourceDeviceT = device_storage_type_t<SourceT>;
     using TargetDeviceT = device_storage_type_t<TargetT>;
 
-    auto casted = [&]() {
+    auto casted = [&](rmm::device_async_resource_ref cast_mr) {
       auto const size = input.size();
       auto output =
         std::make_unique<column>(cudf::data_type{type.id(), input.type().scale()},
                                  size,
-                                 rmm::device_buffer{size * sizeof(TargetDeviceT), stream, mr},
-                                 detail::copy_bitmask(input, stream, mr),
+                                 rmm::device_buffer{size * sizeof(TargetDeviceT), stream, cast_mr},
+                                 detail::copy_bitmask(input, stream, cast_mr),
                                  input.null_count());
 
       mutable_column_view output_mutable = *output;
@@ -355,11 +355,11 @@ struct dispatch_unary_cast_to {
       return output;
     };
 
-    if (input.type().scale() == type.scale()) return casted();
+    if (input.type().scale() == type.scale()) return casted(mr);
 
     if constexpr (sizeof(SourceDeviceT) < sizeof(TargetDeviceT)) {
       // device_cast BEFORE rescale when SourceDeviceT is < TargetDeviceT
-      auto temporary = casted();
+      auto temporary = casted(cudf::get_current_device_resource_ref());
       return detail::rescale<TargetT>(*temporary, scale_type{type.scale()}, stream, mr);
     } else {
       // device_cast AFTER rescale when SourceDeviceT is > TargetDeviceT to avoid overflow

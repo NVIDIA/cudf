@@ -160,6 +160,15 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
     expect_read_uses_memory_resources(builder().output_dict_columns(true).build());
   }
   {
+    // The STRING column is read as binary, which is not dictionary encoded
+    SCOPED_TRACE("dictionary output with binary");
+    std::vector<cudf::io::reader_column_schema> schema(4);
+    schema[1].set_convert_binary_to_strings(false);
+    schema[3] = cudf::io::reader_column_schema(1);
+    expect_read_uses_memory_resources(
+      builder().output_dict_columns(true).set_column_schema(schema).build());
+  }
+  {
     SCOPED_TRACE("synthetic columns");
     expect_read_uses_memory_resources(
       builder().prepend_row_index_column(true).prepend_source_index_column(true).build());
@@ -195,7 +204,8 @@ TEST_F(ParquetReaderTest, ReadStructsUsesMemoryResources)
       .decimal_width(cudf::type_id::DECIMAL128);
   };
   {
-    // Null consistency replaces the decoded null masks of the struct's children
+    // TODO: Null consistency replaces the decoded null masks of the struct's children on the output
+    // resource before the decimal cast copies them again. Use EXACT once it does not
     SCOPED_TRACE("plain");
     expect_read_uses_memory_resources(builder().build(),
                                       {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,

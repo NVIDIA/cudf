@@ -10,7 +10,9 @@
 #include "runtime/context.hpp"
 #include "synthetic_column_helpers.hpp"
 
+#include <cudf/detail/gather.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sequence.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
@@ -20,6 +22,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/unary.hpp>
@@ -831,19 +834,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
 
   // Create the final output cudf columns.
   for (size_t i = 0; i < _output_buffers.size(); ++i) {
-    auto metadata           = _reader_column_schema.has_value()
-                                ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
-                                : std::nullopt;
-    auto const& schema      = _metadata->get_schema(_output_column_schemas[i]);
-    auto const logical_type = schema.logical_type.value_or(LogicalType{});
-    // FIXED_LEN_BYTE_ARRAY never read as string.
-    // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY as
-    // binary and not strings, this test needs to change.
-    if (schema.type == Type::FIXED_LEN_BYTE_ARRAY and logical_type.type != LogicalType::DECIMAL) {
-      metadata = std::make_optional<reader_column_schema>();
-      metadata->set_convert_binary_to_strings(false);
-      metadata->set_type_length(schema.type_length);
-    }
+    auto const metadata = output_column_schema(i);
     // Only construct `out_metadata` if `_output_metadata` has not been cached.
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
@@ -975,14 +966,37 @@ std::optional<std::vector<std::string>> reader_impl::get_column_projection(
 }
 
 cudf::memory_resources reader_impl::column_mr(cudf::memory_resources mr,
-                                              data_type type,
-                                              bool is_top_level) const
+                                              cudf::io::detail::inline_column_buffer const& buffer,
+                                              std::optional<size_t> top_level_index) const
 {
+  auto const type      = buffer.type;
   auto const will_cast = _options.decimal_width != type_id::EMPTY and cudf::is_fixed_point(type) and
                          type.id() != _options.decimal_width;
-  auto const will_encode =
-    is_top_level and _options.output_dict_columns and type.id() == type_id::STRING;
+  // Binary columns are returned as LIST<UINT8>, which is not encoded
+  auto const will_encode = _options.output_dict_columns and top_level_index.has_value() and
+                           type.id() == type_id::STRING and not buffer.string_as_binary and
+                           output_column_schema(*top_level_index)
+                             .value_or(reader_column_schema{})
+                             .is_enabled_convert_binary_to_strings();
   return (will_cast or will_encode) ? mr.as_temporary() : mr;
+}
+
+std::optional<reader_column_schema> reader_impl::output_column_schema(size_t index) const
+{
+  auto const& schema      = _metadata->get_schema(_output_column_schemas[index]);
+  auto const logical_type = schema.logical_type.value_or(LogicalType{});
+  // FIXED_LEN_BYTE_ARRAY never read as string.
+  // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY as
+  // binary and not strings, this test needs to change.
+  if (schema.type == Type::FIXED_LEN_BYTE_ARRAY and logical_type.type != LogicalType::DECIMAL) {
+    auto metadata = std::make_optional<reader_column_schema>();
+    metadata->set_convert_binary_to_strings(false);
+    metadata->set_type_length(schema.type_length);
+    return metadata;
+  }
+  return _reader_column_schema.has_value()
+           ? std::make_optional<reader_column_schema>((*_reader_column_schema)[index])
+           : std::nullopt;
 }
 
 void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>& out_columns,
@@ -1036,13 +1050,13 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
         io::detail::empty_like(_output_buffers[i],
                                &col_name,
                                _stream,
-                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
+                               column_mr(mr, _output_buffers[i], i).get_output_mr()));
     } else {
       out_columns.emplace_back(
         io::detail::empty_like(_output_buffers[i],
                                nullptr,
                                _stream,
-                               column_mr(mr, _output_buffers[i].type, true).get_output_mr()));
+                               column_mr(mr, _output_buffers[i], i).get_output_mr()));
     }
   }
 
@@ -1143,20 +1157,34 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
         _options.output_dict_columns and only_output.column(i).type().id() == type_id::STRING;
       (will_encode ? encode_indices : other_indices).push_back(i);
     }
-    auto const apply_predicate = [&](std::vector<size_type> const& indices,
-                                     cudf::memory_resources apply_mr) {
-      return cudf::detail::apply_mask(only_output.select(indices),
-                                      *predicate,
-                                      cudf::detail::mask_type::RETENTION,
-                                      _stream,
-                                      apply_mr)
+    if (encode_indices.empty()) {
+      return {cudf::detail::apply_mask(
+                only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr),
+              std::move(out_metadata)};
+    }
+    // Gather map of the surviving rows, computed once for both subsets
+    auto const row_indices = cudf::detail::sequence(read_table->num_rows(),
+                                                    numeric_scalar<size_type>(0, true, _stream),
+                                                    _stream,
+                                                    _mr.get_temporary_mr());
+    auto const gather_map =
+      cudf::detail::apply_mask(table_view{std::vector<column_view>{row_indices->view()}},
+                               *predicate,
+                               cudf::detail::mask_type::RETENTION,
+                               _stream,
+                               _mr.as_temporary());
+    auto const gather_rows = [&](std::vector<size_type> const& indices,
+                                 cudf::memory_resources gather_mr) {
+      return cudf::detail::gather(only_output.select(indices),
+                                  gather_map->get_column(0).view(),
+                                  out_of_bounds_policy::DONT_CHECK,
+                                  negative_index_policy::NOT_ALLOWED,
+                                  _stream,
+                                  gather_mr)
         ->release();
     };
-    auto encode_columns = encode_indices.empty()
-                            ? std::vector<std::unique_ptr<column>>{}
-                            : apply_predicate(encode_indices, _mr.as_temporary());
-    auto other_columns  = other_indices.empty() ? std::vector<std::unique_ptr<column>>{}
-                                                : apply_predicate(other_indices, _mr);
+    auto encode_columns = gather_rows(encode_indices, _mr.as_temporary());
+    auto other_columns  = gather_rows(other_indices, _mr);
     std::vector<std::unique_ptr<column>> output_columns(only_output.num_columns());
     for (size_t i = 0; i < encode_indices.size(); ++i) {
       output_columns[encode_indices[i]] = std::move(encode_columns[i]);

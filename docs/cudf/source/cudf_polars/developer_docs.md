@@ -632,8 +632,9 @@ The Polars 2.0 coverage run identified four close in-memory behavioral matches.
 Each local case has only 17 local-only lines, all in the local assertion helper.
 All four upstream nodes appear in the maintained GPU-execution lists for both
 Polars 2.0 and 2.1, and their public assertions cover the same operations.
-These are candidates for a later pruning PR, not approved deletions: the
-upstream nodes still need current strict GPU validation on both versions.
+These are candidates for a later pruning PR, not approved deletions. All four
+upstream nodes passed a strict injected-GPU run on Polars 2.0 for both in-memory
+and default-blocksize SPMD; Polars 2.1 still needs the same check.
 
 | Local test | Upstream lazy counterpart | Review finding |
 | --- | --- | --- |

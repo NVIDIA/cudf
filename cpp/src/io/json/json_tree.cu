@@ -393,8 +393,12 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
   cuda::device_buffer<NodeT> node_categories(stream, mr, num_nodes, cuda::no_init);
   auto const node_categories_it =
     cuda::make_transform_output_iterator(node_categories.begin(), token_to_node{});
-  auto const node_categories_end =
-    cudf::detail::copy_if(tokens.begin(), tokens.end(), node_categories_it, is_node, stream);
+  auto const node_categories_end = cudf::detail::copy_if(tokens.begin(),
+                                                         tokens.end(),
+                                                         node_categories_it,
+                                                         is_node,
+                                                         stream,
+                                                         cudf::get_current_device_resource_ref());
   CUDF_EXPECTS(cuda::std::distance(node_categories_it, node_categories_end) ==
                  static_cast<std::ptrdiff_t>(num_nodes),
                "node category count mismatch");
@@ -417,7 +421,8 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
     [is_node, tokens_gpu = tokens.begin()] __device__(size_type i) -> bool {
       return is_node(tokens_gpu[i]);
     },
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
   CUDF_EXPECTS(cuda::std::distance(node_range_out_it, node_range_out_end) ==
                  static_cast<std::ptrdiff_t>(num_nodes),
                "node range count mismatch");

@@ -115,7 +115,8 @@ direct_inner_join(column_view const& left_keys,
                                              cuda::counting_iterator<size_type>{left_keys.size()},
                                              out_iter,
                                              is_match{lookup.data(), d_left_keys},
-                                             stream);
+                                             stream,
+                                             cudf::get_current_device_resource_ref());
 
   auto const num_matches = cuda::std::distance(out_iter, out_end);
   left_indices->resize(num_matches, stream);

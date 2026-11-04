@@ -698,8 +698,13 @@ void detect_malformed_pages(device_span<PageInfo const> pages,
   cuda::device_buffer<size_type> compacted_row_counts(
     stream, cudf::get_current_device_resource_ref(), pages.size(), cuda::no_init);
   auto const compacted_row_counts_begin = compacted_row_counts.begin();
-  auto const compacted_row_counts_end   = cudf::detail::copy_if(
-    row_counts_begin, row_counts_end, compacted_row_counts_begin, row_counts_nonzero{}, stream);
+  auto const compacted_row_counts_end =
+    cudf::detail::copy_if(row_counts_begin,
+                          row_counts_end,
+                          compacted_row_counts_begin,
+                          row_counts_nonzero{},
+                          stream,
+                          cudf::get_current_device_resource_ref());
   if (compacted_row_counts_end != compacted_row_counts_begin) {
     auto const found_row_count = [&]() {
       auto found_row_count = cudf::detail::make_pinned_vector(
@@ -799,7 +804,8 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
                               page_spans.begin(),
                               cuda::proclaim_return_type<bool>(
                                 [] __device__(auto const& span) { return not span.empty(); }),
-                              stream);
+                              stream,
+                              cudf::get_current_device_resource_ref());
       if (end_iter == page_spans.begin()) {
         // No pages compressed with this codec, skip
         continue;

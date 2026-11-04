@@ -351,8 +351,12 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cuda::transform_iterator(cuda::counting_iterator<int64_t>{0}, pair_generator{fn, chars_bytes});
   auto const out_itr = cuda::make_zip_iterator(
     cuda::std::make_tuple(targets_positions.begin(), targets_indices.begin()));
-  auto const copy_end =
-    cudf::detail::copy_if(copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream);
+  auto const copy_end = cudf::detail::copy_if(copy_itr,
+                                              copy_itr + chars_bytes,
+                                              out_itr,
+                                              copy_if_fn{},
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(static_cast<int64_t>(std::distance(out_itr, copy_end)), target_count);

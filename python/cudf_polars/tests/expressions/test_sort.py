@@ -3,14 +3,27 @@
 from __future__ import annotations
 
 import itertools
+from unittest import mock
 
 import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
 )
+
+
+@pytest.fixture(params=[False, True], ids=["request_asc", "request_desc"])
+def request_descending(request):
+    return request.param
+
+
+@pytest.fixture(params=[False, True], ids=["request_nulls_first", "request_nulls_last"])
+def request_nulls_last(request):
+    return request.param
 
 
 @pytest.mark.parametrize("descending", [False, True])
@@ -95,6 +108,82 @@ def test_setsorted_expr_with_nulls(engine: pl.GPUEngine, descending, nulls_last)
     ldf = pl.LazyFrame({"a": values})
     q = ldf.select(pl.col("a").set_sorted(descending=descending))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls", ["no_nulls", "nulls_first", "nulls_last"])
+def test_sort_expression_sorted_input(
+    engine: pl.GPUEngine, descending, nulls, request_descending, request_nulls_last
+):
+    values: list[int | None] = [*sorted([3, 1, 2, 2, 5, -1], reverse=descending)]
+    if nulls == "nulls_first":
+        values.insert(0, None)
+    elif nulls == "nulls_last":
+        values.append(None)
+    ldf = pl.LazyFrame({"a": values})
+    q = ldf.select(
+        pl.col("a")
+        .set_sorted(descending=descending)
+        .sort(descending=request_descending, nulls_last=request_nulls_last)
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize(
+    "values, dtype",
+    [
+        ([], pl.Int64()),
+        ([7], pl.Int64()),
+        ([None, None], pl.Int64()),
+        ([None, -1.0, 2.0, float("nan")], pl.Float64()),
+    ],
+    ids=["empty", "one_row", "all_nulls", "float_nan"],
+)
+def test_sort_expression_sorted_input_edge_cases(
+    engine: pl.GPUEngine,
+    descending,
+    values,
+    dtype,
+    request_descending,
+    request_nulls_last,
+):
+    ldf = pl.LazyFrame(
+        {"a": pl.Series(values[::-1] if descending else values, dtype=dtype)}
+    )
+    q = ldf.select(
+        pl.col("a")
+        .set_sorted(descending=descending)
+        .sort(descending=request_descending, nulls_last=request_nulls_last)
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "request_descending, request_nulls_last, expected_calls",
+    [(False, False, 0), (False, True, 1), (True, False, 1)],
+    ids=["match", "nulls_mismatch", "order_mismatch"],
+)
+def test_sort_expression_sorted_input_skips_sort(
+    in_memory_engine: pl.GPUEngine,
+    request_descending,
+    request_nulls_last,
+    expected_calls,
+):
+    ldf = pl.LazyFrame({"a": [None, 1, 2, 3]})
+    q = ldf.select(
+        pl.col("a")
+        .set_sorted()
+        .sort(descending=request_descending, nulls_last=request_nulls_last)
+    )
+    with (
+        mock.patch.object(plc.sorting, "sort", wraps=plc.sorting.sort) as sort,
+        mock.patch.object(
+            plc.sorting, "stable_sort", wraps=plc.sorting.stable_sort
+        ) as stable_sort,
+    ):
+        assert_gpu_result_equal(q, engine=in_memory_engine)
+    assert sort.call_count + stable_sort.call_count == expected_calls
 
 
 @pytest.mark.parametrize("descending", [False, True])

@@ -157,15 +157,17 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                      cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
+  cudf::memory_resources mrs{mr};
   // TODO: switch these to resizable buffers once https://github.com/NVIDIA/cccl/issues/12051
   // is resolved
   auto gather_map_storage = cuda::device_buffer<size_type>{
-    stream, cudf::get_current_device_resource_ref(), static_cast<std::size_t>(size), cuda::no_init};
+    stream, mrs.get_temporary_mr(), static_cast<std::size_t>(size), cuda::no_init};
   auto const gather_map_end = cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                                                     cuda::counting_iterator<size_type>{size},
                                                     gather_map_storage.begin(),
                                                     is_left,
-                                                    stream);
+                                                    stream,
+                                                    mrs.as_temporary());
 
   auto const gather_map = device_span<size_type const>{
     gather_map_storage.data(),
@@ -176,7 +178,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                     out_of_bounds_policy::DONT_CHECK,
                                                     negative_index_policy::NOT_ALLOWED,
                                                     stream,
-                                                    cudf::get_current_device_resource_ref());
+                                                    mrs.as_temporary());
 
   auto result = cudf::detail::scatter(
     table_view{std::vector<column_view>{scatter_src_lhs->get_column(0).view()}},
@@ -196,13 +198,15 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::scalar const& lhs,
                                                      cuda::stream_ref stream,
                                                      rmm::device_async_resource_ref mr)
 {
+  cudf::memory_resources mrs{mr};
   auto scatter_map = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), static_cast<std::size_t>(size), cuda::no_init);
+    stream, mrs.get_temporary_mr(), static_cast<std::size_t>(size), cuda::no_init);
   auto const scatter_map_end = cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                                                      cuda::counting_iterator<size_type>{size},
                                                      scatter_map.begin(),
                                                      is_left,
-                                                     stream);
+                                                     stream,
+                                                     mrs.as_temporary());
 
   auto const scatter_map_size  = std::distance(scatter_map.begin(), scatter_map_end);
   auto scatter_source          = std::vector<std::reference_wrapper<scalar const>>{std::ref(lhs)};

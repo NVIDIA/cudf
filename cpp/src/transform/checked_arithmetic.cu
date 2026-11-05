@@ -163,14 +163,16 @@ struct binary_launcher {
                   mutable_column_view& out,
                   binary_operator op,
                   error_policy policy,
-                  cuda::stream_ref stream) const
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const
   {
     if constexpr (is_supported_type<T>) {
-      auto lhs_device = column_device_view::create(lhs, stream);
-      auto rhs_device = column_device_view::create(rhs, stream);
-      auto out_device = mutable_column_device_view::create(out, stream);
+      auto const temp_mr = mr.get_temporary_mr();
+      auto lhs_device    = column_device_view::create(lhs, stream, temp_mr);
+      auto rhs_device    = column_device_view::create(rhs, stream, temp_mr);
+      auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
       cudf::detail::device_scalar<int32_t> max_error{
-        static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref()};
+        static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
 
       cudf::detail::grid_1d config(out.size(), 256);
       checked_binary_kernel<T, LhsIsScalar, RhsIsScalar>
@@ -192,13 +194,15 @@ struct unary_launcher {
                   mutable_column_view& out,
                   unary_operator op,
                   error_policy policy,
-                  cuda::stream_ref stream) const
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const
   {
     if constexpr (is_supported_type<T>) {
-      auto input_device = column_device_view::create(input, stream);
-      auto out_device   = mutable_column_device_view::create(out, stream);
+      auto const temp_mr = mr.get_temporary_mr();
+      auto input_device  = column_device_view::create(input, stream, temp_mr);
+      auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
       cudf::detail::device_scalar<int32_t> max_error{
-        static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref()};
+        static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
 
       cudf::detail::grid_1d config(out.size(), 256);
       checked_unary_kernel<T><<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(
@@ -249,7 +253,7 @@ std::unique_ptr<column> binary_operation_impl(column_view const& lhs,
                                               data_type output_type,
                                               error_policy policy,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   validate_binary(lhs, rhs, op, output_type);
 
@@ -264,7 +268,8 @@ std::unique_ptr<column> binary_operation_impl(column_view const& lhs,
                         result_view,
                         op,
                         policy,
-                        stream);
+                        stream,
+                        mr);
   result->set_null_count(
     cudf::detail::null_count(result_view.null_mask(), 0, result_view.size(), stream));
   return result;
@@ -278,10 +283,11 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
   auto lhs_column =
-    make_column_from_scalar(lhs, 1, stream, cudf::get_current_device_resource_ref());
+    make_column_from_scalar(lhs, 1, stream, cudf::memory_resources{temp_mr, temp_mr});
   return binary_operation_impl<true, false>(
     lhs_column->view(), rhs, rhs.size(), op, output_type, policy, stream, mr);
 }
@@ -292,10 +298,11 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
   auto rhs_column =
-    make_column_from_scalar(rhs, 1, stream, cudf::get_current_device_resource_ref());
+    make_column_from_scalar(rhs, 1, stream, cudf::memory_resources{temp_mr, temp_mr});
   return binary_operation_impl<false, true>(
     lhs, rhs_column->view(), lhs.size(), op, output_type, policy, stream, mr);
 }
@@ -306,7 +313,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          data_type output_type,
                                          error_policy policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes do not match", std::invalid_argument);
   return binary_operation_impl<false, false>(
@@ -317,7 +324,7 @@ std::unique_ptr<column> unary_operation(column_view const& input,
                                         unary_operator op,
                                         error_policy policy,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   CUDF_EXPECTS(is_checked(op),
                "Error policies are only supported for checked arithmetic operators");
@@ -331,7 +338,7 @@ std::unique_ptr<column> unary_operation(column_view const& input,
   if (input.is_empty()) { return result; }
 
   auto result_view = result->mutable_view();
-  cudf::type_dispatcher(input.type(), unary_launcher{}, input, result_view, op, policy, stream);
+  cudf::type_dispatcher(input.type(), unary_launcher{}, input, result_view, op, policy, stream, mr);
   result->set_null_count(
     cudf::detail::null_count(result_view.null_mask(), 0, result_view.size(), stream));
   return result;

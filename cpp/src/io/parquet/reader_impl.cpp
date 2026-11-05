@@ -969,24 +969,29 @@ cudf::memory_resources reader_impl::column_mr(cudf::memory_resources mr,
                                               cudf::io::detail::inline_column_buffer const& buffer,
                                               std::optional<size_t> top_level_index) const
 {
-  auto const type      = buffer.type;
-  auto const will_cast = _options.decimal_width != type_id::EMPTY and cudf::is_fixed_point(type) and
-                         type.id() != _options.decimal_width;
-  // Binary columns are returned as LIST<UINT8>, which is not encoded. Mirrors make_column via
+  auto const type = buffer.type;
+  // Check if we need to cast decimal columns
+  auto const will_cast_decimals = _options.decimal_width != type_id::EMPTY and
+                                  cudf::is_fixed_point(type) and
+                                  type.id() != _options.decimal_width;
+  auto const is_string = type.id() == type_id::STRING;
+  // Check if a top-level STRING buffer is returned as binary (LIST<UINT8>). See
   // output_column_schema
-  auto const will_encode = _options.output_dict_columns and top_level_index.has_value() and
-                           type.id() == type_id::STRING and not buffer.string_as_binary and
-                           output_column_schema(*top_level_index)
-                             .value_or(reader_column_schema{})
-                             .is_enabled_convert_binary_to_strings();
-  return (will_cast or will_encode) ? mr.as_temporary() : mr;
+  auto const is_binary = is_string and top_level_index.has_value() and
+                         (buffer.string_as_binary or not output_column_schema(*top_level_index)
+                                                           .value_or(reader_column_schema{})
+                                                           .is_enabled_convert_binary_to_strings());
+  // Check if we need to encode strings as dictionaries
+  auto const will_dict_encode_strings =
+    is_string and not is_binary and _options.output_dict_columns and top_level_index.has_value();
+  return (will_cast_decimals or will_dict_encode_strings) ? mr.as_temporary() : mr;
 }
 
 std::optional<reader_column_schema> reader_impl::output_column_schema(size_t index) const
 {
   auto const& schema      = _metadata->get_schema(_output_column_schemas[index]);
   auto const logical_type = schema.logical_type.value_or(LogicalType{});
-  // FIXED_LEN_BYTE_ARRAY never read as string.
+  // Non-decimal FIXED_LEN_BYTE_ARRAY columns are always read as binary
   // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY as
   // binary and not strings, this test needs to change.
   if (schema.type == Type::FIXED_LEN_BYTE_ARRAY and logical_type.type != LogicalType::DECIMAL) {
@@ -1151,14 +1156,14 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
                  "Predicate filter should return a boolean");
     // Exclude columns present in filter only in output. STRING columns to be dictionary encoded
     // are copied again by the encode, so their surviving rows go to the temporary resource.
-    std::vector<size_type> encode_indices;
+    std::vector<size_type> dict_encode_indices;
     std::vector<size_type> other_indices;
     for (size_type i = 0; i < only_output.num_columns(); ++i) {
-      auto const will_encode =
+      auto const will_dict_encode_strings =
         _options.output_dict_columns and only_output.column(i).type().id() == type_id::STRING;
-      (will_encode ? encode_indices : other_indices).push_back(i);
+      (will_dict_encode_strings ? dict_encode_indices : other_indices).push_back(i);
     }
-    if (encode_indices.empty()) {
+    if (dict_encode_indices.empty()) {
       return {cudf::detail::apply_mask(
                 only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr),
               std::move(out_metadata)};
@@ -1184,11 +1189,11 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
                                   gather_mr)
         ->release();
     };
-    auto encode_columns = gather_rows(encode_indices, _mr.as_temporary());
-    auto other_columns  = gather_rows(other_indices, _mr);
+    auto dict_encode_columns = gather_rows(dict_encode_indices, _mr.as_temporary());
+    auto other_columns       = gather_rows(other_indices, _mr);
     std::vector<std::unique_ptr<column>> output_columns(only_output.num_columns());
-    for (size_t i = 0; i < encode_indices.size(); ++i) {
-      output_columns[encode_indices[i]] = std::move(encode_columns[i]);
+    for (size_t i = 0; i < dict_encode_indices.size(); ++i) {
+      output_columns[dict_encode_indices[i]] = std::move(dict_encode_columns[i]);
     }
     for (size_t i = 0; i < other_indices.size(); ++i) {
       output_columns[other_indices[i]] = std::move(other_columns[i]);

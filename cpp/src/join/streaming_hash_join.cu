@@ -208,6 +208,16 @@ struct slot_table_ref {
     return bucket >= num_buckets ? bucket - num_buckets : bucket;
   }
 
+  /// Returns the bucket `k` steps after `bucket` along a probe sequence.
+  [[nodiscard]] __device__ cuda::std::uint32_t advance(cuda::std::uint32_t bucket,
+                                                       cuda::std::uint32_t step,
+                                                       cuda::std::uint32_t k) const
+  {
+    auto const position = bucket + static_cast<cuda::std::uint64_t>(k) * step;
+    return static_cast<cuda::std::uint32_t>(position < num_buckets ? position
+                                                                   : position % num_buckets);
+  }
+
   [[nodiscard]] __device__ slot_type* bucket_slots(cuda::std::uint32_t bucket) const
   {
     return slots + static_cast<std::size_t>(bucket) * bucket_size;
@@ -332,15 +342,70 @@ __device__ thread_index_type warp_index()
          static_cast<thread_index_type>(threadIdx.x) / cudf::detail::warp_size;
 }
 
+/// Returns the mask of lanes `[first, last)`.
+__device__ cuda::std::uint32_t lane_range(cuda::std::uint32_t first, cuda::std::uint32_t last)
+{
+  auto const below = [](cuda::std::uint32_t lanes) {
+    return lanes >= cudf::detail::warp_size ? ~cuda::std::uint32_t{0}
+                                            : (cuda::std::uint32_t{1} << lanes) - 1;
+  };
+  return below(last) & ~below(first);
+}
+
 /**
- * @brief Probes the left rows of `warp` one bucket per step, calling
- * `on_bucket(row, candidates, slots)` on every lane per step.
+ * @brief Shares the lanes of a warp among the rows whose probe sequences are still being walked.
  *
- * Each group of `GroupSize` lanes probes one left row, examining its share of each bucket, and each
- * warp probes tiles of rows in the same order in every kernel, so the count and retrieve kernels
- * agree on which warp owns each match. `candidates` has a bit for each slot in `slots` whose
- * fingerprint matches the row. The lanes of a warp advance their buckets together, so they also
- * compare their candidates together.
+ * A warp holds one row per unit of `GroupSize` lanes. With `n` of its rows walking, the `r`-th of
+ * them gets units `[r * width, (r + 1) * width)` with `width = units / n`, and the `k`-th of these
+ * examines the bucket `k` steps further along the row's sequence. While every row walks, each unit
+ * examines its own row's next bucket. Once rows finish, the rest advance `width` buckets per step,
+ * so a long sequence, such as the run of a key with many duplicates, is walked by the whole warp.
+ */
+template <int GroupSize>
+struct walk_share {
+  static constexpr auto num_units =
+    static_cast<cuda::std::uint32_t>(cudf::detail::warp_size / GroupSize);
+
+  cuda::std::uint32_t walking;   ///< First lanes of the units whose rows are walking
+  cuda::std::uint32_t width;     ///< Units per walking row
+  cuda::std::uint32_t rank;      ///< Rank among walking rows of the row this unit examines
+  cuda::std::uint32_t offset;    ///< Steps past that row's next bucket that this unit examines
+  cuda::std::uint32_t owner;     ///< First lane of the unit that holds that row
+  cuda::std::uint32_t own_rank;  ///< Rank among walking rows of this unit's own row
+  bool assigned;                 ///< Whether this unit examines a bucket in this step
+
+  /// Shares the warp among the rows whose units have `walking` set; `unit` is this lane's unit.
+  static __device__ walk_share make(warp_tile const& warp, bool walking, cuda::std::uint32_t unit)
+  {
+    walk_share share{};
+    share.walking  = warp.ballot(walking && warp.thread_rank() % GroupSize == 0);
+    auto const n   = static_cast<cuda::std::uint32_t>(cuda::std::popcount(share.walking));
+    share.width    = num_units / n;
+    share.rank     = unit / share.width;
+    share.offset   = unit % share.width;
+    share.assigned = share.rank < n;
+    share.owner    = share.assigned ? __fns(share.walking, 0, share.rank + 1) : unit * GroupSize;
+    share.own_rank = static_cast<cuda::std::uint32_t>(
+      cuda::std::popcount(share.walking & lane_range(0, unit * GroupSize)));
+    return share;
+  }
+
+  /// Returns the lanes that examine the walking row of rank `r`.
+  [[nodiscard]] __device__ cuda::std::uint32_t row_lanes(cuda::std::uint32_t r) const
+  {
+    return lane_range(r * width * GroupSize, (r + 1) * width * GroupSize);
+  }
+};
+
+/**
+ * @brief Probes the left rows of `warp`, calling `on_bucket(row, candidates, slots)` on every lane
+ * per step.
+ *
+ * Each group of `GroupSize` lanes holds one left row and examines its share of a bucket per step;
+ * lanes whose rows are done help walk the others, as described in `walk_share`. Each warp probes
+ * tiles of rows the same way in every kernel, so the count and retrieve kernels agree on which warp
+ * owns each match. `candidates` has a bit for each slot in `slots` whose fingerprint matches `row`.
+ * The lanes of a warp advance together, so they also compare their candidates together.
  */
 template <int GroupSize, typename Hasher, typename OnBucket>
 __device__ void probe_buckets(warp_tile const& warp,
@@ -361,17 +426,31 @@ __device__ void probe_buckets(warp_tile const& warp,
     auto const hash  = searching ? hasher(index) : hash_value_type{0};
     auto [bucket, step] = searching ? table.probe_sequence(hash)
                                     : cuda::std::pair<cuda::std::uint32_t, cuda::std::uint32_t>{};
+    auto const unit     = static_cast<cuda::std::uint32_t>(group.meta_group_rank());
     while (warp.any(searching)) {
+      auto const share        = walk_share<GroupSize>::make(warp, searching, unit);
+      auto const target_index = warp.shfl(index, share.owner);
+      auto const target_hash  = warp.shfl(hash, share.owner);
+      auto const target =
+        table.advance(warp.shfl(bucket, share.owner), warp.shfl(step, share.owner), share.offset);
       cuda::std::uint32_t candidates = 0;
-      slot_type const* slots         = nullptr;
-      if (searching) {
-        auto const window = table.load<lane_slots>(bucket, first_slot);
-        candidates        = table.candidates(window, hash);
-        searching         = !group.any(has_empty_slot(window));
-        slots             = table.bucket_slots(bucket) + first_slot;
-        bucket            = table.next(bucket, step);
+      auto ends_here                 = false;
+      if (share.assigned) {
+        auto const window = table.load<lane_slots>(target, first_slot);
+        candidates        = table.candidates(window, target_hash);
+        ends_here         = group.any(has_empty_slot(window));
       }
-      on_bucket(index, candidates, slots);
+      // A row's sequence ends at its first bucket with an empty slot, and buckets past it hold no
+      // match of the row, so their units skip comparing.
+      auto const ends = warp.ballot(ends_here && group.thread_rank() == 0);
+      if ((ends & share.row_lanes(share.rank) & lane_range(0, unit * GroupSize)) != 0) {
+        candidates = 0;
+      }
+      on_bucket(target_index, candidates, table.bucket_slots(target) + first_slot);
+      if (searching) {
+        searching = (ends & share.row_lanes(share.own_rank)) == 0;
+        bucket    = table.advance(bucket, step, share.width);
+      }
     }
   }
 }

@@ -127,10 +127,13 @@ Creating a datasource (`make_datasources`, file or S3 access) and copying
 large C++ structs such as `FileMetaData` also need `with nogil:`. Callers
 run these from thread pools, so holding the GIL there serializes the
 threads. When callers need per-row-group or per-column-chunk data, add a
-bulk accessor instead of a Python loop.
+bulk accessor instead of a Python loop. A Python loop also builds a C++
+struct and a Python object on every iteration, and that overhead is often
+larger than the cost of holding the GIL.
 
 ```cython
-# Bad: one Python call per row group, GIL held for each copy
+# Bad: one Python call per row group, with a new C++ struct, a new Python
+# object, and the GIL held for each copy
 for i in range(metadata.num_row_groups()):
     sizes.append(metadata.row_group(i).total_byte_size())
 

@@ -1266,7 +1266,7 @@ class TemporalFunction(Expr):
             by_expr = self.children[1]
             if not isinstance(by_expr, Literal) or not isinstance(by_expr.value, str):
                 raise NotImplementedError("dt.offset_by with a non-literal offset")
-            self.options = _plan_offset_by(self.children[0].dtype, by_expr.value)
+            self.options = (_plan_offset_by(self.children[0].dtype, by_expr.value),)
         elif self.name in {
             TemporalFunction.Name.Truncate,
             TemporalFunction.Name.Round,
@@ -1511,10 +1511,11 @@ class TemporalFunction(Expr):
         elif self.name is TemporalFunction.Name.OffsetBy:
             (column, _) = columns
             # polars adds the ticks with INT64 arithmetic, wrapping on overflow.
+            (ticks,) = self.options
             shifted = _wrapping(
                 plc.binaryop.BinaryOperator.ADD,
                 plc.unary.bit_cast(column.obj, _INT64, stream=df.stream),
-                cast("int", self.options),
+                ticks,
                 df.stream,
             )
             return Column(

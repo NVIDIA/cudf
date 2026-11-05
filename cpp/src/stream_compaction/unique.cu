@@ -50,7 +50,8 @@ std::unique_ptr<table> unique(table_view const& input,
   auto const num_rows = input.num_rows();
   if (num_rows == 0 or input.num_columns() == 0 or keys.empty()) { return empty_like(input); }
 
-  auto temp_mr        = cudf::get_current_device_resource_ref();
+  cudf::memory_resources mrs(mr);
+  auto temp_mr        = mrs.get_temporary_mr();
   auto unique_indices = make_numeric_column(
     data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, temp_mr);
   auto mutable_view = mutable_column_device_view::create(*unique_indices, stream, temp_mr);
@@ -78,7 +79,8 @@ std::unique_ptr<table> unique(table_view const& input,
                                               d_results.begin(),
                                               mutable_view->begin<size_type>(),
                                               cuda::std::identity{},
-                                              stream);
+                                              stream,
+                                              mrs.as_temporary());
       return static_cast<size_type>(
         cuda::std::distance(mutable_view->begin<size_type>(), result_end));
     } else {
@@ -91,7 +93,8 @@ std::unique_ptr<table> unique(table_view const& input,
                                     mutable_view->begin<size_type>(),
                                     row_equal,
                                     keep,
-                                    stream);
+                                    stream,
+                                    mrs.as_temporary());
       return static_cast<size_type>(
         cuda::std::distance(mutable_view->begin<size_type>(), result_end));
     }

@@ -83,6 +83,12 @@ cdef list _group_byte_ranges_by_source(
 
 cdef class _BloomFilterBuffers:
     cdef shared_ptr[void] c_obj
+    cdef Stream stream
+    cdef DeviceMemoryResource mr
+
+    def __dealloc__(self):
+        with nogil:
+            self.c_obj.reset()
 
 
 cdef class _BloomFilterBitset:
@@ -172,6 +178,8 @@ cpdef list fetch_bloom_filters_to_device(
 
     cdef _BloomFilterBuffers buffers = _BloomFilterBuffers.__new__(_BloomFilterBuffers)
     buffers.c_obj = fetched.buffers
+    buffers.stream = _stream
+    buffers.mr = _mr
     cdef _BloomFilterBitset bitset
     cdef Py_ssize_t source
     views_per_source = []

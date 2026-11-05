@@ -4,6 +4,7 @@ import pytest
 from utils import synchronize_stream
 
 import rmm
+from rmm.pylibrmm.stream import Stream
 
 import pylibcudf as plc
 from pylibcudf.io.parquet_io_utils import (
@@ -29,12 +30,16 @@ def source_info(tmp_path, source_bytes) -> plc.io.SourceInfo:
     return plc.io.SourceInfo(paths)
 
 
-def to_host(view: plc.gpumemoryview) -> bytes:
-    return rmm.DeviceBuffer(ptr=view.ptr, size=view.size).tobytes()
+def to_host(view: plc.gpumemoryview, stream=None) -> bytes:
+    stream = plc.utils._get_stream(stream)
+    return rmm.DeviceBuffer(
+        ptr=view.ptr, size=view.size, stream=stream
+    ).tobytes(stream=stream)
 
 
+@pytest.mark.parametrize("stream", [None, Stream()])
 def test_fetch_byte_ranges_to_device_single_source(
-    tmp_path, source_bytes
+    tmp_path, source_bytes, stream
 ) -> None:
     path = tmp_path / "source.bin"
     path.write_bytes(source_bytes[0])
@@ -44,17 +49,19 @@ def test_fetch_byte_ranges_to_device_single_source(
         plc.io.SourceInfo([str(path)]),
         byte_ranges,
         IOSubmissionPolicy.SERIALIZE,
+        stream,
     )
-    synchronize_stream()
+    synchronize_stream(stream)
 
-    assert [to_host(view) for view in views] == [
+    assert [to_host(view, stream) for view in views] == [
         source_bytes[0][:16],
         source_bytes[0][100:132],
     ]
 
 
+@pytest.mark.parametrize("stream", [None, Stream()])
 def test_fetch_byte_ranges_to_device_multiple_sources(
-    source_info, source_bytes
+    source_info, source_bytes, stream
 ) -> None:
     # Ranges are not grouped by source, and the second source has no ranges
     ranges = [
@@ -68,11 +75,12 @@ def test_fetch_byte_ranges_to_device_multiple_sources(
         source_info,
         [byte_range for byte_range, _ in ranges],
         IOSubmissionPolicy.SERIALIZE,
+        stream,
         source_indices=[source for _, source in ranges],
     )
-    synchronize_stream()
+    synchronize_stream(stream)
 
-    assert [to_host(view) for view in views] == [
+    assert [to_host(view, stream) for view in views] == [
         source_bytes[source][r.offset : r.offset + r.size]
         for r, source in ranges
     ]

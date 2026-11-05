@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing_extensions import Buffer
+    from pylibcudf.span import Span
     from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.io.parquet_metadata import FileMetaData
@@ -403,7 +404,7 @@ cdef class HybridScanMultiFile:
 
     def filter_row_groups_with_dictionary_pages(
         self,
-        list dictionary_page_data,
+        object dictionary_page_data: Sequence[Span],
         RowGroupIndices row_group_indices not None,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
@@ -412,7 +413,7 @@ cdef class HybridScanMultiFile:
 
         Parameters
         ----------
-        dictionary_page_data : Sequence
+        dictionary_page_data : Sequence[Span]
             Span-like objects containing dictionary page data, in the same
             order as the byte ranges returned by
             :meth:`dictionary_pages_byte_ranges`
@@ -450,7 +451,7 @@ cdef class HybridScanMultiFile:
 
     def filter_row_groups_with_bloom_filters(
         self,
-        list bloom_filter_data,
+        object bloom_filter_data: Sequence[Span],
         RowGroupIndices row_group_indices not None,
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None
@@ -459,9 +460,10 @@ cdef class HybridScanMultiFile:
 
         Parameters
         ----------
-        bloom_filter_data : Sequence
-            Span-like objects containing bloom filter data, in the same order
-            as the byte ranges returned by :meth:`bloom_filters_byte_ranges`
+        bloom_filter_data : Sequence[Span]
+            Header-stripped, 32-byte aligned bloom filter bitsets, as returned
+            by :func:`~pylibcudf.io.parquet_io_utils.fetch_bloom_filters_to_device`,
+            in the same order as :meth:`bloom_filters_byte_ranges`.
         row_group_indices : RowGroupIndices
             Input row group indices, one list per source
         options : ParquetReaderOptions
@@ -607,7 +609,7 @@ cdef class HybridScanMultiFile:
     def materialize_filter_columns(
         self,
         RowGroupIndices row_group_indices not None,
-        list column_chunk_data: list[Span],
+        object column_chunk_data: Sequence[Span],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
         ParquetReaderOptions options,
@@ -620,7 +622,7 @@ cdef class HybridScanMultiFile:
         ----------
         row_group_indices : RowGroupIndices
             Input row group indices, one list per source
-        column_chunk_data : list[Span]
+        column_chunk_data : Sequence[Span]
             Span-like objects containing flattened column chunk data of filter
             columns, in the same order as ``filter_column_chunks_byte_ranges``
         row_mask : Column
@@ -702,7 +704,7 @@ cdef class HybridScanMultiFile:
     def materialize_payload_columns(
         self,
         RowGroupIndices row_group_indices not None,
-        list column_chunk_data: list[Span],
+        object column_chunk_data: Sequence[Span],
         Column row_mask,
         cpp_use_data_page_mask mask_data_pages,
         ParquetReaderOptions options,
@@ -715,7 +717,7 @@ cdef class HybridScanMultiFile:
         ----------
         row_group_indices : RowGroupIndices
             Input row group indices, one list per source
-        column_chunk_data : list[Span]
+        column_chunk_data : Sequence[Span]
             Span-like objects containing flattened column chunk data of payload
             columns, in the same order as ``payload_column_chunks_byte_ranges``
         row_mask : Column
@@ -797,7 +799,7 @@ cdef class HybridScanMultiFile:
     def materialize_all_columns(
         self,
         RowGroupIndices row_group_indices not None,
-        list column_chunk_data: list[Span],
+        object column_chunk_data: Sequence[Span],
         ParquetReaderOptions options,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
@@ -808,7 +810,7 @@ cdef class HybridScanMultiFile:
         ----------
         row_group_indices : RowGroupIndices
             Input row group indices, one list per source
-        column_chunk_data : list[Span]
+        column_chunk_data : Sequence[Span]
             Span-like objects containing flattened column chunk data of all
             columns, in the same order as ``all_column_chunks_byte_ranges``
         options : ParquetReaderOptions

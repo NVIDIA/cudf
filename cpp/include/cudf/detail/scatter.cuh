@@ -17,6 +17,7 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/detail/scatter.cuh>
 #include <cudf/strings/string_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -27,7 +28,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/count.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -51,13 +51,15 @@ namespace detail {
  * @param scatter_map_end End of the scatter map.
  * @param gather_rows Number of rows in the output map.
  * @param stream Stream used for CUDA kernel calls.
+ * @param mr Memory resources used to allocate the returned gather map's device memory
  * @return Output gather map.
  */
 template <typename MapIterator>
 auto scatter_to_gather(MapIterator scatter_map_begin,
                        MapIterator scatter_map_end,
                        size_type gather_rows,
-                       cuda::stream_ref stream)
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr)
 {
   using MapValueType = cuda::std::iter_value_t<MapIterator>;
 
@@ -66,15 +68,14 @@ auto scatter_to_gather(MapIterator scatter_map_begin,
   // value outside the range of the target column.
   // We'll use the `numeric_limits::lowest()` value for this since it should always be outside the
   // valid range.
-  auto gather_map = rmm::device_uvector<size_type>(gather_rows, stream);
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    gather_map.begin(),
-    gather_map.end(),
-    std::numeric_limits<size_type>::lowest());
+  auto gather_map = rmm::device_uvector<size_type>(gather_rows, stream, mr.get_output_mr());
+  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                             gather_map.begin(),
+                             gather_map.end(),
+                             std::numeric_limits<size_type>::lowest());
 
   // Convert scatter map to a gather map
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   cuda::counting_iterator<MapValueType>{0},
                   cuda::counting_iterator{
                     static_cast<MapValueType>(std::distance(scatter_map_begin, scatter_map_end))},
@@ -100,10 +101,11 @@ template <typename MapIterator>
 auto scatter_to_gather_complement(MapIterator scatter_map_begin,
                                   MapIterator scatter_map_end,
                                   size_type gather_rows,
-                                  cuda::stream_ref stream)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
-  auto gather_map = rmm::device_uvector<size_type>(gather_rows, stream);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto gather_map = rmm::device_uvector<size_type>(gather_rows, stream, mr.get_output_mr());
+  thrust::sequence(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                    gather_map.begin(),
                    gather_map.end(),
                    0);
@@ -112,7 +114,7 @@ auto scatter_to_gather_complement(MapIterator scatter_map_begin,
     cuda::make_constant_iterator(std::numeric_limits<size_type>::lowest());
   auto const out_of_bounds_end =
     out_of_bounds_begin + cuda::std::distance(scatter_map_begin, scatter_map_end);
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   out_of_bounds_begin,
                   out_of_bounds_end,
                   scatter_map_begin,
@@ -120,7 +122,7 @@ auto scatter_to_gather_complement(MapIterator scatter_map_begin,
   return gather_map;
 }
 
-template <typename Element, typename Enable = void>
+template <typename Element>
 struct column_scatterer_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
@@ -129,8 +131,8 @@ struct column_scatterer_impl {
   }
 };
 
-template <typename Element>
-struct column_scatterer_impl<Element, std::enable_if_t<cudf::is_fixed_width<Element>()>> {
+template <cudf::concepts::fixed_width Element>
+struct column_scatterer_impl<Element> {
   template <typename MapIterator>
   std::unique_ptr<column> operator()(column_view const& source,
                                      MapIterator scatter_map_begin,
@@ -197,7 +199,7 @@ struct column_scatterer_impl<dictionary32> {
                                      rmm::device_async_resource_ref mr) const
   {
     if (target_in.is_empty())  // empty begets empty
-      return make_empty_column(type_id::DICTIONARY32);
+      return empty_like(target_in);
     if (source_in.is_empty())  // no input, just make a copy
       return std::make_unique<column>(target_in, stream, mr);
 
@@ -293,8 +295,11 @@ struct column_scatterer_impl<struct_view> {
                                             structs_target.child_end(),
                                             [](auto const& col) { return col.nullable(); });
     if (child_nullable) {
-      auto const gather_map =
-        scatter_to_gather(scatter_map_begin, scatter_map_end, target.size(), stream);
+      auto const gather_map = scatter_to_gather(scatter_map_begin,
+                                                scatter_map_end,
+                                                target.size(),
+                                                stream,
+                                                cudf::get_current_device_resource_ref());
       gather_bitmask(cudf::table_view{std::vector<cudf::column_view>{structs_src.child_begin(),
                                                                      structs_src.child_end()}},
                      gather_map.begin(),
@@ -317,8 +322,11 @@ struct column_scatterer_impl<struct_view> {
     // Only gather bitmask from the target column for the rows that have not been scattered onto
     // The bitmask from the source column will be gathered at the top level `scatter()` call.
     if (target.nullable()) {
-      auto const gather_map =
-        scatter_to_gather_complement(scatter_map_begin, scatter_map_end, target.size(), stream);
+      auto const gather_map = scatter_to_gather_complement(scatter_map_begin,
+                                                           scatter_map_end,
+                                                           target.size(),
+                                                           stream,
+                                                           cudf::get_current_device_resource_ref());
       gather_bitmask(table_view{std::vector<cudf::column_view>{target}},
                      gather_map.begin(),
                      result,
@@ -406,8 +414,11 @@ std::unique_ptr<table> scatter(table_view const& source,
     std::any_of(source.begin(), source.end(), [](auto const& col) { return col.nullable(); }) or
     std::any_of(target.begin(), target.end(), [](auto const& col) { return col.nullable(); });
   if (nullable) {
-    auto const gather_map = scatter_to_gather(
-      updated_scatter_map_begin, updated_scatter_map_end, target.num_rows(), stream);
+    auto const gather_map = scatter_to_gather(updated_scatter_map_begin,
+                                              updated_scatter_map_end,
+                                              target.num_rows(),
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
     gather_bitmask(source, gather_map.begin(), result, gather_bitmask_op::PASSTHROUGH, stream, mr);
 
     // For struct columns, we need to superimpose the null_mask of the parent over the null_mask of

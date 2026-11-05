@@ -51,6 +51,28 @@ extern "C" __device__ transform_type transform;
 
 }  // namespace lto
 
+template <typename... Args>
+  requires requires(Args... args) { GENERIC_TRANSFORM_OP(args...); }
+__device__ errc invoke_transform(Args... args)
+{
+  if constexpr (!cuda::std::is_void_v<decltype(GENERIC_TRANSFORM_OP(args...))>) {
+    return static_cast<errc>(GENERIC_TRANSFORM_OP(args...));
+  } else {
+    (void)GENERIC_TRANSFORM_OP(args...);
+    return errc::SUCCESS;
+  }
+}
+
+template <bool has_user_data, typename... Args>
+__device__ errc invoke_transform_op(void* user_data, size_type row, Args... args)
+{
+  if constexpr (has_user_data) {
+    return invoke_transform(user_data, row, args...);
+  } else {
+    return invoke_transform(args...);
+  }
+}
+
 /// @brief The generic transform kernel. Supports all types and nullability combinations.
 template <bool is_null_aware, bool has_user_data, typename InputAccessors, typename OutputAccessors>
 __device__ void transform_kernel(size_type row_size,
@@ -60,21 +82,8 @@ __device__ void transform_kernel(size_type row_size,
                                  mutable_column_device_view_core const* __restrict__ output_cols,
                                  int32_t* __restrict__ max_error)
 {
-  auto operation = [&]<typename Args>(thread_index_type row, Args args) {
-    auto func = [&](auto... a) {
-      if constexpr (!cuda::std::is_void_v<decltype(GENERIC_TRANSFORM_OP(a...))>) {
-        return static_cast<cudf::errc>(GENERIC_TRANSFORM_OP(a...));
-      } else {
-        (void)GENERIC_TRANSFORM_OP(a...);
-        return errc::SUCCESS;
-      }
-    };
-
-    if constexpr (has_user_data) {
-      return cuda::std::apply(func, cuda::std::tuple_cat(cuda::std::tuple{user_data, row}, args));
-    } else {
-      return cuda::std::apply(func, args);
-    }
+  auto operation = [&](size_type row, auto... args) {
+    return invoke_transform_op<has_user_data>(user_data, row, args...);
   };
 
   detail::transform_kernel<is_null_aware, InputAccessors, OutputAccessors>(

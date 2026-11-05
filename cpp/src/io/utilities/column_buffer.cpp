@@ -13,11 +13,13 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <functional>
@@ -32,10 +34,10 @@ void gather_column_buffer::allocate_strings_data(bool memset_data, cuda::stream_
   // Due to the fact that make_strings_column copies the input data to
   // produce its outputs, _strings is actually a temporary. As a result, we
   // do not pass the provided mr to the call to
-  // make_zeroed_device_uvector_async here and instead let it use the
+  // make_zeroed_device_buffer_async here and instead let it use the
   // default rmm memory resource.
-  _strings = std::make_unique<rmm::device_uvector<string_index_pair>>(
-    cudf::detail::make_zeroed_device_uvector_async<string_index_pair>(
+  _strings = std::make_unique<cuda::device_buffer<string_index_pair>>(
+    cudf::detail::make_zeroed_device_buffer_async<string_index_pair>(
       size, stream, cudf::get_current_device_resource_ref()));
 }
 
@@ -208,7 +210,7 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
           auto col_content      = string_col->release();
 
           // convert to uint8 column, strings are currently stored as int8
-          auto data      = col_content.data.release();
+          auto data      = std::move(col_content.data);
           auto char_size = data->size();
 
           CUDF_EXPECTS(char_size < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),

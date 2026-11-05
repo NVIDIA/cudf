@@ -19,8 +19,8 @@ use crate::{
     },
     model::CudfPolarsModelBuilder,
     resource::{
-        DATA_CHANNEL_RESOURCE_TYPE, DeclaredResource, DeclaredResourceGroup,
-        PROCESSOR_RESOURCE_TYPE,
+        DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, DeclaredResource,
+        DeclaredResourceGroup, PROCESSOR_RESOURCE_TYPE,
     },
 };
 
@@ -92,6 +92,21 @@ impl CudfPolarsUiAnalyzer {
                         },
                     );
                 }
+                CudfPolarsEvent::DeviceMemory(DeviceMemoryEvent::Declared {
+                    instance_name,
+                    worker,
+                    ..
+                }) => {
+                    resources.insert(
+                        event.id,
+                        DeclaredResource {
+                            id: event.id,
+                            instance_name: instance_name.clone(),
+                            type_name: DEVICE_MEMORY_RESOURCE_TYPE,
+                            parent_group_id: worker.target,
+                        },
+                    );
+                }
                 _ => {}
             }
             builder.try_push(event)?;
@@ -151,6 +166,7 @@ impl CudfPolarsUiAnalyzer {
                     start_time_unix_ns: Some(event.timestamp),
                     duration_s: None,
                     instance_name: Some(instance_name),
+                    custom_attributes: Vec::new(),
                     implementation: Some(quent_query_engine_ui::EngineImplementationAttributes {
                         name: Some(implementation.name),
                         version: Some(implementation.version),

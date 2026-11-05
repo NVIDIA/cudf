@@ -12,6 +12,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory>
 #include <cuda/stream>
 
 #include <memory>
@@ -73,8 +74,8 @@ create_column_device_views(HostTableView source_view,
     padded_views_size_bytes,
     cuda::no_init,
     cuda::std::execution::prop{cuda::allocation_alignment, alignof(ColumnDeviceView)});
-  void* h_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(h_buffer.data());
-  void* d_ptr    = detail::align_ptr_for_type<ColumnDeviceView>(descendant_storage->data());
+  void* h_ptr    = cuda::align_up(h_buffer.data(), alignof(ColumnDeviceView));
+  void* d_ptr    = cuda::align_up(descendant_storage->data(), alignof(ColumnDeviceView));
   auto d_columns = detail::child_columns_to_device_array<ColumnDeviceView>(
     source_view.begin(), source_view.end(), h_ptr, d_ptr);
 

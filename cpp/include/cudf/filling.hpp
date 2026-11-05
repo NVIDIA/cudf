@@ -48,12 +48,14 @@ namespace CUDF_EXPORT cudf {
  * @param end The index of the last element in the fill range (exclusive)
  * @param value The scalar value to fill
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for allocations
  */
 void fill_in_place(mutable_column_view& destination,
                    size_type begin,
                    size_type end,
                    scalar const& value,
-                   cuda::stream_ref stream = cudf::get_default_stream());
+                   cuda::stream_ref stream   = cudf::get_default_stream(),
+                   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Fills a range of elements in a column out-of-place with a scalar
@@ -111,14 +113,13 @@ std::unique_ptr<column> fill(
  * @param input_table Input table
  * @param count Non-nullable column of an integral type
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  * @return The result table containing the repetitions
  */
-std::unique_ptr<table> repeat(
-  table_view const& input_table,
-  column_view const& count,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> repeat(table_view const& input_table,
+                              column_view const& count,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Repeat rows of a Table.
@@ -136,14 +137,13 @@ std::unique_ptr<table> repeat(
  * @param input_table Input table
  * @param count Number of repetitions
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned table's device memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  * @return The result table containing the repetitions
  */
-std::unique_ptr<table> repeat(
-  table_view const& input_table,
-  size_type count,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> repeat(table_view const& input_table,
+                              size_type count,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Fills a column with a sequence of value specified by an initial value and a step.

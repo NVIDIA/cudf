@@ -10,6 +10,8 @@
 #include <cudf/types.hpp>
 
 #include <cuda/atomic>
+#include <cuda/cmath>
+#include <cuda/std/bit>
 #include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
@@ -34,7 +36,7 @@ struct hash_table_ref {
     // Multiply-high maps a 32-bit hash into [0, capacity) without division or modulo.
     // Reverse the bits so bucket selection uses the low hash bits, preserving the high-bit
     // fingerprint's ability to reject collisions without comparing rows.
-    return __umulhi(__brev(hash), capacity);
+    return cuda::mul_hi(cuda::std::bit_reverse(hash), capacity);
   }
 
   template <typename Equal>

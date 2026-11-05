@@ -74,7 +74,7 @@ auto write_file(std::vector<std::unique_ptr<cudf::column>>& input_columns,
       auto const [null_mask, null_count] =
         cudf::test::detail::make_null_mask(valid_iter + offset, valid_iter + col->size() + offset);
       col = cudf::structs::detail::superimpose_and_sanitize_nulls(
-        reinterpret_cast<cudf::bitmask_type const*>(null_mask.data()),
+        null_mask.data(),
         null_count,
         std::move(col),
         cudf::get_default_stream(),
@@ -751,8 +751,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     // 20001 offsets :   80004  bytes
     // 30000 ints    :   120000 bytes
     // total         :   200004 bytes
-    auto const template_lists = int32s_lists_col{
-      int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{1, 2}, int32s_lists_col{3, 4, 5}};
+    auto const template_lists = int32s_lists_col{{}, {0}, {1, 2}, {3, 4, 5}};
 
     auto const gather_values =
       std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
@@ -761,10 +760,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsNoNulls)
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{template_lists}}, gather_map)->release().front()));
 
-    auto const bools_lists = bools_lists_col{bools_lists_col{},
-                                             bools_lists_col{false},
-                                             bools_lists_col{false, true},
-                                             bools_lists_col{true, true, false}};
+    auto const bools_lists = bools_lists_col{{}, {false}, {false, true}, {true, true, false}};
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{bools_lists}}, gather_map)->release().front()));
 
@@ -841,10 +837,10 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
     // total              :   142504 bytes
     auto const template_lists =
       int32s_lists_col{// these will all be null
-                       int32s_lists_col{},
-                       int32s_lists_col{0},
-                       int32s_lists_col{1, 2},
-                       int32s_lists_col{3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
+                       {},
+                       {0},
+                       {1, 2},
+                       {3, 4, 5, 6, 7, 8, 9} /* this list will be nullified out */};
     auto const gather_values =
       std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
     auto const gather_iter = gather_values.begin();
@@ -854,11 +850,10 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithListsHavingNulls)
 
     auto const bools_lists = bools_lists_col{
       // these will all be null
-      bools_lists_col{},
-      bools_lists_col{false},
-      bools_lists_col{false, true},
-      bools_lists_col{
-        true, true, false, true, true, false, false} /* this list will be nullified out */};
+      {},
+      {false},
+      {false, true},
+      {true, true, false, true, true, false, false} /* this list will be nullified out */};
     input_columns.emplace_back(
       std::move(cudf::gather(cudf::table_view{{bools_lists}}, gather_map)->release().front()));
 
@@ -942,8 +937,7 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithStructsOfLists)
       auto const str_iter = str_values.begin();
       child_columns.emplace_back(strings_col{str_iter, str_iter + num_rows}.release());
 
-      auto const template_lists = int32s_lists_col{
-        int32s_lists_col{}, int32s_lists_col{0}, int32s_lists_col{0, 1}, int32s_lists_col{0, 1, 2}};
+      auto const template_lists = int32s_lists_col{{}, {0}, {0, 1}, {0, 1, 2}};
       auto const gather_values =
         std::views::iota(int32_t{0}) | std::views::transform([&](int32_t i) { return i % 4; });
       auto const gather_iter = gather_values.begin();
@@ -2759,20 +2753,11 @@ TEST_F(ParquetChunkedReaderTest, ReadStringsWithRowBounds)
                          .skip_rows(rows_to_skip)
                          .num_rows(rows_to_read)
                          .build();
-  auto reader = cudf::io::chunked_parquet_reader(output_read_limit, pass_read_limit, options);
-
-  auto num_chunks = 0;
-  auto out_tables = std::vector<std::unique_ptr<cudf::table>>{};
-  while (reader.has_next()) {
-    out_tables.emplace_back(reader.read_chunk().tbl);
-    ++num_chunks;
+  // Without a pass limit, the subpass also holds the pages before and after the row bounds, whose
+  // levels are not decoded
+  for (auto const pass_limit : {pass_read_limit, std::size_t{0}}) {
+    auto const [result, num_chunks] = chunked_read(options, output_read_limit, pass_limit);
+    EXPECT_GT(num_chunks, 1);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected[0], result->view());
   }
-  auto out_tviews = std::vector<cudf::table_view>{};
-  for (auto const& tbl : out_tables) {
-    out_tviews.emplace_back(tbl->view());
-  }
-  auto const chunked_result = cudf::concatenate(out_tviews);
-
-  EXPECT_GT(num_chunks, 1);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected[0], chunked_result->view());
 }

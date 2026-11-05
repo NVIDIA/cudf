@@ -9,11 +9,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
-#include <thrust/detail/use_default.h>
 #include <thrust/iterator/iterator_adaptor.h>
-#include <thrust/iterator/iterator_categories.h>
 #include <thrust/iterator/iterator_facade.h>
+#include <thrust/iterator/iterator_traversal_tags.h>
 
 namespace cudf::detail {
 
@@ -71,24 +71,27 @@ struct strong_index_iterator : public thrust::iterator_facade<strong_index_itera
    *
    * @param n The beginning index
    */
-  explicit constexpr strong_index_iterator(Underlying n) : begin{n} {}
+  CUDF_HOST_DEVICE explicit constexpr strong_index_iterator(Underlying n) : begin{n} {}
 
   friend class thrust::iterator_core_access;  ///< Allow access to the base class
 
  private:
-  __device__ constexpr void increment() { ++begin; }
-  __device__ constexpr void decrement() { --begin; }
+  CUDF_HOST_DEVICE constexpr void increment() { ++begin; }
+  CUDF_HOST_DEVICE constexpr void decrement() { --begin; }
 
-  __device__ constexpr void advance(Underlying n) { begin += n; }
+  CUDF_HOST_DEVICE constexpr void advance(Underlying n) { begin += n; }
 
-  __device__ constexpr bool equal(strong_index_iterator<Index> const& other) const noexcept
+  CUDF_HOST_DEVICE constexpr bool equal(strong_index_iterator<Index> const& other) const noexcept
   {
     return begin == other.begin;
   }
 
-  __device__ constexpr Index dereference() const noexcept { return static_cast<Index>(begin); }
+  CUDF_HOST_DEVICE constexpr Index dereference() const noexcept
+  {
+    return static_cast<Index>(begin);
+  }
 
-  __device__ constexpr Underlying distance_to(
+  CUDF_HOST_DEVICE constexpr Underlying distance_to(
     strong_index_iterator<Index> const& other) const noexcept
   {
     return other.begin - begin;
@@ -174,9 +177,8 @@ __device__ inline weak_ordering compare_elements(string_view lhs, string_view rh
  * @param rhs The second element
  * @return Indicates the relationship between the elements
  */
-template <typename Element>
+template <cuda::std::floating_point Element>
 __device__ weak_ordering relational_compare(Element lhs, Element rhs)
-  requires(cuda::std::is_floating_point_v<Element>)
 {
   if (isnan(lhs) and isnan(rhs)) {
     return weak_ordering::EQUIVALENT;
@@ -219,7 +221,6 @@ inline __device__ auto null_compare(bool lhs_is_null, bool rhs_is_null, null_ord
  */
 template <typename Element>
 __device__ weak_ordering relational_compare(Element lhs, Element rhs)
-  requires(not cuda::std::is_floating_point_v<Element>)
 {
   return detail::compare_elements(lhs, rhs);
 }
@@ -232,9 +233,8 @@ __device__ weak_ordering relational_compare(Element lhs, Element rhs)
  * @param rhs second element
  * @return `true` if `lhs` == `rhs` else `false`.
  */
-template <typename Element>
+template <cuda::std::floating_point Element>
 __device__ bool equality_compare(Element lhs, Element rhs)
-  requires(cuda::std::is_floating_point_v<Element>)
 {
   if (isnan(lhs) and isnan(rhs)) { return true; }
   return lhs == rhs;
@@ -250,7 +250,6 @@ __device__ bool equality_compare(Element lhs, Element rhs)
  */
 template <typename Element>
 __device__ bool equality_compare(Element const lhs, Element const rhs)
-  requires(not cuda::std::is_floating_point_v<Element>)
 {
   return lhs == rhs;
 }

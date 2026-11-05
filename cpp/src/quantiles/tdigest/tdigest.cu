@@ -227,7 +227,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
                  },
                  stream,
                  mr)
-             : std::pair<cuda::device_buffer<std::byte>, size_type>{
+             : std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type>{
                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
   }();
 
@@ -385,7 +385,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
                      tdigest_is_empty + tdv.size(),
                      0);
     if (null_count == 0) {
-      return std::pair<cuda::device_buffer<std::byte>, size_type>{
+      return std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type>{
         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), null_count};
     }
     return cudf::detail::valid_if(

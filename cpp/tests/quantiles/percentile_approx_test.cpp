@@ -227,7 +227,7 @@ void grouped_test(cudf::data_type input_type, std::vector<std::pair<int, int>> p
   });
 }
 
-std::pair<cuda::device_buffer<std::byte>, cudf::size_type> make_null_mask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> make_null_mask(
   cudf::column_view const& col)
 {
   auto itr = cudf::test::iterators::valids_at_multiples_of(2);

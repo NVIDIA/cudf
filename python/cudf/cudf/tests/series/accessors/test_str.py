@@ -2696,6 +2696,13 @@ def _assert_string_cat(data, others, sep, na_rep, index=None):
         (["nOPq", None, "RsT", None, "uVw"], "|", ""),
         (["nOPq", None, "RsT", None, "uVw"], "|", "null"),
         ([None, None, None, None, None], "|", "null"),
+        (["x", None], "|", None),
+        (["x", None], "<>", None),
+        (["x", None], "|", "-"),
+        (["x", "y", None], "|", None),
+        (["x", None, None], "|", None),
+        ([None, None, "z"], "|", None),
+        ([None, "x", None, "z", None], "|", None),
     ],
 )
 def test_string_cat_join(data, sep, na_rep):

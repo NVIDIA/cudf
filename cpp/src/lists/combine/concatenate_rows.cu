@@ -17,12 +17,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/exec_policy.hpp>
-
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/scan.h>
 
 namespace cudf {
 namespace lists {
@@ -59,7 +57,7 @@ namespace {
  * We can do this by recomputing a new offsets column that does this regrouping.
  *
  */
-std::tuple<std::unique_ptr<column>, cuda::device_buffer<std::byte>, size_type>
+std::tuple<std::unique_ptr<column>, cuda::device_buffer<cudf::bitmask_type>, size_type>
 generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          bool build_null_mask,
                                          concatenate_null_policy null_policy,
@@ -125,7 +123,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
   auto [null_mask, null_count] = [&]() {
     // if the input doesn't contain nulls, no work to do
     if (!build_null_mask) {
-      return std::pair<cuda::device_buffer<std::byte>, size_type>{
+      return std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type>{
         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
     }
 
@@ -153,10 +151,12 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
   return {std::move(offsets), std::move(null_mask), null_count};
 }
 
-rmm::device_uvector<size_type> generate_null_counts(table_device_view const& input,
-                                                    cuda::stream_ref stream)
+cuda::device_buffer<size_type> generate_null_counts(table_device_view const& input,
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr)
 {
-  rmm::device_uvector<size_type> null_counts(input.num_rows(), stream);
+  cuda::device_buffer<size_type> null_counts(
+    stream, mr.get_output_mr(), input.num_rows(), cuda::no_init);
 
   auto keys =
     cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -226,8 +226,11 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
 
   // if the output needs a null mask, generate a vector of null counts per row of input, where the
   // count is the number of columns that contain a null for a given row.
-  auto row_null_counts = build_null_mask ? generate_null_counts(*input_dv, stream)
-                                         : rmm::device_uvector<size_type>{0, stream};
+  auto row_null_counts =
+    build_null_mask
+      ? generate_null_counts(*input_dv, stream, cudf::get_current_device_resource_ref())
+      : cuda::device_buffer<size_type>{
+          stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
 
   // if we have nulls, overlay an appropriate null mask onto the
   // concatenated column so that gather() sanitizes out the child data of rows that will ultimately

@@ -93,12 +93,17 @@ Compilers:
 
 * `gcc` version 13.3+
 * `nvcc` version 12.9+
-* `cmake` version 3.29.6+
+* `cmake` version 4.0+
 
 CUDA/GPU Runtime:
 
 * CUDA 12.2+
-* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0)
+* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0) with CUDA 12.x
+* Turing architecture or better (Compute Capability >=7.5) with CUDA 13.x
+
+Other requirements:
+
+* `zlib` 1.2.13+
 
 You can obtain CUDA from
 [https://developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads).
@@ -122,7 +127,7 @@ Instructions for a minimal build environment without conda are included below.
 
 ```bash
 # create the conda environment (assuming in base `cudf` directory)
-conda env create --name cudf_dev --file conda/environments/all_cuda-133_arch-$(uname -m).yaml
+conda env create --name cudf_dev --file conda/environments/all_cuda-134_arch-$(uname -m).yaml
 # activate the environment
 conda activate cudf_dev
 ```
@@ -149,6 +154,10 @@ conda activate cudf_dev
   them into a different location, set `$INSTALL_PREFIX`. Python packages are installed into the
   active Python environment. Finally, note that the script depends on the `nvcc` executable being on
   your path, or defined in `$CUDACXX`.
+
+  The `PARALLEL_LEVEL` environment variable sets the number of C++ build jobs passed to
+  `cmake --build -j` and defaults to `nproc`. Lowering it reduces peak memory use at the cost of
+  longer C++ build times.
 
 ```bash
 cd $CUDF_HOME
@@ -329,6 +338,19 @@ The [C++ Developer Guide](https://docs.nvidia.com/cudf/latest/libcudf/developer_
 
 The [Python Developer Guide](https://docs.nvidia.com/cudf/latest/developer_guide/) includes details on contributing to cuDF Python code.
 
+## Automated and AI-assisted contributions
+
+AI-assisted contributions are welcome and must meet the same requirements as other contributions.
+
+- **You are responsible:** Review and understand the change before submission. Be able to explain it. For submissions from a bot or agent account, identify the responsible human.
+- **Verify correctness:** AI-generated code may contain bugs or security issues. Run the applicable tests and review the diff carefully.
+- **Self-review before opening a pull request:** Run the repository's review skill (`/review-cudf`, defined in `.agents/skills/review-cudf`) with your AI assistant and address its findings before requesting review from cuDF maintainers. Also have your AI assistant read the review comments and contents of the latest ~10 PRs that touched the same files or folders, and check your change against the feedback reviewers gave there. Maintainers use the same skill, so anything it flags will likely be raised in review.
+- **No AI-generated sensitive content:** Do not use AI to generate security policies, legal, or license text.
+- **Disclose AI assistance:** Note AI assistance in the pull request description.
+- **Own review responses:** Review AI-assisted replies before posting them. You remain responsible for their content and your review decisions.
+  - Do not submit issues, pull requests, or review responses through a fully autonomous process. A human contributor must remain available and engaged.
+
+Maintainers may close submissions without technical review when they appear unvetted, misleading, or otherwise impose disproportionate review cost. Repeated submissions of this kind may result in account blocking.
 
 ## Attribution
 

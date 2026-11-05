@@ -27,6 +27,8 @@
 #include <cooperative_groups/scan.h>
 #include <cub/warp/warp_reduce.cuh>
 #include <cub/warp/warp_scan.cuh>
+#include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 
@@ -217,10 +219,10 @@ CUDF_KERNEL void url_decode_char_counter(column_device_view const in_strings,
       continue;
     }
 
-    auto const in_string     = in_strings.element<string_view>(row_idx);
-    auto const in_chars      = in_string.data();
-    auto const string_length = in_string.size_bytes();
-    auto const nblocks       = cudf::util::div_rounding_up_unsafe(string_length, char_block_size);
+    auto const in_string        = in_strings.element<string_view>(row_idx);
+    auto const in_chars         = in_string.data();
+    auto const string_length    = in_string.size_bytes();
+    auto const nblocks          = cuda::ceil_div(string_length, char_block_size);
     size_type escape_char_count = 0;
 
     for (size_type block_idx = 0; block_idx < nblocks; block_idx++) {
@@ -308,7 +310,7 @@ CUDF_KERNEL void url_decode_char_replacer(column_device_view const in_strings,
     auto const in_chars      = in_string.data();
     auto const string_length = in_string.size_bytes();
     auto out_chars_string    = out_chars + out_offsets[row_idx];
-    auto const nblocks       = cudf::util::div_rounding_up_unsafe(string_length, char_block_size);
+    auto const nblocks       = cuda::ceil_div(string_length, char_block_size);
 
     // Use the last thread of the warp to initialize `out_idx` to 0.
     if (warp_lane == cudf::detail::warp_size - 1) { out_idx[local_warp_id] = 0; }
@@ -385,12 +387,13 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   constexpr size_type threadblock_size = num_warps_per_threadblock * cudf::detail::warp_size;
   constexpr size_type char_block_size  = 256;
   auto const num_threadblocks =
-    std::min(65536, cudf::util::div_rounding_up_unsafe(strings_count, num_warps_per_threadblock));
+    std::min(65536, cuda::ceil_div(strings_count, num_warps_per_threadblock));
 
   auto const d_strings = column_device_view::create(strings.parent(), stream);
 
   // build offsets column by computing the output row sizes and scanning the results
-  auto row_sizes = rmm::device_uvector<size_type>(strings_count, stream);
+  auto row_sizes = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   url_decode_char_counter<num_warps_per_threadblock, char_block_size>
     <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, row_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -410,7 +413,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // copy null mask
-  cuda::device_buffer<std::byte> null_mask =
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
     cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   return make_strings_column(strings_count,

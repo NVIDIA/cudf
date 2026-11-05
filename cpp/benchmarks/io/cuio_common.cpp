@@ -5,7 +5,6 @@
 
 #include <benchmarks/io/cuio_common.hpp>
 
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -13,6 +12,8 @@
 #include <kvikio/file_utils.hpp>
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
+
+#include <cuda/cmath>
 
 #include <unistd.h>
 
@@ -206,7 +207,7 @@ std::vector<cudf::size_type> segments_in_chunk(int num_segments, int num_chunks,
   CUDF_EXPECTS(chunk_idx < num_chunks,
                "Chunk index must be smaller than the number of chunks in the file");
 
-  auto const segments_in_chunk = cudf::util::div_rounding_up_unsafe(num_segments, num_chunks);
+  auto const segments_in_chunk = cuda::ceil_div(num_segments, num_chunks);
   auto const begin_segment     = std::min(chunk_idx * segments_in_chunk, num_segments);
   auto const end_segment       = std::min(begin_segment + segments_in_chunk, num_segments);
   std::vector<cudf::size_type> selected_segments(end_segment - begin_segment);

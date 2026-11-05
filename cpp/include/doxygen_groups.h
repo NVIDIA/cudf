@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -184,5 +184,6 @@
  *   @defgroup label_bins Bin Labeling
  * @}
  * @defgroup expressions Expression Evaluation
+ * @defgroup udfs User-defined Functions
  * @defgroup tdigest tdigest APIs
  */

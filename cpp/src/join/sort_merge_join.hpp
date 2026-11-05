@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "join_match_state.hpp"
+
 #include <cudf/column/column.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table.hpp>
@@ -120,7 +122,7 @@ class sort_merge_join {
                                    ///< rows of the unprocessed table view if null equality is set
                                    ///< to false, otherwise equal to the unprocessed table view
 
-    std::optional<cuda::device_buffer<std::byte>> _validity_mask =
+    std::optional<cuda::device_buffer<cudf::bitmask_type>> _validity_mask =
       std::nullopt;  ///< Optional validity mask for null_equality::UNEQUAL case
     std::optional<size_type> _num_nulls =
       std::nullopt;  ///< Optional count of nulls for null_equality::UNEQUAL case
@@ -180,39 +182,32 @@ class sort_merge_join {
      * @return A device vector containing the mapping from processed table indices to unprocessed
      * table indices
      */
-    rmm::device_uvector<size_type> map_table_to_unprocessed(cuda::stream_ref stream) const;
+    cuda::device_buffer<size_type> map_table_to_unprocessed(cuda::stream_ref stream) const;
   };
 
   /**
-   * @brief Extended match context for sort-merge join with preprocessed table state.
-   *
-   * This struct derives from join_match_context and adds the preprocessed left table
-   * state needed for thread-safe partitioned join operations. It is returned by
-   * inner_join_match_context() and used with partitioned_inner_join().
+   * @brief Sort-merge join state cached in a join_match_context: the preprocessed left table
+   * needed for thread-safe partitioned join operations
    */
-  struct sort_merge_join_match_context : public join_match_context {
+  struct sort_merge_join_match_state final : join_match_state {
     preprocessed_table preprocessed_left;  ///< Preprocessed left table state for partitioned joins
 
     /**
-     * @brief Construct a sort_merge_join_match_context
+     * @brief Construct a sort_merge_join_match_state
      *
-     * @param left_table The left table view
-     * @param match_counts Device vector of match counts per row
+     * @param owner Join object that created the context
      * @param preprocessed Preprocessed left table state
      */
-    sort_merge_join_match_context(table_view left_table,
-                                  std::unique_ptr<rmm::device_uvector<size_type>> match_counts,
-                                  preprocessed_table preprocessed)
-      : join_match_context{left_table, std::move(match_counts)},
-        preprocessed_left{std::move(preprocessed)}
+    sort_merge_join_match_state(void const* owner, preprocessed_table preprocessed)
+      : join_match_state{owner, join_kind::INNER_JOIN}, preprocessed_left{std::move(preprocessed)}
     {
     }
   };
 
   preprocessed_table preprocessed_right;  ///< Preprocessed right table
-  std::unique_ptr<rmm::device_uvector<size_type>>
+  std::unique_ptr<cuda::device_buffer<size_type>>
     right_run_rows;  ///< First row of each key run; the first `num_right_runs` entries are valid
-  std::unique_ptr<rmm::device_uvector<size_type>>
+  std::unique_ptr<cuda::device_buffer<size_type>>
     right_run_offsets;  ///< Start of each run in sorted order; the first `num_right_runs + 1`
                         ///< entries are valid, including the row-count sentinel
   size_type num_right_runs{};   ///< Number of distinct key runs in the processed right table

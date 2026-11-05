@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import kvikio
 import kvikio.defaults
@@ -45,11 +45,14 @@ from cudf_polars.utils.config import (
     configure_kvikio,
     resolve_kvikio_bounce_buffer_bytes,
     resolve_kvikio_nthreads,
-    resolve_kvikio_reactor_dispatch,
     resolve_kvikio_remote_io_backend,
     resolve_kvikio_task_size,
+    resolve_quent_context,
 )
 from cudf_polars.utils.cuda_stream import get_cuda_stream
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_polars_verbose_warns(engine: pl.GPUEngine, monkeypatch: pytest.MonkeyPatch):
@@ -336,6 +339,7 @@ def test_validate_cluster() -> None:
         "target_partition_size",
         "broadcast_limit",
         "sink_to_directory",
+        "parallel_sink_batches",
         "client_device_threshold",
         "max_concurrent_io_tasks",
         "num_py_executors",
@@ -380,12 +384,6 @@ def test_kvikio_resolvers_accept_enum_values(
     )
     assert resolve_kvikio_nthreads({}) == 32
     assert resolve_kvikio_task_size({}) == 64 * 1024 * 1024
-    assert (
-        resolve_kvikio_reactor_dispatch(
-            {"kvikio_reactor_dispatch": kvikio.RemoteReactorDispatch.PER_CHUNK}
-        )
-        == kvikio.RemoteReactorDispatch.PER_CHUNK
-    )
 
 
 @pytest.mark.parametrize(
@@ -422,10 +420,8 @@ def test_streaming_executor_normalizes_kvikio_enum_strings() -> None:
     executor = StreamingExecutor(
         cluster=Cluster.DEFAULT_SINGLETON,
         kvikio_remote_io_backend="EASY_THREADPOOL",
-        kvikio_reactor_dispatch="PER_CHUNK",
     )
     assert executor.kvikio_remote_io_backend == kvikio.RemoteIOBackend.EASY_THREADPOOL
-    assert executor.kvikio_reactor_dispatch == kvikio.RemoteReactorDispatch.PER_CHUNK
 
 
 def test_executor_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -622,6 +618,26 @@ def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
         assert config.executor.quent_context is None
 
 
+def test_resolve_quent_context_preserves_explicit_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+    assert resolve_quent_context({}) is not None
+    assert resolve_quent_context({"quent_context": None}) is None
+
+
+def test_quent_output_root_from_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output_root = tmp_path / "quent"
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+        m.setenv("CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT", str(output_root))
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+        assert config.executor.quent_context is not None
+        assert config.executor.quent_context.output_root == str(output_root)
+
+
 def test_quent_context_from_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     with monkeypatch.context() as m:
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "foo")
@@ -634,7 +650,7 @@ def test_hash_streaming_executor() -> None:
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",
-            executor_options={"quent_context": cudf_polars.quent.QuentContext()},
+            executor_options={"quent_context": cudf_polars.quent.QuentConfig()},
         )
     )
     assert hash(config.executor) == hash(config.executor)
@@ -972,19 +988,16 @@ def test_join_filter_pushdown_options_from_env(
         "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__BLOOM_FILTER_MAX_SIZE",
         "1024",
     )
-    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is not None
     assert config.executor.join_filter_pushdown.threshold == 0.125
     assert config.executor.join_filter_pushdown.bloom_filter_max_size == 1024
-    assert config.executor.join_filter_pushdown.trace
 
 
 def test_join_filter_pushdown_disabled_from_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN", "0")
-    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__TRACE", "1")
     config = ConfigOptions.from_polars_engine(pl.GPUEngine())
     assert config.executor.join_filter_pushdown is None
 
@@ -1002,13 +1015,6 @@ def test_validate_join_filter_pushdown_options() -> None:
             pl.GPUEngine(
                 executor="streaming",
                 executor_options={"join_filter_pushdown": {"threshold": 1.5}},
-            )
-        )
-    with pytest.raises(TypeError, match="trace must be"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={"join_filter_pushdown": {"trace": "bad"}},
             )
         )
     with pytest.raises(TypeError, match="bloom_filter_max_size must be"):
@@ -1045,9 +1051,7 @@ def test_validate_join_filter_pushdown_type() -> None:
 
 
 def test_join_filter_pushdown_from_instance() -> None:
-    options = JoinFilterPushdownOptions(
-        threshold=0.25, bloom_filter_max_size=1024, trace=True
-    )
+    options = JoinFilterPushdownOptions(threshold=0.25, bloom_filter_max_size=1024)
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",
@@ -1293,7 +1297,6 @@ def test_configure_kvikio_multi_poll_defaults(
     configure_kvikio(42)
     reactor_settings = {
         "remote_io_num_reactors": 24,
-        "remote_io_reactor_dispatch": kvikio.RemoteReactorDispatch.PER_CHUNK,
         "remote_io_max_concurrent_requests": 256,
     }
     assert all(
@@ -1309,10 +1312,6 @@ def test_configure_kvikio_multi_poll_defaults(
             assert (key, value) in calls
     assert kvikio.defaults.get("remote_io_backend") == kvikio.RemoteIOBackend.MULTI_POLL
     assert kvikio.defaults.get("remote_io_num_reactors") == 24
-    assert (
-        kvikio.defaults.get("remote_io_reactor_dispatch")
-        == kvikio.RemoteReactorDispatch.PER_CHUNK
-    )
     assert kvikio.defaults.get("remote_io_max_concurrent_requests") == 256
     assert kvikio.defaults.get("bounce_buffer_size") == 16 * 1024 * 1024
     assert kvikio.defaults.get("task_size") == 16 * 1024 * 1024

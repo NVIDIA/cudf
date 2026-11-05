@@ -17,12 +17,15 @@
 #include "temp_storage_wrapper.cuh"
 
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/reduction/detail/sum_overflow.cuh>
+#include <cudf/utilities/concepts.hpp>
+#include <cudf/utilities/traits.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/functional>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
-#include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <math_constants.h>
 
@@ -45,48 +48,60 @@ class union_member {
                        reference_type<U, byte_array_stats>,
                        reference_type<U, T>>>;
 
-  template <typename T, typename U>
+  template <cuda::std::unsigned_integral T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_integral_v<T> and std::is_unsigned_v<T>)
   {
     return val.u_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::signed_integral T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_integral_v<T> and std::is_signed_v<T>)
+    requires(not cuda::std::same_as<T, __int128_t>)
   {
     return val.i_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::same_as<__int128_t> T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_same_v<T, __int128_t>)
   {
     return val.d128_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::floating_point T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_floating_point_v<T>)
   {
     return val.fp_val;
   }
 
-  template <typename T, typename U>
+  template <cudf::concepts::string_view T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_same_v<T, string_view>)
   {
     return val.str_val;
   }
 
-  template <typename T, typename U>
+  template <cuda::std::same_as<statistics::byte_array_view> T, typename U>
   __device__ static type<T, U> get(U& val)
-    requires(std::is_same_v<T, statistics::byte_array_view>)
   {
     return val.byte_val;
   }
 };
+
+namespace detail {
+
+// Integral sums track overflow exactly via net wrap counts; floating point sums are plain
+template <typename A>
+using sum_type = cuda::std::
+  conditional_t<cuda::std::is_floating_point_v<A>, A, reduction::detail::sum_overflow_result<A>>;
+template <typename A>
+using sum_op = cuda::std::conditional_t<cuda::std::is_floating_point_v<A>,
+                                        cuda::std::plus<A>,
+                                        reduction::detail::overflow_sum_op<A>>;
+template <typename A>
+using to_sum = cuda::std::conditional_t<cuda::std::is_floating_point_v<A>,
+                                        cuda::std::identity,
+                                        reduction::detail::to_sum_overflow<A>>;
+
+}  // namespace detail
 
 /**
  * @brief Templated structure used for merging and gathering of statistics chunks
@@ -104,22 +119,21 @@ template <typename T>
 struct typed_statistics_chunk<T, true> {
   using E = typename detail::extrema_type<T>::type;
   using A = typename detail::aggregation_type<T>::type;
+  using S = detail::sum_type<A>;
 
   uint32_t non_nulls{0};   //!< number of non-null values in chunk
   uint32_t null_count{0};  //!< number of null values in chunk
 
   E minimum_value;
   E maximum_value;
-  A aggregate;
+  S aggregate{};
 
   uint8_t has_minmax{false};  //!< Nonzero if min_value and max_values are valid
-  uint8_t has_sum{false};     //!< Nonzero if sum is valid
+  uint8_t has_sum{true};      //!< Nonzero if all merged chunks have a valid sum
   uint8_t has_nan{false};     //!< Nonzero if a NaN was seen (floating point only)
 
   __device__ typed_statistics_chunk()
-    : minimum_value(detail::minimum_identity<E>()),
-      maximum_value(detail::maximum_identity<E>()),
-      aggregate(0)
+    : minimum_value(detail::minimum_identity<E>()), maximum_value(detail::maximum_identity<E>())
   {
   }
 
@@ -129,7 +143,8 @@ struct typed_statistics_chunk<T, true> {
     if constexpr (cuda::std::is_floating_point_v<T>) { has_nan |= cuda::std::isnan(elem); }
     minimum_value = cuda::std::min<E>(minimum_value, detail::extrema_type<T>::convert(elem));
     maximum_value = cuda::std::max<E>(maximum_value, detail::extrema_type<T>::convert(elem));
-    aggregate += detail::aggregation_type<T>::convert(elem);
+    aggregate     = detail::sum_op<A>{}(
+      aggregate, detail::to_sum<A>{}(detail::aggregation_type<T>::convert(elem)));
     has_minmax = true;
   }
 
@@ -139,7 +154,9 @@ struct typed_statistics_chunk<T, true> {
       minimum_value = cuda::std::min<E>(minimum_value, union_member::get<E>(chunk.min_value));
       maximum_value = cuda::std::max<E>(maximum_value, union_member::get<E>(chunk.max_value));
     }
-    if (chunk.has_sum) { aggregate += union_member::get<A>(chunk.sum); }
+    aggregate =
+      detail::sum_op<A>{}(aggregate, detail::to_sum<A>{}(union_member::get<A>(chunk.sum)));
+    has_sum &= chunk.has_sum;
     non_nulls += chunk.non_nulls;
     null_count += chunk.null_count;
     has_nan |= chunk.has_nan;
@@ -221,11 +238,13 @@ __inline__ __device__ typed_statistics_chunk<T, include_aggregate> block_reduce(
 
   // FIXME : Is another syncthreads needed here?
   if constexpr (include_aggregate) {
+    output_chunk.has_sum = __syncthreads_and(output_chunk.has_sum);
     if (output_chunk.has_minmax) {
       using A                = typename detail::aggregation_type<T>::type;
-      using aggregate_reduce = cub::BlockReduce<A, block_size>;
-      output_chunk.aggregate =
-        aggregate_reduce(storage.template get<A>()).Sum(output_chunk.aggregate);
+      using S                = detail::sum_type<A>;
+      using aggregate_reduce = cub::BlockReduce<S, block_size>;
+      output_chunk.aggregate = aggregate_reduce(storage.template get<S>())
+                                 .Reduce(output_chunk.aggregate, detail::sum_op<A>{});
     }
   }
   return output_chunk;
@@ -247,17 +266,6 @@ get_untyped_chunk(typed_statistics_chunk<T, include_aggregate> const& chunk)
   stat.null_count = chunk.null_count;
   stat.has_minmax = chunk.has_minmax;
   stat.has_nan    = chunk.has_nan;
-  stat.has_sum    = [&]() {
-    // invalidate the sum if overflow or underflow is possible
-    if constexpr (std::is_floating_point_v<E> or std::is_integral_v<E>) {
-      if (!chunk.has_minmax) { return true; }
-      return cuda::std::numeric_limits<E>::max() / chunk.non_nulls >=
-               static_cast<E>(chunk.maximum_value) and
-             cuda::std::numeric_limits<E>::lowest() / chunk.non_nulls <=
-               static_cast<E>(chunk.minimum_value);
-    }
-    return true;
-  }();
   if (chunk.has_minmax) {
     if constexpr (std::is_floating_point_v<E>) {
       union_member::get<E>(stat.min_value) =
@@ -268,9 +276,16 @@ get_untyped_chunk(typed_statistics_chunk<T, include_aggregate> const& chunk)
       union_member::get<E>(stat.min_value) = chunk.minimum_value;
       union_member::get<E>(stat.max_value) = chunk.maximum_value;
     }
-    if constexpr (include_aggregate) {
-      using A                        = typename detail::aggregation_type<T>::type;
+  }
+  if constexpr (include_aggregate) {
+    // invalidate the sum if it overflowed
+    using A = typename detail::aggregation_type<T>::type;
+    if constexpr (cuda::std::is_floating_point_v<A>) {
+      stat.has_sum                   = chunk.has_sum and cuda::std::isfinite(chunk.aggregate);
       union_member::get<A>(stat.sum) = chunk.aggregate;
+    } else {
+      stat.has_sum                   = chunk.has_sum and chunk.aggregate.wraps == 0;
+      union_member::get<A>(stat.sum) = chunk.aggregate.sum;
     }
   }
   return stat;

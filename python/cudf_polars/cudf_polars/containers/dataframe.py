@@ -14,7 +14,6 @@ import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataType
 from cudf_polars.utils import conversion
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138, POLARS_VERSION_LT_143
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence, Set
@@ -26,28 +25,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.typing import ColumnOptions, DataFrameHeader, PolarsDataType, Slice
 
-__all__: list[str] = ["DataFrame", "categoricals_to_physical"]
-
-
-def categoricals_to_physical(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Replace Categorical and Enum columns with their physical codes.
-
-    Parameters
-    ----------
-    df
-        Polars dataframe
-
-    Returns
-    -------
-    Polars dataframe
-    """
-    names = [
-        name for name, dtype in df.schema.items() if DataType(dtype).is_categorical
-    ]
-    if not names:
-        return df
-    return df.with_columns(pl.col(names).to_physical())
+__all__: list[str] = ["DataFrame"]
 
 
 def _create_polars_column_metadata(
@@ -86,7 +64,7 @@ class _ObjectWithArrowMetadata:
     def __init__(
         self,
         obj: plc.Table | plc.Column,
-        metadata: list[plc.interop.ColumnMetadata],
+        metadata: list[plc.interop.ColumnMetadata] | plc.interop.ColumnMetadata,
         stream: Stream,
     ) -> None:
         self.obj = obj
@@ -138,10 +116,6 @@ class DataFrame:
     def to_polars(self) -> pl.DataFrame:
         """Convert to a polars DataFrame."""
         if len(self.column_map) == 0:
-            # polars < 1.38 has no DataFrame(height=...) constructor and cannot
-            # represent a zero-column frame with a non-zero row count.
-            if POLARS_VERSION_LT_138:  # pragma: no cover
-                return pl.DataFrame()
             return pl.DataFrame(height=self.num_rows)
 
         # If the arrow table has empty names, from_arrow produces
@@ -157,34 +131,62 @@ class DataFrame:
         ]
         table_columns = list(self.table.columns())
         for i, c in enumerate(self.columns):
-            if c.dtype.is_categorical and c.null_count > 0:
-                # Polars requires non-null codes.
-                filled = plc.replace.replace_nulls(
-                    c.obj,
-                    plc.Scalar.from_py(0, c.obj.type(), stream=self.stream),
-                    stream=self.stream,
+            if isinstance(c.dtype.polars_type, pl.Time):
+                table_columns[i] = plc.Column(
+                    plc.DataType(plc.TypeId.INT64),
+                    c.obj.size(),
+                    c.obj.data(),
+                    c.obj.null_mask(),
+                    c.obj.null_count(),
+                    c.obj.offset(),
+                    c.obj.children(),
                 )
-                table_columns[i] = filled.with_mask(
-                    plc.null_mask.copy_bitmask(c.obj, stream=self.stream),
-                    c.null_count,
-                )
+            elif c.dtype.is_categorical:
+                assert c.obj.type().id() == plc.TypeId.DICTIONARY32
+                if c.obj.num_children() == 0:
+                    table_columns[i] = plc.column_factories.make_empty_column(
+                        plc.DataType(plc.TypeId.INT32), stream=self.stream
+                    )
+                else:
+                    indices = c.obj.children()[0]
+                    table_columns[i] = plc.Column(
+                        indices.type(),
+                        c.obj.size(),
+                        indices.data(),
+                        c.obj.null_mask(),
+                        c.obj.null_count(),
+                        c.obj.offset(),
+                        [],
+                    )
         table = plc.Table(table_columns)
         table_with_metadata = _ObjectWithArrowMetadata(table, metadata, self.stream)
         df = pl.DataFrame(table_with_metadata).rename(name_map)
-        array_dtypes: dict[str, PolarsDataType] = {
+        cast_dtypes: dict[str, PolarsDataType] = {
             column.name: column.dtype.polars_type
             for column in self.columns
-            if isinstance(column.dtype.polars_type, pl.Array)
+            if isinstance(column.dtype.polars_type, (pl.Array, pl.Time))
         }
-        if array_dtypes:
-            # TODO: Remove this cast when libcudf can export Arrow fixed-size lists.
-            df = df.cast(pl.Schema(array_dtypes), strict=True)
+        if cast_dtypes:
+            # TODO: Remove this cast when:
+            # 1. libcudf can export Arrow fixed-size lists.
+            # 2. libcudf natively supports TIME64 type
+            df = df.cast(pl.Schema(cast_dtypes), strict=True)
         categorical_columns = [c for c in self.columns if c.dtype.is_categorical]
         if categorical_columns:
             df = df.with_columns(
-                pl.col(c.name).cast(c.dtype.polars_type)
-                if POLARS_VERSION_LT_143
-                else pl.col(c.name).cat.to(c.dtype.polars_type, strict=True)
+                pl.Series(
+                    _ObjectWithArrowMetadata(
+                        c.obj.children()[1]
+                        if c.obj.num_children() == 2
+                        else plc.column_factories.make_empty_column(
+                            plc.DataType(plc.TypeId.STRING), stream=self.stream
+                        ),
+                        plc.interop.ColumnMetadata(name=c.name),
+                        self.stream,
+                    )
+                )
+                .cast(c.dtype.polars_type, strict=True)
+                .gather(df[c.name])
                 for c in categorical_columns
             )
         return df.with_columns(
@@ -236,7 +238,7 @@ class DataFrame:
         -------
         New dataframe representing the input.
         """
-        plc_table = plc.Table.from_arrow(categoricals_to_physical(df), stream=stream)
+        plc_table = plc.Table.from_arrow(df, stream=stream)
         return cls(
             (
                 Column(d_col, name=name, dtype=DataType(h_col.dtype)).copy_metadata(

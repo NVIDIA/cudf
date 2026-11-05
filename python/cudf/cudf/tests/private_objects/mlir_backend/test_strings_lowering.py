@@ -13,9 +13,11 @@ import cudf.core.udf.mlir_backend.strings_lowering  # noqa: F401  registers len
 from cudf.core.udf.api import Masked
 from cudf.core.udf.mlir_backend.strings_typing import (
     ManagedStrArrayWrapper,
+    NRT_decref,
     mlir_string,
     mlir_string_arg_handler,
 )
+from cudf.core.udf.nrt_utils import nrt_enabled
 from cudf.core.udf.utils import DEPRECATED_SM_REGEX
 
 from .utils import MLIRNumbaCudaConfig
@@ -367,3 +369,1286 @@ def test_masked_string_comparison_propagates_validity():
     for i in range(n):
         if got_valid[i]:
             assert bool(out.get()[i]) is (a[i] == b[i])
+
+
+def test_string_affix():
+    """``startswith`` / ``endswith`` against a literal, over an array."""
+    strings = ["abc", "abcd", "xabc", "ab", "", "cab", "h\u00e9llo"]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    starts = cp.zeros(n, dtype=np.bool_)
+    ends = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(so, eo, s):
+        i = cuda.grid(1)
+        if i < so.size:
+            so[i] = s[i].startswith("ab")
+            eo[i] = s[i].endswith("bc")
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](starts, ends, arr)
+    cuda.synchronize()
+    assert starts.get().tolist() == [s.startswith("ab") for s in strings]
+    assert ends.get().tolist() == [s.endswith("bc") for s in strings]
+
+
+def test_masked_string_affix_propagates_validity():
+    """``Masked(str).startswith(literal)`` -> ``Masked(bool)``; validity carried."""
+    strings = ["abc", "abd", "xyz"]
+    valid = [True, False, True]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, sv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = Masked(s[i], sv[i]).startswith("ab")
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    for i in range(n):
+        if valid[i]:
+            assert bool(out.get()[i]) is strings[i].startswith("ab")
+
+
+def test_string_affix_masked_arg_promotes_to_masked():
+    """A masked *argument* makes the result ``Masked(bool)`` even for a plain receiver."""
+    strings = ["abc", "abc", "xyz"]
+    prefixes = ["ab", "ab", "ab"]
+    pvalid = [True, False, True]
+    sarr, _ks = _make_mlir_string_array(strings)
+    parr, _kp = _make_mlir_string_array(prefixes)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, p, pv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = s[i].startswith(Masked(p[i], pv[i]))
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, sarr, parr, cp.array(pvalid, dtype=np.bool_))
+    cuda.synchronize()
+    # receiver is always valid, so result validity == argument validity
+    assert out_valid.get().tolist() == pvalid
+    for i in range(n):
+        if pvalid[i]:
+            assert bool(out.get()[i]) is strings[i].startswith(prefixes[i])
+
+
+def test_masked_mlir_string_value_valid_resolve():
+    """``.value`` / ``.valid`` still resolve on a ``Masked(mlir_string)`` receiver.
+
+    A ``Masked(mlir_string)``-keyed attribute template shadows the generic
+    ``MaskedType`` one, so it must inherit ``.value``/``.valid``.
+    """
+    strings = ["abc", "abde"]
+    valid = [True, False]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+    out_len = cp.zeros(n, dtype=np.int64)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.int64[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(ov, ol, s, sv):
+        i = cuda.grid(1)
+        if i < ov.size:
+            m = Masked(s[i], sv[i])
+            ov[i] = m.valid
+            ol[i] = len(m.value)
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out_valid, out_len, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    assert out_len.get().tolist() == [len(s) for s in strings]
+
+
+def test_string_search():
+    """``find`` / ``rfind`` / ``count`` against a literal, over an array."""
+    strings = ["hello", "world", "abc", "lll", "", "l"]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    finds = cp.zeros(n, dtype=np.int32)
+    rfinds = cp.zeros(n, dtype=np.int32)
+    counts = cp.zeros(n, dtype=np.int32)
+
+    @cuda.jit(
+        types.void(
+            types.int32[::1],
+            types.int32[::1],
+            types.int32[::1],
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(fo, ro, co, s):
+        i = cuda.grid(1)
+        if i < fo.size:
+            fo[i] = s[i].find("l")
+            ro[i] = s[i].rfind("l")
+            co[i] = s[i].count("l")
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](finds, rfinds, counts, arr)
+    cuda.synchronize()
+    assert finds.get().tolist() == [s.find("l") for s in strings]
+    assert rfinds.get().tolist() == [s.rfind("l") for s in strings]
+    assert counts.get().tolist() == [s.count("l") for s in strings]
+
+
+def test_string_find_multibyte_char_position():
+    """``find`` returns a character (not byte) position for multibyte input."""
+    strings = ["h\u00e9llo!", "\U0001f600x!", "abc"]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.int32)
+
+    @cuda.jit(
+        types.void(types.int32[::1], types.CPointer(mlir_string)),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, s):
+        i = cuda.grid(1)
+        if i < o.size:
+            o[i] = s[i].find("!")
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, arr)
+    cuda.synchronize()
+    # "héllo!" -> 5, "<emoji>x!" -> 2, "abc" -> -1 (character positions)
+    assert out.get().tolist() == [s.find("!") for s in strings]
+
+
+def test_string_contains():
+    """``item in str`` (substring membership) against a literal, over an array."""
+    strings = ["abc", "xabcy", "ab", "", "cba", "aXb"]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(types.boolean[::1], types.CPointer(mlir_string)),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, s):
+        i = cuda.grid(1)
+        if i < o.size:
+            o[i] = "ab" in s[i]
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, arr)
+    cuda.synchronize()
+    assert out.get().tolist() == ["ab" in s for s in strings]
+
+
+def test_masked_string_search_propagates_validity():
+    """``Masked(str).find(literal)`` -> ``Masked(int32)``; validity carried."""
+    strings = ["hello", "world", "abc"]
+    valid = [True, False, True]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.int32)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.int32[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, sv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = Masked(s[i], sv[i]).find("l")
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    for i in range(n):
+        if valid[i]:
+            assert int(out.get()[i]) == strings[i].find("l")
+
+
+def test_masked_string_contains_propagates_validity():
+    """``item in Masked(str)`` -> ``Masked(bool)``; validity from the container."""
+    strings = ["abc", "xyz", "ab"]
+    valid = [True, False, True]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, sv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = "ab" in Masked(s[i], sv[i])
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    for i in range(n):
+        if valid[i]:
+            assert bool(out.get()[i]) is ("ab" in strings[i])
+
+
+def test_string_search_empty_target():
+    """Empty-target search matches Python and never over-reads the source."""
+    strings = ["abc", "", "h\u00e9llo"]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    finds = cp.zeros(n, dtype=np.int32)
+    rfinds = cp.zeros(n, dtype=np.int32)
+    counts = cp.zeros(n, dtype=np.int32)
+    has = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.int32[::1],
+            types.int32[::1],
+            types.int32[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(fo, ro, co, ho, s):
+        i = cuda.grid(1)
+        if i < fo.size:
+            fo[i] = s[i].find("")
+            ro[i] = s[i].rfind("")
+            co[i] = s[i].count("")
+            ho[i] = "" in s[i]
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](finds, rfinds, counts, has, arr)
+    cuda.synchronize()
+    assert finds.get().tolist() == [s.find("") for s in strings]
+    assert rfinds.get().tolist() == [s.rfind("") for s in strings]
+    assert counts.get().tolist() == [s.count("") for s in strings]
+    assert has.get().tolist() == ["" in s for s in strings]
+
+
+def test_masked_string_empty_target_null_row():
+    """Empty-target search on a null row must not over-read its payload.
+
+    A null row carries a null ``data`` pointer; with the empty target the scan
+    must be skipped entirely (otherwise the char-position load would dereference
+    the null pointer). Validity still propagates.
+    """
+    strings = ["abc", None]
+    valid = [True, False]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.int32)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.int32[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, sv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = Masked(s[i], sv[i]).find("")
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    # value only meaningful where valid; "abc".find("") == 0
+    assert int(out.get()[0]) == 0
+
+
+_IS_PREDICATES = [
+    "isalpha",
+    "isalnum",
+    "isdecimal",
+    "isdigit",
+    "isupper",
+    "islower",
+    "isspace",
+    "isnumeric",
+    "istitle",
+]
+
+
+def test_string_is_predicates():
+    """Character-class predicates match Python's ``str`` methods for ASCII.
+
+    One kernel computes all nine predicates into separate columns (numba can't
+    take the method name dynamically); each is compared to the ``str`` oracle.
+    """
+    strings = [
+        "abc",
+        "ABC",
+        "Abc",
+        "abc123",
+        "123",
+        "  ",
+        "a b",
+        "",
+        "Hello World",
+        "hello world",
+        "3.14",
+        "ABC123",
+    ]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    outs = {name: cp.zeros(n, dtype=np.bool_) for name in _IS_PREDICATES}
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],  # isalpha
+            types.boolean[::1],  # isalnum
+            types.boolean[::1],  # isdecimal
+            types.boolean[::1],  # isdigit
+            types.boolean[::1],  # isupper
+            types.boolean[::1],  # islower
+            types.boolean[::1],  # isspace
+            types.boolean[::1],  # isnumeric
+            types.boolean[::1],  # istitle
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o_al, o_an, o_dec, o_dig, o_up, o_lo, o_sp, o_num, o_tit, s):
+        i = cuda.grid(1)
+        if i < o_al.size:
+            e = s[i]
+            o_al[i] = e.isalpha()
+            o_an[i] = e.isalnum()
+            o_dec[i] = e.isdecimal()
+            o_dig[i] = e.isdigit()
+            o_up[i] = e.isupper()
+            o_lo[i] = e.islower()
+            o_sp[i] = e.isspace()
+            o_num[i] = e.isnumeric()
+            o_tit[i] = e.istitle()
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](
+            outs["isalpha"],
+            outs["isalnum"],
+            outs["isdecimal"],
+            outs["isdigit"],
+            outs["isupper"],
+            outs["islower"],
+            outs["isspace"],
+            outs["isnumeric"],
+            outs["istitle"],
+            arr,
+        )
+    cuda.synchronize()
+    for name in _IS_PREDICATES:
+        expected = [getattr(s, name)() for s in strings]
+        assert outs[name].get().tolist() == expected, name
+
+
+def test_masked_string_is_predicate_propagates_validity():
+    """``Masked(str).isalpha()`` -> ``Masked(bool)``; validity carried through."""
+    strings = ["abc", "a1c", "xyz"]
+    valid = [True, False, True]
+    arr, _k = _make_mlir_string_array(strings)
+    n = len(strings)
+    out = cp.zeros(n, dtype=np.bool_)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.boolean[::1],
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def k(o, ov, s, sv):
+        i = cuda.grid(1)
+        if i < o.size:
+            r = Masked(s[i], sv[i]).isalpha()
+            o[i] = r.value
+            ov[i] = r.valid
+
+    with MLIRNumbaCudaConfig():
+        k[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+    cuda.synchronize()
+    assert out_valid.get().tolist() == valid
+    for i in range(n):
+        if valid[i]:
+            assert bool(out.get()[i]) is strings[i].isalpha()
+
+
+# --- concat (string-producing; allocates via NRT) --------------------------
+# NRT buffers are device-heap allocations (in-kernel malloc) and are not
+# host-copyable, so results are verified on the device: produce into an output
+# ``mlir_string`` array, then a second kernel compares each entry against the
+# expected column and writes a host-readable bool.
+def _make_output_mlir_string_array(n):
+    """Allocate a zeroed device array of ``n`` ``mlir_string`` structs.
+
+    Returns the ``ManagedStrArrayWrapper`` the kernel writes into (via
+    ``out[i] = ...``), plus the backing device array that must stay alive for
+    the kernel launches.
+    """
+    structs_dev = cp.zeros(n * 3, dtype=cp.uint64)
+    return ManagedStrArrayWrapper(_DeviceBuf(structs_dev)), structs_dev
+
+
+def test_concat_scalar():
+    """``a[i] + b[i]`` allocates, copies both operands, and returns the result.
+
+    Exercises the full produce-a-string path: NRT allocation in ``lower_concat``,
+    and the ``out[i] = ...`` setitem that stores the value and increfs its
+    ``MemInfo`` so the produced buffer survives past the first kernel (the
+    numba-inserted decref of the local would otherwise free it). Correctness is
+    checked in a second kernel via the already-supported ``==`` operator.
+    """
+    lhs = ["a", "abc", "", "xy", "h\u00e9llo"]
+    rhs = ["1", "", "z", "QQ", "!"]
+    n = len(lhs)
+    expected = [left + right for left, right in zip(lhs, rhs, strict=True)]
+    la, _k1 = _make_mlir_string_array(lhs)
+    rb, _k2 = _make_mlir_string_array(rhs)
+    exp, _k3 = _make_mlir_string_array(expected)
+    out, _out_keep = _make_output_mlir_string_array(n)
+    eq = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.CPointer(mlir_string),
+                types.CPointer(mlir_string),
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a, b):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i] + b[i]
+
+        @cuda.jit(
+            types.void(
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.CPointer(mlir_string),
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def verify(r, o, c):
+            i = cuda.grid(1)
+            if i < r.size:
+                r[i] = o[i] == c[i]
+
+        @cuda.jit(
+            types.void(types.CPointer(mlir_string)),
+            extensions=[mlir_string_arg_handler],
+        )
+        def free(o):
+            i = cuda.grid(1)
+            if i < n:
+                NRT_decref(o[i])
+
+        produce[1, n](out, la, rb)
+        verify[1, n](eq, out, exp)
+        free[1, n](out)
+    cuda.synchronize()
+
+    assert eq.get().tolist() == [True] * n
+
+
+def test_concat_literal():
+    """``a[i] + "!"`` concatenates a column string with a string literal."""
+    vals = ["a", "abc", "", "xy"]
+    n = len(vals)
+    expected = [v + "!" for v in vals]
+    arr, _keep = _make_mlir_string_array(vals)
+    exp, _k = _make_mlir_string_array(expected)
+    out, _out_keep = _make_output_mlir_string_array(n)
+    eq = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.CPointer(mlir_string),
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i] + "!"
+
+        @cuda.jit(
+            types.void(
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.CPointer(mlir_string),
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def verify(r, o, c):
+            i = cuda.grid(1)
+            if i < r.size:
+                r[i] = o[i] == c[i]
+
+        @cuda.jit(
+            types.void(types.CPointer(mlir_string)),
+            extensions=[mlir_string_arg_handler],
+        )
+        def free(o):
+            i = cuda.grid(1)
+            if i < n:
+                NRT_decref(o[i])
+
+        produce[1, n](out, arr)
+        verify[1, n](eq, out, exp)
+        free[1, n](out)
+    cuda.synchronize()
+
+    assert eq.get().tolist() == [True] * n
+
+
+# --- strip / lstrip / rstrip (string-producing; allocate via NRT) -----------
+def _verify_strings(out, expected):
+    """Compare produced ``out`` strings to ``expected`` device-side, then free.
+
+    Must be called inside an active ``nrt_enabled()`` context. Returns the
+    per-row equality as a host list.
+    """
+    n = len(expected)
+    exp, _keep = _make_mlir_string_array(expected)
+    eq = cp.zeros(n, dtype=np.bool_)
+
+    @cuda.jit(
+        types.void(
+            types.boolean[::1],
+            types.CPointer(mlir_string),
+            types.CPointer(mlir_string),
+        ),
+        extensions=[mlir_string_arg_handler],
+    )
+    def verify(r, o, c):
+        i = cuda.grid(1)
+        if i < r.size:
+            r[i] = o[i] == c[i]
+
+    @cuda.jit(
+        types.void(types.CPointer(mlir_string)),
+        extensions=[mlir_string_arg_handler],
+    )
+    def free(o):
+        i = cuda.grid(1)
+        if i < n:
+            NRT_decref(o[i])
+
+    verify[1, n](eq, out, exp)
+    free[1, n](out)
+    cuda.synchronize()
+    return eq.get().tolist()
+
+
+def test_strip_whitespace():
+    """``s.strip()`` trims leading and trailing ASCII whitespace."""
+    vals = ["  abc  ", "\tx\n", "nows", "   ", "", " a b "]
+    expected = [v.strip() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].strip()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_lstrip_whitespace():
+    """``s.lstrip()`` trims only leading ASCII whitespace."""
+    vals = ["  abc  ", "\tx\n", "nows", "   ", " a b "]
+    expected = [v.lstrip() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].lstrip()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_rstrip_whitespace():
+    """``s.rstrip()`` trims only trailing ASCII whitespace."""
+    vals = ["  abc  ", "\tx\n", "nows", "   ", " a b "]
+    expected = [v.rstrip() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].rstrip()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_strip_chars():
+    """``s.strip("x")`` trims the given character set from both ends."""
+    vals = ["xxabcxx", "xax", "abc", "xxx", "", "xaxbx"]
+    expected = [v.strip("x") for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].strip("x")
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+# --- getitem (character-indexed; string-producing, allocates via NRT) --------
+def test_getitem_first_char():
+    """``s[0]`` returns the first character (UTF-8 aware, multibyte safe)."""
+    vals = ["abc", "h\u00e9llo", "\U0001f600x", "z"]
+    expected = [v[0] for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][0]
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_getitem_negative_char():
+    """``s[-1]`` returns the last character, counting from the end."""
+    vals = ["abc", "h\u00e9llo", "x\U0001f600", "z"]
+    expected = [v[-1] for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][-1]
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_getitem_out_of_range_is_empty():
+    """An out-of-range index yields an empty string (UDFs cannot raise)."""
+    vals = ["abc", "h\u00e9llo", "", "z"]
+    expected = ["", "", "", ""]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][99]
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_getitem_below_neg_len_is_empty():
+    """An index below ``-len(s)`` yields an empty string, not the first char."""
+    vals = ["abc", "h\u00e9llo", "x\U0001f600y", ""]
+    expected = ["", "", "", ""]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][-99]
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_getitem_neg_len_boundary():
+    """``s[-len(s)]`` returns the first char; ``s[-len(s)-1]`` is empty.
+
+    Uses 3-character strings so a fixed index is ``-len(s)`` / ``-len(s)-1``.
+    """
+    vals = ["abc", "h\u00e9l", "x\U0001f600y"]  # each 3 characters
+    arr, _keep = _make_mlir_string_array(vals)
+    n = len(vals)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def at_neg_len(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][-3]
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def below_neg_len(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][-4]
+
+        out_at, _k1 = _make_output_mlir_string_array(n)
+        out_below, _k2 = _make_output_mlir_string_array(n)
+        at_neg_len[1, n](out_at, arr)
+        below_neg_len[1, n](out_below, arr)
+        got_at = _verify_strings(out_at, [v[-3] for v in vals])
+        got_below = _verify_strings(out_below, ["", "", ""])
+
+    assert got_at == [True] * n
+    assert got_below == [True] * n
+
+
+def test_getitem_slice():
+    """``s[1:3]`` returns the character substring (UTF-8 aware)."""
+    vals = ["abcde", "h\u00e9llo", "x\U0001f600yz", "ab"]
+    expected = [v[1:3] for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][1:3]
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_getitem_slice_negative():
+    """``s[-3:-1]`` slices with negative bounds counting from the end."""
+    vals = ["abcde", "h\u00e9llo", "wx\U0001f600yz", "abc"]
+    expected = [v[-3:-1] for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i][-3:-1]
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+# --- replace (string-producing; allocates via NRT) --------------------------
+def test_replace_single_char():
+    """``s.replace("l", "L")`` over ASCII and multibyte sources."""
+    vals = ["hello", "llll", "abc", "h\u00e9llo", ""]
+    expected = [v.replace("l", "L") for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].replace("l", "L")
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_replace_empty_old():
+    """``s.replace("", new)`` inserts ``new`` around each character.
+
+    For multibyte sources the insertion must land on UTF-8 character
+    boundaries (start bytes) so the result stays valid UTF-8, matching Python.
+    """
+    vals = ["abc", "h\u00e9llo", "\U0001f600x", "", "z"]
+    expected = [v.replace("", "-") for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].replace("", "-")
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_masked_upper_propagates_validity():
+    """``Masked(str).upper()`` carries validity: null rows stay null."""
+    strings = ["abc", None, "h\u00e9llo", None, "x\U0001f600y"]
+    valid = [s is not None for s in strings]
+    expected = ["" if s is None else s.upper() for s in strings]
+    n = len(strings)
+    arr, _k = _make_mlir_string_array(strings)
+    out, _ok = _make_output_mlir_string_array(n)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, ov, s, sv):
+            i = cuda.grid(1)
+            if i < ov.size:
+                r = Masked(s[i], sv[i]).upper()
+                o[i] = r.value
+                ov[i] = r.valid
+
+        produce[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+        got = _verify_strings(out, expected)
+
+    assert out_valid.get().tolist() == valid
+    assert got == [True] * n
+
+
+def test_masked_replace_propagates_validity():
+    """``Masked(str).replace(old, new)`` carries validity: null rows stay null."""
+    strings = ["hello", None, "h\u00e9llo"]
+    valid = [s is not None for s in strings]
+    expected = ["" if s is None else s.replace("l", "L") for s in strings]
+    n = len(strings)
+    arr, _k = _make_mlir_string_array(strings)
+    out, _ok = _make_output_mlir_string_array(n)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, ov, s, sv):
+            i = cuda.grid(1)
+            if i < ov.size:
+                r = Masked(s[i], sv[i]).replace("l", "L")
+                o[i] = r.value
+                ov[i] = r.valid
+
+        produce[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+        got = _verify_strings(out, expected)
+
+    assert out_valid.get().tolist() == valid
+    assert got == [True] * n
+
+
+def test_masked_getitem_propagates_validity():
+    """``Masked(str)[i]`` carries validity: null rows stay null."""
+    strings = ["abc", None, "h\u00e9llo"]
+    valid = [s is not None for s in strings]
+    expected = ["" if s is None else s[0] for s in strings]
+    n = len(strings)
+    arr, _k = _make_mlir_string_array(strings)
+    out, _ok = _make_output_mlir_string_array(n)
+    out_valid = cp.zeros(n, dtype=np.bool_)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+                types.CPointer(mlir_string),
+                types.boolean[::1],
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, ov, s, sv):
+            i = cuda.grid(1)
+            if i < ov.size:
+                r = Masked(s[i], sv[i])[0]
+                o[i] = r.value
+                ov[i] = r.valid
+
+        produce[1, n](out, out_valid, arr, cp.array(valid, dtype=np.bool_))
+        got = _verify_strings(out, expected)
+
+    assert out_valid.get().tolist() == valid
+    assert got == [True] * n
+
+
+def test_replace_multichar_nonoverlapping():
+    """``s.replace("aa", "b")`` replaces non-overlapping multi-byte targets."""
+    vals = ["aaa", "aaaa", "aXa", "aa", "", "baab"]
+    expected = [v.replace("aa", "b") for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].replace("aa", "b")
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_replace_removal():
+    """``s.replace("x", "")`` removes every occurrence of the target."""
+    vals = ["axbxc", "xxx", "abc", "x"]
+    expected = [v.replace("x", "") for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].replace("x", "")
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+# --- upper / lower (string-producing; cases tables + NRT) -------------------
+def test_upper():
+    """``s.upper()`` over ASCII, Latin-1, non-BMP, and special-case inputs."""
+    vals = [
+        "hello",
+        "Hello",
+        "ABC",
+        "h\u00e9llo",
+        "mix3D",
+        "",
+        "x\U0001f600y",  # non-BMP (cp > 0xFFFF): must not index past the table
+        "\u0130",  # dotted capital I (special-case fold)
+    ]
+    expected = [v.upper() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].upper()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_lower():
+    """``s.lower()`` over ASCII, Latin-1, non-BMP, and special-case inputs."""
+    vals = [
+        "HELLO",
+        "Hello",
+        "abc",
+        "H\u00c9LLO",
+        "MIX3d",
+        "",
+        "x\U0001f600y",  # non-BMP (cp > 0xFFFF): must not index past the table
+        "\u0130",  # dotted capital I
+    ]
+    expected = [v.lower() for v in vals]
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].lower()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n
+
+
+def test_upper_special_case():
+    """``s.upper()`` uses the special-case table (e.g. German sharp-s)."""
+    vals = ["stra\u00dfe", "\u00df", "abc"]
+    expected = [v.upper() for v in vals]  # "STRASSE", "SS", "ABC"
+    n = len(vals)
+    arr, _keep = _make_mlir_string_array(vals)
+    out, _out_keep = _make_output_mlir_string_array(n)
+
+    with nrt_enabled(), MLIRNumbaCudaConfig():
+
+        @cuda.jit(
+            types.void(
+                types.CPointer(mlir_string), types.CPointer(mlir_string)
+            ),
+            extensions=[mlir_string_arg_handler],
+        )
+        def produce(o, a):
+            i = cuda.grid(1)
+            if i < n:
+                o[i] = a[i].upper()
+
+        produce[1, n](out, arr)
+        got = _verify_strings(out, expected)
+
+    assert got == [True] * n

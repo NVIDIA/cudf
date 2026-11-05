@@ -65,7 +65,7 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
 /**
  * @brief Computes output valid mask for op between a column and a scalar
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> scalar_col_valid_mask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
   cuda::stream_ref stream,
@@ -177,7 +177,7 @@ void binary_operation(mutable_column_view& out,
                                                          "cudf::binops::jit::UserDefinedOp");
 
   auto kernel = cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/binaryop/jit/kernel.cu", kernel_reflection, cuda_source);
+    "cudf/cpp/src/binaryop/jit/kernel.cu", kernel_reflection, cuda_source, {});
   auto cfg = kernel.max_occupancy_config(0, 0);
 
   kernel.launch_with({cfg.min_grid_size},
@@ -259,7 +259,8 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
     if (rhs.is_empty()) return out;
 
   auto out_view = out->mutable_view();
-  cudf::binops::compiled::binary_operation(out_view, lhs, rhs, op, stream);
+  cudf::binops::compiled::binary_operation(
+    out_view, lhs, rhs, op, stream, cudf::get_current_device_resource_ref());
   // TODO: consider having the binary_operation count nulls instead
   out->set_null_count(cudf::detail::null_count(out_view.null_mask(), 0, out->size(), stream));
   return out;

@@ -27,7 +27,8 @@ import functools
 import importlib.util
 import json
 import os
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import kvikio
 import kvikio.defaults
@@ -49,8 +50,11 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.context import Context
 
     from cudf_polars.engine.ray import RankActor
-    from cudf_polars.quent._context import QuentContext, WorkerResources
-    from cudf_polars.quent._logging import QuentLogger
+    from cudf_polars.quent._context import QuentConfig
+    from cudf_polars.quent._runtime import (
+        QuentControllerRuntime,
+        QuentWorkerRuntime,
+    )
 
 
 __all__ = [
@@ -68,6 +72,8 @@ __all__ = [
     "StreamingExecutor",
     "StreamingFallbackMode",
     "Unspecified",
+    "resolve_quent_context",
+    "resolve_quent_output_root",
 ]
 
 
@@ -233,7 +239,7 @@ T = TypeVar("T")
 DefaultT = TypeVar("DefaultT")
 
 
-def _make_default_factory(
+def _make_default_factory[T, DefaultT](
     key: str, converter: Callable[[str], T], *, default: DefaultT
 ) -> Callable[[], T | DefaultT]:
     def default_factory() -> T | DefaultT:
@@ -366,22 +372,6 @@ def resolve_kvikio_reactor_count(executor_options: dict[str, Any]) -> int:
     )
 
 
-def resolve_kvikio_reactor_dispatch(
-    executor_options: dict[str, Any],
-) -> kvikio.RemoteReactorDispatch:
-    """Resolve the MULTI_POLL reactor dispatch policy, with env var fallback."""
-    value = executor_options.get(
-        "kvikio_reactor_dispatch",
-        os.environ.get(
-            "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH",
-            os.environ.get("KVIKIO_REMOTE_IO_REACTOR_DISPATCH", "PER_CHUNK"),
-        ),
-    )
-    if isinstance(value, kvikio.RemoteReactorDispatch):
-        return value
-    return kvikio.RemoteReactorDispatch[str(value).upper()]
-
-
 def resolve_kvikio_request_ceiling(executor_options: dict[str, Any]) -> int:
     """Resolve the MULTI_POLL concurrent-request ceiling, with env var fallback."""
     return int(
@@ -434,10 +424,6 @@ def resolve_kvikio_executor_options(executor_options: dict[str, Any]) -> dict[st
         "kvikio_reactor_count", resolve_kvikio_reactor_count(executor_options)
     )
     executor_options.setdefault(
-        "kvikio_reactor_dispatch",
-        resolve_kvikio_reactor_dispatch(executor_options),
-    )
-    executor_options.setdefault(
         "kvikio_request_ceiling",
         resolve_kvikio_request_ceiling(executor_options),
     )
@@ -453,7 +439,6 @@ KVIKIO_CONFIGURABLE_PROPERTIES = (
     "task_size",
     "bounce_buffer_size",
     "remote_io_num_reactors",
-    "remote_io_reactor_dispatch",
     "remote_io_max_concurrent_requests",
     "num_threads",
 )
@@ -466,7 +451,6 @@ KVIKIO_CONFIGURABLE_PROPERTIES = (
 KVIKIO_REACTOR_POOL_PROPERTIES = frozenset(
     {
         "remote_io_num_reactors",
-        "remote_io_reactor_dispatch",
         "remote_io_max_concurrent_requests",
     }
 )
@@ -479,7 +463,6 @@ def configure_kvikio(
     task_size: int | None = None,
     bounce_buffer_bytes: int = 16 * 1024 * 1024,
     reactor_count: int = 24,
-    reactor_dispatch: kvikio.RemoteReactorDispatch = kvikio.RemoteReactorDispatch.PER_CHUNK,
     request_ceiling: int = 256,
 ) -> None:
     """
@@ -514,7 +497,6 @@ def configure_kvikio(
         # left unset in that case.
         reactor_settings = {
             "remote_io_num_reactors": reactor_count,
-            "remote_io_reactor_dispatch": reactor_dispatch,
             "remote_io_max_concurrent_requests": request_ceiling,
         }
     else:
@@ -543,8 +525,8 @@ def _bool_converter(v: str) -> bool:
         raise ValueError(f"Invalid boolean value: '{v}'")
 
 
-def _quent_context_converter(v: str) -> QuentContext | None:
-    from cudf_polars.quent._context import QuentContext
+def _quent_context_converter(v: str) -> QuentConfig | None:
+    from cudf_polars.quent._context import QuentConfig
 
     try:
         enabled = _bool_converter(v)
@@ -552,9 +534,35 @@ def _quent_context_converter(v: str) -> QuentContext | None:
         raise ValueError(f"Invalid value for quent_context: '{v}'") from e
     else:
         if enabled:
-            return QuentContext()
+            return QuentConfig()
         else:
             return None
+
+
+def resolve_quent_context(
+    executor_options: dict[str, Any],
+) -> QuentConfig | None:
+    """Resolve the Quent context, preserving an explicitly supplied value."""
+    if "quent_context" in executor_options:
+        return executor_options["quent_context"]
+    value = os.environ.get("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT")
+    return None if value is None else _quent_context_converter(value)
+
+
+def resolve_quent_output_root(output_root: str | os.PathLike[str] | None = None) -> str:
+    """
+    Resolve the controller-local staging root for collected Quent events.
+
+    An explicit value takes precedence over
+    ``CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT``, which in turn defaults to
+    ``logs/.quent-events``. Relative paths are resolved in the process creating
+    the Quent configuration before its Collector is started.
+    """
+    if output_root is None:
+        output_root = os.environ.get(
+            "CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT", "logs/.quent-events"
+        )
+    return str(Path(output_root).resolve())
 
 
 @dataclasses.dataclass(frozen=True)
@@ -799,8 +807,6 @@ class JoinFilterPushdownOptions:
         Maximum Bloom-filter size in bytes. If the estimated Bloom filter exceeds
         this size, an exact semi-join is preferred when its projected keys fit the
         broadcast limit. Set to 0 to disable Bloom filters. Default is 32 MiB.
-    trace
-        Whether to emit plan-time trace decisions for filter decisions. Default is False.
     """
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN"
@@ -815,11 +821,6 @@ class JoinFilterPushdownOptions:
             f"{_env_prefix}__BLOOM_FILTER_MAX_SIZE",
             int,
             default=32 * 1024 * 1024,
-        )
-    )
-    trace: bool = dataclasses.field(
-        default_factory=_make_default_factory(
-            f"{_env_prefix}__TRACE", _bool_converter, default=False
         )
     )
 
@@ -837,8 +838,6 @@ class JoinFilterPushdownOptions:
             raise TypeError("bloom_filter_max_size must be an int")
         if self.bloom_filter_max_size < 0:
             raise ValueError("bloom_filter_max_size must be non-negative")
-        if not isinstance(self.trace, bool):
-            raise TypeError("trace must be a bool")
 
 
 @dataclasses.dataclass(frozen=True, eq=True)
@@ -983,10 +982,8 @@ class SPMDContext:
         The active RapidsMPF context.
     py_executor
         Thread-pool executor used to drive the actor network on each rank.
-    worker_resources
-        Engine/worker-scoped Quent resources (device memory, channels, thread
-        pool, processor registry, network topology). ``None`` when Quent is
-        disabled.
+    quent_controller_runtime, quent_worker_runtime
+        Process-local Quent role state. ``None`` when Quent is disabled.
     """
 
     comm: Communicator
@@ -994,8 +991,8 @@ class SPMDContext:
     py_executor: ThreadPoolExecutor
     engine_id: uuid.UUID
     worker_id: uuid.UUID
-    quent_logger: QuentLogger | None
-    worker_resources: WorkerResources | None = None
+    quent_controller_runtime: QuentControllerRuntime | None
+    quent_worker_runtime: QuentWorkerRuntime | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1018,7 +1015,7 @@ class RayContext:
     """
 
     rank_actors: list[ActorHandle[RankActor]]
-    quent_logger: QuentLogger | None
+    quent_controller_runtime: QuentControllerRuntime | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1048,7 +1045,7 @@ class DaskContext:
 
     client: distributed.Client
     rapidsmpf_id: str
-    quent_logger: QuentLogger | None
+    quent_controller_runtime: QuentControllerRuntime | None
     owned_client: distributed.Client | None = None
     owned_cluster: Any | None = None
 
@@ -1108,6 +1105,10 @@ class StreamingExecutor:
         Whether multi-partition sink operations write to a directory rather
         than a single file. For the spmd, ray, and dask clusters this is
         always True; setting it to False raises a ValueError.
+    parallel_sink_batches
+        Run ``sink_batches`` callbacks on each rank when ``maintain_order=False``.
+        Enable only when all callbacks are safe to invoke concurrently across
+        ranks. Disabled by default.
     dynamic_planning
         Options controlling dynamic shuffle planning. See
         :class:`~cudf_polars.utils.config.DynamicPlanningOptions` for more.
@@ -1196,15 +1197,6 @@ class StreamingExecutor:
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT`` environment variable
         - the ``KVIKIO_REMOTE_IO_NUM_REACTORS`` environment variable (lower precedence)
-    kvikio_reactor_dispatch
-        How sub-ranges of one read are distributed across reactor threads under
-        the ``MULTI_POLL`` remote I/O backend. Ignored when
-        ``kvikio_remote_io_backend`` is not ``MULTI_POLL``. Defaults to
-        ``kvikio.RemoteReactorDispatch.PER_CHUNK``. This can be set via
-
-        - ``executor_options`` passed to ``polars.GPUEngine``
-        - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH`` environment variable
-        - the ``KVIKIO_REMOTE_IO_REACTOR_DISPATCH`` environment variable (lower precedence)
     kvikio_request_ceiling
         Maximum number of concurrent in-flight requests across all reactor
         threads under the ``MULTI_POLL`` remote I/O backend. 0 means unlimited.
@@ -1217,10 +1209,12 @@ class StreamingExecutor:
           (lower precedence)
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
-        Pass a :class:`~cudf_polars.quent.QuentContext` instance to enable tracing.
+        Pass a :class:`~cudf_polars.quent.QuentConfig` instance to enable tracing.
         Can be set via the ``CUDF_POLARS__EXECUTOR__QUENT_CONTEXT`` environment
         variable (``true`` enables tracing with a default context, ``false``
-        disables it).
+        disables it). The controller-local Collector staging path can be set
+        with ``CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT``; workers do not access
+        this path.
 
     Notes
     -----
@@ -1270,6 +1264,11 @@ class StreamingExecutor:
             f"{_env_prefix}__SINK_TO_DIRECTORY", _bool_converter, default=None
         )
     )
+    parallel_sink_batches: bool = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__PARALLEL_SINK_BATCHES", _bool_converter, default=False
+        )
+    )
     dynamic_planning: DynamicPlanningOptions | None = dataclasses.field(
         default_factory=DynamicPlanningOptions
     )
@@ -1313,9 +1312,6 @@ class StreamingExecutor:
     kvikio_reactor_count: int = dataclasses.field(
         default_factory=lambda: resolve_kvikio_reactor_count({})
     )
-    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch = dataclasses.field(
-        default_factory=lambda: resolve_kvikio_reactor_dispatch({})
-    )
     kvikio_request_ceiling: int = dataclasses.field(
         default_factory=lambda: resolve_kvikio_request_ceiling({})
     )
@@ -1324,7 +1320,7 @@ class StreamingExecutor:
     spmd_context: SPMDContext | None = None
     ray_context: RayContext | None = None
     dask_context: DaskContext | None = None
-    quent_context: QuentContext | None = dataclasses.field(
+    quent_context: QuentConfig | None = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__QUENT_CONTEXT", _quent_context_converter, default=None
         )
@@ -1396,6 +1392,8 @@ class StreamingExecutor:
             raise TypeError("broadcast_limit must be an int")
         if not isinstance(self.sink_to_directory, bool):
             raise TypeError("sink_to_directory must be bool")
+        if not isinstance(self.parallel_sink_batches, bool):
+            raise TypeError("parallel_sink_batches must be bool")
         if not isinstance(self.client_device_threshold, float):
             raise TypeError("client_device_threshold must be a float")
         if not isinstance(self.num_py_executors, int):
@@ -1449,12 +1447,6 @@ class StreamingExecutor:
             raise TypeError("kvikio_reactor_count must be an int")
         if self.kvikio_reactor_count <= 0:
             raise ValueError("kvikio_reactor_count must be positive")
-        if not isinstance(self.kvikio_reactor_dispatch, kvikio.RemoteReactorDispatch):
-            object.__setattr__(
-                self,
-                "kvikio_reactor_dispatch",
-                kvikio.RemoteReactorDispatch[str(self.kvikio_reactor_dispatch).upper()],
-            )
         if not isinstance(self.kvikio_request_ceiling, int):
             raise TypeError("kvikio_request_ceiling must be an int")
         if self.kvikio_request_ceiling < 0:
@@ -1463,7 +1455,10 @@ class StreamingExecutor:
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it
         # to json and hash that.
-        d = dataclasses.asdict(self)
+        # Cluster contexts contain live process-local objects (including thread
+        # locks) that cannot be deep-copied. They do not describe executor
+        # behavior, so exclude them from the hash just as we do for transport.
+        d = dataclasses.asdict(self.drop_unserializable())
         d["dynamic_planning"] = json.dumps(d["dynamic_planning"])
         d["join_filter_pushdown"] = json.dumps(d["join_filter_pushdown"])
         d["max_concurrent_io_tasks"] = json.dumps(
@@ -1473,9 +1468,10 @@ class StreamingExecutor:
         # Hash the quent context UUIDs as ints
         quent_context = d["quent_context"]
         if quent_context is not None:
-            for key in ["engine", "query_group", "query"]:
-                quent_context[key]["id"] = int(quent_context[key]["id"])
-            d["quent_context"] = json.dumps(quent_context)
+            quent_context["engine_id"] = int(quent_context["engine_id"])
+            query_config = quent_context["query"]
+            query_config["query_group_id"] = int(query_config["query_group_id"])
+            d["quent_context"] = json.dumps(quent_context, sort_keys=True)
         return hash(tuple(sorted(d.items())))
 
     def drop_unserializable(self) -> StreamingExecutor:
@@ -1513,7 +1509,7 @@ ExecutorType = TypeVar("ExecutorType", StreamingExecutor, InMemoryExecutor)
 
 
 @dataclasses.dataclass(frozen=True, eq=True)
-class ConfigOptions(Generic[ExecutorType]):
+class ConfigOptions[ExecutorType: (StreamingExecutor, InMemoryExecutor)]:
     """
     Configuration for the polars GPUEngine.
 

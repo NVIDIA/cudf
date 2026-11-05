@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/interop.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -157,6 +158,34 @@ TEST_F(ToArrowDeviceTest, EmptyDictionary)
   EXPECT_EQ(dictionary->n_children, 0);
 }
 
+TEST_F(ToArrowDeviceTest, EmptyDictionaryWithKeys)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b"});
+  auto const meta = std::vector<cudf::column_metadata>({cudf::column_metadata{"d"}});
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.emplace_back(cudf::empty_like(input));
+  cudf::table table(std::move(columns));
+
+  auto schema = cudf::to_arrow_schema(table.view(), meta);
+  ASSERT_NE(schema->children[0]->dictionary, nullptr);
+  EXPECT_STREQ(schema->children[0]->dictionary->format, "u");
+
+  auto from_view         = cudf::to_arrow_device(table.view());
+  auto view_roundtripped = cudf::from_arrow_device(schema.get(), from_view.get());
+  auto const view_after  = cudf::dictionary_column_view(view_roundtripped->column(0));
+  EXPECT_EQ(view_after.size(), 0);
+  ASSERT_EQ(view_after.parent().num_children(), 2);
+  EXPECT_EQ(view_after.keys().type().id(), cudf::type_id::STRING);
+
+  auto from_owned         = cudf::to_arrow_device(std::move(table));
+  auto owned_roundtripped = cudf::from_arrow_device(schema.get(), from_owned.get());
+  auto const owned_after  = cudf::dictionary_column_view(owned_roundtripped->column(0));
+  EXPECT_EQ(owned_after.size(), 0);
+  ASSERT_EQ(owned_after.parent().num_children(), 2);
+  EXPECT_EQ(owned_after.keys().type().id(), cudf::type_id::STRING);
+}
+
 TEST_F(ToArrowDeviceTest, DateTimeTable)
 {
   auto data = {1, 2, 3, 4, 5, 6};
@@ -294,8 +323,8 @@ TYPED_TEST(ToArrowDeviceTestDurationsTest, DurationTable)
 TEST_F(ToArrowDeviceTest, NestedList)
 {
   auto valids = cudf::test::iterators::nulls_at_multiples_of(3);
-  auto col    = cudf::test::lists_column_wrapper<int64_t>(
-    {{{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids});
+  using LCW   = cudf::test::lists_column_wrapper<int64_t>;
+  auto col = LCW({{{{1, 2}, valids}, {{3, 4}, valids}, {5}}, {{6}, {{7, 8, 9}, valids}}}, valids);
 
   std::vector<std::unique_ptr<cudf::column>> cols;
   cols.emplace_back(col.release());
@@ -368,9 +397,8 @@ TEST_F(ToArrowDeviceTest, StructColumn)
   auto int_col2 =
     cudf::test::fixed_width_column_wrapper<int32_t, int32_t>{{12, 24, 47}, {1, 0, 1}}.release();
   auto bool_col = cudf::test::fixed_width_column_wrapper<bool>{{true, true, false}}.release();
-  auto list_col = cudf::test::lists_column_wrapper<int64_t>(
-                    {{{1, 2}, {3, 4}, {5}}, {{{6}}}, {{7}, {8, 9}}})  // NOLINT
-                    .release();
+  using LCW     = cudf::test::lists_column_wrapper<int64_t>;
+  auto list_col = LCW{{{1, 2}, {3, 4}, {5}}, {{6}}, {{7}, {8, 9}}}.release();
   vector_of_columns cols2;
   cols2.push_back(std::move(str_col2));
   cols2.push_back(std::move(int_col2));

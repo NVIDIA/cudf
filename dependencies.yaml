@@ -1107,7 +1107,9 @@ dependencies:
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
             packages:
-              - cuda-bindings>=13.0.2,<14.0
+              # cuda-bindings 13.5 requires CUDA 13.5 driver headers, which
+              # break builds against CUDA 13.4.
+              - cuda-bindings>=13.0.2,<13.5
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

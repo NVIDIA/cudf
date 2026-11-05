@@ -63,7 +63,7 @@ struct executor_jit {
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
-    return cudf::compute_column_jit(table, expr, stream, mr);
+    return cudf::compute_column_jit(table, expr, {}, stream, mr);
   }
 };
 
@@ -75,7 +75,7 @@ struct executor_transform_program {
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
     std::reference_wrapper<cudf::ast::expression const> expressions[] = {expr};
-    cudf::transform_program program{table, expressions, stream, mr};
+    cudf::transform_program program{table, expressions, {}, stream, mr};
     return std::move(program.run(table, stream, mr)->release().front());
   }
 };

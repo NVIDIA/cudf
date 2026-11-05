@@ -10,7 +10,9 @@
 #include "runtime/context.hpp"
 #include "synthetic_column_helpers.hpp"
 
+#include <cudf/detail/gather.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sequence.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
@@ -20,6 +22,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/unary.hpp>
@@ -32,9 +35,12 @@
 
 #include <algorithm>
 #include <bitset>
+#include <functional>
+#include <iterator>
 #include <limits>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <utility>
 
@@ -1065,22 +1071,19 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
   apply_decimal_width_cast(out_columns, mr);
 
-  // Encode any remaining flat STRING columns to DICTIONARY32 via a post-hoc
-  // `dictionary::detail::encode`: columns not produced by the direct transcode fast path, or all of
-  // them when the fast path was disabled (e.g. under a filter). This is applied to the FINAL output
-  // table below -- after any filter is evaluated -- so the filter still operates on STRING columns
-  // and the dictionary is built over only the surviving rows.
-  auto const encode_output_dict_columns =
-    [&](std::unique_ptr<table> tbl) -> std::unique_ptr<table> {
-    if (not _options.output_dict_columns) { return tbl; }
-    auto columns = tbl->release();
-    for (auto& col : columns) {
-      if (col and col->type().id() == type_id::STRING) {
+  // Check if a column is to be dictionary encoded
+  auto const is_dict_encoded = [&](column_view const& col) {
+    return _options.output_dict_columns and col.type().id() == type_id::STRING;
+  };
+
+  // Encode STRING columns to DICTIONARY32
+  auto const encode_output_dict_columns = [&](std::vector<std::unique_ptr<column>>& columns) {
+    std::ranges::for_each(columns, [&](auto& col) {
+      if (is_dict_encoded(col->view())) {
         col =
           cudf::dictionary::detail::encode(col->view(), data_type{type_id::INT32}, _stream, _mr);
       }
-    }
-    return std::make_unique<table>(std::move(columns));
+    });
   };
 
   if (!_output_metadata) {
@@ -1131,9 +1134,9 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
   // check if the output filter AST expression (= _expr_conv.get_converted_expr()) exists
   if (final_filter_expr.has_value()) {
-    auto read_table         = std::make_unique<table>(std::move(out_columns));
-    auto counting_it        = cuda::counting_iterator<std::size_t>{0};
-    auto const output_count = read_table->num_columns() - _num_filter_only_columns;
+    auto const output_count = out_columns.size() - _num_filter_only_columns;
+    auto read_table  = std::make_unique<table>(std::move(out_columns));
+    auto counting_it = cuda::counting_iterator<std::size_t>{0};
     // Exclude columns present in filter only in output.
     auto only_output = read_table->select(counting_it, counting_it + output_count);
 
@@ -1152,13 +1155,64 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
-                 
-    auto output_table = cudf::detail::apply_mask(
-      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
-    return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
+
+    // Check if a STRING column is to be dictionary encoded
+    auto const is_dict_encoded_index = [&](size_type index) {
+      return is_dict_encoded(only_output.column(index));
+    };
+
+    // Separate the STRING columns to be dictionary encoded from the other columns
+    auto const column_indices = std::views::iota(0, only_output.num_columns());
+    auto dict_indices         = column_indices | std::views::filter(is_dict_encoded_index);
+    auto non_dict_indices = column_indices | std::views::filter(std::not_fn(is_dict_encoded_index));
+
+    // No STRING columns are to be dictionary encoded
+    if (std::ranges::empty(dict_indices)) {
+      out_columns = cudf::detail::apply_mask(
+                      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr)
+                      ->release();
+    } else {
+      // Gather map of the surviving rows, computed once for both subsets
+      auto const row_indices = cudf::detail::sequence(read_table->num_rows(),
+                                                      numeric_scalar<size_type>(0, true, _stream),
+                                                      _stream,
+                                                      _mr.get_temporary_mr());
+      auto const gather_map =
+        cudf::detail::apply_mask(table_view{std::vector<column_view>{row_indices->view()}},
+                                 *predicate,
+                                 cudf::detail::mask_type::RETENTION,
+                                 _stream,
+                                 _mr.as_temporary());
+
+      // Helper to gather a subset of columns
+      auto const gather_rows = [&](auto&& indices, cudf::memory_resources gather_mr) {
+        return cudf::detail::gather(only_output.select(indices.begin(), indices.end()),
+                                    gather_map->get_column(0).view(),
+                                    out_of_bounds_policy::DONT_CHECK,
+                                    negative_index_policy::NOT_ALLOWED,
+                                    _stream,
+                                    gather_mr)
+          ->release();
+      };
+
+      // STRING columns to be dictionary encoded go to the temporary resource
+      auto dict_columns = gather_rows(dict_indices, _mr.as_temporary());
+      auto non_dict_columns = gather_rows(non_dict_indices, _mr);
+
+      // Restore the column order
+      out_columns.clear();
+      std::ranges::transform(
+        column_indices,
+        std::back_inserter(out_columns),
+        [&, dict = dict_columns.begin(), non_dict = non_dict_columns.begin()](
+          size_type index) mutable {
+          return std::move(is_dict_encoded_index(index) ? *dict++ : *non_dict++);
+        });
+    }
   }
+
   return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
-          std::move(out_metadata)};
+    std::move(out_metadata)};
 }
 
 table_with_metadata reader_impl::read()

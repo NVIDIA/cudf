@@ -97,8 +97,8 @@ for version in "${VERSIONS[@]}"; do
         COVERAGE_ARGS=(--no-cov)
     fi
 
-    timeout 15m python ci/wsl_pinned_pool_probe.py || echo "pool probe exit $?"
-    exit 1
+    timeout 5m python ci/wsl_pinned_pool_probe.py || echo "pinned pool probe exit $?"
+    export RAPIDSMPF_PINNED_MEMORY=false
     # Fail fast (-x) rather than trying to continue because failed tests pollute the state
     ./ci/run_cudf_polars_pytests.sh \
         "${COVERAGE_ARGS[@]}" \

@@ -61,6 +61,7 @@ def _convert_na_sentinel(value, target_type, *, signed=None):
     """
     return value
 
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 

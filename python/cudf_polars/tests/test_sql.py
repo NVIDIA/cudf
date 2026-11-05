@@ -69,7 +69,7 @@ def test_array_literal(engine: pl.GPUEngine, frames):
 
 
 def test_null_list_literal_raises(engine: pl.GPUEngine):
-    q = pl.LazyFrame({"a": [1, 2]}).select(pl.lit([None]).alias("b"))
+    q = pl.LazyFrame({"a": [1, 2]}).with_columns(pl.lit([None]).alias("b"))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 

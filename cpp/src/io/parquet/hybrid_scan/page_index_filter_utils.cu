@@ -1,0 +1,798 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include "io/parquet/stats_filter_helpers.hpp"
+#include "page_index_filter_utils.hpp"
+
+#include <cudf/column/column_factories.hpp>
+#include <cudf/detail/algorithms/reduce.cuh>
+#include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/gather.hpp>
+#include <cudf/detail/labeling/label_segments.cuh>
+#include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/host_vector.hpp>
+#include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/logger.hpp>
+#include <cudf/null_mask.hpp>
+#include <cudf/scalar/scalar.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
+
+#include <rmm/device_buffer.hpp>
+#include <rmm/exec_policy.hpp>
+
+#include <cub/device/device_radix_sort.cuh>
+#include <cub/device/device_select.cuh>
+#include <cub/device/device_transform.cuh>
+#include <cuda/buffer>
+#include <cuda/cmath>
+#include <cuda/iterator>
+#include <cuda/std/algorithm>
+#include <cuda/std/bit>
+#include <cuda/std/execution>
+#include <cuda/std/iterator>
+#include <cuda/stream>
+#include <thrust/for_each.h>
+#include <thrust/transform.h>
+
+#include <algorithm>
+#include <iterator>
+#include <numeric>
+#include <span>
+#include <vector>
+
+namespace cudf::io::parquet::hybrid_scan::detail {
+
+namespace {
+
+/**
+ * @brief Functor to read the row mask, i.e. the zeroth Fenwick tree level
+ *
+ * Nulls are read as retained rows here so that pages aren't accidentally pruned due to
+ * unavailable page-level statistics (represented as nulls)
+ */
+struct row_mask_accessor {
+  bool const* data;               ///< Row mask data, adjusted for the column view offset
+  bitmask_type const* null_mask;  ///< Null mask, or nullptr if there are no nulls
+  cudf::size_type offset;         ///< Column view offset, needed to index into the null mask
+
+  /**
+   * @brief Constructs a row mask accessor from a nullable boolean row mask column
+   *
+   * @param row_mask Boolean row mask column
+   */
+  explicit row_mask_accessor(cudf::column_view const& row_mask)
+    : data{row_mask.begin<bool>()},
+      null_mask{row_mask.has_nulls() ? row_mask.null_mask() : nullptr},
+      offset{row_mask.offset()}
+  {
+  }
+
+  __device__ bool inline operator()(cudf::size_type row_idx) const noexcept
+  {
+    if (data[row_idx]) { return true; }
+    return null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx);
+  }
+};
+
+/*
+ * @brief Functor to build a Fenwick tree level from the previous level data
+ *
+ * @param tree_level_ptrs Pointers to the start of Fenwick tree level data
+ * @param row_mask Accessor for the zeroth tree level (the row mask)
+ * @param prev_level Previous tree level
+ * @param prev_level_size Size of the previous tree level
+ * @param current_level_size Size of the current tree level
+ */
+struct build_fenwick_tree_level_functor {
+  bool** tree_level_ptrs;
+  row_mask_accessor row_mask;
+  cudf::size_type prev_level;
+  cudf::size_type prev_level_size;
+  cudf::size_type current_level_size;
+
+  /**
+   * @brief Reads an element from the previous tree level
+   *
+   * @param prev_level_idx Previous tree level element index
+   * @return Value of the element at the previous tree level
+   */
+  __device__ bool inline read_prev_level(cudf::size_type prev_level_idx) const noexcept
+  {
+    // Use the row mask accessor for the zeroth tree level
+    return prev_level == 0 ? row_mask(prev_level_idx) : tree_level_ptrs[prev_level][prev_level_idx];
+  }
+
+  /**
+   * @brief Builds the next Fenwick tree level from the current level data
+   * by ORing two elements at the current level.
+   *
+   * elem_current_level[idx] = elem_prev_level[idx * 2] OR elem_prev_level[idx * 2 + 1];
+   *
+   * @param current_level_idx Current tree level element index
+   */
+  __device__ void operator()(cudf::size_type current_level_idx) const noexcept
+  {
+    auto current_level_ptr = tree_level_ptrs[prev_level + 1];
+
+    // Handle the odd-sized remaining element if prev_level_size is odd
+    if (prev_level_size % 2 and current_level_idx == current_level_size - 1) {
+      current_level_ptr[current_level_idx] = read_prev_level(prev_level_size - 1);
+    } else {
+      current_level_ptr[current_level_idx] =
+        read_prev_level(current_level_idx * 2) or read_prev_level((current_level_idx * 2) + 1);
+    }
+  }
+};
+
+/**
+ * @brief Functor to binary search a `true` value in the Fenwick tree in range [start, end)
+ *
+ * @param tree_level_ptrs Pointers to the start of Fenwick tree level data
+ * @param row_mask Accessor for the zeroth tree level (the row mask)
+ * @param page_offsets Pointer to page offsets describing each search range i as [page_offsets[i],
+ * page_offsets[i+1))
+ * @param num_ranges Number of search ranges
+ */
+struct search_fenwick_tree_functor {
+  bool** tree_level_ptrs;
+  row_mask_accessor row_mask;
+  cudf::size_type const* page_offsets;
+  cudf::size_type num_ranges;
+
+  /**
+   * @brief Enum class to represent which range boundary we are currently processing
+   */
+  enum class boundary : uint8_t {
+    START = 0,
+    END   = 1,
+  };
+
+  /**
+   * @brief Finds the smallest power of two in the range [start, end). If no power of two is
+   * found, returns a zero.
+   *
+   * @param start Range start
+   * @param end Range end
+   * @return Smallest power of two in the range [start, end) or a zero if no power of two is found
+   */
+  __device__ cudf::size_type inline constexpr smallest_power_of_two_in_range(
+    cudf::size_type start, cudf::size_type end) const noexcept
+  {
+    auto const result = cuda::next_power_of_two(start);
+    return result < end ? result : 0;
+  }
+
+  /**
+   * @brief Finds the largest power of two in the range (start, end]. If no power of two is found,
+   * returns a zero.
+   *
+   * @param start Range start
+   * @param end Range end
+   * @return Largest power of two in the range (start, end] or a zero if no power of two is found
+   */
+  __device__ size_type inline constexpr largest_power_of_two_in_range(size_type start,
+                                                                      size_type end) const noexcept
+  {
+    auto const result = cuda::prev_power_of_two(end);
+    return result > start ? result : 0;
+  }
+
+  /**
+   * @brief Aligns a range boundary to the next power-of-two block
+   *
+   * @tparam Boundary Current boundary type (START or END)
+   * @param start Range start
+   * @param end Range end
+   * @return A pair of the tree level and block size
+   */
+  template <boundary Boundary>
+  __device__ auto inline constexpr align_range_boundary(cudf::size_type start,
+                                                        cudf::size_type end) const noexcept
+  {
+    if constexpr (Boundary == boundary::START) {
+      if (start == 0 or cuda::is_power_of_two(start)) {
+        auto const block_size =
+          cuda::std::max<size_type>(start & -start, largest_power_of_two_in_range(start, end));
+        auto const tree_level = cuda::std::countr_zero<uint32_t>(block_size);
+        return cuda::std::pair{tree_level, block_size};
+      } else {
+        auto const tree_level = cuda::std::countr_zero<uint32_t>(start);
+        return cuda::std::pair{tree_level, size_type{1} << tree_level};
+      }
+    } else {
+      auto block_size = end & -end;
+      if (start > 0 and cuda::is_power_of_two(end)) {
+        auto const next_alignment = cuda::std::max(smallest_power_of_two_in_range(start, end),
+                                                   largest_power_of_two_in_range(0, end - start));
+        block_size                = end - next_alignment;
+      }
+      return cuda::std::pair{cuda::std::countr_zero<uint32_t>(block_size), block_size};
+    }
+  }
+
+  /**
+   * @brief Queries the Fenwick tree for the given boundary position, tree level and block size
+   *
+   * @tparam Boundary Current boundary type (START or END)
+   * @param boundary_pos Current boundary position
+   * @param tree_level Corresponding tree level to query
+   * @param block_size Alignment block size of the current boundary
+   * @return Boolean indicating if a `true` value is found in the fenwick tree
+   */
+  template <boundary Boundary>
+  __device__ bool inline constexpr query_fenwick_tree(cudf::size_type boundary_pos,
+                                                      cudf::size_type tree_level,
+                                                      cudf::size_type block_size) const noexcept
+  {
+    auto const position = (Boundary == boundary::START) ? boundary_pos : boundary_pos - block_size;
+    auto const mask_index = position >> tree_level;
+    return tree_level == 0 ? row_mask(mask_index) : tree_level_ptrs[tree_level][mask_index];
+  }
+
+  /**
+   * @brief Searches the Fenwick tree to find a `true` value in range [start, end)
+   *
+   * Algorithm: While `start` < `end`, align `start` UP and `end` DOWN to the next power-of-two
+   * searchable tree block. For the two aligned blocks, query the fenwick tree at corresponding
+   * levels for a `true` value (larger block first). If found, return. Else, move the boundaries
+   * to their alignments.
+   *
+   * @param range_idx Index of the range to search
+   * @return Boolean indicating if a `true` value is found in the range
+   */
+  __device__ bool operator()(cudf::size_type range_idx) const noexcept
+  {
+    // Retrieve start and end for the current range [start, end)
+    size_type start = page_offsets[range_idx];
+    size_type end   = page_offsets[range_idx + 1];
+
+    // Return early if the range is empty or invalid
+    if (start >= end or range_idx >= num_ranges) { return false; }
+
+    // Binary search decomposition loop
+    while (start < end) {
+      // Find the largest power-of-two block that aligns `start` up
+      auto const [start_tree_level, start_block_size] =
+        align_range_boundary<boundary::START>(start, end);
+
+      // Find the largest power-of-two block that aligns `end` down
+      auto const [end_tree_level, end_block_size] = align_range_boundary<boundary::END>(start, end);
+
+      // Check the larger block first to minimize the number of queries
+      if (start_block_size >= end_block_size) {
+        // Check the `start` side alignment block first
+        if (start + start_block_size <= end) {
+          if (query_fenwick_tree<boundary::START>(start, start_tree_level, start_block_size)) {
+            return true;
+          }
+          start += start_block_size;
+        }
+        // Check the `end` side alignment block if it's still in range
+        if (end - end_block_size >= start) {
+          if (query_fenwick_tree<boundary::END>(end, end_tree_level, end_block_size)) {
+            return true;
+          }
+          end -= end_block_size;
+        }
+      } else {
+        // Check the `end` side alignment block first
+        if (end - end_block_size >= start) {
+          if (query_fenwick_tree<boundary::END>(end, end_tree_level, end_block_size)) {
+            return true;
+          }
+          end -= end_block_size;
+        }
+        // Check the `start` side alignment block if it's still in range
+        if (start + start_block_size <= end) {
+          if (query_fenwick_tree<boundary::START>(start, start_tree_level, start_block_size)) {
+            return true;
+          }
+          start += start_block_size;
+        }
+      }
+    }
+    return false;
+  }
+};
+
+/**
+ * @brief Computes the offsets of the Fenwick tree levels (level 1 and higher) until the tree level
+ * block size becomes larger than the maximum page (search range) size
+ *
+ * @param level0_size Size of the zeroth tree level (the row mask)
+ * @param max_page_size Maximum page (search range) size
+ * @return Fenwick tree level offsets
+ */
+std::vector<size_type> compute_fenwick_tree_level_offsets(cudf::size_type level0_size,
+                                                          cudf::size_type max_page_size)
+{
+  std::vector<size_type> tree_level_offsets;
+  tree_level_offsets.push_back(0);
+
+  cudf::size_type current_level_size = cudf::detail::div_rounding_up_safe(level0_size, 2);
+  cudf::size_type current_level      = 1;
+
+  while (current_level_size > 0) {
+    auto const block_size = 1 << current_level;
+    if (std::cmp_greater(block_size, max_page_size)) { break; }
+    tree_level_offsets.push_back(tree_level_offsets.back() + current_level_size);
+    current_level_size =
+      current_level_size == 1 ? 0 : cudf::detail::div_rounding_up_safe(current_level_size, 2);
+    current_level++;
+  }
+  return tree_level_offsets;
+}
+
+/// Threshold on total input offsets to dispatch segment offset computation to the device.
+constexpr auto min_segments_for_device_offsets = 1024;
+
+/**
+ * @brief Compute segment row offsets via pairwise `std::set_union` fold on the host, then H2D.
+ *
+ * TODO: Change this to a resizable buffer if/when https://github.com/NVIDIA/cccl/issues/12051
+ * is implemented
+ */
+[[nodiscard]] std::pair<cuda::device_buffer<size_type>, std::size_t>
+compute_segment_row_offsets_host(std::span<page_statistics_input const> inputs,
+                                 std::size_t total_page_row_offsets,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
+{
+  auto all_page_row_offsets =
+    cudf::detail::make_empty_pinned_vector<size_type>(total_page_row_offsets, stream);
+  auto segment_row_offsets =
+    cudf::detail::make_empty_pinned_vector<size_type>(total_page_row_offsets, stream);
+
+  auto const& first_page_row_offsets = inputs.front().page_row_offsets;
+  all_page_row_offsets.insert(
+    all_page_row_offsets.end(), first_page_row_offsets.begin(), first_page_row_offsets.end());
+
+  // Both buffers are reserved to hold every input offset, so neither reallocates while folding
+  std::for_each(inputs.begin() + 1, inputs.end(), [&](auto const& input) {
+    segment_row_offsets.clear();
+    std::set_union(all_page_row_offsets.begin(),
+                   all_page_row_offsets.end(),
+                   input.page_row_offsets.begin(),
+                   input.page_row_offsets.end(),
+                   std::back_inserter(segment_row_offsets));
+    std::swap(all_page_row_offsets, segment_row_offsets);
+  });
+
+  // A zero-row page repeats a boundary. `std::set_union` preserves the duplicate in the union.
+  all_page_row_offsets.erase(std::unique(all_page_row_offsets.begin(), all_page_row_offsets.end()),
+                             all_page_row_offsets.end());
+
+  return {cudf::detail::make_device_buffer_async(all_page_row_offsets, stream, mr),
+          all_page_row_offsets.size()};
+}
+
+/**
+ * @brief Compute segment row offsets by sort+unique on page row offsets.
+ *
+ * TODO: Change this to a resizable buffer if/when https://github.com/NVIDIA/cccl/issues/12051
+ * is implemented
+ */
+[[nodiscard]] std::pair<cuda::device_buffer<size_type>, std::size_t>
+compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_row_offsets,
+                                   size_type total_rows,
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
+{
+  auto const temp_mr   = mr.get_temporary_mr();
+  auto const num_items = static_cast<cuda::std::int64_t>(all_page_row_offsets.size());
+  auto const mr_prop   = cuda::std::execution::prop{cuda::mr::get_memory_resource, temp_mr};
+  auto const env       = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
+
+  // Offsets are non-negative and at most `total_rows`, so only their low bits need sorting.
+  auto sorted_offsets = cuda::device_buffer<size_type>(stream, temp_mr, num_items, cuda::no_init);
+  auto const end_bit  = static_cast<int>(cuda::std::bit_width(static_cast<uint32_t>(total_rows)));
+  CUDF_CUDA_TRY(cub::DeviceRadixSort::SortKeys(
+    all_page_row_offsets.data(), sorted_offsets.data(), num_items, 0, end_bit, env));
+
+  auto segment_row_offsets =
+    cuda::device_buffer<size_type>(stream, mr.get_output_mr(), num_items, cuda::no_init);
+  auto num_unique = cudf::detail::device_scalar<cuda::std::int64_t>(stream, temp_mr);
+  CUDF_CUDA_TRY(cub::DeviceSelect::Unique(
+    sorted_offsets.data(), segment_row_offsets.data(), num_unique.data(), num_items, env));
+  auto const num_offsets = static_cast<std::size_t>(num_unique.value(stream));
+
+  return {std::move(segment_row_offsets), num_offsets};
+}
+
+/**
+ * @brief Compute per-input page maps in one kernel. Returns a row-major `num_inputs x
+ * num_segments` buffer where entry `[i, s]` is the page in input `i` containing segment `s`.
+ */
+[[nodiscard]] cuda::device_buffer<size_type> compute_segment_page_maps(
+  cudf::device_span<size_type const> all_page_row_offsets,
+  cudf::device_span<size_type const> input_slice_bounds,
+  cudf::device_span<size_type const> segment_row_offsets,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto const num_inputs   = input_slice_bounds.size() - 1;
+  auto const num_segments = segment_row_offsets.size() - 1;
+
+  auto page_maps =
+    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
+
+  // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
+  // built from the union of all page boundaries, so containment is guaranteed.
+  CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
+    cuda::counting_iterator<std::size_t>{0},
+    page_maps.data(),
+    num_inputs * num_segments,
+    [num_segments,
+     input_slice_bounds   = input_slice_bounds.data(),
+     all_page_row_offsets = all_page_row_offsets.data(),
+     segment_row_offsets  = segment_row_offsets.data()] __device__(std::size_t idx) -> size_type {
+      auto const input_idx   = idx / num_segments;
+      auto const segment_idx = idx % num_segments;
+      auto const slice_begin = all_page_row_offsets + input_slice_bounds[input_idx];
+      auto const slice_end   = all_page_row_offsets + input_slice_bounds[input_idx + 1];
+      auto const segment_beg = segment_row_offsets[segment_idx];
+      // `upper_bound - 1` yields the page whose [begin, end) contains `segment_beg`.
+      auto const upper = cuda::std::upper_bound(slice_begin, slice_end, segment_beg);
+      return static_cast<size_type>(cuda::std::distance(slice_begin, upper) - 1);
+    },
+    stream.get()));
+
+  return page_maps;
+}
+
+}  // namespace
+
+std::pair<cudf::detail::host_vector<size_type>, cudf::detail::host_vector<size_type>>
+compute_page_row_offsets_and_colchunk_page_offsets(
+  std::span<metadata_base const> per_file_metadata,
+  std::span<std::vector<size_type> const> row_group_indices,
+  std::span<size_type const> schema_indices_per_source,
+  cuda::stream_ref stream)
+{
+  // Compute total number of row groups
+  auto const total_row_groups =
+    std::accumulate(row_group_indices.begin(),
+                    row_group_indices.end(),
+                    std::size_t{0},
+                    [](auto sum, auto const& rg_indices) { return sum + rg_indices.size(); });
+
+  // Vector to store the cumulative number of rows in each page - - set initial capacity to two data
+  // pages per row group
+  auto page_row_offsets =
+    cudf::detail::make_empty_host_vector<cudf::size_type>((2 * total_row_groups) + 1, stream);
+  // Vector to store the cumulative number of pages in each column chunk
+  auto col_chunk_page_offsets =
+    cudf::detail::make_empty_host_vector<cudf::size_type>(total_row_groups + 1, stream);
+
+  page_row_offsets.push_back(0);
+  col_chunk_page_offsets.push_back(0);
+
+  // For all data sources
+  std::for_each(
+    cuda::counting_iterator<std::size_t>{0},
+    cuda::counting_iterator{row_group_indices.size()},
+    [&](auto src_idx) {
+      // For all column chunks in this data source
+      auto const& rg_indices = row_group_indices[src_idx];
+      std::optional<size_type> colchunk_iter_offset{};
+      std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto rg_idx) {
+        auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
+        colchunk_iter_offset  = parquet::detail::find_colchunk_iter_offset(
+          row_group, schema_indices_per_source[src_idx], colchunk_iter_offset);
+        auto const& colchunk_iter = row_group.columns.begin() + colchunk_iter_offset.value();
+
+        CUDF_EXPECTS(colchunk_iter->offset_index.has_value(),
+                     "Offset index not found for column chunk",
+                     std::invalid_argument);
+
+        auto const& offset_index       = colchunk_iter->offset_index.value();
+        auto const row_group_num_pages = offset_index.page_locations.size();
+
+        col_chunk_page_offsets.push_back(col_chunk_page_offsets.back() + row_group_num_pages);
+
+        // For all pages in this column chunk, update page row offsets.
+        std::for_each(
+          cuda::counting_iterator<std::size_t>{0},
+          cuda::counting_iterator{row_group_num_pages},
+          [&](auto const page_idx) {
+            int64_t const first_row_idx = offset_index.page_locations[page_idx].first_row_index;
+            // For the last page, this is simply the total number of rows in the column chunk
+            int64_t const last_row_idx =
+              (page_idx < row_group_num_pages - 1)
+                ? offset_index.page_locations[page_idx + 1].first_row_index
+                : row_group.num_rows;
+
+            // Update the page row offsets.
+            page_row_offsets.push_back(page_row_offsets.back() + last_row_idx - first_row_idx);
+          });
+      });
+    });
+
+  return {std::move(page_row_offsets), std::move(col_chunk_page_offsets)};
+}
+
+std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
+  std::span<metadata_base const> per_file_metadata,
+  std::span<std::vector<size_type> const> row_group_indices,
+  std::span<size_type const> schema_indices_per_source)
+{
+  // Compute total number of row groups
+  auto const total_row_groups =
+    std::accumulate(row_group_indices.begin(),
+                    row_group_indices.end(),
+                    std::size_t{0},
+                    [](auto sum, auto const& rg_indices) { return sum + rg_indices.size(); });
+
+  std::vector<size_type> page_row_offsets;
+  page_row_offsets.push_back(0);
+  size_type max_page_size = 0;
+
+  std::for_each(cuda::counting_iterator<std::size_t>{0},
+                cuda::counting_iterator{row_group_indices.size()},
+                [&](auto const src_idx) {
+                  // For all row groups in this source
+                  auto const& rg_indices = row_group_indices[src_idx];
+                  std::optional<size_type> colchunk_iter_offset{};
+                  std::for_each(rg_indices.begin(), rg_indices.end(), [&](auto const& rg_idx) {
+                    auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
+                    colchunk_iter_offset  = parquet::detail::find_colchunk_iter_offset(
+                      row_group, schema_indices_per_source[src_idx], colchunk_iter_offset);
+                    auto const& colchunk_iter =
+                      row_group.columns.begin() + colchunk_iter_offset.value();
+                    CUDF_EXPECTS(colchunk_iter->offset_index.has_value(),
+                                 "Offset index not found for column chunk",
+                                 std::invalid_argument);
+                    auto const& offset_index       = colchunk_iter->offset_index.value();
+                    auto const row_group_num_pages = offset_index.page_locations.size();
+                    std::for_each(cuda::counting_iterator<std::size_t>{0},
+                                  cuda::counting_iterator{row_group_num_pages},
+                                  [&](auto const page_idx) {
+                                    int64_t const first_row_idx =
+                                      offset_index.page_locations[page_idx].first_row_index;
+                                    int64_t const last_row_idx =
+                                      (page_idx < row_group_num_pages - 1)
+                                        ? offset_index.page_locations[page_idx + 1].first_row_index
+                                        : row_group.num_rows;
+                                    auto const page_size = last_row_idx - first_row_idx;
+                                    max_page_size = std::max<size_type>(max_page_size, page_size);
+                                    page_row_offsets.push_back(page_row_offsets.back() + page_size);
+                                  });
+                  });
+                });
+
+  return {std::move(page_row_offsets), max_page_size};
+}
+
+bool are_all_rows_retained(cudf::column_view const& row_mask, cuda::stream_ref stream)
+{
+  return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
+                              cuda::counting_iterator{row_mask.size()},
+                              row_mask_accessor{row_mask},
+                              stream);
+}
+
+thrust::host_vector<bool> compute_row_range_selection_mask(
+  cudf::column_view const& row_mask,
+  std::span<cudf::size_type const> page_row_offsets,
+  cudf::size_type max_page_size,
+  cuda::stream_ref stream)
+{
+  // Need at least two offsets (or one range) to search the Fenwick tree
+  if (page_row_offsets.size() < 2) { return thrust::host_vector<bool>{}; }
+
+  auto const total_rows         = row_mask.size();
+  auto const mr                 = cudf::get_current_device_resource_ref();
+  auto const tree_level_offsets = compute_fenwick_tree_level_offsets(total_rows, max_page_size);
+  auto const num_levels         = static_cast<cudf::size_type>(tree_level_offsets.size());
+  auto tree_levels_data =
+    cuda::device_buffer<bool>(stream, mr, tree_level_offsets.back(), cuda::no_init);
+  auto host_tree_level_ptrs = cudf::detail::make_pinned_vector_async<bool*>(num_levels, stream);
+  // The zeroth level is the row mask itself, read through its accessor
+  auto const d_row_mask   = row_mask_accessor{row_mask};
+  host_tree_level_ptrs[0] = nullptr;
+  std::for_each(cuda::counting_iterator<cudf::size_type>{1},
+                cuda::counting_iterator<cudf::size_type>{num_levels},
+                [&](auto const level_idx) {
+                  host_tree_level_ptrs[level_idx] =
+                    tree_levels_data.data() + tree_level_offsets[level_idx - 1];
+                });
+  auto tree_level_ptrs = cudf::detail::make_device_buffer_async(host_tree_level_ptrs, stream, mr);
+
+  auto prev_level_size = total_rows;
+  std::for_each(
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator<cudf::size_type>{num_levels - 1},
+    [&](auto const prev_level) {
+      auto const current_level_size = cudf::detail::div_rounding_up_safe(prev_level_size, 2);
+      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<cudf::size_type>{0},
+                       cuda::counting_iterator{current_level_size},
+                       build_fenwick_tree_level_functor{.tree_level_ptrs = tree_level_ptrs.data(),
+                                                        .row_mask        = d_row_mask,
+                                                        .prev_level      = prev_level,
+                                                        .prev_level_size = prev_level_size,
+                                                        .current_level_size = current_level_size});
+      prev_level_size = current_level_size;
+    });
+
+  auto const num_ranges    = static_cast<cudf::size_type>(page_row_offsets.size() - 1);
+  auto device_results      = cuda::device_buffer<bool>(stream, mr, num_ranges, cuda::no_init);
+  auto pinned_page_offsets = cudf::detail::make_pinned_vector(page_row_offsets, stream);
+  auto page_offsets = cudf::detail::make_device_buffer_async(pinned_page_offsets, stream, mr);
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<cudf::size_type>{0},
+                    cuda::counting_iterator{num_ranges},
+                    device_results.begin(),
+                    search_fenwick_tree_functor{.tree_level_ptrs = tree_level_ptrs.data(),
+                                                .row_mask        = d_row_mask,
+                                                .page_offsets    = page_offsets.data(),
+                                                .num_ranges      = num_ranges});
+
+  auto results = cudf::detail::make_pinned_vector_async(device_results, stream);
+  stream.sync();
+
+  return thrust::host_vector<bool>(results.begin(), results.end());
+}
+
+std::unique_ptr<column> compute_row_mask_from_page_stats(
+  std::span<page_statistics_input const> inputs,
+  size_type num_columns,
+  size_type total_rows,
+  std::reference_wrapper<ast::expression const> stats_expression,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+
+  CUDF_EXPECTS(
+    total_rows > 0, "Parquet row groups must contain at least one row", cudf::logic_error);
+
+  auto const temp_mr = mr.get_temporary_mr();
+
+  // Return an all true row mask if no compacted page statistics are provided
+  if (inputs.empty()) {
+    CUDF_LOG_WARN(
+      "At least one set of compacted page statistics is required. Falling back to an all true row "
+      "mask.");
+    auto const true_scalar = cudf::numeric_scalar<bool>{true, true, stream, temp_mr};
+    return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr.get_output_mr());
+  }
+
+  // Ensure all compacted page statistics refer to a valid input column, are internally consistent,
+  // and span all selected rows.
+  CUDF_EXPECTS(std::all_of(inputs.begin(),
+                           inputs.end(),
+                           [&](auto const& input) {
+                             return input.column_index >= 0 and input.column_index < num_columns and
+                                    std::cmp_equal(input.page_row_offsets.size(),
+                                                   input.statistics.num_rows() + 1) and
+                                    not input.page_row_offsets.empty() and
+                                    input.page_row_offsets.front() == 0 and
+                                    input.page_row_offsets.back() == total_rows;
+                           }),
+               "Compacted page statistics inputs are invalid",
+               std::invalid_argument);
+
+  // Total page row offsets across all input columns
+  auto const total_page_row_offsets = std::accumulate(
+    inputs.begin(), inputs.end(), std::size_t{0}, [](auto count, auto const& input) {
+      return count + input.page_row_offsets.size();
+    });
+
+  // Concatenate all inputs' page row offsets and slice bounds into pinned host buffers.
+  auto host_all_page_row_offsets =
+    cudf::detail::make_empty_pinned_vector<size_type>(total_page_row_offsets, stream);
+  auto host_input_slice_bounds =
+    cudf::detail::make_empty_pinned_vector<size_type>(inputs.size() + 1, stream);
+  host_input_slice_bounds.push_back(0);
+  std::for_each(inputs.begin(), inputs.end(), [&](auto const& input) {
+    host_all_page_row_offsets.insert(host_all_page_row_offsets.end(),
+                                     input.page_row_offsets.begin(),
+                                     input.page_row_offsets.end());
+    host_input_slice_bounds.push_back(host_input_slice_bounds.back() +
+                                      static_cast<size_type>(input.page_row_offsets.size()));
+  });
+
+  auto const all_page_row_offsets =
+    cudf::detail::make_device_buffer_async(host_all_page_row_offsets, stream, temp_mr);
+  auto const input_slice_bounds =
+    cudf::detail::make_device_buffer_async(host_input_slice_bounds, stream, temp_mr);
+
+  // Sorted, deduplicated union of all page boundaries. Host fold for small totals, device
+  // sort+unique for larger.
+  auto const [segment_row_offsets_storage, num_offsets] =
+    total_page_row_offsets >= min_segments_for_device_offsets
+      ? compute_segment_row_offsets_device(
+          all_page_row_offsets, total_rows, stream, mr.as_temporary())
+      : compute_segment_row_offsets_host(inputs, total_page_row_offsets, stream, mr.as_temporary());
+
+  auto const segment_row_offsets =
+    cudf::device_span<size_type const>{segment_row_offsets_storage.data(), num_offsets};
+  auto const num_segments = static_cast<size_type>(segment_row_offsets.size() - 1);
+
+  // Compute all input columns' page maps in a single kernel launch.
+  auto const page_maps = compute_segment_page_maps(
+    all_page_row_offsets, input_slice_bounds, segment_row_offsets, stream, temp_mr);
+
+  auto constexpr stats_cols_per_column = parquet::detail::stats_cols_per_column;
+
+  // Stats of non-participating columns are never referenced by the expression so use a common
+  // placeholder column for them.
+  auto const placeholder =
+    std::cmp_less(inputs.size(), num_columns)
+      ? cudf::make_numeric_column(
+          data_type{type_id::BOOL8}, num_segments, mask_state::UNALLOCATED, stream, temp_mr)
+      : std::unique_ptr<column>{};
+
+  // Convert per-segment page statistics into a table such that for each column `i`:
+  //   min(col[i])     = segment_views[i * stats_cols_per_column + 0]
+  //   max(col[i])     = segment_views[i * stats_cols_per_column + 1]
+  //   is_null(col[i]) = segment_views[i * stats_cols_per_column + 2]
+  std::vector<std::unique_ptr<column>> segment_columns;
+  segment_columns.reserve(stats_cols_per_column * inputs.size());
+  std::vector<column_view> segment_views(stats_cols_per_column * num_columns,
+                                         placeholder ? placeholder->view() : cudf::column_view{});
+  std::for_each(cuda::counting_iterator<std::size_t>{0},
+                cuda::counting_iterator{inputs.size()},
+                [&](auto const input_idx) {
+                  auto const& input         = inputs[input_idx];
+                  auto const page_map_slice = cudf::device_span<size_type const>{
+                    page_maps.data() + (input_idx * num_segments),
+                    static_cast<std::size_t>(num_segments)};
+                  auto gathered         = cudf::detail::gather(input.statistics.view(),
+                                                       page_map_slice,
+                                                       out_of_bounds_policy::DONT_CHECK,
+                                                       negative_index_policy::NOT_ALLOWED,
+                                                       stream,
+                                                       mr.as_temporary());
+                  auto gathered_columns = gathered->release();
+                  for (size_type stat_index = 0; stat_index < stats_cols_per_column; ++stat_index) {
+                    segment_views[(stats_cols_per_column * input.column_index) + stat_index] =
+                      gathered_columns[stat_index]->view();
+                    segment_columns.push_back(std::move(gathered_columns[stat_index]));
+                  }
+                });
+
+  // Filter segment-level statistics using AST expression and return the (BOOL8) predicate column.
+  auto const page_segments_table = cudf::table_view{segment_views};
+  auto segment_mask =
+    cudf::detail::compute_column(page_segments_table, stats_expression.get(), stream, temp_mr);
+  CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
+               "Page statistics expression must produce a boolean column");
+
+  // Drop the null mask if it was allocated but ended up empty
+  if (segment_mask->nullable() and segment_mask->null_count() == 0) {
+    segment_mask->set_null_mask(
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
+  }
+
+  // Compute row-level segment indices
+  auto row_segment_indices =
+    cuda::device_buffer<size_type>(stream, temp_mr, total_rows, cuda::no_init);
+  cudf::detail::label_segments(segment_row_offsets.begin(),
+                               segment_row_offsets.end(),
+                               row_segment_indices.begin(),
+                               row_segment_indices.end(),
+                               stream);
+
+  // Gather segment-level mask to row-level mask
+  auto row_mask = cudf::detail::gather(cudf::table_view{{segment_mask->view()}},
+                                       row_segment_indices,
+                                       out_of_bounds_policy::DONT_CHECK,
+                                       negative_index_policy::NOT_ALLOWED,
+                                       stream,
+                                       mr);
+  return std::move(row_mask->release().front());
+}
+
+}  // namespace cudf::io::parquet::hybrid_scan::detail

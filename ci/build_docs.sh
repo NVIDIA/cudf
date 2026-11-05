@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -50,6 +50,11 @@ mkdir -p "${RAPIDS_DOCS_DIR}/libcudf/html"
 mv html/* "${RAPIDS_DOCS_DIR}/libcudf/html"
 popd
 
+rapids-logger "Build cuDF Java Doxygen XML"
+pushd java/doxygen
+doxygen Doxyfile
+popd
+
 rapids-logger "Build Python docs"
 pushd docs/cudf
 make dirhtml O="-j 8"
@@ -63,6 +68,11 @@ make dirhtml
 mkdir -p "${RAPIDS_DOCS_DIR}/dask-cudf/html"
 mv build/dirhtml/* "${RAPIDS_DOCS_DIR}/dask-cudf/html"
 popd
+
+if (( EXITCODE != 0 )); then
+  rapids-logger "Documentation build failed; skipping upload"
+  exit "${EXITCODE}"
+fi
 
 RAPIDS_VERSION_NUMBER="${RAPIDS_VERSION_MAJOR_MINOR}" rapids-upload-docs
 

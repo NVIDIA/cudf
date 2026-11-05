@@ -390,6 +390,7 @@ files:
       key: test
     includes:
       - depends_on_cupy
+      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
       - pyarrow_run
       - test_python_common
@@ -1387,6 +1388,33 @@ dependencies:
           - matrix:
               cuda_suffixed: "false"
             packages: [*libcudf_unsuffixed]
+  depends_on_numba_cuda:
+    # Test-only: pylibcudf's transform UDF test uses stock ``numba.cuda`` to
+    # compile a device function to PTX. The numba-cuda package provides that
+    # working ``numba.cuda`` (and finds libNVVM from the nvidia CUDA wheels);
+    # cuDF's runtime device code uses numba-cuda-mlir instead.
+    common:
+      - output_types: [conda]
+        packages:
+          - &numba_cuda numba-cuda>=0.22.2,<0.31.0
+    specific:
+      - output_types: [requirements, constraints, pyproject]
+        matrices:
+          - matrix:
+              cuda: "12.*"
+              cuda_suffixed: "true"
+            packages:
+              - numba-cuda[cu12]>=0.22.2,<0.31.0
+          - matrix:
+              cuda: "13.*"
+              cuda_suffixed: "true"
+            packages:
+              - numba-cuda[cu13]>=0.22.2,<0.31.0
+          # fallback to numba-cuda with no extra CUDA packages if 'cuda_suffixed' isn't true
+          - matrix:
+              cuda_suffixed: "false"
+            packages:
+              - *numba_cuda
   depends_on_numba_cuda_mlir:
     common:
       - output_types: [conda, requirements, pyproject]

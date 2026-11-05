@@ -179,38 +179,40 @@ def _name_dates() -> pl.Series:
 
 
 @pytest.mark.parametrize("format", ["%A", "%a", "%B", "%b", "%A, %d %B %Y"])
-@pytest.mark.parametrize(
-    "dtype", [pl.Date(), pl.Datetime("us"), pl.Datetime("ns", "UTC")]
-)
-def test_strftime_names(engine: pl.GPUEngine, format, dtype):
-    ldf = pl.LazyFrame({"dates": _name_dates().cast(dtype)})
-    q = ldf.select(pl.col("dates").dt.strftime(format))
+def test_strftime_names(engine: pl.GPUEngine, format):
+    dtypes = {
+        "date": pl.Date(),
+        "us": pl.Datetime("us"),
+        "ns_utc": pl.Datetime("ns", "UTC"),
+    }
+    ldf = pl.LazyFrame({name: _name_dates().cast(t) for name, t in dtypes.items()})
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in dtypes)
     assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("format", ["%p", "%a %b %d %I:%M %p"])
-@pytest.mark.parametrize("dtype", [pl.Datetime("us"), pl.Datetime("ns", "UTC")])
-def test_strftime_am_pm(engine: pl.GPUEngine, format, dtype):
+def test_strftime_am_pm(engine: pl.GPUEngine, format):
     # Half of the values fall before noon, half after.
     values = _name_dates() + pl.Series(
         [datetime.timedelta(hours=13 * (i % 2)) for i in range(24)]
     )
-    ldf = pl.LazyFrame({"dates": values.cast(dtype)})
-    q = ldf.select(pl.col("dates").dt.strftime(format))
+    dtypes = {"us": pl.Datetime("us"), "ns_utc": pl.Datetime("ns", "UTC")}
+    ldf = pl.LazyFrame({name: values.cast(t) for name, t in dtypes.items()})
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in dtypes)
     assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("format", ["%A", "%b", "%H", "%A %H:%M"])
-@pytest.mark.parametrize("tz", ["America/Los_Angeles", "Asia/Tokyo"])
-def test_strftime_non_utc_time_zone(engine: pl.GPUEngine, format, tz):
+def test_strftime_non_utc_time_zone(engine: pl.GPUEngine, format):
     # 2023-12-31 16:30 in Los Angeles is already 2024-01-01 in UTC.
     values = pl.Series(
         [datetime.datetime(2023, 12, 31, 16, 30), datetime.datetime(2024, 7, 4, 1, 15)]
-    )
+    ).cast(pl.Datetime("us"))
+    zones = {"la": "America/Los_Angeles", "tokyo": "Asia/Tokyo"}
     ldf = pl.LazyFrame(
-        {"dates": values.cast(pl.Datetime("us")).dt.replace_time_zone(tz)}
+        {name: values.dt.replace_time_zone(tz) for name, tz in zones.items()}
     )
-    q = ldf.select(pl.col("dates").dt.strftime(format))
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in zones)
     assert_gpu_result_equal(q, engine=engine)
 
 

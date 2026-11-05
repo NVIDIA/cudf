@@ -39,10 +39,10 @@ _TIMESTAMP_TO_DURATION = {
     plc.TypeId.TIMESTAMP_NANOSECONDS: plc.TypeId.DURATION_NANOSECONDS,
 }
 
-# libcudf reads the AM/PM strings and the weekday and month names for the
-# "%p", "%a", "%A", "%b" and "%B" specifiers from a 40 element names column
-# (it yields empty strings if the column is empty). Polars formats with chrono,
-# which always uses English names regardless of the process locale.
+# libcudf reads the weekday and month names for the "%a", "%A", "%b" and "%B"
+# specifiers from a 40 element names column, after the AM/PM strings (it yields
+# empty strings if the column is empty). Polars formats with chrono, which
+# always uses English names regardless of the process locale.
 _STRFTIME_NAMES = [
     "AM",
     "PM",

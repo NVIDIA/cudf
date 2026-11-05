@@ -36,7 +36,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using io::detail::inline_column_buffer;
 using parquet::detail::ColumnChunkDesc;
@@ -1264,11 +1264,13 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
 
     auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
     auto final_row_mask =
-      use_jit
-        ? cudf::compute_column_jit(
-            read_table->view(), final_filter_expr.value().get(), _stream, _mr.get_temporary_mr())
-        : cudf::detail::compute_column(
-            *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
+      use_jit ? cudf::compute_column_jit(read_table->view(),
+                                         final_filter_expr.value().get(),
+                                         {},
+                                         _stream,
+                                         _mr.get_temporary_mr())
+              : cudf::detail::compute_column(
+                  *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 
@@ -1498,4 +1500,4 @@ INSTANTIATE_HYBRID_SCAN_COLUMNS_APIS(read_columns_mode::ALL_COLUMNS)
 
 #undef INSTANTIATE_HYBRID_SCAN_COLUMNS_APIS
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

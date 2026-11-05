@@ -15,15 +15,13 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/host_vector.h>
 
 #include <numeric>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using parquet::detail::ColumnChunkDesc;
 using parquet::detail::pass_intermediate_data;
@@ -196,4 +194,4 @@ void hybrid_scan_reader_impl::setup_next_pass(
   }
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

@@ -203,13 +203,7 @@ ConfigureTest(
   PERCENT 100
 )
 
-ConfigureTest(
-  MIXED_JOIN_TEST join/mixed_join_tests.cu
-  GPUS 1
-  PERCENT 30
-)
-# JIT compilation can overlap the GPU work in other tests.
-set_tests_properties(MIXED_JOIN_TEST PROPERTIES COST 300)
+ConfigureTest(MIXED_JOIN_TEST join/mixed_join_tests.cu)
 
 # ##################################################################################################
 # * is_sorted tests -------------------------------------------------------------------------------
@@ -643,7 +637,7 @@ ConfigureTest(
 ConfigureTest(
   LARGE_STRINGS_CSV_TEST large_strings/csv_tests.cpp large_strings/large_strings_fixture.cpp
   GPUS 1
-  PERCENT 30
+  PERCENT 100
 )
 ConfigureTest(
   LARGE_STRINGS_TEST

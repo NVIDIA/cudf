@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 
@@ -47,6 +48,22 @@ TEST_F(BinaryOperatorParityTest, StringNullMinMaxSupported)
       cudf::binops::is_supported_operation(str, str, cudf::data_type{cudf::type_id::INT32}, op));
   }
   EXPECT_FALSE(cudf::binops::is_supported_operation(str, str, str, cudf::binary_operator::ADD));
+
+  // the implementation must agree with the support query
+  auto const lhs = cudf::test::strings_column_wrapper({"a", "c", "z"}, {true, true, false});
+  auto const rhs = cudf::test::strings_column_wrapper({"b", "b", "d"});
+  {
+    auto const expected = cudf::test::strings_column_wrapper({"a", "b", "d"});
+    auto const result   = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MIN, str);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  }
+  {
+    auto const expected = cudf::test::strings_column_wrapper({"b", "c", "d"});
+    auto const result   = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MAX, str);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  }
+  EXPECT_THROW(cudf::binary_operation(lhs, rhs, cudf::binary_operator::ADD, str),
+               cudf::data_type_error);
 }
 
 TEST_F(BinaryOperatorParityTest, CheckedArithmeticPropagates)

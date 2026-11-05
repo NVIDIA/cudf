@@ -209,13 +209,13 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
 {
   // dictionary operands would resolve to their indices instead of their keys
   if (is_dictionary(out) or is_dictionary(lhs) or is_dictionary(rhs)) { return false; }
-  // strings support NULL_MIN/NULL_MAX via a dedicated (non-dispatched) implementation
-  if (op == binary_operator::NULL_MIN or op == binary_operator::NULL_MAX) {
-    if (lhs.id() == type_id::STRING and rhs.id() == type_id::STRING and
-        out.id() == type_id::STRING) {
-      return true;
-    }
-  }
   return double_type_dispatcher(lhs, rhs, is_supported_operation_functor{}, out, op);
+}
+
+bool is_string_null_min_max(data_type out, data_type lhs, data_type rhs, binary_operator op)
+{
+  return (op == binary_operator::NULL_MIN or op == binary_operator::NULL_MAX) and
+         lhs.id() == type_id::STRING and rhs.id() == type_id::STRING and
+         out.id() == type_id::STRING;
 }
 }  // namespace cudf::binops::compiled

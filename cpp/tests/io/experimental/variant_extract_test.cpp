@@ -8,6 +8,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
@@ -3407,3 +3408,5 @@ TEST_F(ExtractVariantFieldsStatusTest, CastStatusReachesBatchedOutput)
   expect_status_values(*status.columns[1], {ST_MISMATCH, ST_MISSING, ST_MISMATCH});
   expect_status_values(*status.columns[2], {ST_MISSING, ST_MISSING, ST_MISSING});
 }
+
+CUDF_TEST_PROGRAM_MAIN()

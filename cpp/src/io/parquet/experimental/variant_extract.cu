@@ -1371,7 +1371,8 @@ void copy_located_values(cudf::lists_column_device_view const& values,
                          device_span<size_type* const> d_offsets,
                          device_span<uint8_t* const> d_out,
                          size_type num_rows,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   auto const rows     = cuda::fast_mod_div<Index>{num_rows};
   auto const src_iter = cuda::make_transform_iterator(
@@ -1388,7 +1389,8 @@ void copy_located_values(cudf::lists_column_device_view const& values,
         auto const path = i / rows;
         return d_dst[path] + d_off[path][i - path * static_cast<Index>(rows)];
       }));
-  cudf::detail::batched_memcpy_async(src_iter, dst_iter, d_sizes.begin(), d_sizes.size(), stream);
+  cudf::detail::batched_memcpy_async(
+    src_iter, dst_iter, d_sizes.begin(), d_sizes.size(), stream, mr);
 }
 
 struct cast_variant_fn {
@@ -1828,11 +1830,23 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
     auto const d_out = cudf::detail::make_device_uvector_async(h_out, stream, temp_mr);
     // 64-bit division costs the copy a few percent, so it is only paid when the index needs it
     if (num_outputs <= std::numeric_limits<size_type>::max()) {
-      copy_located_values<size_type>(
-        val_lists_device_view, d_src_offsets, d_sizes, d_offsets, d_out, num_rows, stream);
+      copy_located_values<size_type>(val_lists_device_view,
+                                     d_src_offsets,
+                                     d_sizes,
+                                     d_offsets,
+                                     d_out,
+                                     num_rows,
+                                     stream,
+                                     resources.as_temporary());
     } else {
-      copy_located_values<int64_t>(
-        val_lists_device_view, d_src_offsets, d_sizes, d_offsets, d_out, num_rows, stream);
+      copy_located_values<int64_t>(val_lists_device_view,
+                                   d_src_offsets,
+                                   d_sizes,
+                                   d_offsets,
+                                   d_out,
+                                   num_rows,
+                                   stream,
+                                   resources.as_temporary());
     }
   }
 

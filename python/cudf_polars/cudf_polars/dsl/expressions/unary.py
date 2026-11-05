@@ -259,6 +259,7 @@ class UnaryFunction(Expr):
     )
     _pointwise_fns = frozenset(
         {
+            "as_struct",
             "clip",
             "fill_null",
             "fill_null_with_strategy",
@@ -2140,6 +2141,20 @@ class UnaryFunction(Expr):
                 if reverse:
                     result = plc.copying.reverse(result, stream=df.stream)
                 return Column(result, dtype=self.dtype)
+            if (
+                self.name in {"cum_min", "cum_max"}
+                and column.is_sorted == plc.types.Sorted.YES
+            ):
+                unchanged_order = (
+                    plc.types.Order.ASCENDING
+                    if (self.name == "cum_max") != reverse
+                    else plc.types.Order.DESCENDING
+                )
+                if column.order == unchanged_order and not (
+                    self.name == "cum_max"
+                    and plc.traits.is_floating_point(column.dtype.plc_type)
+                ):
+                    return column
             plc_col = column.obj
             if reverse:
                 # A reverse cumulative aggregation is a forward one over the
@@ -2185,9 +2200,34 @@ class UnaryFunction(Expr):
             elif self.name == "cum_max":
                 agg = plc.aggregation.max()
 
-            result = plc.reduce.scan(
-                plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
-            )
+            if self.name in {"cum_min", "cum_max"} and plc.traits.is_floating_point(
+                col_type
+            ):
+                # Polars skips NaN: a NaN takes the result of the preceding
+                # values, or stays NaN if no value precedes it.
+                scanned = plc.reduce.scan(
+                    plc.transform.column_nans_to_nulls(plc_col, stream=df.stream),
+                    agg,
+                    plc.reduce.ScanType.INCLUSIVE,
+                    stream=df.stream,
+                )
+                nan_filled = plc.replace.replace_nulls(
+                    scanned, plc.replace.ReplacePolicy.PRECEDING, stream=df.stream
+                )
+                use_filled = plc.binaryop.binary_operation(
+                    plc.unary.is_valid(nan_filled, stream=df.stream),
+                    plc.unary.is_valid(plc_col, stream=df.stream),
+                    plc.binaryop.BinaryOperator.LOGICAL_AND,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
+                result = plc.copying.copy_if_else(
+                    nan_filled, plc_col, use_filled, stream=df.stream
+                )
+            else:
+                result = plc.reduce.scan(
+                    plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
+                )
             if reverse:
                 result = plc.copying.reverse(result, stream=df.stream)
             return Column(result, dtype=self.dtype)

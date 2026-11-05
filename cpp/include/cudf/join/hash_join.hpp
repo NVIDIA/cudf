@@ -272,8 +272,8 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and caching the matching
+   *         groups that partitioned_inner_join() reuses
    */
   [[nodiscard]] cudf::join_match_context inner_join_match_context(
     cudf::table_view const& left,
@@ -297,8 +297,8 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and caching the matching
+   *         groups that partitioned_left_join() reuses
    */
   [[nodiscard]] cudf::join_match_context left_join_match_context(
     cudf::table_view const& left,
@@ -322,8 +322,8 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and caching the matching
+   *         groups that partitioned_full_join() reuses
    */
   [[nodiscard]] cudf::join_match_context full_join_match_context(
     cudf::table_view const& left,
@@ -340,9 +340,9 @@ class hash_join {
    * The returned left_indices are relative to the original complete probe table, not just the
    * partition, so they can be used directly with the original probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -366,9 +366,9 @@ class hash_join {
    *
    * The returned left_indices are relative to the original complete probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -396,9 +396,9 @@ class hash_join {
    *
    * The returned left_indices are relative to the original complete probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches

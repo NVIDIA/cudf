@@ -18,6 +18,7 @@ files:
       - cuda_version
       - depends_on_cupy
       - depends_on_cuda_bindings
+      - depends_on_cuda_bindings_build
       - depends_on_dask_cuda
       - depends_on_kvikio
       - depends_on_libkvikio
@@ -342,6 +343,7 @@ files:
     includes:
       - build_base
       - build_python_common
+      - depends_on_cuda_bindings_build
       - depends_on_libcudf
       - depends_on_librmm
       - depends_on_rmm
@@ -1108,6 +1110,23 @@ dependencies:
           - matrix:
             packages:
               - cuda-bindings>=13.0.2,<14.0
+  # https://github.com/NVIDIA/cuda-python/blob/main/cuda_bindings_13/docs/source/support.rst
+  # The Cython layer of cuda.bindings must be built against CTK headers of the
+  # same or newer major.minor version, so cap the version at what the CUDA 13.4
+  # headers support. The runtime requirement (depends_on_cuda_bindings) is
+  # intentionally looser.
+  depends_on_cuda_bindings_build:
+    specific:
+      - output_types: [conda, requirements, pyproject]
+        matrices:
+          - matrix:
+              cuda: "12.*"
+            packages:
+              - cuda-bindings>=12.9.3,<13.0
+          # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
+          - matrix:
+            packages:
+              - cuda-bindings>=13.0.2,<13.5
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

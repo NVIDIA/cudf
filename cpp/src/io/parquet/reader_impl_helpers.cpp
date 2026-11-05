@@ -179,6 +179,28 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
   return cuda::std::nullopt;
 }
 
+namespace {
+
+/**
+ * @brief Check if two logical types describe the same column type.
+ *
+ * ENUM is read as STRING and `converted_to_logical_type` maps it to STRING, so the two are equal.
+ */
+bool logical_types_match(LogicalType const& lhs, LogicalType const& rhs)
+{
+  auto const canonical = [](LogicalType const& t) {
+    return t.type == LogicalType::ENUM ? LogicalType::STRING : t.type;
+  };
+  auto const unit = [](auto const& t) {
+    return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
+  };
+  return canonical(lhs) == canonical(rhs) and unit(lhs.time_type) == unit(rhs.time_type) and
+         unit(lhs.timestamp_type) == unit(rhs.timestamp_type) and
+         lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
+}
+
+}  // namespace
+
 /**
  * @brief Lookup schema children by name or field ID across multiple sources.
  */
@@ -2149,20 +2171,6 @@ aggregate_reader_metadata::select_columns(
         : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
     // Writers may emit the deprecated converted type, the logical type, or both for the same
     // column. If both sources carry a logical type, compare those instead of the converted types.
-    auto const logical_types_match = [](LogicalType const& l, LogicalType const& r) {
-      auto const unit = [](auto const& t) {
-        return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
-      };
-      auto const int_width = [](LogicalType const& t) {
-        return t.int_type.has_value() ? t.int_type->bitWidth : int8_t{0};
-      };
-      auto const int_signed = [](LogicalType const& t) {
-        return t.int_type.has_value() and t.int_type->isSigned;
-      };
-      return l.type == r.type and unit(l.time_type) == unit(r.time_type) and
-             unit(l.timestamp_type) == unit(r.timestamp_type) and int_width(l) == int_width(r) and
-             int_signed(l) == int_signed(r);
-    };
     auto const types_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
                                ? logical_types_match(*lhs.logical_type, *rhs.logical_type)
                                : lhs.converted_type == rhs.converted_type;

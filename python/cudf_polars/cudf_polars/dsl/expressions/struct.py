@@ -21,7 +21,7 @@ from cudf_polars.utils.dtypes import make_empty_column
 if TYPE_CHECKING:
     from typing import Self
 
-    from polars import polars  # type: ignore[attr-defined]
+    from polars import _plr as polars
 
     from cudf_polars.containers import DataFrame, DataType
 

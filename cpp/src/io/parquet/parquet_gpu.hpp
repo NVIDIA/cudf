@@ -17,11 +17,12 @@
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/atomic>
+#include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
@@ -29,6 +30,7 @@
 #include <cuda_runtime.h>
 
 #include <climits>
+#include <concepts>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -188,16 +190,17 @@ struct is_scoped_enum<Enum, false> {
 using std::is_scoped_enum;
 #endif
 
+template <typename T>
+concept bit_flag = std::same_as<T, std::uint32_t> || is_scoped_enum<T>::value;
+
 // helpers to do bit operations on scoped enums
-template <typename... Ts,
-          CUDF_ENABLE_IF(... && (std::is_same_v<std::uint32_t, Ts> || is_scoped_enum<Ts>::value))>
+template <bit_flag... Ts>
 CUDF_HOST_DEVICE constexpr std::uint32_t BitAnd(Ts... bits)
 {
   return (... & static_cast<std::uint32_t>(bits));
 }
 
-template <typename... Ts,
-          CUDF_ENABLE_IF(... && (std::is_same_v<std::uint32_t, Ts> || is_scoped_enum<Ts>::value))>
+template <bit_flag... Ts>
 CUDF_HOST_DEVICE constexpr std::uint32_t BitOr(Ts... bits)
 {
   return (... | static_cast<std::uint32_t>(bits));
@@ -333,30 +336,31 @@ struct PageNestingInfo {
 };
 
 /**
- * @brief Which level-prepass consumer a page uses, or NONE for the legacy decoders.
+ * @brief Which nz map consumer a page uses, or NONE to decode without precomputed validity
+ * data.
  *
- * The level prepass walks a page's definition levels once up front and publishes a valid-rank
+ * The nz map producer walks a page's definition levels once up front and precomputes a valid-rank
  * map, so that the decode kernel can place values without decoding levels
  * itself. For now, only the DELTA encodings have a consumer for the map. See
- * `classify_prepass_family` in reader_impl_preprocess.cu.
+ * `classify_nz_map_kind` in reader_impl_preprocess.cu.
  *
  * uint8_t to minimize the overhead in PageInfo
  */
-enum class level_prepass_family : uint8_t {
+enum class nz_map_kind : uint8_t {
   NONE       = 0,
   DELTA_FLAT = 1,
 };
 
 /**
- * @brief Level prepass scratch information
+ * @brief Per-page nz map scratch
  *
- * Contains a valid-rank map computed from the rep and def levels for later decode kernels to use
+ * Contains a valid-rank map computed from the definition levels for later decode kernels to use
  *
  * Reached through a pointer on `PageInfo`, like `PageNestingInfo`, rather than copied into a
  * per-kernel shared-memory struct: the map is indexed by rank straight out of global memory.
  */
-struct page_prepass_state {
-  // `nz_count` value meaning "claimed, but the producer has not run yet".
+struct page_nz_map {
+  // `nz_count` value meaning "this page has a map, but the producer has not run yet".
   static constexpr int32_t not_yet_produced = -1;
 
   // Valid-rank map: `nz_idx[rank]` is the input position of the rank-th valid value. Null for a
@@ -364,9 +368,6 @@ struct page_prepass_state {
   uint32_t* nz_idx{};
   // Negative until the producer runs; the page's valid count afterwards.
   int32_t nz_count{not_yet_produced};
-  // Producer-written count whose meaning depends on the page's family, which is why it is not
-  // named for one of them. `DELTA_FLAT`, the only family here, uses it for the page's null count.
-  int32_t aux_count{};
 };
 
 /**
@@ -447,21 +448,21 @@ struct PageInfo {
   bool is_compressed;                  // Whether the page is compressed (V2 header)
   bool has_value_info;  // true if str_bytes, num_valids, etc are derivable from page indexes
 
-  // prepass_family indicates which prepass consumer a page uses.
-  // `prepass_state` is null when the selector did not claim this page -- non-null *is* the
-  // selection flag.
-  level_prepass_family prepass_family{level_prepass_family::NONE};
-  page_prepass_state* prepass_state{};
+  // map_kind indicates which nz map consumer a page uses.
+  // `nz_map` is null when `classify_nz_map_kind` selected no consumer for this page --
+  // non-null *is* the selection flag.
+  nz_map_kind map_kind{nz_map_kind::NONE};
+  page_nz_map* nz_map{};
 
   /**
-   * @brief True when this page was selected for @p family's prepass.
+   * @brief True when this page carries an nz map of kind @p kind.
    *
-   * @param family Prepass family to test against
-   * @return True if the page carries prepass scratch for @p family
+   * @param kind Map kind to test against
+   * @return True if the page carries nz map scratch of kind @p kind
    */
-  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool is_prepass_family(level_prepass_family family) const
+  [[nodiscard]] CUDF_HOST_DEVICE constexpr bool has_nz_map(nz_map_kind kind) const
   {
-    return prepass_state != nullptr && prepass_family == family;
+    return nz_map != nullptr && map_kind == kind;
   }
 };
 
@@ -647,8 +648,7 @@ CUDF_HOST_DEVICE constexpr inline size_t max_RLE_page_size(uint8_t value_bit_wid
   // bitwidths it's hard to get the pathological 8:2 split.
   // If the encoder starts printing the data corruption warning, then this will need to be
   // revisited.
-  return 4 + 5 + cudf::util::div_rounding_up_unsafe<size_t>(num_values * value_bit_width, 8) +
-         (num_values / 8);
+  return 4 + 5 + cuda::ceil_div<size_t, size_t>(num_values * value_bit_width, 8) + (num_values / 8);
 }
 
 // Bytes needed for the RLE length field
@@ -658,7 +658,7 @@ constexpr uint32_t RLE_LENGTH_FIELD_LEN = sizeof(uint32_t);
 // seven payload bits. Equal to 1 (field header byte) + ceil(value_bits / 7).
 CUDF_HOST_DEVICE constexpr size_t max_thrift_field_size(size_t value_bits)
 {
-  return 1 + cudf::util::div_rounding_up_unsafe<size_t>(value_bits, 7);
+  return 1 + cuda::ceil_div<size_t, size_t>(value_bits, 7);
 }
 
 // Max V2 page header size excluding statistics. Equal to size of 9 `i32` fields + 2 bool fields
@@ -877,6 +877,18 @@ void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
                          cuda::stream_ref stream);
 
 /**
+ * @brief Page metadata from the page index to be applied to pages during header parsing.
+ */
+struct page_index_info {
+  int32_t num_rows;
+  int32_t chunk_row;
+  int32_t num_nulls;
+  int32_t num_valids;
+  int32_t str_bytes;
+  bool has_value_info;
+};
+
+/**
  * @brief Decode page headers from corresponding specified page data spans.
  *
  * Empty spans initialize the corresponding logical page descriptor but are not decoded.
@@ -885,6 +897,7 @@ void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
  * @param[out] pages Device span of pages
  * @param[in] page_data Device span of page data
  * @param[in] chunk_page_offsets List of running count of page locations per column chunk
+ * @param[in] page_indexes Device span of metadata from page index for each logical page.
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
  */
@@ -893,6 +906,7 @@ void decode_page_headers_from_page_data(
   cudf::device_span<PageInfo> pages,
   cudf::device_span<cudf::device_span<uint8_t const> const> page_data,
   cudf::device_span<size_type const> chunk_page_offsets,
+  cudf::device_span<page_index_info const> page_indexes,
   kernel_error::pointer error_code,
   cuda::stream_ref stream);
 
@@ -999,7 +1013,7 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
  */
 void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pages,
                                      cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
-                                     rmm::device_uvector<uint8_t>& temp_string_buf,
+                                     cuda::device_buffer<uint8_t>& temp_string_buf,
                                      cuda::stream_ref stream);
 
 /**
@@ -1074,8 +1088,11 @@ void write_final_offsets(host_span<size_type const> offsets,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
+ * @param[in] has_flat_nz_map Whether any page of this subpass carries a flat nz map
+ * @param[in] needs_level_decoder Whether any DELTA_BINARY page of this subpass lacks a flat nz map
  * @param[out] error_code Error code for kernel failures
- * @param[in] stream CUDA stream to use
+ * @param[in] stream CUDA stream for the level-decoding kernel
+ * @param[in] nz_map_stream Stream the producer ran on, which orders the consumer behind it
  */
 void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
@@ -1083,8 +1100,11 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          size_t min_row,
                          int level_type_size,
                          cudf::device_span<bool const> page_mask,
+                         bool has_flat_nz_map,
+                         bool needs_level_decoder,
                          kernel_error::pointer error_code,
-                         cuda::stream_ref stream);
+                         cuda::stream_ref stream,
+                         cuda::stream_ref nz_map_stream);
 
 /**
  * @brief Launches kernel for reading the DELTA_BYTE_ARRAY column data stored in the pages
@@ -1184,6 +1204,32 @@ void preprocess_levels(cudf::detail::hostdevice_span<PageInfo> pages,
                        size_t num_rows,
                        int level_type_size,
                        cuda::stream_ref stream);
+
+/**
+ * @brief Launches the kernel that computes the flat nz map
+ *
+ * Runs once per output chunk, before the decode kernels, over the pages `classify_nz_map_kind`
+ * selected a consumer for. Writes `page_nz_map::nz_idx` / `nz_count` and the leaf column's null
+ * mask, so that the matching decode kernel can place values without walking definition levels
+ * itself. A subpass may yield several output chunks, each with its own `min_row` / `num_rows`, and
+ * the map covers one chunk's range at a time — unlike the allocation, which is sized once per
+ * subpass over the pass's row range.
+ *
+ * @param[in,out] pages All pages to be processed
+ * @param[in] chunks All chunks to be processed
+ * @param[in] page_mask Boolean vector indicating which pages need to be processed
+ * @param[in] min_row Minimum row index to read
+ * @param[in] num_rows Number of rows to read starting from min_row
+ * @param[in] level_type_size Size in bytes of the type for level decoding (1 or 2)
+ * @param[in] stream CUDA stream to use
+ */
+void precompute_flat_nz_map(cudf::detail::hostdevice_span<PageInfo> pages,
+                            cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
+                            cudf::device_span<bool const> page_mask,
+                            size_t min_row,
+                            size_t num_rows,
+                            int level_type_size,
+                            cuda::stream_ref stream);
 
 /**
  * @brief Fills output offset entries for pruned string and list pages

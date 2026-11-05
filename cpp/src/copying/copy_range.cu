@@ -37,9 +37,12 @@ void in_place_copy_range(cudf::column_view const& source,
                          cudf::size_type source_begin,
                          cudf::size_type source_end,
                          cudf::size_type target_begin,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
-  auto p_source_device_view = cudf::column_device_view::create(source, stream);
+  auto const temp_mr        = mr.get_temporary_mr();
+  auto const temp_mrs       = cudf::memory_resources{temp_mr, temp_mr};
+  auto p_source_device_view = cudf::column_device_view::create(source, stream, temp_mr);
   if (source.has_nulls()) {
     cudf::detail::copy_range(
       cudf::detail::make_null_replacement_iterator<T>(*p_source_device_view, T()) + source_begin,
@@ -47,14 +50,16 @@ void in_place_copy_range(cudf::column_view const& source,
       target,
       target_begin,
       target_begin + (source_end - source_begin),
-      stream);
+      stream,
+      temp_mrs);
   } else {
     cudf::detail::copy_range(p_source_device_view->begin<T>() + source_begin,
                              cuda::make_constant_iterator(true),  // dummy
                              target,
                              target_begin,
                              target_begin + (source_end - source_begin),
-                             stream);
+                             stream,
+                             temp_mrs);
   }
 }
 
@@ -66,9 +71,10 @@ struct in_place_copy_range_dispatch {
   void operator()(cudf::size_type source_begin,
                   cudf::size_type source_end,
                   cudf::size_type target_begin,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
   {
-    in_place_copy_range<T>(source, target, source_begin, source_end, target_begin, stream);
+    in_place_copy_range<T>(source, target, source_begin, source_end, target_begin, stream, mr);
   }
 
   template <typename T, typename... Args>
@@ -98,7 +104,15 @@ struct out_of_place_copy_range_dispatch {
 
     if (source_end != source_begin) {  // otherwise no-op
       auto ret_view = p_ret->mutable_view();
-      in_place_copy_range<T>(source, ret_view, source_begin, source_end, target_begin, stream);
+      // TODO: route through the caller's memory resources once copy_range is migrated
+      auto const temp_mr = cudf::get_current_device_resource_ref();
+      in_place_copy_range<T>(source,
+                             ret_view,
+                             source_begin,
+                             source_end,
+                             target_begin,
+                             stream,
+                             cudf::memory_resources{temp_mr, temp_mr});
       p_ret->set_null_count(ret_view.null_count());
     }
 
@@ -152,18 +166,20 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   auto const source_indices = source_view.get_indices_annotated();
   auto target_contents      = target_matched->release();
   auto target_indices(std::move(target_contents.children.front()));
-  cudf::mutable_column_view new_indices(
-    target_indices->type(),
-    dict_target.size(),
-    target_indices->mutable_view().head(),
-    reinterpret_cast<cudf::bitmask_type*>(target_contents.null_mask->data()),
-    dict_target.null_count());
+  cudf::mutable_column_view new_indices(target_indices->type(),
+                                        dict_target.size(),
+                                        target_indices->mutable_view().head(),
+                                        target_contents.null_mask->data(),
+                                        dict_target.null_count());
+  // TODO: route through the caller's memory resources once copy_range is migrated
+  auto const temp_mr = cudf::get_current_device_resource_ref();
   cudf::type_dispatcher(new_indices.type(),
                         in_place_copy_range_dispatch{source_indices, new_indices},
                         source_begin,
                         source_end,
                         target_begin,
-                        stream);
+                        stream,
+                        cudf::memory_resources{temp_mr, temp_mr});
   auto null_count     = new_indices.null_count();
   auto indices_column = std::make_unique<cudf::column>(
     new_indices.type(),
@@ -191,7 +207,8 @@ void copy_range_in_place(column_view const& source,
                          size_type source_begin,
                          size_type source_end,
                          size_type target_begin,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::is_fixed_width(target.type()),
                "In-place copy_range does not support variable-sized types.",
@@ -212,7 +229,8 @@ void copy_range_in_place(column_view const& source,
                                                  source_begin,
                                                  source_end,
                                                  target_begin,
-                                                 stream);
+                                                 stream,
+                                                 mr);
   }
 }
 
@@ -248,11 +266,12 @@ void copy_range_in_place(column_view const& source,
                          size_type source_begin,
                          size_type source_end,
                          size_type target_begin,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_range_in_place(
-    source, target, source_begin, source_end, target_begin, stream);
+    source, target, source_begin, source_end, target_begin, stream, mr);
 }
 
 std::unique_ptr<column> copy_range(column_view const& source,

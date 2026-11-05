@@ -66,11 +66,14 @@ from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
 )
+from cudf_polars.streaming.actor_graph.partitioning import (
+    NormalizedPartitioning,
+    maybe_remap_partitioning,
+)
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
-    NormalizedPartitioning,
     _evaluate_chunk_sync,
     _sample_chunks,
     allgather_and_reduce,
@@ -81,7 +84,6 @@ from cudf_polars.streaming.actor_graph.utils import (
     evaluate_batch,
     evaluate_chunk,
     gather_in_task_group,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     replay_buffered_channel,
@@ -663,7 +665,10 @@ async def _shuffle_and_reassemble(
     )
 
     forward_shuffle = ShuffleManager(
-        context, comm, forward_modulus, forward_shuffle_collective_id
+        context,
+        comm,
+        forward_modulus,
+        forward_shuffle_collective_id,
     )
     return_shuffle = ShuffleManager(
         context,
@@ -764,7 +769,9 @@ async def over_actor(
         chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
-    ) as tracer:
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         metadata_in = await recv_metadata(ch_in, context)
 
         partitioning = NormalizedPartitioning.from_keys(

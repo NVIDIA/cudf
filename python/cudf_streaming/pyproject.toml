@@ -17,7 +17,7 @@ authors = [
     { name = "NVIDIA Corporation" },
 ]
 license = "Apache-2.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "libcudf-streaming==26.12.*,>=0.0.0a0",
     "pylibcudf==26.12.*,>=0.0.0a0",
@@ -59,7 +59,7 @@ select = [
 ]
 
 # PyPI hard limit is 1GiB, but try to keep these as small as possible
-max_allowed_size_compressed = '75M'
+max_allowed_size_compressed = '2M'
 
 [tool.pytest.ini_options]
 addopts = "--tb=native --strict-config --strict-markers"
@@ -71,7 +71,7 @@ xfail_strict = true
 
 [tool.rapids-build-backend]
 build-backend = "scikit_build_core.build"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies-file = "../../dependencies.yaml"
 matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 requires = [

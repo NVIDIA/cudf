@@ -65,7 +65,7 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
 /**
  * @brief Computes output valid mask for op between a column and a scalar
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> scalar_col_valid_mask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
   cuda::stream_ref stream,

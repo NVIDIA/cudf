@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -30,7 +31,8 @@ TEST_F(MurmurHashTest, NonCanonicalBool)
                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                    0);
 
-  auto const output = cudf::hashing::murmurhash3_x86_32(cudf::table_view({col->view()}));
+  auto const input  = cudf::table_view({col->view()});
+  auto const output = cudf::hashing::murmurhash3_x86_32(input);
   auto const host   = cudf::test::to_host<uint32_t>(output->view()).first;
 
   ASSERT_EQ(raw.size(), host.size());
@@ -38,6 +40,18 @@ TEST_F(MurmurHashTest, NonCanonicalBool)
   EXPECT_EQ(host[1], host[2]) << "byte 2 must hash the same as byte 1";
   EXPECT_EQ(host[1], host[3]) << "byte 255 must hash the same as byte 1";
   EXPECT_NE(host[0], host[1]) << "false and true must differ";
+
+  // All row-hashing algorithms must interpret the raw bytes as the same logical bool values.
+  cudf::test::fixed_width_column_wrapper<bool> const canonical{false, true, true, true};
+  auto const reference = cudf::table_view({canonical});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(),
+                                 cudf::hashing::murmurhash3_x86_32(reference)->view());
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::hashing::murmurhash3_x64_128(input)->view(),
+                                cudf::hashing::murmurhash3_x64_128(reference)->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::hashing::xxhash_32(input)->view(),
+                                 cudf::hashing::xxhash_32(reference)->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::hashing::xxhash_64(input)->view(),
+                                 cudf::hashing::xxhash_64(reference)->view());
 }
 
 TEST_F(MurmurHashTest, MultiValue)

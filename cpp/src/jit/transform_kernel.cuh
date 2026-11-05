@@ -15,7 +15,6 @@
 
 #include <cuda/atomic>
 #include <cuda/std/algorithm>
-#include <cuda/std/tuple>
 #include <cuda/std/utility>
 
 #include <jit/column_accessor.cuh>
@@ -24,11 +23,14 @@
 
 namespace cudf::detail {
 
+template <typename T>
+inline constexpr bool is_fixed_width_repr_compatible =
+  cudf::is_fixed_width<T>() && cudf::is_rep_layout_compatible<T>();
+
 /**
  * @brief Applies a row operation using transform input and output accessors.
  *
- * `operation` is invoked as `operation(row, arguments)`, where `arguments` is a tuple containing
- * output pointers followed by input values.
+ * `operation` is invoked as `operation(row, output_pointers..., input_values...)`.
  */
 template <bool IsNullAware,
           typename InputAccessors,
@@ -41,59 +43,70 @@ __device__ void transform_kernel(size_type row_size,
                                  int32_t* __restrict__ max_error,
                                  RowOperation&& operation)
 {
+  constexpr auto all_fixed_width_repr_compatible = []<typename... A>() {
+    return (is_fixed_width_repr_compatible<typename A::element_type> && ...);
+  };
+  constexpr bool direct_access = InputAccessors::map(all_fixed_width_repr_compatible) &&
+                                 OutputAccessors::map(all_fixed_width_repr_compatible);
+
   auto const start  = grid_1d::global_thread_id();
   auto const stride = grid_1d::grid_stride();
   auto thread_error = errc::SUCCESS;
 
+  // `row_index` is intentionally kept wide to reduce register pressure.
+  // The row indexes are checked against the row sizes before use.
+  // Both branches expand argument packs directly to avoid concatenated tuple types and
+  // `cuda::std::apply` machinery, reducing frontend work, especially for JIT compilation.
   if constexpr (!IsNullAware) {
-    for (auto row = start; row < row_size; row += stride) {
-      if (stencil != nullptr && !bit_is_set(stencil, row)) { continue; }
+    for (auto row_index = start; row_index < row_size; row_index += stride) {
+      if (stencil != nullptr && !bit_is_set(stencil, row_index)) { continue; }
 
-      auto ins = InputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::element(input_cols, row)...}; });
+      if constexpr (direct_access) {
+        InputAccessors::map([&]<typename... In> {
+          OutputAccessors::map([&]<typename... Out> {
+            auto const error = operation(
+              row_index,
+              (Out::column(output_cols).template data<typename Out::element_type>() + row_index)...,
+              In::column(input_cols)
+                .template data<typename In::element_type>()[In::map_index(row_index)]...);
+            thread_error = cuda::std::max(thread_error, error);
+          });
+        });
+      } else {
+        OutputAccessors::map([&]<typename... Out> {
+          [&](auto... outs) {
+            InputAccessors::map([&]<typename... In> {
+              auto const error =
+                operation(row_index, &outs..., In::element(input_cols, row_index)...);
+              (Out::assign(output_cols, row_index, outs), ...);
 
-      auto outs = OutputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::output_arg(output_cols, row)...}; });
-
-      auto out_ptrs =
-        cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
-
-      auto const row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
-
-      OutputAccessors::map([&]<typename... A>() {
-        (A::assign(output_cols, row, cuda::std::get<A::index>(outs)), ...);
-      });
-
-      thread_error = cuda::std::max(thread_error, row_error);
+              thread_error = cuda::std::max(thread_error, error);
+            });
+          }(Out::output_arg(output_cols, row_index)...);
+        });
+      }
     }
   } else {
     // Keep every lane in a warp on the same loop iteration when writing validity.
     auto const warp_padded_size =
-      util::round_up_safe<thread_index_type>(row_size, detail::warp_size);
+      cudf::detail::round_up_safe<thread_index_type>(row_size, detail::warp_size);
 
-    for (auto row = start; row < warp_padded_size; row += stride) {
-      auto const active_mask = __ballot_sync(0xffff'ffffu, row < row_size);
-      if (row >= row_size) { continue; }
-
-      auto ins = InputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::nullable_element(input_cols, row)...}; });
-
-      auto outs = OutputAccessors::map(
-        [&]<typename... A>() { return cuda::std::tuple{A::null_output_arg(output_cols, row)...}; });
-
-      auto out_ptrs =
-        cuda::std::apply([&](auto&... args) { return cuda::std::tuple{&args...}; }, outs);
-
-      auto const row_error = operation(row, cuda::std::tuple_cat(out_ptrs, ins));
-
-      OutputAccessors::map([&]<typename... A>() {
-        (A::assign(output_cols, row, *cuda::std::get<A::index>(outs)), ...);
-        (jit::warp_compact_validity<A>(
-           active_mask, output_cols, row, cuda::std::get<A::index>(outs).has_value()),
-         ...);
+    for (auto row_index = start; row_index < warp_padded_size; row_index += stride) {
+      auto const active_mask = __ballot_sync(0xffff'ffffu, row_index < row_size);
+      if (row_index >= row_size) { continue; }
+      OutputAccessors::map([&]<typename... Out> {
+        [&](auto... outs) {
+          InputAccessors::map([&]<typename... In> {
+            auto const error =
+              operation(row_index, &outs..., In::nullable_element(input_cols, row_index)...);
+            // Null outputs are disengaged; the value written for those rows is undefined.
+            (Out::assign(output_cols, row_index, outs.value_or(typename Out::element_type{})), ...);
+            (jit::warp_compact_validity<Out>(active_mask, output_cols, row_index, outs.has_value()),
+             ...);
+            thread_error = cuda::std::max(thread_error, error);
+          });
+        }(Out::null_output_arg(output_cols, row_index)...);
       });
-
-      thread_error = cuda::std::max(thread_error, row_error);
     }
   }
 

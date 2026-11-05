@@ -79,7 +79,7 @@ struct preprocessed_table {
                                                        rmm::device_async_resource_ref>;
 
   preprocessed_table(table_device_view_owner&& table,
-                     std::vector<cuda::device_buffer<std::byte>>&& null_buffers,
+                     std::vector<cuda::device_buffer<cudf::bitmask_type>>&& null_buffers,
                      std::vector<std::unique_ptr<column>>&& tmp_columns)
     : _t(std::move(table)),
       _null_buffers(std::move(null_buffers)),
@@ -88,7 +88,7 @@ struct preprocessed_table {
   }
 
   table_device_view_owner _t;
-  std::vector<cuda::device_buffer<std::byte>> _null_buffers;
+  std::vector<cuda::device_buffer<cudf::bitmask_type>> _null_buffers;
   std::vector<std::unique_ptr<column>> _tmp_columns;
 };
 

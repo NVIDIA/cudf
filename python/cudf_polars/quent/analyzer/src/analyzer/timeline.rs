@@ -23,8 +23,8 @@ use super::CudfPolarsUiAnalyzer;
 use crate::{
     evaluate::EvaluateUsage,
     resource::{
-        DATA_CHANNEL_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE,
-        evaluate_resource_type,
+        DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
+        PROCESSOR_RESOURCE_TYPE, resource_type,
     },
 };
 
@@ -104,7 +104,7 @@ impl CudfPolarsUiAnalyzer {
 
         if !matches!(
             resource_type_name.as_str(),
-            PROCESSOR_RESOURCE_TYPE | DATA_CHANNEL_RESOURCE_TYPE
+            PROCESSOR_RESOURCE_TYPE | DEVICE_MEMORY_RESOURCE_TYPE | DATA_CHANNEL_RESOURCE_TYPE
         ) {
             return Err(AnalyzerError::InvalidArgument(format!(
                 "unknown resource type {resource_type_name:?}"
@@ -128,7 +128,7 @@ impl CudfPolarsUiAnalyzer {
                             || requested_operator_ids.contains(&operator_id))
                 })
         });
-        let resource_type = evaluate_resource_type(&resource_type_name);
+        let resource_type = resource_type(&resource_type_name);
         let data = if entity_type_name.is_some() {
             let mut builder = ResourceTimelineByKeyBuilder::try_new(
                 &resource_type,

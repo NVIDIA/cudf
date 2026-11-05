@@ -9,14 +9,13 @@
 #include <cudf/hashing/detail/hash_functions.cuh>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/concepts.hpp>
 
 #include <cuda/std/array>
 #include <cuda/std/bit>
+#include <cuda/std/concepts>
 #include <cuda/std/cstddef>
 #include <cuda/std/type_traits>
-
-#include <vector_types.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +23,7 @@
 namespace cudf::hashing::detail {
 
 template <typename Key>
-  requires(not cudf::is_nested<Key>())
+  requires(not cudf::concepts::nested<Key>)
 struct Spark_MurmurHash3_x86_32 {
  private:
   static constexpr std::size_t BLOCK_SIZE = 4;
@@ -62,10 +61,10 @@ struct Spark_MurmurHash3_x86_32 {
   [[nodiscard]] __device__ static inline uint32_t mix_block(uint32_t k1, uint32_t h)
   {
     k1 *= c1;
-    k1 = rotate_bits_left(k1, rot_c1);
+    k1 = cuda::std::rotl(k1, rot_c1);
     k1 *= c2;
     h ^= k1;
-    h = rotate_bits_left(h, rot_c2);
+    h = cuda::std::rotl(h, rot_c2);
     h = h * 5 + c3;
     return h;
   }
@@ -93,7 +92,7 @@ struct Spark_MurmurHash3_x86_32 {
    * matching Spark's tail-byte handling.
    */
   template <typename BlockFn, typename ByteFn>
-    requires(cuda::std::is_same_v<int8_t, cuda::std::invoke_result_t<ByteFn, std::size_t>>)
+    requires(cuda::std::same_as<int8_t, cuda::std::invoke_result_t<ByteFn, std::size_t>>)
   [[nodiscard]] __device__ inline uint32_t hash_blocks(std::size_t length,
                                                        BlockFn extract_block,
                                                        ByteFn extract_byte) const
@@ -144,8 +143,7 @@ struct Spark_MurmurHash3_x86_32 {
    * Four-byte blocks are mixed whole. Leftover bytes are sign-extended and mixed individually,
    * matching Spark's tail-byte handling without staging an intermediate byte buffer.
    */
-  template <typename T>
-    requires(cuda::std::is_integral_v<T>)
+  template <cuda::std::integral T>
   [[nodiscard]] uint32_t __device__ inline hash_low_bytes(T value, std::size_t length) const
   {
     return hash_blocks(
@@ -163,9 +161,7 @@ template <>
 __device__ inline auto Spark_MurmurHash3_x86_32<bool>::operator()(bool const& key) const
   -> result_type
 {
-  // BOOL8 is "0 == false, else true", so canonicalize before hashing: a stored byte of 2 must
-  // hash as 1, not as 2.
-  return compute<uint32_t>(key ? 1u : 0u);
+  return compute<uint32_t>(key);
 }
 
 template <>
@@ -255,15 +251,8 @@ __device__ inline auto Spark_MurmurHash3_x86_32<numeric::decimal128>::operator()
 
   // Spark hashes the big-endian representation, so reverse the bytes and shift the significant
   // ones down. Doing this in registers avoids staging a byte buffer in local memory.
-  auto const swap128 = [](__int128_t v) {
-    auto const words    = cuda::std::bit_cast<uint4>(v);
-    auto const permuted = uint4{.x = __byte_perm(words.w, 0, 0x0123),
-                                .y = __byte_perm(words.z, 0, 0x0123),
-                                .z = __byte_perm(words.y, 0, 0x0123),
-                                .w = __byte_perm(words.x, 0, 0x0123)};
-    return cuda::std::bit_cast<__uint128_t>(permuted);
-  };
-  auto const big_endian = swap128(val) >> (8 * (key_size - length));
+  auto const big_endian =
+    cuda::std::byteswap(static_cast<__uint128_t>(val)) >> (8 * (key_size - length));
 
   // Hash the low `length` bytes of `big_endian`, matching what `compute_bytes` would do over the
   // equivalent byte buffer.

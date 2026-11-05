@@ -28,6 +28,7 @@
 #include <cudf/unary.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <src/io/parquet/parquet_gpu.hpp>
 #include <src/io/parquet/stats_filter_helpers.hpp>
@@ -36,11 +37,13 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <locale>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 using ParquetDecompressionTest = DecompressionTest<ParquetReaderTest>;
@@ -86,6 +89,149 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
   auto const result = cudf::io::read_parquet(read_options);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+}
+
+// TODO: delete this test once the nz map is on by default.
+//
+// This test reads one file twice, with the nz map producer and its delta binary consumer off and
+// then on, and requires the two to agree. Those kernels are gated by an environment variable that
+// will be removed once the full set of kernels has been merged and the end result benchmarked.
+// Once the default flips, the rest of the suite covers those paths and this has nothing left to
+// add.
+TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
+{
+  // The nz map is a second decode path selected by an env var: the same file must read
+  // identically with it on and off.
+  //
+  // DELTA_BINARY_PACKED because it is the only encoding with a consumer at this point in the
+  // series, and nullable so that the map itself is exercised. A required column gets one too, but
+  // takes the consumer's identity-map path, where no map is allocated.
+  static constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
+
+  constexpr int num_rows = 50000;
+  auto const values      = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<int32_t>(i * 3 - 7); });
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 7) != 0; });
+  cudf::test::fixed_width_column_wrapper<int32_t> const nullable_col{
+    values, values + num_rows, valids};
+  // A required column takes the consumer's identity-map path: the producer writes no `nz_idx` and
+  // the consumer derives the position from the rank alone.
+  cudf::test::fixed_width_column_wrapper<int32_t> const required_col(values, values + num_rows);
+  // Optional but with no null in it. `maybe_has_nulls` short-circuits, so the producer returns
+  // early with `nz_idx` allocated and the null mask left to the all-valid fill.
+  auto const all_valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto) { return true; });
+  cudf::test::fixed_width_column_wrapper<int32_t> const no_nulls_col{
+    values, values + num_rows, all_valid};
+  // A nested column the classifier declines, so its pages stay on the level-decoding kernel while
+  // the flat ones above go to the consumer. The two must partition the pages between them.
+  auto const list_offsets = cudf::detail::make_counting_transform_iterator(
+    cudf::size_type{0}, [](auto row) { return static_cast<cudf::size_type>(2 * row); });
+  auto const nested_col = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(list_offsets,
+                                                            list_offsets + num_rows + 1)
+      .release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>(values, values + (2 * num_rows)).release(),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+
+  auto const expected = table_view({nullable_col, required_col, no_nulls_col, nested_col->view()});
+
+  auto input_metadata = cudf::io::table_input_metadata{expected};
+  for (auto& col_meta : input_metadata.column_metadata) {
+    col_meta.set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+  }
+  // The list's leaf carries the encoding; the list column itself is not a leaf.
+  input_metadata.column_metadata[3].child(1).set_encoding(
+    cudf::io::column_encoding::DELTA_BINARY_PACKED);
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+      .write_v2_headers(true)
+      .metadata(input_metadata)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_fragment_size(1000)
+      .max_page_size_rows(1000)
+      .build());
+
+  auto const read_back = [&] {
+    return cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<std::byte const>{
+          reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+        .build());
+  };
+
+  {
+    tmp_env_var const env{nz_map_env_var, "0"};
+    auto const level_decoded = read_back();
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, level_decoded.tbl->view());
+  }
+  {
+    tmp_env_var const env{nz_map_env_var, "1"};
+    auto const with_nz_map = read_back();
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, with_nz_map.tbl->view());
+  }
+  // A bounded read puts the same pages on the bounds-page path, where the two routes diverge most.
+  {
+    auto const trimmed = [&] {
+      return cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<std::byte const>{
+            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+          .skip_rows(1500)
+          .num_rows(4321)
+          .build());
+    };
+    // 1500 lands mid-page against 1000-row pages, so the consumer's prefix search has 500 values
+    // below `first_row` to skip rather than one.
+    auto const sliced = cudf::slice(expected, {1500, 1500 + 4321});
+    {
+      tmp_env_var const env{nz_map_env_var, "0"};
+      CUDF_TEST_EXPECT_TABLES_EQUAL(sliced, trimmed().tbl->view());
+    }
+    {
+      tmp_env_var const env{nz_map_env_var, "1"};
+      CUDF_TEST_EXPECT_TABLES_EQUAL(sliced, trimmed().tbl->view());
+    }
+  }
+
+  // A chunked read runs the producer once per output chunk over the same scratch, each time with
+  // that chunk's row range rather than the pass's.
+  {
+    auto const read_chunked = [&] {
+      auto reader = cudf::io::chunked_parquet_reader(
+        1'024,
+        8'192,
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<std::byte const>{
+            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+          .build());
+      std::vector<std::unique_ptr<cudf::table>> chunks;
+      while (reader.has_next()) {
+        chunks.push_back(reader.read_chunk().tbl);
+      }
+      std::vector<cudf::table_view> views;
+      views.reserve(chunks.size());
+      for (auto const& c : chunks) {
+        views.push_back(c->view());
+      }
+      return std::pair{cudf::concatenate(views), std::move(chunks)};
+    };
+    {
+      tmp_env_var const env{nz_map_env_var, "0"};
+      auto const [joined, keep] = read_chunked();
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, joined->view());
+    }
+    {
+      tmp_env_var const env{nz_map_env_var, "1"};
+      auto const [joined, keep] = read_chunked();
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, joined->view());
+    }
+  }
 }
 
 TEST_F(ParquetReaderTest, UserBounds)
@@ -3597,7 +3743,7 @@ TEST_F(ParquetReaderTest, RepeatedNoAnnotations)
   auto num_list_rows = list_offsets_column->size() - 1;
 
   auto mask = cudf::create_null_mask(6, cudf::mask_state::ALL_VALID);
-  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(mask.data()), 0, 2, false);
+  cudf::set_null_mask(mask.data(), 0, 2, false);
 
   auto list_col = cudf::make_lists_column(
     num_list_rows, std::move(list_offsets_column), struct_col.release(), 2, std::move(mask));
@@ -4902,7 +5048,7 @@ void filter_typed_test()
                                            numeric::scale_type{0});  // i ∈ [-10,000, 10,000)
       } else {
         return cudf::numeric_scalar<T>(
-          (100 - 100 * std::is_signed_v<T>));  // i/100 ∈ [-100, 100) or [0, 200)
+          (100 - 100 * cuda::std::is_signed_v<T>));  // i/100 ∈ [-100, 100) or [0, 200)
       }
     }();
 
@@ -5086,7 +5232,7 @@ void filter_unary_operation_typed_test()
                                            numeric::scale_type{0});  // i ∈ [-10,000, 10,000)
       } else {
         return cudf::numeric_scalar<T>(
-          (100 - 100 * std::is_signed_v<T>));  // i/100 ∈ [-100, 100) or [0, 200)
+          (100 - 100 * cuda::std::is_signed_v<T>));  // i/100 ∈ [-100, 100) or [0, 200)
       }
     }();
 
@@ -6232,16 +6378,17 @@ TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)
 {
   auto col0 = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5};
   auto col1 = cudf::test::fixed_width_column_wrapper<int32_t>{10, 20, 30, 40, 50};
-  cudf::table_view tbl{{col0, col1}};
+  auto col2 = cudf::test::fixed_width_column_wrapper<int32_t>{100, 200, 300, 400, 500};
+  cudf::table_view tbl{{col0, col1, col2}};
 
   auto filepath =
-    write_parquet_temp_file(tbl, "CaseInsensitiveColumnSelection.parquet", {"col0", "col1"});
+    write_parquet_temp_file(tbl, "CaseInsensitiveColumnSelection.parquet", {"col0", "äpfel", "k"});
 
-  // Case-sensitive: "col0" is ignored
+  // Case-sensitive: "col0" and "äpfel" are ignored
   {
     auto read_opts =
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build();
-    read_opts.set_column_names({"Col0"});
+    read_opts.set_column_names({"Col0", "ÄPFEL"});
     // ignore_missing_columns defaults to true, so result should be empty
     auto result = cudf::io::read_parquet(read_opts);
     EXPECT_EQ(result.tbl->view().num_columns(), 0);
@@ -6260,18 +6407,44 @@ TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), col0);
   }
 
-  // Case-insensitive: "COL0" -> "col0", "Col1" -> "col1"
+  // Skip the remaining tests if the C.UTF-8 locale is unavailable
+  try {
+    std::ignore = std::locale("C.UTF-8");
+  } catch (std::runtime_error const&) {
+    GTEST_SKIP() << "C.UTF-8 locale unavailable";
+  }
+
+  // Case-insensitive: "COL0" -> "col0", "ÄPFEL" -> "äpfel", KELVIN SIGN (U+212A) -> "k"
   {
     auto read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
                        .case_sensitive_names(false)
                        .build();
-    read_opts.set_column_names({"COL0", "Col1"});
+    read_opts.set_column_names({"COL0", "ÄPFEL", "\u212A"});
     auto result = cudf::io::read_parquet(read_opts);
-    ASSERT_EQ(result.tbl->view().num_columns(), 2);
+    ASSERT_EQ(result.tbl->view().num_columns(), 3);
     EXPECT_EQ(result.metadata.schema_info[0].name, "col0");
-    EXPECT_EQ(result.metadata.schema_info[1].name, "col1");
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), col0);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(1), col1);
+    EXPECT_EQ(result.metadata.schema_info[1].name, "äpfel");
+    EXPECT_EQ(result.metadata.schema_info[2].name, "k");
+    CUDF_TEST_EXPECT_TABLES_EQUAL(result.tbl->view(), tbl);
+  }
+
+  // Case-insensitive filter referencing a non-ASCII column name
+  {
+    auto const col_ref = cudf::ast::column_name_reference("ÄpFeL");
+    auto scalar        = cudf::numeric_scalar<int32_t>(30, true);
+    auto literal       = cudf::ast::literal(scalar);
+    auto filter_expr = cudf::ast::operation(cudf::ast::ast_operator::LESS_EQUAL, col_ref, literal);
+    auto const predicate =
+      cudf::test::fixed_width_column_wrapper<bool>{true, true, true, false, false}.release();
+    auto const expected = cudf::apply_retention_mask(tbl, predicate->view());
+
+    auto const read_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .case_sensitive_names(false)
+        .filter(filter_expr)
+        .build();
+    auto const read = cudf::io::read_parquet(read_opts).tbl;
+    CUDF_TEST_EXPECT_TABLES_EQUAL(read->view(), expected->view());
   }
 }
 

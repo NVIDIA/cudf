@@ -16,7 +16,9 @@ import pylibcudf as plc
 from pylibcudf.io.types import CompressionType
 
 
-def write_hybrid_scan_parquet_bytes(table, row_group_size):
+def write_hybrid_scan_parquet_bytes(
+    table, row_group_size, write_statistics=True
+):
     """Write a PyArrow table to parquet bytes with hybrid-scan-friendly settings
     (dictionary encoding, statistics, page index).
     """
@@ -26,7 +28,7 @@ def write_hybrid_scan_parquet_bytes(table, row_group_size):
         buf,
         row_group_size=row_group_size,
         use_dictionary=True,
-        write_statistics=True,
+        write_statistics=write_statistics,
         write_page_index=True,
     )
     return buf.getvalue()
@@ -577,3 +579,11 @@ COMPRESSION_TYPE_TO_PANDAS = {
     CompressionType.BROTLI: "brotli",
 }
 ALL_PA_TYPES = DEFAULT_PA_TYPES
+
+requires_pyarrow_bloom_filters = pytest.mark.skipif(
+    int(pa.__version__.split(".", 1)[0]) < 24,
+    reason="pyarrow writes Parquet bloom filters from 24.0",
+)
+
+# Sized so that absent values are practically never false positives
+BLOOM_FILTER_OPTIONS = {"ndv": 1000, "fpp": 0.0001}

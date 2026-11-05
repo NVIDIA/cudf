@@ -627,7 +627,8 @@ async def shuffle_actor(
         chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
-    ):
+    ) as actor_scope:
+        ir_context = actor_scope.require_ir_context()
         await _global_shuffle(
             context,
             comm,

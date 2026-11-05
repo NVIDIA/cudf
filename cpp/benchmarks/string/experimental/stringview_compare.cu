@@ -4,13 +4,13 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
@@ -21,8 +21,10 @@
 
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <thrust/count.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
@@ -150,10 +152,7 @@ struct compare_arrow_sv {
     // shortcut to check preview bytes
     auto pv_lhs = reinterpret_cast<uint32_t const*>(item_lhs.inlined.data)[0];
     auto pv_rhs = reinterpret_cast<uint32_t const*>(item_rhs.inlined.data)[0];
-    if (pv_lhs != pv_rhs) {
-      return cudf::hashing::detail::swap_endian(pv_lhs) <
-             cudf::hashing::detail::swap_endian(pv_rhs);
-    }
+    if (pv_lhs != pv_rhs) { return cuda::std::byteswap(pv_lhs) < cuda::std::byteswap(pv_rhs); }
 
     // prefix matches so check how many bytes are left to compare
     constexpr auto prefix_size = static_cast<cudf::size_type>(sizeof(uint32_t));
@@ -262,7 +261,7 @@ std::pair<rmm::device_uvector<ArrowBinaryView>, cuda::device_buffer<char>> creat
   // Make sure only one buffer is needed.
   // Using a single data buffer makes the two formats more similar focusing on the layout.
   constexpr int64_t max_size = std::numeric_limits<cudf::size_type>::max() / 2;
-  auto const num_buffers     = cudf::util::div_rounding_up_safe(longer_chars_size, max_size);
+  auto const num_buffers     = cuda::ceil_div(longer_chars_size, max_size);
   CUDF_EXPECTS(num_buffers <= 1, "num_buffers must be <= 1");
 
   // now build BinaryView objects from the strings in device memory
@@ -370,6 +369,7 @@ static void BM_sv_hash(nvbench::state& state)
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);
     auto const d_chars          = data_buffer.data();
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
                         begin,
@@ -377,14 +377,19 @@ static void BM_sv_hash(nvbench::state& state)
                         output.begin(),
                         hash_arrow_sv{d_items.data(), d_chars});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
     auto col_size  = column->alloc_size();
     state.add_global_memory_reads(col_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(
         rmm::exec_policy_nosync(stream), begin, end, output.begin(), hash_sv{*d_strings});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 
@@ -412,6 +417,7 @@ static void BM_sv_starts(nvbench::state& state)
     auto [d_items, data_buffer] = create_sv_array(col_view, stream);
     auto const d_chars          = data_buffer.data();
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
                         begin,
@@ -419,10 +425,13 @@ static void BM_sv_starts(nvbench::state& state)
                         output.begin(),
                         starts_arrow_sv{d_items.data(), d_chars, tgt_size});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
     auto col_size  = column->alloc_size();
     state.add_global_memory_reads(col_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       thrust::transform(rmm::exec_policy_nosync(stream),
                         begin,
@@ -430,6 +439,8 @@ static void BM_sv_starts(nvbench::state& state)
                         output.begin(),
                         starts_sv{*d_strings, tgt_size});
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 
@@ -462,7 +473,8 @@ static void BM_sv_sort(nvbench::state& state)
   state.add_global_memory_writes(num_rows * sizeof(cudf::size_type));
 
   // indices are the keys that are sorted (not inplace)
-  auto keys      = rmm::device_uvector<cudf::size_type>(num_rows, stream);
+  auto keys = cuda::device_buffer<cudf::size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   auto in_keys   = cuda::counting_iterator<cudf::size_type>{0};
   auto out_keys  = keys.begin();
   auto tmp_bytes = std::size_t{0};
@@ -476,10 +488,13 @@ static void BM_sv_sort(nvbench::state& state)
     auto tmp_stg = cuda::device_buffer<std::byte>{
       stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init};
     state.add_global_memory_reads(num_rows * sizeof(ArrowBinaryView) + data_buffer.size());
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
         tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto d_strings = cudf::column_device_view::create(col_view, stream);
     auto col_size  = column->alloc_size();
@@ -490,10 +505,13 @@ static void BM_sv_sort(nvbench::state& state)
     auto tmp_stg = cuda::device_buffer<std::byte>{
       stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init};
     state.add_global_memory_reads(col_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cub::DeviceMergeSort::SortKeysCopy(
         tmp_stg.data(), tmp_bytes, in_keys, out_keys, num_rows, comparator, stream.get());
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 
@@ -525,9 +543,12 @@ static void BM_sv_gather(nvbench::state& state)
     state.add_global_memory_reads(gather_size);
     state.add_global_memory_writes(gather_size);
 
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       gather_sv_array(d_items, data_buffer, begin, map_rows, stream);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else {
     auto const result = cudf::gather(
       cudf::table_view({col_view}), map_view, cudf::out_of_bounds_policy::DONT_CHECK, stream);
@@ -535,10 +556,13 @@ static void BM_sv_gather(nvbench::state& state)
     state.add_global_memory_reads(result->alloc_size());
     state.add_global_memory_writes(result->alloc_size());
 
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::gather(
         cudf::table_view({col_view}), map_view, cudf::out_of_bounds_policy::DONT_CHECK, stream);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 

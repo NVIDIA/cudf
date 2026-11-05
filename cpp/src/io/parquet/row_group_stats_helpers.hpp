@@ -20,7 +20,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
-#include <tuple>
+#include <span>
 #include <type_traits>
 #include <vector>
 
@@ -29,11 +29,11 @@ namespace cudf::io::parquet::detail {
 /**
  * @brief Converts row-group column chunk statistics to device columns.
  *
- * Each output column has one row for every selected row group.
+ * Each output column has one row for every selected row group. The min and max columns are always
+ * returned, followed by the all-null column if `has_is_null_operator` is set.
  */
 struct row_group_stats_caster : public stats_caster_base {
-  using result_type = std::
-    tuple<std::unique_ptr<column>, std::unique_ptr<column>, std::optional<std::unique_ptr<column>>>;
+  using result_type = std::vector<std::unique_ptr<column>>;
 
   template <typename T>
   [[nodiscard]] static constexpr bool can_use_deprecated_minmax()
@@ -49,11 +49,11 @@ struct row_group_stats_caster : public stats_caster_base {
 
   size_type total_row_groups;
   std::vector<metadata> const& per_file_metadata;
-  host_span<std::vector<size_type> const> row_group_indices;
+  std::span<std::vector<size_type> const> row_group_indices;
   bool has_is_null_operator;
 
   template <typename T>
-  result_type operator()(host_span<int const> per_source_schema_indices,
+  result_type operator()(std::span<int const> schema_indices_per_source,
                          cudf::data_type dtype,
                          cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr) const
@@ -61,7 +61,7 @@ struct row_group_stats_caster : public stats_caster_base {
     CUDF_EXPECTS(row_group_indices.size() == per_file_metadata.size(),
                  "Row-group indices must match parquet metadata sources",
                  std::invalid_argument);
-    CUDF_EXPECTS(per_source_schema_indices.size() == per_file_metadata.size(),
+    CUDF_EXPECTS(schema_indices_per_source.size() == per_file_metadata.size(),
                  "Per-source schema indices must match parquet metadata sources",
                  std::invalid_argument);
     auto const computed_total_row_groups =
@@ -85,7 +85,7 @@ struct row_group_stats_caster : public stats_caster_base {
 
       size_type stats_idx = 0;
       for (size_t src_idx = 0; src_idx < row_group_indices.size(); ++src_idx) {
-        auto const mapped_schema_idx = per_source_schema_indices[src_idx];
+        auto const mapped_schema_idx = schema_indices_per_source[src_idx];
         auto const& source_metadata  = per_file_metadata[src_idx];
         CUDF_EXPECTS(mapped_schema_idx >= 0 and
                        static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),
@@ -155,11 +155,14 @@ struct row_group_stats_caster : public stats_caster_base {
           stats_idx++;
         }
       };
-      return {min.to_device(dtype, stream, mr),
-              max.to_device(dtype, stream, mr),
-              has_is_null_operator ? std::make_optional(is_null->to_device(
-                                       data_type{cudf::type_id::BOOL8}, stream, mr))
-                                   : std::nullopt};
+      result_type columns;
+      columns.reserve(stats_cols_per_column);
+      columns.emplace_back(min.to_device(dtype, stream, mr));
+      columns.emplace_back(max.to_device(dtype, stream, mr));
+      if (has_is_null_operator) {
+        columns.emplace_back(is_null->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
+      }
+      return columns;
     }
   }
 };

@@ -24,14 +24,13 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cooperative_groups.h>
-#include <cub/block/block_scan.cuh>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/fill.h>
-#include <thrust/sequence.h>
 
 #include <limits>
 #include <memory>
@@ -132,8 +131,7 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
     auto stencil = cuda::counting_iterator<size_type>{0};
     auto const row_bitmask =
       cudf::detail::bitmask_and(left, stream, cudf::get_current_device_resource_ref()).first;
-    auto const pred =
-      cudf::detail::row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask.data())};
+    auto const pred = cudf::detail::row_is_valid{row_bitmask.data()};
 
     hash_table.find_if_async(
       iter, iter + left_table_num_rows, stencil, pred, d_equal, hasher, found_begin, stream.get());
@@ -184,8 +182,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
       auto stencil = cuda::counting_iterator<size_type>{0};
       auto const row_bitmask =
         cudf::detail::bitmask_and(_right, stream, cudf::get_current_device_resource_ref()).first;
-      auto const pred =
-        cudf::detail::row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask.data())};
+      auto const pred = cudf::detail::row_is_valid{row_bitmask.data()};
 
       // insert valid rows
       this->_hash_table.insert_if_async(
@@ -233,7 +230,8 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
   auto left_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left_table_num_rows, stream, mr);
 
-  auto found_indices     = rmm::device_uvector<size_type>(left_table_num_rows, stream);
+  auto found_indices = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), left_table_num_rows, cuda::no_init);
   auto const found_begin = cuda::make_transform_output_iterator(found_indices.begin(), output_fn{});
 
   auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(

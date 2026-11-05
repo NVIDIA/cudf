@@ -20,17 +20,13 @@
 
 #include <nvtext/edit_distance.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/stream>
-#include <thrust/execution_policy.h>
-#include <thrust/fill.h>
-#include <thrust/for_each.h>
-#include <thrust/sequence.h>
 #include <thrust/transform.h>
 
 namespace nvtext {
@@ -132,7 +128,7 @@ __device__ void compute_distance(Iterator input1,
     auto it1 = input1;
     auto it2 = input2;
 
-    auto tile_count = cudf::util::div_rounding_up_safe(n + 1, tile_size);
+    auto tile_count = cudf::detail::div_rounding_up_safe(n + 1, tile_size);
     while (tile_count--) {
       auto const offset = (jdx - 1);
       // locate the 2 characters to compare along the diagonal
@@ -167,7 +163,7 @@ __device__ void compute_distance(Iterator input1,
     auto it1 = input1;
     auto it2 = input2;
 
-    auto tile_count = cudf::util::div_rounding_up_safe(n, tile_size);
+    auto tile_count = cudf::detail::div_rounding_up_safe(n, tile_size);
     while (tile_count--) {
       auto const offset = (jdx - 1);
       // locate the 2 characters to compare along the diagonal
@@ -234,7 +230,7 @@ CUDF_KERNEL void levenshtein_kernel(cudf::column_device_view d_strings,
 std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& input,
                                             cudf::strings_column_view const& targets,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   auto const output_type = cudf::data_type{cudf::type_to_id<cudf::size_type>()};
   if (input.is_empty()) { return cudf::make_empty_column(output_type); }
@@ -247,12 +243,13 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
   }
 
   // create device columns from the input columns
-  auto d_strings = cudf::column_device_view::create(input.parent(), stream);
-  auto d_targets = cudf::column_device_view::create(targets.parent(), stream);
+  auto const temp_mr = mr.get_temporary_mr();
+  auto d_strings     = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto d_targets     = cudf::column_device_view::create(targets.parent(), stream, temp_mr);
 
   // calculate the size of the compute-buffer
-  rmm::device_uvector<std::ptrdiff_t> offsets(input.size() + 1, stream);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  cuda::device_buffer<std::ptrdiff_t> offsets(stream, temp_mr, input.size() + 1, cuda::no_init);
+  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{input.size()},
                     offsets.begin(),
@@ -260,9 +257,9 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
 
   // get the total size of the temporary compute buffer
   // and convert sizes to offsets in-place
-  auto const compute_size =
-    cudf::detail::sizes_to_offsets(offsets.begin(), offsets.end(), offsets.begin(), 0, stream, mr);
-  rmm::device_uvector<cudf::size_type> compute_buffer(compute_size, stream);
+  auto const compute_size = cudf::detail::sizes_to_offsets(
+    offsets.begin(), offsets.end(), offsets.begin(), 0, stream, mr.as_temporary());
+  cuda::device_buffer<cudf::size_type> compute_buffer(stream, temp_mr, compute_size, cuda::no_init);
   auto d_buffer = compute_buffer.data();
 
   auto results = cudf::make_fixed_width_column(
@@ -271,7 +268,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0,
     stream,
-    mr);
+    mr.get_output_mr());
   auto d_results = results->mutable_view().data<cudf::size_type>();
 
   constexpr auto block_size = 256L;
@@ -294,7 +291,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
 std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& input,
                                             cudf::strings_column_view const& targets,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::edit_distance(input, targets, stream, mr);

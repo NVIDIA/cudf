@@ -37,12 +37,11 @@ struct page_statistics_input {
 };
 
 /**
- * @brief Compute page row offsets and column chunk page (count) offsets for a given column schema
- * index
+ * @brief Compute page row offsets and column chunk page (count) offsets for a given column
  *
  * @param per_file_metadata Span of parquet footer metadata
  * @param row_group_indices Span of input row group indices
- * @param schema_idx Column's schema index
+ * @param schema_indices_per_source Column's schema index in each source
  * @param stream CUDA stream
  * @return Pair of page row offsets and column chunk page (count) offsets
  */
@@ -50,22 +49,22 @@ struct page_statistics_input {
 compute_page_row_offsets_and_colchunk_page_offsets(
   std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
-  size_type schema_idx,
+  std::span<size_type const> schema_indices_per_source,
   cuda::stream_ref stream);
 
 /**
  * @brief Computes page row offsets and the size (number of rows) of the largest page for a given
- * column schema index
+ * column
  *
  * @param per_file_metadata Span of parquet footer metadata
  * @param row_group_indices Span of input row group indices
- * @param schema_idx Column's schema index
+ * @param schema_indices_per_source Column's schema index in each source
  * @return A pair of page row offsets and the size of the largest page in this column
  */
 [[nodiscard]] std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
   std::span<metadata_base const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
-  size_type schema_idx);
+  std::span<size_type const> schema_indices_per_source);
 
 /**
  * @brief Checks whether every row is retained by the boolean row mask
@@ -105,7 +104,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
  * @param total_rows Total number of rows
  * @param stats_expression AST expression to evaluate on page statistics
  * @param stream CUDA stream
- * @param mr Device memory resource for the output device vector
+ * @param mr Memory resources used to allocate temporary and returned column device memory
  * @return Row mask column
  */
 [[nodiscard]] std::unique_ptr<column> compute_row_mask_from_page_stats(
@@ -114,6 +113,6 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   size_type total_rows,
   std::reference_wrapper<ast::expression const> stats_expression,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 }  // namespace cudf::io::parquet::experimental::detail

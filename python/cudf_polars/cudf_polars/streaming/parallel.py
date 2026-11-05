@@ -42,7 +42,9 @@ from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged, traver
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.streaming.io import _clear_source_info_cache
+from cudf_polars.streaming.plan_metadata import PlanMetadata
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import (
     _contains_over,
@@ -85,6 +87,7 @@ class LoweringInfo:
     partition_info: MutableMapping[
         IR, PartitionInfo
     ]  # Partition mapping for nodes in the lowered IR.
+    plan_metadata: PlanMetadata | None
 
 
 def remove_cache_nodes(ir: IR) -> IR:
@@ -100,7 +103,11 @@ def remove_cache_nodes(ir: IR) -> IR:
 
 
 def optimize_with_stats(
-    ir: IR, config_options: ConfigOptions[StreamingExecutor], stats: StatsCollector
+    ir: IR,
+    config_options: ConfigOptions[StreamingExecutor],
+    stats: StatsCollector,
+    *,
+    plan_metadata: PlanMetadata | None = None,
 ) -> IR:
     """
     Optimize an IR graph given some statistics.
@@ -113,6 +120,9 @@ def optimize_with_stats(
         GPUEngine configuration options.
     stats
         Pre-computed statistics.
+    plan_metadata
+        Optional place to record details about lowering / optimization
+        decisions.
 
     Returns
     -------
@@ -124,7 +134,12 @@ def optimize_with_stats(
     )
 
     ir = remove_cache_nodes(ir)
-    return optimize_join_filter_pushdown(ir, stats, config_options)
+    return optimize_join_filter_pushdown(
+        ir,
+        stats,
+        config_options,
+        plan_metadata=plan_metadata,
+    )
 
 
 def _lower_ir_graph_impl(
@@ -141,11 +156,23 @@ def _lower_ir_graph_impl(
         "rank": rank,
         "nranks": nranks,
     }
-    optimized = optimize_with_stats(ir, config_options, stats)
+    if config_options.executor.quent_context is not None:
+        plan_metadata = PlanMetadata()
+    else:
+        plan_metadata = None
+    optimized = optimize_with_stats(
+        ir,
+        config_options,
+        stats,
+        plan_metadata=plan_metadata,
+    )
     mapper: LowerIRTransformer = CachingVisitor(lower_ir_node, state=state)
     lowered, partition_info = mapper(optimized)
     return LoweringInfo(
-        optimized=optimized, lowered=lowered, partition_info=partition_info
+        optimized=optimized,
+        lowered=lowered,
+        partition_info=partition_info,
+        plan_metadata=plan_metadata,
     ), mapper
 
 
@@ -305,7 +332,10 @@ def _(
     ir: MapFunction, rec: LowerIRTransformer
 ) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
     if ir.name == "hint_sorted":
-        return _lower_ir_pwise(ir, rec, preserve_partitioning=True)
+        child, partition_info = rec(ir.children[0])
+        new_node = HintSorted(ir.schema, ir.options, child)
+        partition_info[new_node] = partition_info[child]
+        return new_node, partition_info
 
     # Allow pointwise operations
     if ir.name in ("rename", "explode"):
@@ -347,7 +377,15 @@ def _lower_ir_pwise(
     return new_node, partition_info
 
 
-lower_ir_node.register(HConcat, _lower_ir_pwise)
+@lower_ir_node.register(HConcat)
+def _(
+    ir: HConcat, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if ir.streaming_safe:
+        return _lower_ir_pwise(ir, rec)
+    return _lower_ir_fallback(
+        ir, rec, msg="HConcat is not supported for multiple partitions."
+    )
 
 
 @lower_ir_node.register(Filter)

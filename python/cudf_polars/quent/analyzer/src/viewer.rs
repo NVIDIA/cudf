@@ -7,7 +7,10 @@ use std::path::Path;
 use quent_analyzer::context::ContextInventory;
 use quent_events::Event;
 use quent_query_engine_analyzer::ui::{QuentViewer, ViewerEventStream};
-use quent_store::event::{EntityEventStore, ModelEventLoader};
+use quent_store::{
+    context::ContextSet,
+    event::{CombinedEventLoader, EventLoader},
+};
 use uuid::Uuid;
 
 use crate::{
@@ -23,15 +26,16 @@ impl QuentViewer for Viewer {
 
     fn context_inventory(dir: &Path) -> quent_io::ImporterResult<ContextInventory> {
         let (context_id, root) = context_location(dir)?;
-        let store = quent_store::event::filesystem::Store::<CudfPolars>::new(root);
-        let engine_ids = store
-            .entity_events::<generated::Engine>(context_id)
+        let loader = quent_store::event::filesystem::Loader::<CudfPolars>::new(
+            root,
+            ContextSet::one(context_id),
+        );
+        let engine_ids = EventLoader::<generated::Engine>::events(&loader)
             .map_err(quent_io::ImporterError::other)?
             .map(|event| event.map(|event| event.id))
             .collect::<Result<HashSet<_>, _>>()
             .map_err(quent_io::ImporterError::other)?;
-        let worker_engine_ids = store
-            .entity_events::<generated::Worker>(context_id)
+        let worker_engine_ids = EventLoader::<generated::Worker>::events(&loader)
             .map_err(quent_io::ImporterError::other)?
             .filter_map(|event| match event {
                 Ok(Event {
@@ -50,11 +54,14 @@ impl QuentViewer for Viewer {
 
     fn import_events(dir: &Path) -> quent_io::ImporterResult<ViewerEventStream<Self::Analyzer>> {
         let (context_id, root) = context_location(dir)?;
-        let events = quent_store::event::filesystem::Store::<CudfPolars>::new(root)
-            .load_model_events(context_id)
-            .map_err(quent_io::ImporterError::other)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(quent_io::ImporterError::other)?;
+        let events = quent_store::event::filesystem::Loader::<CudfPolars>::new(
+            root,
+            ContextSet::one(context_id),
+        )
+        .combined_events()
+        .map_err(quent_io::ImporterError::other)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(quent_io::ImporterError::other)?;
         Ok(Box::new(events.into_iter()))
     }
 }

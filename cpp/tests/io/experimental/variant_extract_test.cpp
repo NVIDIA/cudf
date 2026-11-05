@@ -1381,6 +1381,38 @@ TEST_F(CastVariantTest, ApachePrimitiveFloats)
   cast(avf::primitive_double, double{1234567890.1234});
 }
 
+TEST_F(CastVariantTest, ApachePrimitiveTimestamps)
+{
+  using us          = cudf::timestamp_us;
+  using ns          = cudf::timestamp_ns;
+  auto const expect = [](auto got, auto expected) {
+    cudf::test::fixed_width_column_wrapper<decltype(expected)> col{expected};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, col);
+  };
+  // The timezone-adjusted and NTZ encodings both decode into the timestamp of the same unit.
+  expect(cast_apache_primitive<us>(avf::primitive_timestamp), us{us::duration{0x000632E7DD9752E0}});
+  expect(cast_apache_primitive<us>(avf::primitive_timestampntz),
+         us{us::duration{0x000632E48348C2E0}});
+  expect(cast_apache_primitive<ns>(avf::primitive_timestamp_nanos),
+         ns{ns::duration{0x1805AFB76C3A4115}});
+  expect(cast_apache_primitive<ns>(avf::primitive_timestampntz_nanos),
+         ns{ns::duration{0x1805AFB76C3A4115}});
+  // No unit conversion: a mismatched unit or a plain int64 yields null with TYPE_MISMATCH.
+  auto const expect_mismatch = [](cudf::type_id target, auto const& fixture) {
+    auto const stream = cudf::test::get_default_stream();
+    auto col          = make_apache_variant(fixture);
+    auto const value  = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+    auto status       = make_status_buffer(value.size());
+    auto got          = cudf::io::parquet::experimental::cast_variant(
+      value, cudf::data_type{target}, status->mutable_view(), stream);
+    EXPECT_EQ(got->null_count(), 1);
+    expect_status_values(*status, {ST_MISMATCH});
+  };
+  expect_mismatch(cudf::type_id::TIMESTAMP_NANOSECONDS, avf::primitive_timestamp);
+  expect_mismatch(cudf::type_id::TIMESTAMP_MICROSECONDS, avf::primitive_timestamp_nanos);
+  expect_mismatch(cudf::type_id::TIMESTAMP_MICROSECONDS, avf::primitive_int64);
+}
+
 TEST_F(CastVariantTest, ApachePrimitiveBooleans)
 {
   auto stream     = cudf::test::get_default_stream();
@@ -1741,7 +1773,7 @@ TEST_F(CastVariantTest, UnsupportedTypeThrows)
                                        cudf::type_id::UINT64,
                                        cudf::type_id::TIMESTAMP_DAYS,
                                        cudf::type_id::TIMESTAMP_SECONDS,
-                                       cudf::type_id::TIMESTAMP_MICROSECONDS,
+                                       cudf::type_id::TIMESTAMP_MILLISECONDS,
                                        cudf::type_id::DURATION_SECONDS};
 
   // Empty input: the early-return path must still validate the type.
@@ -2741,7 +2773,7 @@ TEST_F(CastVariantStatusTest, SqlNullInputProducesRowNullStatus)
                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   // Mask row 1 SQL null
   auto null_mask = cudf::create_null_mask(2, cudf::mask_state::ALL_VALID, stream, cmr());
-  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 1, 2, false);
+  cudf::set_null_mask(null_mask.data(), 1, 2, false);
   stream.sync();
   values_col->set_null_mask(std::move(null_mask), 1);
 

@@ -7,6 +7,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/iterator.cuh>
@@ -14,6 +15,7 @@
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
@@ -23,7 +25,7 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cub/device/device_select.cuh>
+#include <cub/device/device_partition.cuh>
 #include <cub/device/device_topk.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -34,10 +36,6 @@
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
-
-#include <algorithm>
-#include <cstdint>
 
 namespace cudf {
 namespace detail {
@@ -51,30 +49,6 @@ namespace {
  * into that image; see key_at_row.
  */
 bool is_fast_path(column_view const& column) { return cudf::is_fixed_width(column.type()); }
-
-/**
- * @brief Returns the null precedence used by the overloads that take only a direction
- *
- * Nulls go to the far end of the requested direction, so a top-k contains a null only when k
- * exceeds the number of non-null rows.
- */
-null_order default_null_precedence(order topk_order)
-{
-  return topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
-}
-
-/**
- * @brief Returns true if nulls belong at the front of the top-k result
- *
- * `null_precedence` is relative to the values and not to the output: `BEFORE` means a null
- * compares less than every value. A null is therefore selected first exactly when the direction
- * being selected agrees with where nulls sit -- descending selects the greatest first, so it takes
- * nulls first under `AFTER`.
- */
-bool nulls_selected_first(order topk_order, null_order null_precedence)
-{
-  return (null_precedence == null_order::AFTER) == (topk_order == order::DESCENDING);
-}
 
 /**
  * @brief Reads `values[row]` and returns the key cub should compare
@@ -128,16 +102,14 @@ struct key_at_row {
   }
 };
 
-/// Selects a valid row, or a null one when `want_valid` is false. Only used where the input is
-/// known to have nulls.
-struct row_validity_is {
+/// Selects the non-null rows. Only used where the input is known to have nulls.
+struct row_is_valid {
   bitmask_type const* null_mask;
   size_type offset;
-  bool want_valid;
 
   __device__ bool operator()(size_type row) const
   {
-    return cudf::bit_is_set(null_mask, offset + row) == want_valid;
+    return cudf::bit_is_set(null_mask, offset + row);
   }
 };
 
@@ -198,7 +170,7 @@ struct dispatch_topk_fn {
         select(values, cuda::counting_iterator<size_type>{});
       }
     } else {
-      select(thrust::make_transform_iterator(valid_rows, key_at_row<T>{values}), valid_rows);
+      select(cuda::transform_iterator(valid_rows, key_at_row<T>{values}), valid_rows);
     }
   }
 
@@ -229,93 +201,60 @@ struct dispatch_topk_fn {
  *
  * Nulls are partitioned out of the key stream instead of being encoded into it. Only a
  * floating-point type reliably has a spare bit pattern to spend on a null sentinel -- every
- * integral pattern is a valid key -- and widening the key to make room costs radix passes. The
- * split of k between null and non-null rows is host-side arithmetic on `null_count()`, which
- * `column_view` already carries, so partitioning costs one pass over the input and no
+ * integral pattern is a valid key -- and widening the key to make room costs radix passes. Nulls
+ * go to the far end in either direction, so a top-k holds a null only once it holds every non-null
+ * row. Which of the two cases applies is host-side arithmetic on `null_count()`, which
+ * `column_view` already carries, so separating the nulls costs one pass over the input and no
  * synchronization.
  */
 rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
                                                  size_type k,
                                                  order topk_order,
-                                                 null_order null_precedence,
                                                  cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr)
 {
-  auto const temp_mr    = cudf::get_current_device_resource_ref();
-  auto const size       = col.size();
-  auto const null_count = col.null_count();
-  auto const num_valid  = size - null_count;
+  auto const temp_mr   = cudf::get_current_device_resource_ref();
+  auto const size      = col.size();
+  auto const num_valid = size - col.null_count();
 
   auto output = rmm::device_uvector<size_type>(k, stream, mr);
 
-  if (null_count == 0) {
+  if (col.null_count() == 0) {
     type_dispatcher<dispatch_storage_type>(
       col.type(), dispatch_topk_fn{col, nullptr, size, k, topk_order, output.data(), stream});
     return output;
   }
 
-  // How much of the output each side of the partition supplies. Both counts are host-side
-  // arithmetic on null_count(), so neither compaction below has to be sized on the device.
-  auto const nulls_first = nulls_selected_first(topk_order, null_precedence);
-  auto const num_nulls_out =
-    nulls_first ? std::min(k, null_count) : std::max(size_type{0}, k - num_valid);
-  auto const num_valid_out = k - num_nulls_out;
-  auto* const nulls_out    = nulls_first ? output.data() : output.data() + num_valid_out;
-  auto* const valid_out    = nulls_first ? output.data() + num_nulls_out : output.data();
+  auto const rows     = cuda::counting_iterator<size_type>(0);
+  auto const is_valid = row_is_valid{col.null_mask(), col.offset()};
 
-  auto const rows   = cuda::counting_iterator<size_type>(0);
-  auto const mask   = col.null_mask();
-  auto const offset = col.offset();
-
-  // cub::DeviceSelect::If rather than thrust::copy_if: copy_if, even under
-  // rmm::exec_policy_nosync, unconditionally synchronizes the stream to read its
-  // selected count back to the host, which would undo the host-side count split
-  // above. cub::DeviceSelect::If needs a device pointer for that count, but both
-  // counts are already known (num_nulls_out / num_valid_out), so it is written
-  // to a throwaway and ignored -- and no synchronization occurs.
-  auto d_num_selected = rmm::device_uvector<size_type>(1, stream, temp_mr);
-  auto const compact  = [&](size_type* out, bool want_valid) {
-    row_validity_is const pred{mask, offset, want_valid};
-    size_t temp_bytes = 0;
-    CUDF_CUDA_TRY(cub::DeviceSelect::If(
-      nullptr, temp_bytes, rows, out, d_num_selected.data(), size, pred, stream.get()));
-    auto temp = cuda::device_buffer<std::byte>(stream, temp_mr, temp_bytes, cuda::no_init);
-    CUDF_CUDA_TRY(cub::DeviceSelect::If(
-      temp.data(), temp_bytes, rows, out, d_num_selected.data(), size, pred, stream.get()));
-  };
-
-  // Compacted only when some nulls are wanted: for a null placement that puts them at the far end,
-  // k <= num_valid means none are. The compaction needs its own buffer because the select writes
-  // every match, while the output holds only the num_nulls_out of them that are kept.
-  auto null_rows =
-    rmm::device_uvector<size_type>(num_nulls_out > 0 ? null_count : 0, stream, temp_mr);
-  if (num_nulls_out > 0) {
-    compact(null_rows.data(), false);
+  if (k >= num_valid) {
+    // Every non-null row is in the answer and nulls fill any remainder, so there is no order
+    // statistic to find. This also keeps the selection off cub's k == num_items edge case. One
+    // partition puts the non-null rows ahead of the null ones and the answer is its first k
+    // entries; it writes every row, so it needs a buffer of its own rather than the k-row output.
+    auto partitioned_rows = rmm::device_uvector<size_type>(size, stream, temp_mr);
+    CUDF_CUDA_TRY(cub::DevicePartition::If(rows,
+                                           partitioned_rows.begin(),
+                                           cuda::make_discard_iterator(),
+                                           size,
+                                           is_valid,
+                                           cudf::detail::make_env(stream, temp_mr)));
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
-      nulls_out, null_rows.data(), num_nulls_out * sizeof(size_type), stream));
+      output.data(), partitioned_rows.data(), k * sizeof(size_type), stream));
+    return output;
   }
-
-  if (num_valid_out == 0) { return output; }
 
   // Compacting the non-null rows in input order gives cub a candidate list whose values are the
   // original row indices, so it carries them through and the output needs no remapping. Input order
   // fixes the values cub carries, not its tie choice: which of several equal-keyed candidates it
   // keeps at the k-th boundary is unspecified (determinism::not_guaranteed).
   auto valid_rows = rmm::device_uvector<size_type>(num_valid, stream, temp_mr);
-  compact(valid_rows.data(), true);
-
-  if (num_valid_out == num_valid) {
-    // Every non-null row is in the answer, so there is no order statistic to find. This also
-    // keeps the selection off cub's k == num_items edge case.
-    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
-      valid_out, valid_rows.data(), num_valid_out * sizeof(size_type), stream));
-    return output;
-  }
+  cudf::detail::copy_if_async(rows, rows + size, valid_rows.begin(), is_valid, stream);
 
   type_dispatcher<dispatch_storage_type>(
     col.type(),
-    dispatch_topk_fn{
-      col, valid_rows.data(), num_valid, num_valid_out, topk_order, valid_out, stream});
+    dispatch_topk_fn{col, valid_rows.data(), num_valid, k, topk_order, output.data(), stream});
 
   return output;
 }
@@ -325,7 +264,6 @@ rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
 std::unique_ptr<column> top_k(column_view const& col,
                               size_type k,
                               order topk_order,
-                              null_order null_precedence,
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr)
 {
@@ -336,12 +274,12 @@ std::unique_ptr<column> top_k(column_view const& col,
   auto const indices = [&]() -> std::unique_ptr<column> {
     auto const temp_mr = cudf::get_current_device_resource_ref();
     if (is_fast_path(col)) {
-      return std::make_unique<column>(
-        select_top_k_rows(col, k, topk_order, null_precedence, stream, temp_mr),
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return std::make_unique<column>(select_top_k_rows(col, k, topk_order, stream, temp_mr),
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                      0);
     }
-    return sorted_order<sort_method::STABLE>(col, topk_order, null_precedence, stream, temp_mr);
+    auto const nulls = topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
+    return sorted_order<sort_method::STABLE>(col, topk_order, nulls, stream, temp_mr);
   }();
 
   auto const k_indices = cudf::detail::split(indices->view(), {k}, stream).front();
@@ -353,19 +291,9 @@ std::unique_ptr<column> top_k(column_view const& col,
   return std::move(result->release().front());
 }
 
-std::unique_ptr<column> top_k(column_view const& col,
-                              size_type k,
-                              order topk_order,
-                              cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
-{
-  return cudf::detail::top_k(col, k, topk_order, default_null_precedence(topk_order), stream, mr);
-}
-
 std::unique_ptr<column> top_k_order(column_view const& col,
                                     size_type k,
                                     order topk_order,
-                                    null_order null_precedence,
                                     cuda::stream_ref stream,
                                     rmm::device_async_resource_ref mr)
 {
@@ -379,29 +307,17 @@ std::unique_ptr<column> top_k_order(column_view const& col,
       mr);
   }
 
-  if (is_fast_path(col)) {
-    return std::make_unique<column>(
-      select_top_k_rows(col, k, topk_order, null_precedence, stream, mr),
-      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-      0);
-  }
-
   auto const temp_mr = cudf::get_current_device_resource_ref();
-  auto indices =
-    sorted_order<sort_method::STABLE>(col, topk_order, null_precedence, stream, temp_mr);
+  if (is_fast_path(col)) {
+    return std::make_unique<column>(select_top_k_rows(col, k, topk_order, stream, mr),
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                    0);
+  }
+  auto const nulls = topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
+  auto indices     = sorted_order<sort_method::STABLE>(col, topk_order, nulls, stream, temp_mr);
 
   return std::make_unique<column>(
     cudf::detail::split(indices->view(), {k}, stream).front(), stream, mr);
-}
-
-std::unique_ptr<column> top_k_order(column_view const& col,
-                                    size_type k,
-                                    order topk_order,
-                                    cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
-{
-  return cudf::detail::top_k_order(
-    col, k, topk_order, default_null_precedence(topk_order), stream, mr);
 }
 
 }  // namespace detail

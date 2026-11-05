@@ -19,7 +19,9 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -118,12 +120,21 @@ TYPED_TEST(TopKTypes, TopK_Nulls_DefaultPlacement)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     expected, sorted(cudf::top_k_order(input, 3, cudf::order::DESCENDING))->view());
 
-  // k covering every non-null row pads the result with the far-end nulls. Asserted on values rather
-  // than on indices, because taking one of two rows that compare equal does not pin which one.
+  // k equal to the number of non-null rows takes exactly those rows, in either direction.
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 1, 2, 4, 5, 6, 8, 9});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    expected, sorted(cudf::top_k_order(input, 8, cudf::order::ASCENDING))->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    expected, sorted(cudf::top_k_order(input, 8, cudf::order::DESCENDING))->view());
+
+  // A larger k pads the result with the far-end nulls. Asserted on values rather than on indices,
+  // because taking one of two rows that compare equal does not pin which one.
   auto padded = cudf::test::fixed_width_column_wrapper<T, int32_t>({0, 0, 1, 2, 4, 5, 6, 8, 9},
                                                                    {0, 1, 1, 1, 1, 1, 1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     padded, sorted(cudf::top_k(input, 9, cudf::order::ASCENDING))->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    padded, sorted(cudf::top_k(input, 9, cudf::order::DESCENDING))->view());
 
   // The value-returning overload shares the gate, so exercise it once.
   auto expected_values = cudf::test::fixed_width_column_wrapper<T, int32_t>({6, 8, 9});
@@ -628,4 +639,42 @@ TEST_F(TopK, TopKSegmentedEmptyMultiBlock)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
   result = cudf::segmented_top_k_order(input, offsets, 2);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+}
+
+// Multi-block: every tenth of 100'000 rows is null, so separating the null rows spans many thread
+// blocks. Values equal their row index, which makes every expected set unique. k is taken on both
+// sides of the number of non-null rows, where the selection stops finding an order statistic among
+// them and takes all of them instead.
+TEST_F(TopK, TopKNullsMultiBlock)
+{
+  auto constexpr num_rows = cudf::size_type{100'000};
+  auto const is_valid     = [](cudf::size_type row) { return row % 10 != 0; };
+  auto const rows         = cuda::counting_iterator<cudf::size_type>{0};
+  auto input              = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    rows, rows + num_rows, cuda::transform_iterator(rows, is_valid));
+
+  auto valid_rows = std::vector<cudf::size_type>{};
+  std::copy_if(rows, rows + num_rows, std::back_inserter(valid_rows), is_valid);
+  auto const num_valid = static_cast<cudf::size_type>(valid_rows.size());
+
+  for (auto const topk_order : {cudf::order::ASCENDING, cudf::order::DESCENDING}) {
+    // One short of every non-null row leaves out the last one in the requested direction.
+    auto const first = valid_rows.begin() + (topk_order == cudf::order::DESCENDING ? 1 : 0);
+    auto expected =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(first, first + num_valid - 1);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+      expected, sorted(cudf::top_k_order(input, num_valid - 1, topk_order))->view());
+
+    expected =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(valid_rows.begin(), valid_rows.end());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+      expected, sorted(cudf::top_k_order(input, num_valid, topk_order))->view());
+
+    // Padding with nulls is asserted on values, since which null rows are taken is unspecified.
+    // The sort puts the nulls first, so every non-null value follows them.
+    auto const padded = sorted(cudf::top_k(input, num_valid + 5, topk_order));
+    EXPECT_EQ(padded->null_count(), 5);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected,
+                                        cudf::slice(padded->view(), {5, num_valid + 5}).front());
+  }
 }

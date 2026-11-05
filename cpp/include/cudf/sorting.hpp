@@ -376,6 +376,11 @@ std::unique_ptr<table> stable_segmented_sort_by_key(
  * unspecified and may vary between runs. The result is always a valid top-k: the row count and the
  * multiset of returned keys are fixed; only the choice among equal-keyed rows is not.
  *
+ * @note Nulls are ordered after all non-null elements in either `topk_order`, so the returned
+ * column contains nulls only when `k` exceeds the number of non-null elements. For floating-point
+ * columns, NaN elements compare equal to each other and greater than all other non-null elements,
+ * and -0.0 compares equal to +0.0.
+ *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *
  * @param col Column to compute top k
@@ -402,6 +407,11 @@ std::unique_ptr<column> top_k(
  * @note Among keys that compare equal at the k-th boundary, which of the tied rows are returned is
  * unspecified and may vary between runs. The result is always a valid top-k: the row count and the
  * multiset of returned keys are fixed; only the choice among equal-keyed rows is not.
+ *
+ * @note Nulls are ordered after all non-null elements in either `topk_order`, so the returned
+ * indices refer to null elements only when `k` exceeds the number of non-null elements. For
+ * floating-point columns, NaN elements compare equal to each other and greater than all other
+ * non-null elements, and -0.0 compares equal to +0.0.
  *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *

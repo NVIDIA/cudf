@@ -180,7 +180,6 @@ auto to_args(std::span<input_column_view const> inputs,
   return std::make_tuple(std::move(d_args), std::move(handles));
 }
 
-
 kernel get_linked_kernel(
   std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type, char const*>>
     precompiled_kernel_fragment,

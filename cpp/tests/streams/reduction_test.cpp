@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -12,6 +13,22 @@
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+
+#include <cudf_reduce_lto_test_fragments.hpp>
+
+namespace {
+cudf::lto_fragments reduction_fragments()
+{
+  auto bytes = [](size_t id) {
+    auto const range = cudf_reduce_lto_test_fragments::file_ranges[id];
+    return cudf_reduce_lto_test_fragments::files.subspan(range[0], range[1]);
+  };
+  static cudf::lto_fragment const fragments[]{
+    {cudf::lto_binary_type::FATBIN, bytes(cudf_reduce_lto_test_fragments::sum_count)},
+    {cudf::lto_binary_type::FATBIN, bytes(cudf_reduce_lto_test_fragments::tpch_q6_sales)}};
+  return fragments;
+}
+}  // namespace
 
 class ReductionTest : public cudf::test::BaseFixture {};
 
@@ -92,6 +109,24 @@ TEST_F(ReductionTest, MinMax)
     {true, false, true, true, true, true, false, false, true}};
 
   cudf::minmax(input, cudf::test::get_default_stream());
+}
+
+TEST_F(ReductionTest, ReduceLto)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> input{1, 2, 3};
+  cudf::reduce_input const inputs[]{input};
+  cudf::data_type const states[]{cudf::data_type{cudf::type_id::INT64},
+                                 cudf::data_type{cudf::type_id::INT64}};
+  cudf::data_type const outputs[]{states[0], states[1], cudf::data_type{cudf::type_id::FLOAT64}};
+  cudf::reduce_udf const udf{reduction_fragments(),
+                             "tpch_q6_sales_init",
+                             "sum_update",
+                             "tpch_q6_sales_merge",
+                             "tpch_q6_sales_finalize"};
+  auto result = cudf::reduce_lto(
+    udf, cudf::null_aware::YES, inputs, states, outputs, cudf::test::get_default_stream());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0],
+                                 (cudf::test::fixed_width_column_wrapper<int64_t>{{6}, {true}}));
 }
 
 CUDF_TEST_PROGRAM_MAIN()

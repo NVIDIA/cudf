@@ -6,11 +6,26 @@
 #pragma once
 
 #include <cudf/aggregation.hpp>
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_view.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/types.hpp>
+#include <cudf/udf.hpp>
+#include <cudf/user_data.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
+#include <functional>
+#include <memory>
 #include <optional>
+#include <span>
+#include <string_view>
+#include <utility>
+#include <variant>
+#include <vector>
 
 /**
  * @file
@@ -262,6 +277,78 @@ namespace reduction {
  */
 bool is_valid_aggregation(data_type source, aggregation::Kind kind);
 }  // namespace reduction
+
+/**
+ * @brief Non-owning columns, broadcast scalars and opaque device pointers.
+ *
+ * Keep referenced device storage alive until stream work completes.
+ */
+using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
+
+/**
+ * @brief Compiled callbacks defining a reduction; each returns @c cudf::errc.
+ *
+ * Parameters are ordered as follows; each ellipsis expands fields in specification order.
+ *
+ * | Callback | Parameters |
+ * |----------|------------|
+ * | init | state pointers... |
+ * | filter | row index, bool* selected, input values... |
+ * | update | row index, state pointers..., input values... |
+ * | merge | destination state pointers..., source state values... |
+ * | finalize | output pointers..., state values... |
+ *
+ * Initialize every independent state to its identity. Merge must be associative and preserve
+ * that identity; update/merge order is unspecified. An empty filter symbol selects all rows.
+ * A false selection or filter error skips update. Row indices refer to the input views.
+ *
+ * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
+ * State and outputs support fixed-width types and strings. Keep referenced string characters
+ * alive until stream work completes; returned string columns own a copy.
+ *
+ * With @c null_aware::YES, inputs, state and outputs use @c cuda::std::optional<T>, with mutable
+ * parameters passed as pointers to optionals. Empty optionals represent nulls. Callbacks define
+ * null-state identities and output validity. With @c null_aware::NO, use plain values; rows with
+ * any null column/scalar input are skipped before filtering. Indices, the filter's bool pointer
+ * and @c void* user-data inputs are never optional. Filter and update share one set of row loads.
+ *
+ * Fragment bytes and symbol names are non-owning and must outlive the call. See @ref lto_fragment.
+ */
+struct reduce_udf {
+  lto_fragments fragments{};    ///< Device-code fragments
+  std::string_view init{};      ///< Initializes independent state
+  std::string_view update{};    ///< Incorporates a selected row
+  std::string_view merge{};     ///< Combines partial states
+  std::string_view finalize{};  ///< Writes output values
+  std::string_view filter{};    ///< Optional row predicate
+};
+
+/**
+ * @brief Reduces rows into one single-row column per requested output, in specification order.
+ *
+ * Column lengths must match; scalars and user data broadcast. With no column input there are
+ * zero rows. Empty inputs and selections finalize the identity state; callbacks determine
+ * values and validity. Input/state/output types and callback signatures follow @ref reduce_udf.
+ *
+ * @throws std::invalid_argument for mismatched input lengths or unsupported state/output types
+ * @throws cudf::evaluation_error for callback failures
+ * @param udf Compiled fragments and callback symbols
+ * @param is_null_aware Whether values use optional wrappers
+ * @param inputs Inputs in callback order
+ * @param state_types State fields in callback order
+ * @param outputs Returned types in finalization order
+ * @param stream Execution stream
+ * @param mr Output and temporary memory resources
+ * @return One single-row column per output
+ */
+std::vector<std::unique_ptr<column>> reduce_lto(
+  reduce_udf const& udf,
+  null_aware is_null_aware,
+  std::span<reduce_input const> inputs,
+  std::span<data_type const> state_types,
+  std::span<data_type const> outputs,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

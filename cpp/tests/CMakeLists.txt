@@ -246,6 +246,25 @@ ConfigureTest(
 
 # ##################################################################################################
 # * reduction tests -------------------------------------------------------------------------------
+rtcx_add_embed(cudf_reduce_lto_test_fragments)
+foreach(fragment IN ITEMS sum_count filtering strings input_output errors tpch_q6_sales wide_state)
+  add_fragment(
+    cudf_reduce_lto_test_fragments FRAGMENT ${fragment} SOURCE reductions/udfs/${fragment}.cu
+  )
+endforeach()
+rtcx_embed_blob(
+  cudf_reduce_lto_test_fragments
+  FILE
+  "${CMAKE_CURRENT_SOURCE_DIR}/reductions/udfs/tpch_q6_sales.cu"
+  DEST
+  fragments/tpch_q6_sales.cu
+  ID
+  tpch_q6_sales_source
+)
+rtcx_embed(
+  cudf_reduce_lto_test_fragments COMPRESSION none OUTPUT_DIRECTORY
+  "${CMAKE_CURRENT_BINARY_DIR}/reduce_lto_embed"
+)
 ConfigureTest(
   REDUCTIONS_TEST
   reductions/approx_distinct_count_tests.cpp
@@ -257,6 +276,7 @@ ConfigureTest(
   reductions/list_rank_test.cpp
   reductions/rank_tests.cpp
   reductions/reduction_tests.cpp
+  reductions/reduce_lto.cpp
   reductions/scan_tests.cpp
   reductions/segmented_reduction_tests.cpp
   reductions/tdigest_tests.cpp
@@ -897,3 +917,11 @@ ConfigureTest(
 # Install tests ####################################################################################
 # ##################################################################################################
 rapids_test_install_relocatable(INSTALL_COMPONENT_SET testing DESTINATION bin/gtests/libcudf)
+
+foreach(target IN ITEMS REDUCTIONS_TEST STREAM_REDUCTION_TEST)
+  target_sources(
+    ${target} PRIVATE ${cudf_reduce_lto_test_fragments_SOURCE_DIR}/cudf_reduce_lto_test_fragments.s
+  )
+  target_include_directories(${target} PRIVATE ${cudf_reduce_lto_test_fragments_SOURCE_DIR})
+  add_dependencies(${target} cudf_reduce_lto_test_fragments)
+endforeach()

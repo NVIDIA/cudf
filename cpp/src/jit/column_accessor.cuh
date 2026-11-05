@@ -16,6 +16,25 @@
 namespace cudf {
 namespace jit {
 
+/** @brief An opaque pointer input, broadcast to every row without optional wrapping. */
+template <int32_t Index>
+struct user_data_accessor {
+  using element_type             = void*;
+  static constexpr int32_t index = Index;
+
+  static __device__ void* element(column_device_view_core const* cols, size_type)
+  {
+    return const_cast<void*>(cols[index].head());
+  }
+
+  static __device__ void* nullable_element(column_device_view_core const* cols, size_type row)
+  {
+    return element(cols, row);
+  }
+
+  static __device__ bool is_valid(column_device_view_core const*, size_type) { return true; }
+};
+
 template <int32_t Index, typename Column, typename Element, bool AsScalar, int32_t TableIndex>
 struct column_accessor {
   static constexpr int32_t index       = Index;

@@ -121,23 +121,11 @@ std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> construct_child_nu
  *    element sizes.
  */
 struct list_child_constructor {
- private:
-  /**
-   * @brief Determine whether the child column type is supported with scattering lists.
-   *
-   * @tparam T The data type of the child column of the list being scattered.
-   */
-  template <typename T>
-  struct is_supported_child_type {
-    static bool const value =
-      cudf::concepts::fixed_width<T> || cudf::concepts::string_view<T> || cudf::concepts::nested<T>;
-  };
-
- public:
   // Catch-all for unsupported child column types.
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&... args)
-    requires(!is_supported_child_type<T>::value)
+    requires(not(cudf::concepts::fixed_width<T> or cudf::concepts::string_view<T> or
+                 cudf::concepts::nested<T>))
   {
     CUDF_FAIL("list_child_constructor unsupported!");
   }

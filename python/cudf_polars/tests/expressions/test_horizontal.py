@@ -43,6 +43,20 @@ def test_max_horizontal_all_null_row(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("fn", [pl.max_horizontal, pl.min_horizontal])
+def test_minmax_horizontal_skips_nan(fn, engine: pl.GPUEngine) -> None:
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "a": [1.0, nan, nan, None, None, 1.0, 3.0],
+            "b": [nan, 2.0, nan, nan, None, None, 0.5],
+            "c": [0.0, 5.0, nan, None, None, nan, nan],
+        }
+    )
+    q = df.select(fn("a", "b", "c"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_max_horizontal_string_unsupported(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"a": ["x", None], "b": ["y", "z"]})
     q = df.select(pl.max_horizontal("a", "b"))

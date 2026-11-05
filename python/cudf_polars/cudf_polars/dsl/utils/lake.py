@@ -141,7 +141,10 @@ class LakehouseScanOptions:
         to keep.
     partition_values
         Maps a physical field ID to the value its Iceberg identity-transformed
-        partition field takes, one row per path.
+        partition field takes, one row per path. Polars only uses a value for
+        a file that lacks the column: a file that holds it supplies it, and
+        for a file written under a partition spec that lacks the field the
+        value is the initial default, not partition data.
     partition_errors
         Maps a physical field ID to the reason polars could not supply the
         values of its Iceberg identity-transformed partition field. Such a
@@ -314,15 +317,24 @@ class LakehouseScanOptions:
             if defaults_kind != "iceberg":  # pragma: no cover; only kind polars emits
                 raise NotImplementedError(f"Unhandled default values {defaults_kind!r}")
             partition_fields, raw_initial_defaults = defaults_payload
-            for physical_id, value in partition_fields.items():
-                if isinstance(value, str):
-                    partition_errors[physical_id] = value
-                else:
-                    partition_values[physical_id] = pl.Series._from_pyseries(value)
             initial_defaults = {
                 physical_id: pl.Series._from_pyseries(value)
                 for physical_id, value in raw_initial_defaults.items()
             }
+            for physical_id, value in partition_fields.items():
+                if isinstance(value, str):
+                    partition_errors[physical_id] = value
+                else:
+                    series = pl.Series._from_pyseries(value)
+                    # Polars gives no value for the trailing files whose
+                    # partition spec dropped the field. They take the initial
+                    # default.
+                    if (missing := len(paths) - len(series)) > 0:
+                        default = initial_defaults.get(physical_id)
+                        series = series.extend_constant(
+                            None if default is None else default.item(), missing
+                        )
+                    partition_values[physical_id] = series
         return cls(
             columns=columns,
             position_deletes=position_deletes,
@@ -502,7 +514,6 @@ def read_lake_files(
             column.physical_id: column.name
             for column in lake_options.columns
             if column.name in projected
-            and column.physical_id not in lake_options.partition_values
         }
     else:
         wanted = {name: name for name in schema if name in projected}
@@ -537,19 +548,29 @@ def read_lake_files(
         stop = start + len(list(group))
         present = frozenset(keys)
         read_keys = [key for key in wanted if key in present]
+        # Columns that the files lack take the partition value of each file.
+        # The values are per file, so every row of each file must be read.
+        fallback_values = {
+            key: lake_options.partition_values[key].slice(start, stop - start)
+            for key in wanted
+            if key not in present and key in lake_options.partition_values
+        }
         filters = None
         if predicate is not None:
-            filters, group_exact = _group_filter(
-                predicate,
-                predicate_columns,
-                paths[start],
-                footers[start],
-                read_keys,
-                wanted,
-                schema,
-                stream=stream,
-            )
-            exact = exact and group_exact
+            if fallback_values:
+                exact = False
+            else:
+                filters, group_exact = _group_filter(
+                    predicate,
+                    predicate_columns,
+                    paths[start],
+                    footers[start],
+                    read_keys,
+                    wanted,
+                    schema,
+                    stream=stream,
+                )
+                exact = exact and group_exact
         frame, source_index = _read_group(
             paths[start:stop],
             read_keys,
@@ -558,6 +579,7 @@ def read_lake_files(
             wanted,
             schema,
             lake_options,
+            fallback_values,
             filters,
             start if track_source else None,
             by_field_id=by_field_id,
@@ -999,6 +1021,7 @@ def _read_group(
     wanted: Mapping[Any, str],
     schema: Schema,
     lake_options: LakehouseScanOptions,
+    fallback_values: Mapping[Any, pl.Series],
     filters: plc.expressions.Expression | None,
     source_offset: int | None,
     *,
@@ -1031,6 +1054,10 @@ def _read_group(
     lake_options
         Options of the scan, giving the defaults for columns the files do
         not hold.
+    fallback_values
+        Maps the key of each wanted column that the files do not hold to its
+        partition value for each file. ``filters`` must be ``None`` when this
+        is non-empty.
     filters
         Parquet filter to apply while reading, in terms of the names the
         files hold, or ``None`` to read every row.
@@ -1139,6 +1166,17 @@ def _read_group(
                 "failed to resolve Iceberg column mapping: "
                 "error loading identity transform value from metadata for "
                 f"missing field: {lake_options.partition_errors[key]}"
+            )
+        elif key in fallback_values:
+            (obj,) = plc.filling.repeat(
+                plc.Table([plc.Column.from_arrow(fallback_values[key], stream=stream)]),
+                plc.Column.from_arrow(
+                    pl.Series(values=rows_per_path, dtype=pl.Int32()), stream=stream
+                ),
+                stream=stream,
+            ).columns()
+            frame_columns.append(
+                Column(obj, name=name, dtype=dtype).astype(dtype, stream)
             )
         else:
             default = lake_options.initial_defaults.get(key) if by_field_id else None

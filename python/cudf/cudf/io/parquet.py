@@ -2095,7 +2095,10 @@ class ParquetDatasetWriter:
         It is in bytes, if the input is int.
         Size can also be a str in form or "10 MB", "1 GB", etc.
         If this parameter is used, it is mandatory to pass
-        `file_name_prefix`.
+        `file_name_prefix`. Files from one ``write_table`` call share
+        a writer, which is closed once all of them reach this size; a
+        partition that is not written again keeps its writer open until
+        ``close()``.
     file_name_prefix : str
         This is a prefix to file names generated only when
         `max_file_size` is specified.
@@ -2231,7 +2234,7 @@ class ParquetDatasetWriter:
         full_paths = []
         metadata_file_paths = []
         full_offsets = [0]
-        rotated_paths = []
+        rotated_paths = set()
 
         for idx, keys in enumerate(part_names.itertuples(index=False)):
             subdir = fs.sep.join(
@@ -2285,7 +2288,7 @@ class ParquetDatasetWriter:
                         > self.max_file_size
                     ):
                         # This file is full and will not be written again
-                        rotated_paths.append(new_full_path)
+                        rotated_paths.add(new_full_path)
                         curr_file_num += 1
                         new_file_name = (
                             f"{self.filename}_{curr_file_num}.parquet"

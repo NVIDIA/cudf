@@ -23,12 +23,14 @@ from numba_cuda_mlir.lowering_utilities import (
     int_of,
     true,
     try_extract_constant,
+    unverified_convert,
 )
 from numba_cuda_mlir.models import PrimitiveModel, register_model
 from numba_cuda_mlir.numba_cuda import typing as nb_typing
 from numba_cuda_mlir.numba_cuda.core import ir as numba_ir
 from numba_cuda_mlir.numba_cuda.types.misc import unliteral
 
+from cudf.core.missing import NA
 from cudf.core.udf._ops import (
     arith_ops,
     bitwise_ops,
@@ -41,6 +43,23 @@ from cudf.core.udf.mlir_backend.masked_typing import (
     NAType,
     na_type,
 )
+
+
+@unverified_convert.register(type(NA))
+def _convert_na_sentinel(value, target_type, *, signed=None):
+    """Defer conversion of the ``cudf.NA`` sentinel (a pandas ``NAType``).
+
+    Loading the ``cudf.NA`` global in a UDF (``getattr(cudf, "NA")``) makes
+    numba-cuda-mlir store the raw Python ``NA`` object and convert it to the
+    var's MLIR type (``none``, since ``NAType`` has an opaque data model);
+    without a handler this raises ``NotImplementedError`` and aborts
+    compilation (e.g. ``if x is cudf.NA``). ``NA`` carries no payload and only
+    ever feeds an ``is``/``is not`` comparison (which reads the Masked validity
+    bit) or an ``NA -> Masked`` cast (which ignores the payload), so we defer
+    exactly like numba-cuda-mlir's own ``opaque_data_model_convert`` and return
+    the value unchanged; it is resolved/eliminated later.
+    """
+    return value
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -501,15 +520,17 @@ def _make_lower_masked_unary(op: Callable) -> Callable:
                 f"{getattr(op, '__name__', op)!r} on {operand_inner_ty}; "
                 f"signature {sig}"
             )
-        # The same operand var can feed multiple unary calls in one
-        # expression (e.g. ``sin(x) + lgamma(x)``); suffix the temp var
-        # name by op so typemap keys stay unique.
+        # Derive the temp var names from the unique result ``target`` (each op
+        # call has its own SSA result), not the operand, so the same op applied
+        # to the same operand more than once in a single expression
+        # (e.g. ``floor(x) + 1 if x - floor(x) >= 0.5 else floor(x)``) does not
+        # produce colliding typemap keys.
         op_tag = getattr(op, "__name__", "op")
         op_var = _make_temp_var(
-            builder, args[0], f"{op_tag}_in", operand_inner_ty
+            builder, target, f"{op_tag}_in", operand_inner_ty
         )
         out_var = _make_temp_var(
-            builder, args[0], f"{op_tag}_out", result_inner_ty
+            builder, target, f"{op_tag}_out", result_inner_ty
         )
         builder.store_var(op_var, m_val)
         cg(builder, out_var, [op_var], [])

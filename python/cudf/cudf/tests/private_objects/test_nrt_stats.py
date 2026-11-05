@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pytest
-from numba.cuda import config
-from numba.cuda.memory_management.nrt import rtsys
+from numba_cuda_mlir.numba_cuda import config
+from numba_cuda_mlir.numba_cuda.memory_management.nrt import rtsys
 
 import cudf
 from cudf.core.column import ColumnBase, as_column

@@ -4,8 +4,8 @@
 import os
 
 import pytest
-from numba import types
-from numba.cuda import config as numba_config
+from numba_cuda_mlir import types
+from numba_cuda_mlir.numba_cuda import config as numba_config
 
 from cudf.core.udf import nrt_utils
 from cudf.core.udf.utils import _udf_code_cache, compile_udf

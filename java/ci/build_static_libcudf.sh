@@ -54,7 +54,7 @@ OPTIONS:
 
 EXAMPLES:
     build_static_libcudf.sh --output-dir /tmp/libcudf-cuda12 --cuda-version "12.9.2"
-    build_static_libcudf.sh -o /tmp/libcudf-cuda13 -c 13.3.0 -A "80"
+    build_static_libcudf.sh -o /tmp/libcudf-cuda13 -c 13.4.3 -A "80"
 
 EOF
 }
@@ -119,6 +119,8 @@ DOCKER_ARGS=(
   --volume "${REPO_ROOT}:/repo"
   --volume "${OUTPUT_DIR}:/output"
   --workdir /repo
+  --env PIP_CACHE_DIR=/tmp/pip-cache
+  --env UV_CACHE_DIR=/tmp/uv-cache
   --env RAPIDS_CUDA_VERSION="${CUDA_VERSION}"
   --env PARALLEL_LEVEL="${PARALLEL_LEVEL}"
   --env HOST_UID="$(id -u)"

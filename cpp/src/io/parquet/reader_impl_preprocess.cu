@@ -849,13 +849,16 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // Decode definition and repetition levels for all subpass pages
   // so they're available to compute_page_sizes and decode kernels.
   // We can't determine subpass skip_rows & num_rows yet, so we use the pass values.
-  detail::preprocess_levels(subpass.pages,
-                            pass.chunks,
-                            subpass_page_mask_span(),
-                            pass.skip_rows,
-                            pass.num_rows,
-                            pass.level_type_size,
-                            _stream);
+  // Only launch kernel if there are levels to decode.
+  if (subpass.level_decode_data.size() != 0) {
+    detail::preprocess_levels(subpass.pages,
+                              pass.chunks,
+                              subpass_page_mask_span(),
+                              pass.skip_rows,
+                              pass.num_rows,
+                              pass.level_type_size,
+                              _stream);
+  }
 
   // iterate over all input columns and determine if they contain lists.
   // TODO: we could do this once at the file level instead of every time we get in here. the set of
@@ -1122,7 +1125,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
           out_buf_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
         nullmask_bufs.emplace_back(
           out_buf.null_mask(),
-          cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
+          cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
             sizeof(cudf::bitmask_type));
         if (has_unwritten_slots and out_buf.data() != nullptr) {
           unwritten_bufs.push_back(
@@ -1255,7 +1258,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
             buffer_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
           nullmask_bufs.emplace_back(
             out_buf.null_mask(),
-            cudf::util::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
+            cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
               sizeof(cudf::bitmask_type));
           if (has_unwritten_slots and out_buf.data() != nullptr) {
             unwritten_bufs.push_back(

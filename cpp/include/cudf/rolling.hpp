@@ -278,7 +278,7 @@ std::unique_ptr<column> rolling_window(
  *            size_type min_periods,
  *            rolling_aggregation const& agg,
  *            cuda::stream_ref stream,
- *            rmm::device_async_resource_ref mr)
+ *            cudf::memory_resources mr)
  *
  * @param default_outputs A column of per-row default values to be returned instead
  *                        of nulls. Used for LEAD()/LAG(), if the row offset crosses
@@ -455,7 +455,7 @@ std::unique_ptr<column> grouped_rolling_window(
  *            size_type min_periods,
  *            rolling_aggregation const& aggr,
  *            cuda::stream_ref stream,
- *            rmm::device_async_resource_ref mr)
+ *            cudf::memory_resources mr)
  */
 std::unique_ptr<column> grouped_rolling_window(
   table_view const& group_keys,
@@ -477,7 +477,7 @@ std::unique_ptr<column> grouped_rolling_window(
  *            size_type min_periods,
  *            rolling_aggregation const& aggr,
  *            cuda::stream_ref stream,,
- *            rmm::device_async_resource_ref mr)
+ *            cudf::memory_resources mr)
  *
  * @param default_outputs A column of per-row default values to be returned instead
  *                        of nulls. Used for LEAD()/LAG(), if the row offset crosses
@@ -505,7 +505,7 @@ std::unique_ptr<column> grouped_rolling_window(
  *            size_type min_periods,
  *            rolling_aggregation const& aggr,
  *            cuda::stream_ref stream,
- *            rmm::device_async_resource_ref mr)
+ *            cudf::memory_resources mr)
  */
 std::unique_ptr<column> grouped_rolling_window(
   table_view const& group_keys,

@@ -122,7 +122,7 @@ std::unique_ptr<column> min_rank_scan(column_view const& grouped_values,
  *                                      device_span<size_type const> group_labels,
  *                                      device_span<size_type const> group_offsets,
  *                                      cuda::stream_ref stream,
- *                                      rmm::device_async_resource_ref mr)
+ *                                      cudf::memory_resources mr)
  */
 std::unique_ptr<column> max_rank_scan(column_view const& grouped_values,
                                       column_view const& value_order,
@@ -139,7 +139,7 @@ std::unique_ptr<column> max_rank_scan(column_view const& grouped_values,
  *                                      device_span<size_type const> group_labels,
  *                                      device_span<size_type const> group_offsets,
  *                                      cuda::stream_ref stream,
- *                                      rmm::device_async_resource_ref mr)
+ *                                      cudf::memory_resources mr)
  */
 std::unique_ptr<column> first_rank_scan(column_view const& grouped_values,
                                         column_view const& value_order,
@@ -156,7 +156,7 @@ std::unique_ptr<column> first_rank_scan(column_view const& grouped_values,
  *                                      device_span<size_type const> group_labels,
  *                                      device_span<size_type const> group_offsets,
  *                                      cuda::stream_ref stream,
- *                                      rmm::device_async_resource_ref mr)
+ *                                      cudf::memory_resources mr)
  */
 std::unique_ptr<column> average_rank_scan(column_view const& grouped_values,
                                           column_view const& value_order,

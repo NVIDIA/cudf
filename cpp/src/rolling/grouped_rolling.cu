@@ -405,7 +405,7 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
  *               range_window_bounds const& following,
  *               size_type min_periods,
  *               rolling_aggregation const& aggr,
- *               rmm::device_async_resource_ref mr );
+ *               cudf::memory_resources mr );
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
@@ -521,7 +521,7 @@ std::unique_ptr<column> grouped_range_rolling_window(table_view const& group_key
  *               range_window_bounds const& following,
  *               size_type min_periods,
  *               rolling_aggregation const& aggr,
- *               rmm::device_async_resource_ref mr );
+ *               cudf::memory_resources mr );
  */
 std::unique_ptr<column> grouped_range_rolling_window(table_view const& group_keys,
                                                      column_view const& timestamp_column,

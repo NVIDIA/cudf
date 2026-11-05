@@ -108,7 +108,7 @@ std::unique_ptr<scalar> reduce(
  * detection is performed throughout the entire computation.
  *
  * @see cudf::reduce(column_view const&,reduce_aggregation
- * const&,data_type,cuda::stream_ref,rmm::device_async_resource_ref) for more details
+ * const&,data_type,cuda::stream_ref,cudf::memory_resources) for more details
  *
  * @throw std::invalid_argument if reduction is not `sum`, `product`, `min`, `max`, `any`, `all`,
  * or `sum_overflow` and `init` is specified.

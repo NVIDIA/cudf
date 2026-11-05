@@ -217,6 +217,25 @@ struct writer_timezone {
   duration_s const base_epoch;
 
   /**
+   * @brief Returns this timezone's offsets from UT over time, reading them on the first call.
+   *
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @return Transition table, as returned by `make_timezone_transition_table`; empty when writing
+   * UTC, where the wall clock and the input instants coincide
+   */
+  table_view ut_offsets(cuda::stream_ref stream) const;
+
+  /**
+   * @brief Returns whether this timezone's wall clock coincides with the instants it is given.
+   *
+   * True for UTC and for aliases whose offset from UT is zero throughout, which have no transition
+   * to apply.
+   *
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   */
+  [[nodiscard]] bool is_utc(cuda::stream_ref stream) const;
+
+  /**
    * @brief Resolves a timezone name into the epoch that timestamps are encoded relative to.
    *
    * Uses `base_epoch_in_timezone`, so the writer and the reader resolve the epoch the same way.
@@ -229,6 +248,8 @@ struct writer_timezone {
 
  private:
   [[nodiscard]] static duration_s compute_base_epoch(std::string_view timezone);
+
+  mutable std::unique_ptr<cudf::table> transitions;
 };
 
 enum class writer_state {

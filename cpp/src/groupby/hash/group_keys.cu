@@ -493,18 +493,6 @@ grouped_keys group_keys(table_view const& keys,
   if (num_rows >= hash_csr_min_rows_to_estimate) {
     domain_capacity = small_key_domain_capacity(keys, skip_rows_with_nulls);
   }
-<<<<<<< HEAD:cpp/src/groupby/hash/compute_groupby.cu
-
-  if (has_compound_aggs) {
-    // M2 and COUNT_VALID are already cached in output order. The shared finalizer can
-    // retain its raw-moment fallback for streaming while ordinary groupby reuses these results.
-    for (auto const& request : requests) {
-      auto const finalizer = hash_compound_agg_finalizer(request.values, cache, stream, mr);
-      for (auto const& agg : request.aggregations) {
-        cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
-      }
-    }
-=======
   if (cudf::detail::has_nested_columns(keys)) {
     return group_keys(num_rows,
                       row_bitmask,
@@ -517,7 +505,6 @@ grouped_keys group_keys(table_view const& keys,
                       domain_capacity,
                       stream,
                       mr);
->>>>>>> main:cpp/src/groupby/hash/group_keys.cu
   }
   return group_keys(num_rows,
                     row_bitmask,

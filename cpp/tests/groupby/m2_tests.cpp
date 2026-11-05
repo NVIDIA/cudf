@@ -10,6 +10,9 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/aggregation/host_udf.hpp>
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
@@ -494,5 +497,54 @@ TEST_F(GroupbyStableM2Test, IndependentSumsAndRequestOrder)
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sums, sorted->view().column(2));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(means, sorted->view().column(3));
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(squares, sorted->view().column(4));
+  }
+}
+
+namespace {
+
+struct m2_after_count_udf : cudf::groupby_host_udf {
+  [[nodiscard]] std::size_t do_hash() const override { return 0; }
+  [[nodiscard]] bool is_equal(cudf::host_udf_base const& other) const override
+  {
+    return dynamic_cast<m2_after_count_udf const*>(&other) != nullptr;
+  }
+  [[nodiscard]] std::unique_ptr<cudf::host_udf_base> clone() const override
+  {
+    return std::make_unique<m2_after_count_udf>();
+  }
+  [[nodiscard]] std::unique_ptr<cudf::column> get_empty_output(
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
+  {
+    return cudf::make_numeric_column(
+      cudf::data_type{cudf::type_id::FLOAT64}, 0, cudf::mask_state::UNALLOCATED, stream, mr);
+  }
+  [[nodiscard]] std::unique_ptr<cudf::column> operator()(
+    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
+  {
+    // Separate calls share a cache. Extraction must allow M2 without a new count output.
+    static_cast<void>(compute_aggregation(cudf::make_count_aggregation()));
+    return std::make_unique<cudf::column>(
+      compute_aggregation(cudf::make_m2_aggregation()), stream, mr);
+  }
+};
+
+}  // namespace
+
+TEST_F(GroupbyStableM2Test, CountCachedBeforeM2)
+{
+  keys_col<int32_t> keys{0, 0, 0, 1, 1};
+  for (bool nullable : {false, true}) {
+    vals_col<double> values{{0x1p40, 0x1p40 + 2, 0x1p40 + 4, 0x1p40, 0x1p40 + 2},
+                            {true, true, !nullable, true, true}};
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = values;
+    requests[0].aggregations.push_back(cudf::make_host_udf_aggregation<cudf::groupby_aggregation>(
+      std::make_unique<m2_after_count_udf>()));
+    cudf::groupby::groupby gb(cudf::table_view{{keys}});
+    auto result = gb.aggregate(requests);
+    auto sorted =
+      cudf::sort(cudf::table_view{{result.first->view().column(0), *result.second[0].results[0]}});
+    vals_col<double> expected{nullable ? 2.0 : 8.0, 2.0};
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, sorted->view().column(1));
   }
 }

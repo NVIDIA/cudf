@@ -123,15 +123,19 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
         break;
       }
     }
-    CUDF_EXPECTS(count_index != num_aggs, "M2 requires a valid-count output");
     auto d_col = column_device_view::create(col, stream, mr.get_temporary_mr());
     auto const type =
       is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
-    auto const ctx   = reduction_context{col, *d_col, type, grouped, num_groups, false};
-    auto [m2, count] = compute_m2_and_count(
-      ctx, is_agg_intermediate[i], is_agg_intermediate[count_index], stream, mr);
-    results[i]           = std::move(m2);
-    results[count_index] = std::move(count);
+    auto const ctx = reduction_context{col, *d_col, type, grouped, num_groups, false};
+    // A prior aggregation may already have cached COUNT_VALID, so extraction can omit it.
+    auto [m2, count] =
+      compute_m2_and_count(ctx,
+                           is_agg_intermediate[i],
+                           count_index == num_aggs || is_agg_intermediate[count_index],
+                           stream,
+                           mr);
+    results[i] = std::move(m2);
+    if (count_index != num_aggs) { results[count_index] = std::move(count); }
   }
 
   // Returns one past the last of the consecutive additive aggregations on the column of `begin`
@@ -250,7 +254,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       std::ranges::move(batch, results.begin() + i);
     } else {
       auto const resources = is_agg_intermediate[i] ? mr.as_temporary() : mr;
-      results.push_back(compute_aggregation(kind, ctx, stream, resources));
+      results[i]           = compute_aggregation(kind, ctx, stream, resources);
     }
     i = end;
   }

@@ -33,16 +33,11 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
-<<<<<<< HEAD
-#include <thrust/tabulate.h>
-=======
 #include <thrust/for_each.h>
->>>>>>> main
+#include <thrust/tabulate.h>
 
 #include <algorithm>
 #include <cmath>
@@ -542,52 +537,12 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
     cache_keys.push_back(agg_gathered_view.column(input_offsets.at(input_column)));
   }
 
-<<<<<<< HEAD
-  auto [values_view_fin, agg_kinds_fin, agg_objects_fin, is_intermediate_fin, has_compound_fin] =
-    detail::hash::extract_single_pass_aggs(
-      column_grouped, stream, detail::hash::aggregation_mode::STREAMING_ATOMIC);
-
-=======
   // The stored aggregation objects already match the physical result order. Re-extracting
   // them here can reorder results or duplicate intermediates shared with explicit requests.
->>>>>>> main
   cudf::detail::result_cache cache(_agg_kinds.size());
   detail::hash::finalize_output(table_view{cache_keys}, _agg_objects, agg_gathered, &cache, stream);
 
-<<<<<<< HEAD
-  if (_has_compound_aggs) {
-    // Compute compound aggs (MEAN/STD/VARIANCE/M2/...) into the cache.  The cache itself
-    // dedupes: skip if (column, kind) is already there from a prior agg in the group.
-    for (auto const& req : column_grouped) {
-      auto const finalizer =
-        detail::hash::hash_compound_agg_finalizer(req.values, &cache, stream, mr);
-      for (auto const& agg : req.aggregations) {
-        if (cache.has_result(req.values, *agg)) continue;
-        if (agg->kind == aggregation::M2 || agg->kind == aggregation::VARIANCE ||
-            agg->kind == aggregation::STD) {
-          auto const m2 = make_m2_aggregation();
-          if (!cache.has_result(req.values, *m2)) {
-            cache.add_result(
-              req.values,
-              *m2,
-              compute_raw_m2(req.values.type(),
-                             cache.get_result(req.values, *make_sum_of_squares_aggregation()),
-                             cache.get_result(req.values, *make_sum_aggregation()),
-                             cache.get_result(req.values, *make_count_aggregation()),
-                             stream,
-                             mr.get_output_mr()));
-          }
-        }
-        cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
-      }
-    }
-  }
-
-  // User-1:1 lookup keys so `extract_results` returns results in the order of the
-  // original user requests, sharing cache entries across requests on the same column.
-=======
   // Preserve the user's request order while sharing cached simple and compound results.
->>>>>>> main
   std::vector<aggregation_request> user_requests;
   user_requests.reserve(_requests_clone.size());
   for (size_t i = 0; i < _requests_clone.size(); ++i) {
@@ -600,6 +555,22 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
       // Gathered intermediates may lack null masks, so MEAN derives nulls from the counts.
       auto const finalizer =
         detail::hash::hash_compound_agg_finalizer(ar.values, &cache, true, stream, mr);
+      // Streaming accumulates raw moments, while ordinary HashCSR caches stable M2 directly.
+      if (agg.kind == aggregation::M2 || agg.kind == aggregation::VARIANCE ||
+          agg.kind == aggregation::STD) {
+        auto const m2 = make_m2_aggregation();
+        if (!cache.has_result(ar.values, *m2)) {
+          cache.add_result(
+            ar.values,
+            *m2,
+            compute_raw_m2(_aggregate_input_types[_request_first_agg_offset[i]],
+                           cache.get_result(ar.values, *make_sum_of_squares_aggregation()),
+                           cache.get_result(ar.values, *make_sum_aggregation()),
+                           cache.get_result(ar.values, *make_count_aggregation()),
+                           stream,
+                           mr.get_output_mr()));
+        }
+      }
       cudf::detail::aggregation_dispatcher(agg.kind, finalizer, agg);
     }
     user_requests.push_back(std::move(ar));

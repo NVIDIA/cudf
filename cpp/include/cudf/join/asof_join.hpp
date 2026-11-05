@@ -92,9 +92,9 @@ class asof_join {
    * Passing an empty `right_by` performs an ungrouped as-of join. `right_on` must be sorted in
    * ascending order in this case.
    *
-   * @throws cudf::logic_error if `right_by` has columns and
+   * @throws std::invalid_argument if `right_by` has columns and
    *         `right_by.num_rows() != right_on.size()`
-   * @throws cudf::logic_error if the right-side keys do not satisfy the supported type contract
+   * @throws cudf::data_type_error if the right-side keys do not satisfy the supported type contract
    *
    * @param right_by Right-side equality grouping keys
    * @param right_on Right-side ordered key
@@ -127,10 +127,11 @@ class asof_join {
    * finish before shared state is deallocated. Input columns must remain alive and unmodified until
    * all operations using them have completed.
    *
-   * @throws cudf::logic_error if the left and right inputs have different numbers of grouping keys
-   * @throws cudf::logic_error if `left_by` has columns and
+   * @throws std::invalid_argument if the left and right inputs have different numbers of grouping
+   * keys
+   * @throws std::invalid_argument if `left_by` has columns and
    *         `left_by.num_rows() != left_on.size()`
-   * @throws cudf::logic_error if corresponding left and right key types do not match
+   * @throws cudf::data_type_error if corresponding left and right key types do not match
    *
    * @param left_by Left-side equality grouping keys
    * @param left_on Left-side ordered key

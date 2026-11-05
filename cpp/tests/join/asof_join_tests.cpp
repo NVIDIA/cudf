@@ -16,6 +16,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/buffer>
@@ -28,6 +29,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -459,7 +461,55 @@ TEST_F(AsofJoinTest, MismatchedOrderedKeyTypes)
   EXPECT_THROW(
     (void)join.join(
       cudf::table_view{}, left_on, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES),
-    cudf::logic_error);
+    cudf::data_type_error);
+}
+
+TEST_F(AsofJoinTest, MismatchedGroupingKeyTypes)
+{
+  fixed_width_column_wrapper<int32_t> right_by{1};
+  fixed_width_column_wrapper<int64_t> left_by{1};
+  fixed_width_column_wrapper<int32_t> on{1};
+  asof_join join(cudf::table_view{{right_by}}, on);
+
+  EXPECT_THROW(
+    (void)join.join(
+      cudf::table_view{{left_by}}, on, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES),
+    cudf::data_type_error);
+}
+
+TEST_F(AsofJoinTest, MismatchedGroupingKeyCounts)
+{
+  fixed_width_column_wrapper<int32_t> key{1};
+  asof_join join(cudf::table_view{{key}}, key);
+
+  for (auto const& left_by : {cudf::table_view{}, cudf::table_view{{key, key}}}) {
+    EXPECT_THROW(
+      (void)join.join(left_by, key, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES),
+      std::invalid_argument);
+  }
+}
+
+TEST_F(AsofJoinTest, MismatchedKeyRowCounts)
+{
+  fixed_width_column_wrapper<int32_t> by{1, 2};
+  fixed_width_column_wrapper<int32_t> on{1};
+
+  EXPECT_THROW((asof_join{cudf::table_view{{by}}, on}), std::invalid_argument);
+  asof_join join(cudf::table_view{{by}}, by);
+  EXPECT_THROW(
+    (void)join.join(
+      cudf::table_view{{by}}, on, asof_join_strategy::BACKWARD, asof_join_exact_matches::YES),
+    std::invalid_argument);
+}
+
+TEST_F(AsofJoinTest, UnsupportedKeyTypes)
+{
+  fixed_width_column_wrapper<int32_t> on{1};
+  strings_column_wrapper strings{"a"};
+  cudf::test::lists_column_wrapper<int32_t> lists{{1}};
+
+  EXPECT_THROW((asof_join{cudf::table_view{}, strings}), cudf::data_type_error);
+  EXPECT_THROW((asof_join{cudf::table_view{{lists}}, on}), cudf::data_type_error);
 }
 
 TEST_F(AsofJoinTest, LeftKeyBetweenGroups)

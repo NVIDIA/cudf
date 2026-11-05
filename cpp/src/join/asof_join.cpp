@@ -11,6 +11,7 @@
 #include <cudf/utilities/type_checks.hpp>
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace cudf::experimental::detail {
@@ -30,7 +31,8 @@ void validate_by_types(table_view const& by)
 {
   for (auto const& column : by) {
     CUDF_EXPECTS(is_supported_by_type(column.type()),
-                 "As-of join grouping keys must be strings or fixed-width scalar columns");
+                 "As-of join grouping keys must be strings or fixed-width scalar columns",
+                 cudf::data_type_error);
   }
 }
 
@@ -38,7 +40,8 @@ void validate_key_sizes(table_view const& by, column_view const& on, char const*
 {
   CUDF_EXPECTS(by.num_columns() == 0 || by.num_rows() == on.size(),
                std::string{"As-of join "} + side +
-                 " grouping and ordered keys must have the same number of rows");
+                 " grouping and ordered keys must have the same number of rows",
+               std::invalid_argument);
 }
 
 }  // namespace
@@ -54,7 +57,8 @@ asof_join_impl::asof_join_impl(table_view const& right_by,
   cudf::scoped_range range{"asof_join::asof_join"};
   validate_key_sizes(right_by, right_on, "right");
   CUDF_EXPECTS(is_supported_on_type(right_on.type()),
-               "As-of join ordered keys must be integer, timestamp, or duration columns");
+               "As-of join ordered keys must be integer, timestamp, or duration columns",
+               cudf::data_type_error);
   validate_by_types(right_by);
 
   build_groups(stream, mr);
@@ -74,11 +78,14 @@ cuda::device_buffer<size_type> asof_join_impl::join(table_view const& left_by,
                "As-of joins without exact matches are currently unsupported");
   validate_key_sizes(left_by, left_on, "left");
   CUDF_EXPECTS(left_by.num_columns() == _right_by.num_columns(),
-               "As-of join inputs must have the same number of grouping keys");
+               "As-of join inputs must have the same number of grouping keys",
+               std::invalid_argument);
   CUDF_EXPECTS(cudf::have_same_types(left_by, _right_by),
-               "As-of join grouping-key types must match");
+               "As-of join grouping-key types must match",
+               cudf::data_type_error);
   CUDF_EXPECTS(cudf::have_same_types(left_on, _right_on),
-               "As-of join ordered-key types must match");
+               "As-of join ordered-key types must match",
+               cudf::data_type_error);
 
   return probe(left_by, left_on, stream, mr);
 }

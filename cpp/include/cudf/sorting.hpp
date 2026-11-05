@@ -372,11 +372,10 @@ std::unique_ptr<table> stable_segmented_sort_by_key(
  * This performs the equivalent of a sort and the slice of the resulting first k elements.
  * However, the returned column may or may not necessarily be sorted.
  *
- * @note Among keys that compare equal at the k-th boundary, which of the tied rows are returned is
- * unspecified and may vary between runs. The result is always a valid top-k: the row count and the
- * multiset of returned keys are fixed; only the choice among equal-keyed rows is not.
+ * @note If several elements compare equal to the k-th element, which of them are returned is
+ * unspecified and may vary between runs.
  *
- * @note Nulls are ordered after all non-null elements in either `topk_order`, so the returned
+ * @note Nulls are ordered after all non-null elements regardless of `topk_order`, so the returned
  * column contains nulls only when `k` exceeds the number of non-null elements. For floating-point
  * columns, NaN elements compare equal to each other and greater than all other non-null elements,
  * and -0.0 compares equal to +0.0.
@@ -404,11 +403,10 @@ std::unique_ptr<column> top_k(
  * The indices will represent the top k elements but may or may not represent
  * those elements as k sorted values.
  *
- * @note Among keys that compare equal at the k-th boundary, which of the tied rows are returned is
- * unspecified and may vary between runs. The result is always a valid top-k: the row count and the
- * multiset of returned keys are fixed; only the choice among equal-keyed rows is not.
+ * @note If several elements compare equal to the k-th element, which of them are returned is
+ * unspecified and may vary between runs.
  *
- * @note Nulls are ordered after all non-null elements in either `topk_order`, so the returned
+ * @note Nulls are ordered after all non-null elements regardless of `topk_order`, so the returned
  * indices refer to null elements only when `k` exceeds the number of non-null elements. For
  * floating-point columns, NaN elements compare equal to each other and greater than all other
  * non-null elements, and -0.0 compares equal to +0.0.

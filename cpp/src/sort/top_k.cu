@@ -10,32 +10,37 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/gather.hpp>
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/assert.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/execution_env.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
 
 #include <cub/device/device_partition.cuh>
 #include <cub/device/device_topk.cuh>
 #include <cuda/buffer>
+#include <cuda/execution>
 #include <cuda/iterator>
-#include <cuda/std/bit>
 #include <cuda/std/cmath>
-#include <cuda/std/cstdint>
-#include <cuda/std/execution>
 #include <cuda/std/limits>
-#include <cuda/std/type_traits>
+#include <cuda/std/optional>
 #include <cuda/stream>
+
+#include <memory>
 
 namespace cudf {
 namespace detail {
@@ -43,61 +48,32 @@ namespace {
 /**
  * @brief Returns true if the column's top-k can be resolved by radix selection
  *
- * Radix selection needs a fixed-width key it can reduce to an order-preserving unsigned image.
- * Nulls do not prevent that: select_top_k_rows() partitions them out of the key stream rather
- * than encoding them into it. A floating-point column qualifies once its values are normalized
- * into that image; see key_at_row.
+ * Nullable and floating-point columns qualify; see select_top_k_rows() and key_at_row.
  */
-bool is_fast_path(column_view const& column) { return cudf::is_fixed_width(column.type()); }
+[[nodiscard]] bool is_fast_path(column_view const& column)
+{
+  return cudf::is_fixed_width(column.type());
+}
 
 /**
  * @brief Reads `values[row]` and returns the key cub should compare
  *
- * For a floating-point column this is an order-preserving unsigned image of the value rather than
- * the value itself. Radix selection compares bits and not values, and the usual IEEE-754 mapping
- * -- complement a negative value, set the sign bit of a non-negative one -- is not that image under
- * cudf's ordering, because `sorting_physical_element_comparator` treats every NaN as equal to every
- * other NaN and greater than all other values, and treats -0.0 as equal to +0.0. Two
- * normalizations restore it, and they are the same ones
- * `hashing::detail::normalize_nans_and_zeros` applies for the same reason:
- *
- * - Every NaN becomes the canonical quiet NaN. Its image lands above the image of infinity, so
- *   NaNs order last ascending and first descending. Without this a negative NaN complements to
- *   below the image of -infinity and is selected as the smallest value.
- * - -0.0 becomes +0.0, so the two never order against each other.
- *
- * Every other fixed-width type is returned unchanged, since cub's own twiddle already puts its
- * bits in order.
+ * cub orders floating-point keys by their bits, which puts a negative NaN below -infinity.
+ * Canonicalizing NaNs and zeros first gives cudf's ordering: every NaN equal and greater than all
+ * other values, and -0.0 equal to +0.0.
  */
-template <typename T>
-using key_type_for =
-  cuda::std::conditional_t<cudf::is_floating_point<T>(),
-                           cuda::std::conditional_t<sizeof(T) == sizeof(::cuda::std::uint32_t),
-                                                    ::cuda::std::uint32_t,
-                                                    ::cuda::std::uint64_t>,
-                           T>;
-
 template <typename T>
 struct key_at_row {
   T const* values;
 
-  // Spelled out rather than deduced: nvcc cannot generate the kernel stub for a cub kernel whose
-  // key iterator has a functor with a deduced return type.
-  __device__ key_type_for<T> operator()(size_type row) const
+  __device__ T operator()(size_type row) const
   {
+    auto const value = values[row];
     if constexpr (cudf::is_floating_point<T>()) {
-      using bits_type = key_type_for<T>;
-      static_assert(sizeof(bits_type) == sizeof(T), "no unsigned type matches the key's width");
-
-      auto const value = [v = values[row]] {
-        if (cuda::std::isnan(v)) { return cuda::std::numeric_limits<T>::quiet_NaN(); }
-        return v == T{0} ? T{0} : v;  // normalizes -0.0
-      }();
-      auto constexpr sign_bit = bits_type{1} << ((sizeof(bits_type) * 8) - 1);
-      auto const bits         = cuda::std::bit_cast<bits_type>(value);
-      return static_cast<bits_type>((bits & sign_bit) ? ~bits : (bits | sign_bit));
+      if (cuda::std::isnan(value)) { return cuda::std::numeric_limits<T>::quiet_NaN(); }
+      return value == T{0} ? T{0} : value;  // -0.0 becomes +0.0
     } else {
-      return values[row];
+      return value;
     }
   }
 };
@@ -114,45 +90,34 @@ struct row_is_valid {
 };
 
 /**
- * @brief Selects `num_out` row indices with cub::DeviceTopK, writing them to `d_output`
+ * @brief Selects `output.size()` row indices with cub::DeviceTopK
  *
- * When `valid_rows` is null the selection runs over the whole column. Otherwise `valid_rows` holds
- * `num_items` indices of the non-null rows and the selection runs over those; cub carries those
- * indices through as its values, so the output is indices into `input` either way and never needs
- * remapping.
+ * Without `valid_rows` the selection runs over every row of `input`. Otherwise it runs over the
+ * row indices in `valid_rows`, which cub carries through as its values.
  */
-struct dispatch_topk_fn {
+struct dispatch_top_k_fn {
   column_view input;
-  size_type const* valid_rows;
-  size_type num_items;
-  size_type num_out;
+  cuda::std::optional<device_span<size_type const>> valid_rows;
   order topk_order;
-  size_type* d_output;
+  device_span<size_type> output;
   cuda::stream_ref stream;
+  cudf::memory_resources mr;
 
   template <typename KeysIterator, typename ValuesIterator>
-  void select(KeysIterator keys_in, ValuesIterator vals_in) const
+  void select(KeysIterator keys_in, ValuesIterator vals_in, size_type num_items) const
   {
-    auto requirements = cuda::execution::require(cuda::execution::determinism::not_guaranteed,
-                                                 cuda::execution::output_ordering::unsorted);
-    auto env          = cuda::std::execution::env{cuda::stream_ref{stream.get()}, requirements};
-    auto tmp_size     = std::size_t{0};
-    auto keys_out     = cuda::make_discard_iterator();
-
+    auto const requirements = cuda::execution::require(cuda::execution::determinism::not_guaranteed,
+                                                       cuda::execution::tie_break::unspecified,
+                                                       cuda::execution::output_ordering::unsorted);
+    auto const env          = cudf::detail::make_env(stream, mr, requirements);
+    auto const keys_out     = cuda::make_discard_iterator();
+    auto const num_out      = static_cast<size_type>(output.size());
     if (topk_order == order::ASCENDING) {
       CUDF_CUDA_TRY(cub::DeviceTopK::MinPairs(
-        nullptr, tmp_size, keys_in, keys_out, vals_in, d_output, num_items, num_out, env));
-      auto tmp = cuda::device_buffer<std::byte>(
-        stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
-      CUDF_CUDA_TRY(cub::DeviceTopK::MinPairs(
-        tmp.data(), tmp_size, keys_in, keys_out, vals_in, d_output, num_items, num_out, env));
+        keys_in, keys_out, vals_in, output.data(), num_items, num_out, env));
     } else {
       CUDF_CUDA_TRY(cub::DeviceTopK::MaxPairs(
-        nullptr, tmp_size, keys_in, keys_out, vals_in, d_output, num_items, num_out, env));
-      auto tmp = cuda::device_buffer<std::byte>(
-        stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
-      CUDF_CUDA_TRY(cub::DeviceTopK::MaxPairs(
-        tmp.data(), tmp_size, keys_in, keys_out, vals_in, d_output, num_items, num_out, env));
+        keys_in, keys_out, vals_in, output.data(), num_items, num_out, env));
     }
   }
 
@@ -160,17 +125,19 @@ struct dispatch_topk_fn {
   void select_rows() const
   {
     auto const values = input.begin<T>();
-    if (valid_rows == nullptr) {
-      // Handing cub a raw pointer lets it vectorize its loads, so it is worth keeping for the
-      // types whose values are already their own key.
+    if (not valid_rows.has_value()) {
+      auto const rows = cuda::counting_iterator<size_type>{0};
       if constexpr (cudf::is_floating_point<T>()) {
-        select(cudf::detail::make_counting_transform_iterator(size_type{0}, key_at_row<T>{values}),
-               cuda::counting_iterator<size_type>{});
+        select(cuda::transform_iterator(rows, key_at_row<T>{values}), rows, input.size());
       } else {
-        select(values, cuda::counting_iterator<size_type>{});
+        // A raw pointer lets cub vectorize its loads.
+        select(values, rows, input.size());
       }
     } else {
-      select(cuda::transform_iterator(valid_rows, key_at_row<T>{values}), valid_rows);
+      auto const rows = valid_rows->data();
+      select(cuda::transform_iterator(rows, key_at_row<T>{values}),
+             rows,
+             static_cast<size_type>(valid_rows->size()));
     }
   }
 
@@ -199,29 +166,26 @@ struct dispatch_topk_fn {
 /**
  * @brief Returns the k selected row indices for a fixed-width column
  *
- * Nulls are partitioned out of the key stream instead of being encoded into it. Only a
- * floating-point type reliably has a spare bit pattern to spend on a null sentinel -- every
- * integral pattern is a valid key -- and widening the key to make room costs radix passes. Nulls
- * go to the far end in either direction, so a top-k holds a null only once it holds every non-null
- * row. Which of the two cases applies is host-side arithmetic on `null_count()`, which
- * `column_view` already carries, so separating the nulls costs one pass over the input and no
- * synchronization.
+ * Nulls are ordered last in either direction, so the result contains a null only when `k` exceeds
+ * the number of non-null rows, and `null_count()` tells which case applies without synchronizing.
+ * Nulls are partitioned out rather than encoded as a sentinel key, since an integral key has no
+ * spare bit pattern for one.
  */
-rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
-                                                 size_type k,
-                                                 order topk_order,
-                                                 cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+[[nodiscard]] rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
+                                                               size_type k,
+                                                               order topk_order,
+                                                               cuda::stream_ref stream,
+                                                               cudf::memory_resources mr)
 {
-  auto const temp_mr   = cudf::get_current_device_resource_ref();
+  auto const temp_mr   = mr.get_temporary_mr();
   auto const size      = col.size();
   auto const num_valid = size - col.null_count();
 
-  auto output = rmm::device_uvector<size_type>(k, stream, mr);
+  auto output = rmm::device_uvector<size_type>(k, stream, mr.get_output_mr());
 
   if (col.null_count() == 0) {
     type_dispatcher<dispatch_storage_type>(
-      col.type(), dispatch_topk_fn{col, nullptr, size, k, topk_order, output.data(), stream});
+      col.type(), dispatch_top_k_fn{col, cuda::std::nullopt, topk_order, output, stream, mr});
     return output;
   }
 
@@ -229,32 +193,34 @@ rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
   auto const is_valid = row_is_valid{col.null_mask(), col.offset()};
 
   if (k >= num_valid) {
-    // Every non-null row is in the answer and nulls fill any remainder, so there is no order
-    // statistic to find. This also keeps the selection off cub's k == num_items edge case. One
-    // partition puts the non-null rows ahead of the null ones and the answer is its first k
-    // entries; it writes every row, so it needs a buffer of its own rather than the k-row output.
-    auto partitioned_rows = rmm::device_uvector<size_type>(size, stream, temp_mr);
+    // Every non-null row is selected and nulls fill the rest: partition the non-null rows ahead of
+    // the nulls and take the first k.
+    auto partitioned_rows = cuda::device_buffer<size_type>(stream, temp_mr, size, cuda::no_init);
     CUDF_CUDA_TRY(cub::DevicePartition::If(rows,
-                                           partitioned_rows.begin(),
+                                           partitioned_rows.data(),
                                            cuda::make_discard_iterator(),
                                            size,
                                            is_valid,
-                                           cudf::detail::make_env(stream, temp_mr)));
+                                           cudf::detail::make_env(stream, mr)));
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
       output.data(), partitioned_rows.data(), k * sizeof(size_type), stream));
     return output;
   }
 
-  // Compacting the non-null rows in input order gives cub a candidate list whose values are the
-  // original row indices, so it carries them through and the output needs no remapping. Input order
-  // fixes the values cub carries, not its tie choice: which of several equal-keyed candidates it
-  // keeps at the k-th boundary is unspecified (determinism::not_guaranteed).
-  auto valid_rows = rmm::device_uvector<size_type>(num_valid, stream, temp_mr);
-  cudf::detail::copy_if_async(rows, rows + size, valid_rows.begin(), is_valid, stream);
+  // Select among the compacted non-null row indices; cub carries them through as its values, so
+  // the output needs no remapping.
+  auto valid_rows = cuda::device_buffer<size_type>(stream, temp_mr, num_valid, cuda::no_init);
+  cudf::detail::copy_if_async(
+    rows, rows + size, valid_rows.data(), is_valid, stream, mr.as_temporary());
 
   type_dispatcher<dispatch_storage_type>(
     col.type(),
-    dispatch_topk_fn{col, valid_rows.data(), num_valid, k, topk_order, output.data(), stream});
+    dispatch_top_k_fn{col,
+                      device_span<size_type const>{valid_rows.data(), valid_rows.size()},
+                      topk_order,
+                      output,
+                      stream,
+                      mr});
 
   return output;
 }
@@ -274,9 +240,10 @@ std::unique_ptr<column> top_k(column_view const& col,
   auto const indices = [&]() -> std::unique_ptr<column> {
     auto const temp_mr = cudf::get_current_device_resource_ref();
     if (is_fast_path(col)) {
-      return std::make_unique<column>(select_top_k_rows(col, k, topk_order, stream, temp_mr),
-                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                      0);
+      return std::make_unique<column>(
+        select_top_k_rows(col, k, topk_order, stream, cudf::memory_resources{temp_mr, temp_mr}),
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+        0);
     }
     auto const nulls = topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
     return sorted_order<sort_method::STABLE>(col, topk_order, nulls, stream, temp_mr);

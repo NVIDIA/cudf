@@ -9,13 +9,17 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
 
@@ -23,15 +27,16 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 using TestTypes = cudf::test::
   Concat<cudf::test::IntegralTypesNotBool, cudf::test::FloatingPointTypes, cudf::test::ChronoTypes>;
 
 namespace {
-// Neither top_k nor top_k_order promises its output in any order, so a test comparing against an
-// exact expectation has to sort first.
+// top_k and top_k_order return rows in no particular order, so tests sort before comparing.
 std::unique_ptr<cudf::column> sorted(std::unique_ptr<cudf::column> col)
 {
   return std::move(cudf::sort(cudf::table_view({col->view()}))->release().front());
@@ -75,9 +80,8 @@ TYPED_TEST(TopKTypes, TopK_Nulls)
 {
   using T = TypeParam;
 
-  // Row 4 is null and the derived null precedence places nulls at the far end of the requested
-  // direction, so it never reaches the top 10 either way. Results are sorted before comparing:
-  // a nullable column takes the selection path now, and that path returns its rows unordered.
+  // Row 4 is null. Nulls are ordered after every non-null row in either direction, so it never
+  // reaches the top 10.
   auto itr   = cuda::counting_iterator<int32_t>{0};
   auto input = cudf::test::fixed_width_column_wrapper<T, int32_t>(
     itr, itr + 100, cudf::test::iterators::null_at(4));
@@ -98,24 +102,21 @@ TYPED_TEST(TopKTypes, TopK_Nulls)
     expected_order, sorted(cudf::top_k_order(input, 10, cudf::order::ASCENDING))->view());
 }
 
-TYPED_TEST(TopKTypes, TopK_Nulls_DefaultPlacement)
+TYPED_TEST(TopKTypes, TopKNullsLast)
 {
   using T = TypeParam;
 
-  // Values 0-9 with rows 3 and 7 null. The derived null precedence places nulls at the far end of
-  // the requested direction, so a null is selected only when k exceeds the number of non-null rows.
-  // Every non-null value is distinct and k is chosen so the k-th row is never inside a group of
-  // equal rows, which makes each expected set unique even though the choice among equal rows is
-  // unspecified.
+  // Values 0-9 with rows 3 and 7 null. A null is selected only when k exceeds the number of
+  // non-null rows. The non-null values are distinct, so each expected set is unique.
   auto input = cudf::test::fixed_width_column_wrapper<T, int32_t>({0, 1, 2, 0, 4, 5, 6, 0, 8, 9},
                                                                   {1, 1, 1, 0, 1, 1, 1, 0, 1, 1});
 
-  // Ascending (nulls last by default): the three smallest values.
+  // Ascending: the three smallest values.
   auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 1, 2});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     expected, sorted(cudf::top_k_order(input, 3, cudf::order::ASCENDING))->view());
 
-  // Descending (nulls last by default): the three largest values.
+  // Descending: the three largest values.
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 8, 9});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     expected, sorted(cudf::top_k_order(input, 3, cudf::order::DESCENDING))->view());
@@ -127,8 +128,7 @@ TYPED_TEST(TopKTypes, TopK_Nulls_DefaultPlacement)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     expected, sorted(cudf::top_k_order(input, 8, cudf::order::DESCENDING))->view());
 
-  // A larger k pads the result with the far-end nulls. Asserted on values rather than on indices,
-  // because taking one of two rows that compare equal does not pin which one.
+  // A larger k adds a null. Compare values, since which null row is taken is unspecified.
   auto padded = cudf::test::fixed_width_column_wrapper<T, int32_t>({0, 0, 1, 2, 4, 5, 6, 8, 9},
                                                                    {0, 1, 1, 1, 1, 1, 1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
@@ -136,10 +136,42 @@ TYPED_TEST(TopKTypes, TopK_Nulls_DefaultPlacement)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     padded, sorted(cudf::top_k(input, 9, cudf::order::DESCENDING))->view());
 
-  // The value-returning overload shares the gate, so exercise it once.
+  // top_k takes the same path, so check it once.
   auto expected_values = cudf::test::fixed_width_column_wrapper<T, int32_t>({6, 8, 9});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     expected_values, sorted(cudf::top_k(input, 3, cudf::order::DESCENDING))->view());
+}
+
+TYPED_TEST(TopKTypes, TopKNullsSliced)
+{
+  using T = TypeParam;
+
+  // Values equal their row index and every seventh row is null. The slice starts at row 33, which
+  // is not a multiple of the bitmask word size, so null checks must apply the view's offset.
+  auto const is_valid = [](cudf::size_type row) { return row % 7 != 0; };
+  auto const rows     = cuda::counting_iterator<int32_t>{0};
+  auto const full     = cudf::test::fixed_width_column_wrapper<T, int32_t>(
+    rows, rows + 100, cuda::transform_iterator(rows, is_valid));
+  auto const input = cudf::slice(full, {33, 95}).front();
+
+  // Indices are relative to the slice: row 89 is index 56.
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({56, 57, 59, 60, 61});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, sorted(cudf::top_k_order(input, 5))->view());
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 1, 3, 4, 5});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    expected, sorted(cudf::top_k_order(input, 5, cudf::order::ASCENDING))->view());
+
+  // The slice holds 53 non-null rows, so k = 55 takes all of them plus two nulls.
+  auto valid_values = std::vector<int32_t>{};
+  std::copy_if(rows + 33, rows + 95, std::back_inserter(valid_values), is_valid);
+  auto const expected_values =
+    cudf::test::fixed_width_column_wrapper<T, int32_t>(valid_values.begin(), valid_values.end());
+  for (auto const topk_order : {cudf::order::ASCENDING, cudf::order::DESCENDING}) {
+    auto const result = sorted(cudf::top_k(input, 55, topk_order));
+    EXPECT_EQ(result->null_count(), 2);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values,
+                                        cudf::slice(result->view(), {2, 55}).front());
+  }
 }
 
 template <typename T>
@@ -154,25 +186,19 @@ TYPED_TEST(TopKFloatingPoint, NaNsOrderLast)
   auto const nan     = std::numeric_limits<T>::quiet_NaN();
   auto const neg_nan = std::copysign(nan, T{-1});
 
-  // A NaN compares equal to every other NaN and greater than every other value, and its sign
-  // carries no order. Every k below is chosen so the k-th element does not fall inside a group of
-  // equal elements, which makes the expected set unique even though the choice among equal
-  // elements is unspecified. The returned indices are sorted before comparing because top_k_order
-  // does not promise them in any order.
+  // NaNs compare equal to each other and greater than every other value, whatever their sign. Each
+  // k avoids splitting a group of equal values, so the expected set is unique.
   auto input = cudf::test::fixed_width_column_wrapper<T>({T{2}, neg_nan, T{1}, nan, T{3}});
 
-  auto result = cudf::top_k_order(input, 3, cudf::order::ASCENDING);
-  result      = std::move(cudf::sort(cudf::table_view({result->view()}))->release().front());
+  auto result         = sorted(cudf::top_k_order(input, 3, cudf::order::ASCENDING));
   auto expected_order = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 2, 4});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 
-  result         = cudf::top_k_order(input, 2);
-  result         = std::move(cudf::sort(cudf::table_view({result->view()}))->release().front());
+  result         = sorted(cudf::top_k_order(input, 2));
   expected_order = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1, 3});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 
-  result         = cudf::top_k_order(input, 3);
-  result         = std::move(cudf::sort(cudf::table_view({result->view()}))->release().front());
+  result         = sorted(cudf::top_k_order(input, 3));
   expected_order = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1, 3, 4});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 }
@@ -184,21 +210,18 @@ TYPED_TEST(TopKFloatingPoint, Infinities)
   auto const nan = std::numeric_limits<T>::quiet_NaN();
   auto const inf = std::numeric_limits<T>::infinity();
 
-  // Pins NaN above +infinity, which is what keeps the two apart in the returned set.
+  // NaN ranks above +infinity.
   auto input = cudf::test::fixed_width_column_wrapper<T>({inf, -inf, T{0}, nan});
 
-  auto result = cudf::top_k_order(input, 2, cudf::order::ASCENDING);
-  result      = std::move(cudf::sort(cudf::table_view({result->view()}))->release().front());
+  auto result         = sorted(cudf::top_k_order(input, 2, cudf::order::ASCENDING));
   auto expected_order = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1, 2});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 
-  result         = cudf::top_k_order(input, 2);
-  result         = std::move(cudf::sort(cudf::table_view({result->view()}))->release().front());
+  result         = sorted(cudf::top_k_order(input, 2));
   expected_order = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 3});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 
-  auto values   = cudf::top_k(input, 2, cudf::order::ASCENDING);
-  values        = std::move(cudf::sort(cudf::table_view({values->view()}))->release().front());
+  auto values   = sorted(cudf::top_k(input, 2, cudf::order::ASCENDING));
   auto expected = cudf::test::fixed_width_column_wrapper<T>({-inf, T{0}});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, values->view());
 }
@@ -207,18 +230,14 @@ TYPED_TEST(TopKFloatingPoint, SignedZeros)
 {
   using T = TypeParam;
 
-  // -0.0 and +0.0 compare equal, so which of the two is kept is unspecified. Both k values below
-  // take the pair whole, making the expected set unique either way. This is a regression guard
-  // rather than a check of that choice.
+  // -0.0 and +0.0 compare equal. Each k takes both, so the expected set is unique.
   auto input = cudf::test::fixed_width_column_wrapper<T>({T{-0.0}, T{1}, T{0.0}, T{-1}});
 
-  auto result = cudf::top_k_order(input, 3, cudf::order::ASCENDING);
-  result      = std::move(cudf::sort(cudf::table_view({result->view()}))->release().front());
+  auto result         = sorted(cudf::top_k_order(input, 3, cudf::order::ASCENDING));
   auto expected_order = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 2, 3});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 
-  result         = cudf::top_k_order(input, 3);
-  result         = std::move(cudf::sort(cudf::table_view({result->view()}))->release().front());
+  result         = sorted(cudf::top_k_order(input, 3));
   expected_order = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 1, 2});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 }
@@ -230,22 +249,103 @@ TYPED_TEST(TopKFloatingPoint, NullsAndNaNs)
   auto const nan = std::numeric_limits<T>::quiet_NaN();
   auto const inf = std::numeric_limits<T>::infinity();
 
-  // Nulls and NaNs are ordered by separate mechanisms -- a null is partitioned out of the key
-  // stream, a NaN is normalized inside it -- so they are exercised together. Ascending order is
-  // -inf(4) < 1(0) < 2(5) < NaN(1) == NaN(6), with rows 2 and 3 null. The derived null precedence
-  // places nulls at the far end of the requested direction, so neither direction reaches them here.
+  // Ascending order is -inf(4) < 1(0) < 2(5) < NaN(1) == NaN(6). Rows 2 and 3 are null, which
+  // neither direction reaches here.
   auto input = cudf::test::fixed_width_column_wrapper<T>({T{1}, nan, T{0}, T{0}, -inf, T{2}, nan},
                                                          {1, 1, 0, 0, 1, 1, 1});
 
-  // Ascending (nulls last by default): -inf, then 1.
+  // Ascending: -inf, then 1.
   auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 4});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     expected, sorted(cudf::top_k_order(input, 2, cudf::order::ASCENDING))->view());
 
-  // Descending (nulls last by default): the two NaNs, which outrank every value.
+  // Descending: the two NaNs, which outrank every value.
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1, 6});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     expected, sorted(cudf::top_k_order(input, 2, cudf::order::DESCENDING))->view());
+}
+
+TYPED_TEST(TopKFloatingPoint, MultiBlock)
+{
+  using T = TypeParam;
+
+  // Distinct finite values mixed with NaNs of both signs, infinities, and signed zeros, with and
+  // without nulls. Each k ends among the distinct finite values, so the expected set is unique.
+  auto constexpr num_rows = cudf::size_type{100'000};
+  auto const nan          = std::numeric_limits<T>::quiet_NaN();
+  auto const inf          = std::numeric_limits<T>::infinity();
+  auto values             = std::vector<T>(num_rows);
+  for (cudf::size_type row = 0; row < num_rows; ++row) {
+    switch (row % 1000) {
+      case 7: values[row] = std::copysign(nan, row % 2000 == 7 ? T{1} : T{-1}); break;
+      case 11: values[row] = inf; break;
+      case 13: values[row] = -inf; break;
+      case 17: values[row] = T{-0.0}; break;
+      case 19: values[row] = T{0.0}; break;
+      default: values[row] = static_cast<T>(row) - T{50'000}; break;
+    }
+  }
+  auto const is_valid = [](cudf::size_type row) { return row % 10 != 5; };
+
+  // NaNs compare equal to each other and greater than every other value.
+  auto const less = [](T lhs, T rhs) {
+    return std::isnan(rhs) ? !std::isnan(lhs) : (!std::isnan(lhs) && lhs < rhs);
+  };
+  auto const expected_rows = [&](cudf::size_type k, cudf::order topk_order, bool with_nulls) {
+    auto rows = std::vector<cudf::size_type>{};
+    for (cudf::size_type row = 0; row < num_rows; ++row) {
+      if (!with_nulls || is_valid(row)) { rows.push_back(row); }
+    }
+    std::stable_sort(rows.begin(), rows.end(), [&](auto lhs, auto rhs) {
+      return topk_order == cudf::order::ASCENDING ? less(values[lhs], values[rhs])
+                                                  : less(values[rhs], values[lhs]);
+    });
+    rows.resize(k);
+    std::sort(rows.begin(), rows.end());
+    return cudf::test::fixed_width_column_wrapper<cudf::size_type>(rows.begin(), rows.end());
+  };
+
+  auto const rows     = cuda::counting_iterator<cudf::size_type>{0};
+  auto const nullable = cudf::test::fixed_width_column_wrapper<T>(
+    values.begin(), values.end(), cuda::transform_iterator(rows, is_valid));
+  auto const non_nullable = cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end());
+
+  // 100 NaNs and 100 +infinities lead in descending order; 100 -infinities lead in ascending order.
+  for (auto const with_nulls : {false, true}) {
+    auto const input = with_nulls ? cudf::column_view{nullable} : cudf::column_view{non_nullable};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_rows(210, cudf::order::DESCENDING, with_nulls),
+                                   sorted(cudf::top_k_order(input, 210))->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      expected_rows(110, cudf::order::ASCENDING, with_nulls),
+      sorted(cudf::top_k_order(input, 110, cudf::order::ASCENDING))->view());
+  }
+}
+
+template <typename T>
+struct TopKFixedPoint : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(TopKFixedPoint, cudf::test::FixedPointTypes);
+
+TYPED_TEST(TopKFixedPoint, Nulls)
+{
+  using RepType    = cudf::device_storage_type_t<TypeParam>;
+  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
+  auto const scale = numeric::scale_type{-2};
+
+  // Rows 2 and 5 are null.
+  auto const input =
+    fp_wrapper({500, -300, 0, 1200, -4500, 700, 100}, {1, 1, 0, 1, 1, 0, 1}, scale);
+
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 3});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, sorted(cudf::top_k_order(input, 2))->view());
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1, 4});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected, sorted(cudf::top_k_order(input, 2, cudf::order::ASCENDING))->view());
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 1, 3, 4, 6});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, sorted(cudf::top_k_order(input, 5))->view());
+
+  auto const expected_values = fp_wrapper({500, 1200}, scale);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values, sorted(cudf::top_k(input, 2))->view());
 }
 
 TYPED_TEST(TopKTypes, TopKSegmented)
@@ -641,10 +741,8 @@ TEST_F(TopK, TopKSegmentedEmptyMultiBlock)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
 }
 
-// Multi-block: every tenth of 100'000 rows is null, so separating the null rows spans many thread
-// blocks. Values equal their row index, which makes every expected set unique. k is taken on both
-// sides of the number of non-null rows, where the selection stops finding an order statistic among
-// them and takes all of them instead.
+// Every tenth of 100'000 rows is null, and values equal their row index, so every expected set is
+// unique. k is taken on both sides of the number of non-null rows.
 TEST_F(TopK, TopKNullsMultiBlock)
 {
   auto constexpr num_rows = cudf::size_type{100'000};
@@ -670,11 +768,53 @@ TEST_F(TopK, TopKNullsMultiBlock)
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
       expected, sorted(cudf::top_k_order(input, num_valid, topk_order))->view());
 
-    // Padding with nulls is asserted on values, since which null rows are taken is unspecified.
-    // The sort puts the nulls first, so every non-null value follows them.
+    // Which null rows pad the result is unspecified, so compare values; sorting puts nulls first.
     auto const padded = sorted(cudf::top_k(input, num_valid + 5, topk_order));
     EXPECT_EQ(padded->null_count(), 5);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected,
                                         cudf::slice(padded->view(), {5, num_valid + 5}).front());
+  }
+}
+
+TEST_F(TopK, NullsBool)
+{
+  // Row 2 is null; the non-null rows hold two trues and three falses.
+  auto const input = cudf::test::fixed_width_column_wrapper<bool>(
+    {true, false, true, false, true, false}, {1, 1, 0, 1, 1, 1});
+
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 4});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, sorted(cudf::top_k_order(input, 2))->view());
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({1, 3, 5});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected, sorted(cudf::top_k_order(input, 3, cudf::order::ASCENDING))->view());
+}
+
+TEST_F(TopK, AllNulls)
+{
+  auto const input = cudf::test::fixed_width_column_wrapper<int32_t>(
+    {1, 2, 3, 4, 5}, cudf::test::iterators::all_nulls());
+
+  for (auto const topk_order : {cudf::order::ASCENDING, cudf::order::DESCENDING}) {
+    auto const result = cudf::top_k(input, 3, topk_order);
+    EXPECT_EQ(result->size(), 3);
+    EXPECT_EQ(result->null_count(), 3);
+  }
+}
+
+TEST_F(TopK, NullsStrings)
+{
+  // Strings take the sort path, which also orders nulls after every non-null row. Rows 1 and 4 are
+  // null.
+  auto const input = cudf::test::strings_column_wrapper({"b", "", "d", "a", ""}, {1, 0, 1, 1, 0});
+
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 2});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, sorted(cudf::top_k_order(input, 2))->view());
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 3});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected, sorted(cudf::top_k_order(input, 2, cudf::order::ASCENDING))->view());
+
+  // k = 4 exceeds the three non-null rows, so exactly one null is returned.
+  for (auto const topk_order : {cudf::order::ASCENDING, cudf::order::DESCENDING}) {
+    EXPECT_EQ(cudf::top_k(input, 4, topk_order)->null_count(), 1);
   }
 }

@@ -12,6 +12,7 @@
 #include <cudf/io/experimental/cudftable.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 
@@ -89,9 +90,7 @@ void write_cudftable(data_sink* sink, table_view const& input, cuda::stream_ref 
   sink->flush();
 }
 
-packed_table read_cudftable(datasource* source,
-                            cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+packed_table read_cudftable(datasource* source, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const header_size = sizeof(cudftable_header);
   CUDF_EXPECTS(source->size() >= header_size, "File too small to contain a valid cudftable header");

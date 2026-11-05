@@ -259,7 +259,7 @@ class stats_caster_base {
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr)
+                          cudf::memory_resources mr)
     {
       auto offsets =
         cudf::detail::make_empty_host_vector<cudf::size_type>(host_strings.size() + 1, stream);
@@ -270,8 +270,9 @@ class stats_caster_base {
         offsets.push_back(offsets.back() + str.size_bytes());
         sizes.push_back(str.size_bytes());
       }
-      auto d_chars   = cudf::detail::make_device_uvector_async(host_chars, stream, mr);
-      auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr);
+      auto d_chars =
+        cudf::detail::make_device_uvector_async(host_chars, stream, mr.get_output_mr());
+      auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr.get_output_mr());
       auto d_sizes   = cudf::detail::make_device_buffer_async(sizes, stream, mr);
       stream.sync();  // ensures the vectors are not destroyed before the copy is completed
       return {std::move(d_chars), std::move(d_offsets), std::move(d_sizes)};
@@ -279,7 +280,7 @@ class stats_caster_base {
 
     [[nodiscard]] std::unique_ptr<column> inline to_device(cudf::data_type dtype,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr) const
+                                                           cudf::memory_resources mr) const
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);
@@ -300,7 +301,7 @@ class stats_caster_base {
           null_count,
           std::move(null_mask_buffer));
       }
-      auto data = cudf::detail::make_device_uvector_async(val, stream, mr);
+      auto data = cudf::detail::make_device_uvector_async(val, stream, mr.get_output_mr());
       auto null_mask_buffer =
         cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
       CUDF_CUDA_TRY(cudf::detail::memcpy_async(null_mask_buffer.data(),

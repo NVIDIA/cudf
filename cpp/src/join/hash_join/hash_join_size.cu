@@ -9,6 +9,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/std/cstdint>
 
@@ -80,6 +81,6 @@ template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::INNER_JOI
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::LEFT_JOIN>(
   cudf::table_view const&, cuda::stream_ref) const;
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::FULL_JOIN>(
-  cudf::table_view const&, cuda::stream_ref, rmm::device_async_resource_ref) const;
+  cudf::table_view const&, cuda::stream_ref, cudf::memory_resources) const;
 
 }  // namespace cudf::detail

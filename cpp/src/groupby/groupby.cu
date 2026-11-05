@@ -64,7 +64,7 @@ struct empty_column_constructor {
   column_view values;
   aggregation const& agg;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   template <typename ValuesType, aggregation::Kind k>
   std::unique_ptr<cudf::column> operator()() const
@@ -140,7 +140,7 @@ struct empty_column_constructor {
 template <typename RequestType>
 auto empty_results(std::span<RequestType const> requests,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cudf::memory_resources mr)
 {
   std::vector<aggregation_result> empty_results;
 

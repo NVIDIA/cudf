@@ -703,7 +703,7 @@ std::vector<std::unique_ptr<column>> materialize_string_columns(
   device_span<char const> data,
   std::vector<cuda::device_buffer<string_offset_pair<OffsetT>>>& staging,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   using cudf::strings::detail::string_index_pair;
   auto const to_pair = cuda::proclaim_return_type<string_index_pair>(
@@ -756,7 +756,7 @@ decode_result decode_data(parse_options const& parse_opts,
                           int32_t num_actual_columns,
                           int32_t num_active_columns,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr)
+                          cudf::memory_resources mr)
 {
   // Alloc output; columns' data memory is still expected for empty dataframe
   std::vector<column_buffer> out_buffers;
@@ -863,7 +863,7 @@ table_with_metadata read_csv(cudf::io::datasource* source,
                              csv_reader_options const& reader_opts,
                              parse_options const& parse_opts,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   std::vector<char> header;
 
@@ -1224,7 +1224,7 @@ parse_options make_parse_options(csv_reader_options const& reader_opts, cuda::st
 table_with_metadata read_csv(std::unique_ptr<cudf::io::datasource>&& source,
                              csv_reader_options const& options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   auto parse_options = make_parse_options(options, stream);
 

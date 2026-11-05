@@ -221,7 +221,7 @@ class output_builder {
   output_builder(size_type max_write_size,
                  size_type max_growth,
                  cuda::stream_ref stream,
-                 rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+                 cudf::memory_resources mr = cudf::get_current_device_resource_ref())
     : _max_write_size{max_write_size}, _max_growth{max_growth}, _mr{mr}
   {
     CUDF_EXPECTS(max_write_size > 0, "Internal error");
@@ -326,7 +326,7 @@ class output_builder {
    * @return The output vector.
    */
   template <typename Buffer = rmm::device_uvector<T>>
-  [[nodiscard]] Buffer gather(cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  [[nodiscard]] Buffer gather(cuda::stream_ref stream, cudf::memory_resources mr) const
   {
     auto output = [&] {
       if constexpr (std::is_same_v<Buffer, cuda::device_buffer<T>>) {
@@ -351,7 +351,7 @@ class output_builder {
   // TODO: Replace this with a resizable buffer once https://github.com/NVIDIA/cccl/issues/12051
   // is done
   struct output_chunk {
-    output_chunk(size_type capacity, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+    output_chunk(size_type capacity, cuda::stream_ref stream, cudf::memory_resources mr)
       : storage(stream, mr, capacity, cuda::no_init)
     {
     }

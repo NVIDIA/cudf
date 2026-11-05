@@ -16,6 +16,7 @@
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -129,10 +130,7 @@ struct [[nodiscard]] instance_context {
   friend struct ast_converter;
   friend struct node;
 
-  instance_context(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-    : stream_(stream), mr_(mr)
-  {
-  }
+  instance_context(cuda::stream_ref stream, cudf::memory_resources mr) : stream_(stream), mr_(mr) {}
 
   instance_context(instance_context const&) = delete;
 
@@ -528,7 +526,7 @@ struct [[nodiscard]] ast_converter {
    * @param right_table Right input table referenced by expressions
    */
   ast_converter(cuda::stream_ref stream,
-                rmm::device_async_resource_ref mr,
+                cudf::memory_resources mr,
                 table_view left_table,
                 table_view right_table)
     : stream_(std::move(stream)),
@@ -599,7 +597,7 @@ struct [[nodiscard]] ast_converter {
     table_view const& right_table,
     std::string_view function_name,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   /**
    * @brief Convert an AST `filter` expression to a `cudf::filter`
@@ -620,7 +618,7 @@ struct [[nodiscard]] ast_converter {
                                table_view const& right_table,
                                std::string_view function_name,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               cudf::memory_resources mr);
 };
 
 }  // namespace row_ir

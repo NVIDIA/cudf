@@ -6,7 +6,7 @@ import functools
 import os
 import warnings
 from pickle import dumps
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import cachetools
 import cupy as cp
@@ -288,7 +288,9 @@ def _buffer_as_dtyped_view(data: "Buffer", n: int, dtype: np.dtype):
 
 
 def _get_input_args_from_frame(fr: IndexedFrame) -> list:
-    args: list[Buffer | tuple[Buffer, Buffer]] = []
+    # Heterogeneous launch args: a per-column data view (cupy array) or string
+    # wrapper, optionally paired with a mask view, followed by int offsets.
+    args: list[Any] = []
     offsets = []
     for col in _supported_cols_from_frame(fr).values():
         if _is_string_dtype(col.dtype):
@@ -427,7 +429,7 @@ def set_malloc_heap_size(size=None):
         _HEAP_SIZE = size
 
 
-def column_to_mlir_string_array_init_heap(col: plc.Column) -> Buffer:
+def column_to_mlir_string_array_init_heap(col: plc.Column) -> rmm.DeviceBuffer:
     set_malloc_heap_size()
     return _column_to_mlir_string_array(col)
 
@@ -446,7 +448,7 @@ def _column_to_mlir_string_array(plc_col: plc.Column) -> rmm.DeviceBuffer:
 
     offsets_data = plc_col.child(0).data()
     chars_data = plc_col.data()
-    offsets_ptr = offsets_data.ptr
+    offsets_ptr = offsets_data.ptr if offsets_data is not None else 0
     chars_ptr = chars_data.ptr if chars_data is not None else 0
 
     offset_type_id = plc_col.child(0).type().id()

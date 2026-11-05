@@ -33,7 +33,7 @@ def _row_slot():
     raise NotImplementedError("_row_slot is only for JIT")
 
 
-_row_slot_cases = []
+_row_slot_cases: list[Row] = []
 
 
 class RowSlotTemplate(AbstractTemplate):

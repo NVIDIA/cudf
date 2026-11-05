@@ -97,6 +97,34 @@ def test_compute_column(expr, df):
     assert_frame_equal(expect, got)
 
 
+def test_boolean_xor_is_not_converted_to_ast():
+    # libcudf's AST evaluation rejects XOR of booleans, so it must stay out of
+    # a pushed-down filter.
+    stream = get_cuda_stream()
+    q = pl.LazyFrame({"a": [True, False], "b": [True, True]}).select(
+        pl.col("a") ^ pl.col("b")
+    )
+    ir = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+    assert isinstance(ir, ir_nodes.Select)
+    (named,) = ir.exprs
+    with_colrefs = insert_colrefs(
+        named.value,
+        table_ref=plc.expressions.TableReference.LEFT,
+        name_to_index={"a": 0, "b": 1},
+    )
+    assert to_ast(with_colrefs, stream=stream) is None
+    # Integer XOR is still supported.
+    q = pl.LazyFrame({"a": [1, 2], "b": [3, 3]}).select(pl.col("a") ^ pl.col("b"))
+    ir = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+    (named,) = ir.exprs
+    with_colrefs = insert_colrefs(
+        named.value,
+        table_ref=plc.expressions.TableReference.LEFT,
+        name_to_index={"a": 0, "b": 1},
+    )
+    assert to_ast(with_colrefs, stream=stream) is not None
+
+
 def test_invalid_colref_construction_raises():
     literal = expr_nodes.Literal(DataType(pl.datatypes.Int8()), 1)
     with pytest.raises(TypeError):

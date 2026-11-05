@@ -271,7 +271,7 @@ device_span<size_type const> groupby_helper::group_labels(cuda::stream_ref strea
     if (!labels.empty()) {
       auto const offsets = group_offsets(stream, mr);
       cudf::detail::label_segments(
-        offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream);
+        offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream, mr.as_temporary());
     }
   }
   return *_groups->group_labels;

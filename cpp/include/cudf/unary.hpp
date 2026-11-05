@@ -141,16 +141,15 @@ std::unique_ptr<cudf::column> is_valid(
  * @param input Input column
  * @param out_type Desired datatype of output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  *
  * @returns Column of same size as `input` containing result of the cast operation
  * @throw cudf::logic_error if `input` or `out_type` is not a fixed-width type
  */
-std::unique_ptr<column> cast(
-  column_view const& input,
-  data_type out_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> cast(column_view const& input,
+                             data_type out_type,
+                             cuda::stream_ref stream   = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Check if a cast between two datatypes is supported.

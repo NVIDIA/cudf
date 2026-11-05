@@ -84,17 +84,8 @@ kernel get_udf_kernel(std::string const& source_file,
   std::vector<rtcx::memory_fragment> fragments{
     {.data = kernel_fragment->view(), .type = rtcx::binary_type::LTO_IR, .name = nullptr}};
   for (auto const& fragment : link_fragments) {
-    auto const binary_type = [&] {
-      switch (fragment.type) {
-        case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
-        case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
-        case lto_binary_type::PTX: return rtcx::binary_type::PTX;
-        default:
-          CUDF_FAIL(std::format("Unrecognized LTO binary type {}", static_cast<int>(fragment.type)),
-                    std::invalid_argument);
-      }
-    }();
-    fragments.push_back({.data = fragment.data, .type = binary_type, .name = nullptr});
+    fragments.push_back(
+      {.data = fragment.data, .type = as_rtcx_binary_type(fragment.type), .name = nullptr});
   }
   return get_lto_linked_kernel(source_file, {}, fragments);
 }

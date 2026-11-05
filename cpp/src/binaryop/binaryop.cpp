@@ -389,7 +389,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                         {},
                         std::nullopt,
                         stream,
-                        mr);
+                        mr.get_output_mr());
 
   auto columns = result->release();
   return std::move(columns.front());

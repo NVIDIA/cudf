@@ -1373,8 +1373,11 @@ def test_datetime_offset_by_extreme_values(
         # polars floors sub-day offsets on a Date and nulls overflow.
         (pl.Date(), "1d"),
         (pl.Date(), "1h"),
-        # A duration longer than polars' INT64 nanoseconds wraps there.
+        # A duration of 2**63 nanoseconds or more wraps in polars' INT64
+        # nanoseconds before it is converted to the time unit, so on
+        # microsecond and millisecond columns even -2**63 ns flips its sign.
         (pl.Datetime("ms"), "9223372036s854775808ns"),
+        (pl.Datetime("us"), "-9223372036s854775808ns"),
         (pl.Datetime("ms"), "1000000000m"),
         (pl.Datetime("us"), ""),
     ],

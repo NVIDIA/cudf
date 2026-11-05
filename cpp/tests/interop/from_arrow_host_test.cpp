@@ -25,6 +25,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <array>
 #include <cstring>
@@ -1134,3 +1135,135 @@ INSTANTIATE_TEST_CASE_P(FromArrowHostDeviceTest,
                                           std::make_tuple(0, 0),
                                           std::make_tuple(0, 3000),
                                           std::make_tuple(10000, 10000)));
+
+namespace {
+template <typename IndexType>
+std::unique_ptr<cudf::column> dictionary_from_arrow_host(std::vector<int64_t> const& keys,
+                                                         std::vector<IndexType> const& indices,
+                                                         std::vector<uint8_t> const& validity,
+                                                         int64_t offset = 0)
+{
+  nanoarrow::UniqueSchema schema;
+  NANOARROW_THROW_NOT_OK(
+    ArrowSchemaInitFromType(schema.get(), nanoarrow_storage_type<IndexType>::type));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaAllocateDictionary(schema.get()));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema->dictionary, NANOARROW_TYPE_INT64));
+
+  auto array = get_nanoarrow_dict_array<int64_t, IndexType>(keys, indices, validity);
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_NONE, nullptr));
+  slice_host_nanoarrow(array.get(), offset, static_cast<int64_t>(indices.size()));
+
+  ArrowDeviceArray input;
+  memcpy(&input.array, array.get(), sizeof(ArrowArray));
+  input.device_id   = -1;
+  input.device_type = ARROW_DEVICE_CPU;
+  return cudf::from_arrow_host_column(schema.get(), &input);
+}
+
+template <typename SignedType>
+std::unique_ptr<cudf::column> expected_dictionary(std::vector<int64_t> const& keys,
+                                                  std::vector<SignedType> const& indices,
+                                                  std::vector<uint8_t> const& validity)
+{
+  auto keys_col    = cudf::test::fixed_width_column_wrapper<int64_t>(keys.begin(), keys.end());
+  auto indices_col = cudf::test::fixed_width_column_wrapper<SignedType>(
+    indices.begin(), indices.end(), validity.begin());
+  return cudf::make_dictionary_column(keys_col, indices_col);
+}
+
+std::vector<int64_t> sequential_keys(int64_t num_keys)
+{
+  std::vector<int64_t> keys(num_keys);
+  std::iota(keys.begin(), keys.end(), int64_t{0});
+  return keys;
+}
+
+}  // namespace
+
+template <typename T>
+struct FromArrowHostDictionaryUnsignedIndicesTest : public cudf::test::BaseFixture {};
+
+using UnsignedIndexTypes = cudf::test::Types<uint8_t, uint16_t, uint32_t>;
+TYPED_TEST_SUITE(FromArrowHostDictionaryUnsignedIndicesTest, UnsignedIndexTypes);
+
+TYPED_TEST(FromArrowHostDictionaryUnsignedIndicesTest, SameWidthWhenKeysFit)
+{
+  using IndexType  = TypeParam;
+  using SignedType = cuda::std::make_signed_t<IndexType>;
+  std::vector<int64_t> keys{10, 20, 30, 40};
+  std::vector<uint8_t> validity{1, 0, 1, 1, 1};
+
+  auto got =
+    dictionary_from_arrow_host<IndexType>(keys, std::vector<IndexType>{3, 0, 1, 2, 3}, validity);
+
+  auto expected =
+    expected_dictionary<SignedType>(keys, std::vector<SignedType>{3, 0, 1, 2, 3}, validity);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<SignedType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), got->view());
+}
+
+TYPED_TEST(FromArrowHostDictionaryUnsignedIndicesTest, AllNullWithNoKeysKeepsRows)
+{
+  using IndexType  = TypeParam;
+  using SignedType = cuda::std::make_signed_t<IndexType>;
+  std::vector<uint8_t> validity{0, 0, 0};
+
+  auto got = dictionary_from_arrow_host<IndexType>({}, std::vector<IndexType>{0, 0, 0}, validity);
+
+  EXPECT_EQ(got->size(), 3);
+  EXPECT_EQ(got->null_count(), 3);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<SignedType>()});
+}
+
+template <typename T>
+struct FromArrowHostDictionaryNarrowIndicesTest : public cudf::test::BaseFixture {};
+
+using NarrowUnsignedIndexTypes = cudf::test::Types<uint8_t, uint16_t>;
+TYPED_TEST_SUITE(FromArrowHostDictionaryNarrowIndicesTest, NarrowUnsignedIndexTypes);
+
+TYPED_TEST(FromArrowHostDictionaryNarrowIndicesTest, ReinterpretAtSignedLimit)
+{
+  using IndexType          = TypeParam;
+  using SignedType         = cuda::std::make_signed_t<IndexType>;
+  auto constexpr max_index = std::numeric_limits<SignedType>::max();
+  auto const keys          = sequential_keys(int64_t{max_index} + 1);
+  std::vector<uint8_t> validity{1, 0, 1};
+
+  auto got = dictionary_from_arrow_host<IndexType>(
+    keys, std::vector<IndexType>{static_cast<IndexType>(max_index), 0, 1}, validity);
+
+  auto expected =
+    expected_dictionary<SignedType>(keys, std::vector<SignedType>{max_index, 0, 1}, validity);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<SignedType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), got->view());
+}
+
+TYPED_TEST(FromArrowHostDictionaryNarrowIndicesTest, WidenAboveSignedLimit)
+{
+  using IndexType = TypeParam;
+  using WiderType = std::conditional_t<std::is_same_v<IndexType, uint8_t>, int16_t, int32_t>;
+  auto constexpr max_index =
+    static_cast<WiderType>(std::numeric_limits<cuda::std::make_signed_t<IndexType>>::max() + 1);
+  auto const keys = sequential_keys(int64_t{max_index} + 1);
+  std::vector<uint8_t> validity{1, 0, 1};
+
+  auto got = dictionary_from_arrow_host<IndexType>(
+    keys, std::vector<IndexType>{static_cast<IndexType>(max_index), 0, 1}, validity);
+
+  auto expected =
+    expected_dictionary<WiderType>(keys, std::vector<WiderType>{max_index, 0, 1}, validity);
+  EXPECT_EQ(cudf::dictionary_column_view(got->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<WiderType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), got->view());
+
+  auto got_sliced = dictionary_from_arrow_host<IndexType>(
+    keys, std::vector<IndexType>{static_cast<IndexType>(max_index), 0, 1}, validity, 1);
+  auto expected_sliced = cudf::slice(expected->view(), {1, 3}).front();
+  EXPECT_EQ(cudf::dictionary_column_view(got_sliced->view()).indices().type(),
+            cudf::data_type{cudf::type_to_id<WiderType>()});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_sliced, got_sliced->view());
+}

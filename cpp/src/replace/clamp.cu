@@ -29,6 +29,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -84,7 +85,8 @@ std::unique_ptr<cudf::column> clamp_string_column(strings_column_view const& inp
 
   auto fn = clamp_strings_fn<OptionalScalarIterator, ReplaceScalarIterator>{
     d_input, lo_itr, lo_replace_itr, hi_itr, hi_replace_itr};
-  rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(input.size(), stream);
+  cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},

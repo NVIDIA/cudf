@@ -15,6 +15,7 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 
 @pytest.fixture(
@@ -181,7 +182,6 @@ def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
     [
         pl.col("b").filter(pl.col("b") > 20),
         pl.col("b").head(2),
-        pl.lit(1),
     ],
 )
 def test_max_min_by_mismatched_length_raises(
@@ -197,16 +197,35 @@ def test_max_min_by_mismatched_length_raises(
             q.collect(engine=engine)
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 raises ShapeError for a length-1 value or key",
+)
 @pytest.mark.parametrize("expr", ["max_by", "min_by"])
-def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str) -> None:
+@pytest.mark.parametrize("value", [pl.lit(99), pl.col("b").max()])
+def test_max_min_by_scalar_value(engine: pl.GPUEngine, expr: str, value) -> None:
+    # polars >= 2.1 broadcasts a scalar value over the `by` keys.
     df = pl.LazyFrame({"b": [1, 5, 2]})
-    q = df.select(getattr(pl.lit(99), expr)("b"))
-    if is_streaming_engine(engine):
-        with pytest.RaisesGroup(pl.exceptions.ShapeError):
-            q.collect(engine=engine)
-    else:
-        with pytest.raises(pl.exceptions.ShapeError):
-            q.collect(engine=engine)
+    q = df.select(getattr(value, expr)("b").alias("out"))
+    assert_gpu_result_equal(q, engine=engine)
+    empty = df.clear().select(getattr(value, expr)("b").alias("out"))
+    assert_gpu_result_equal(empty, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 raises ShapeError for a length-1 value or key",
+)
+@pytest.mark.parametrize("expr", ["max_by", "min_by"])
+def test_max_min_by_scalar_key(engine: pl.GPUEngine, expr: str) -> None:
+    # A scalar `by` ties every row, so any row of the input may be returned.
+    df = pl.LazyFrame({"a": [1, 2, 3, 4]})
+    for by in [pl.lit(1), pl.col("a").max()]:
+        q = df.select(getattr(pl.col("a"), expr)(by))
+        out = q.collect(engine=engine).item()
+        assert out in {1, 2, 3, 4}
+    q = df.select(getattr(pl.col("a"), expr)(pl.lit(None, dtype=pl.Int64)))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
@@ -403,6 +422,81 @@ def test_cum_agg_reverse(engine: pl.GPUEngine, cum_agg, data, dtype):
     assert_gpu_result_equal(q, engine=engine, check_exact=False)
 
 
+@pytest.mark.parametrize("cum_agg", ["cum_min", "cum_max"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_cum_min_max_float_nan(engine: pl.GPUEngine, cum_agg, reverse):
+    nan = float("nan")
+    values = [nan, 3.0, nan, 1.0, None, nan, 0.5, -float("inf"), nan]
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Float64())})
+    q = df.select(getattr(pl.col("a"), cum_agg)(reverse=reverse))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("cum_agg", ["cum_min", "cum_max"])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_cum_min_max_sorted(
+    engine: pl.GPUEngine, cum_agg, reverse, descending, nulls_last
+):
+    sorted_values = sorted([1, 2, 2, 3], reverse=descending)
+    values = [*sorted_values, None] if nulls_last else [None, *sorted_values]
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Int32())})
+    q = df.select(
+        getattr(pl.col("a").set_sorted(descending=descending), cum_agg)(reverse=reverse)
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "cum_agg,reverse,descending",
+    [
+        ("cum_max", False, False),
+        ("cum_min", False, True),
+        ("cum_min", True, False),
+        ("cum_max", True, True),
+    ],
+)
+def test_cum_min_max_sorted_keeps_sorted_flag(
+    in_memory_engine: pl.GPUEngine, cum_agg, reverse, descending
+):
+    values = sorted([1, 2, 2, 3], reverse=descending)
+    df = pl.LazyFrame({"a": pl.Series([None, *values], dtype=pl.Int32())})
+    q = df.select(
+        getattr(pl.col("a").set_sorted(descending=descending), cum_agg)(reverse=reverse)
+    )
+    result = q.collect(engine=in_memory_engine)
+    assert result["a"].flags["SORTED_DESC" if descending else "SORTED_ASC"]
+
+
+@pytest.mark.parametrize("cum_agg", ["cum_min", "cum_max"])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("data", [[], [None, None], [1]])
+def test_cum_min_max_no_valid_or_one_row(engine: pl.GPUEngine, cum_agg, reverse, data):
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Int32())})
+    q = df.select(getattr(pl.col("a").set_sorted(), cum_agg)(reverse=reverse))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "cum_agg,reverse,descending,values",
+    [
+        ("cum_min", False, True, [float("nan"), 2.0, 1.0, None]),
+        ("cum_min", True, False, [None, 1.0, 2.0, float("nan")]),
+        ("cum_max", False, False, [None, 1.0, 2.0, float("nan")]),
+        ("cum_max", True, True, [float("nan"), 2.0, 1.0, None]),
+    ],
+)
+def test_cum_min_max_sorted_float_nan(
+    engine: pl.GPUEngine, cum_agg, reverse, descending, values
+):
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Float64())})
+    q = df.select(
+        getattr(pl.col("a").set_sorted(descending=descending), cum_agg)(reverse=reverse)
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("q", [0.5, pl.lit(0.5)])
 @pytest.mark.parametrize("interp", ["nearest", "higher", "lower", "midpoint", "linear"])
 def test_quantile(engine: pl.GPUEngine, df, q, interp):
@@ -447,6 +541,51 @@ def test_agg_float_with_nans(engine: pl.GPUEngine, op):
     )
     q = df.select(op(pl.col("a")), op(pl.col("b")))
 
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("op", [pl.Expr.min, pl.Expr.max])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_min_max_sorted(engine: pl.GPUEngine, dtype, op, descending, nulls_last):
+    sorted_values = sorted([1, 2, 2, 3], reverse=descending)
+    values = [*sorted_values, None] if nulls_last else [None, *sorted_values]
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=dtype)})
+    q = df.select(op(pl.col("a").set_sorted(descending=descending)))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("op", [pl.Expr.min, pl.Expr.max])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("dtype", [pl.Int32, pl.Float64])
+def test_min_max_sorted_then_is_finite(engine: pl.GPUEngine, op, descending, dtype):
+    values = [None, *sorted([1, 2, 3], reverse=descending)]
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=dtype)})
+    q = df.select(op(pl.col("a").set_sorted(descending=descending)).is_finite())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("op", [pl.Expr.min, pl.Expr.max])
+@pytest.mark.parametrize("data", [[], [None, None], [1]])
+def test_min_max_sorted_no_valid_or_one_row(engine: pl.GPUEngine, op, data):
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Int32())})
+    q = df.select(op(pl.col("a").set_sorted()))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "op", [pl.Expr.min, pl.Expr.nan_min, pl.Expr.max, pl.Expr.nan_max]
+)
+@pytest.mark.parametrize(
+    "descending,values",
+    [
+        (False, [None, 1.0, 2.0, float("nan")]),
+        (True, [float("nan"), 2.0, 1.0, None]),
+    ],
+)
+def test_min_max_sorted_float_nan(engine: pl.GPUEngine, op, descending, values):
+    df = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Float64())})
+    q = df.select(op(pl.col("a").set_sorted(descending=descending)))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -571,4 +710,9 @@ def test_hist_no_bin_count_unsupported(engine: pl.GPUEngine):
 def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
     df = pl.LazyFrame({"a": [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]})
     q = df.select(expr)
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_n_unique_null_dtype_unsupported(engine: pl.GPUEngine) -> None:
+    q = pl.LazyFrame({"x": [1, 2, 3]}).select(pl.lit(None).drop_nulls().n_unique())
     assert_ir_translation_raises(q, engine, NotImplementedError)

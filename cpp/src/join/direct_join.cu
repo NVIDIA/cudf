@@ -111,11 +111,13 @@ direct_inner_join(column_view const& left_keys,
   auto const out_iter    = cuda::tabulate_output_iterator{
     emit_match_pair{left_indices->data(), right_indices->data(), lookup.data(), d_left_keys}};
 
+  cudf::memory_resources mrs{mr};
   auto const out_end = cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                                              cuda::counting_iterator<size_type>{left_keys.size()},
                                              out_iter,
                                              is_match{lookup.data(), d_left_keys},
-                                             stream);
+                                             stream,
+                                             mrs.as_temporary());
 
   auto const num_matches = cuda::std::distance(out_iter, out_end);
   left_indices->resize(num_matches, stream);

@@ -17,6 +17,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/buffer>
 #include <cuda/stream>
@@ -27,8 +28,18 @@ hash_compound_agg_finalizer::hash_compound_agg_finalizer(column_view const& col,
                                                          cudf::detail::result_cache* cache,
                                                          cuda::stream_ref stream,
                                                          cudf::memory_resources mr)
+  : hash_compound_agg_finalizer(col, cache, col.has_nulls(), stream, mr)
+{
+}
+
+hash_compound_agg_finalizer::hash_compound_agg_finalizer(column_view const& col,
+                                                         cudf::detail::result_cache* cache,
+                                                         bool input_has_nulls,
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr)
   : col{col},
     input_type{is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type()},
+    input_has_nulls{input_has_nulls},
     cache{cache},
     stream{stream},
     mr{mr}
@@ -68,11 +79,10 @@ void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& final
                                         MakeArgAggFn make_arg_agg)
 {
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
-  if (finalizer.input_type.id() == type_id::STRING) {
+  if (finalizer.input_type.id() == type_id::STRING || cudf::is_nested(finalizer.input_type)) {
     auto transformed_agg = make_arg_agg();
     finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
   }  // else: no-op, since this is only relevant for compound aggregations
-  // TODO: support other nested types.
 }
 
 // Specialization for MIN aggregation
@@ -119,7 +129,7 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
   if (sum_result.has_nulls()) {
     result->set_null_mask(cudf::detail::copy_bitmask(sum_result, stream, mr.get_output_mr()),
                           sum_result.null_count());
-  } else if (col.has_nulls()) {  // SUM aggregation is only intermediate result, thus it is
+  } else if (input_has_nulls) {  // SUM aggregation is only intermediate result, thus it is
                                  // forced to be non-nullable
     auto [null_mask, null_count] = make_mask_from_counts(
       count_result.begin<size_type>(), count_result.end<size_type>(), stream, mr.as_temporary());

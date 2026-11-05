@@ -48,10 +48,6 @@ def _parse_remote_io_backend(value: str) -> kvikio.RemoteIOBackend:
     return kvikio.RemoteIOBackend[value.upper()]
 
 
-def _parse_reactor_dispatch(value: str) -> kvikio.RemoteReactorDispatch:
-    return kvikio.RemoteReactorDispatch[value.upper()]
-
-
 def _opt(
     category: str,
     env_var: str | None = None,
@@ -145,7 +141,7 @@ class StreamingOptions:
     num_streaming_threads
         Threads used to execute coroutines.
         Env: ``RAPIDSMPF_NUM_STREAMING_THREADS``.
-        Default: ``1``.
+        Default: ``4``.
         Category: rapidsmpf.
     num_streams
         CUDA streams for concurrent GPU execution.
@@ -176,7 +172,8 @@ class StreamingOptions:
     pinned_memory
         Enable pinned host memory.
         Env: ``RAPIDSMPF_PINNED_MEMORY``.
-        Default: ``True``.
+        Default: ``True`` if the system supports pinned memory resources,
+        otherwise ``False``.
         Category: rapidsmpf.
     pinned_initial_pool_size
         Initial pinned memory pool size (bytes).
@@ -266,12 +263,6 @@ class StreamingOptions:
         Number of reactor threads used by the ``MULTI_POLL`` remote I/O backend.
         Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT``.
         Default: ``24``.
-        Category: executor.
-    kvikio_reactor_dispatch
-        How sub-ranges of one read are distributed across reactor threads under
-        the ``MULTI_POLL`` remote I/O backend.
-        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH``.
-        Default: ``kvikio.RemoteReactorDispatch.PER_CHUNK``.
         Category: executor.
     kvikio_request_ceiling
         Maximum number of concurrent in-flight requests across all reactor
@@ -436,11 +427,6 @@ class StreamingOptions:
     )
     kvikio_reactor_count: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT", int
-    )
-    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch | Unspecified = _opt(
-        "executor",
-        "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH",
-        _parse_reactor_dispatch,
     )
     kvikio_request_ceiling: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING", int
@@ -690,7 +676,7 @@ class StreamingOptions:
             type=int,
             help=textwrap.dedent("""\
                 Number of threads used to execute coroutines. Must be > 0.
-                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 1."""),
+                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 4."""),
         )
         g.add_argument(
             "--num-streams",
@@ -745,7 +731,7 @@ class StreamingOptions:
             action=argparse.BooleanOptionalAction,
             help=textwrap.dedent("""\
                 Enable pinned host memory if available on the system.
-                Env: RAPIDSMPF_PINNED_MEMORY. Default: true."""),
+                Env: RAPIDSMPF_PINNED_MEMORY. Default: true if supported."""),
         )
         g.add_argument(
             "--pinned-initial-pool-size",

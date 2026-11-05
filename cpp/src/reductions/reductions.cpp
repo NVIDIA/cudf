@@ -16,9 +16,11 @@
 #include <cudf/reduction/detail/histogram.hpp>
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <utility>
@@ -87,7 +89,7 @@ struct reduction_function : public base_reduction_function {
 };
 
 template <typename Source>
-  requires(cudf::is_numeric<Source>() or cudf::is_fixed_point<Source>())
+  requires(cudf::concepts::arithmetic<Source> or cudf::concepts::fixed_point<Source>)
 struct reduction_function<Source, cudf::aggregation::SUM> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -109,7 +111,7 @@ struct reduction_function<Source, cudf::aggregation::SUM_OVERFLOW>
 };
 
 template <typename Source>
-  requires(cudf::is_numeric<Source>() or cudf::is_fixed_point<Source>())
+  requires(cudf::concepts::arithmetic<Source> or cudf::concepts::fixed_point<Source>)
 struct reduction_function<Source, cudf::aggregation::PRODUCT> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -155,8 +157,7 @@ struct reduction_function<Source, cudf::aggregation::ARGMAX> : public base_reduc
   }
 };
 
-template <typename Source>
-  requires(std::is_arithmetic_v<Source>)
+template <cudf::concepts::arithmetic Source>
 struct reduction_function<Source, cudf::aggregation::ANY> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -168,8 +169,7 @@ struct reduction_function<Source, cudf::aggregation::ANY> : public base_reductio
   }
 };
 
-template <typename Source>
-  requires(std::is_arithmetic_v<Source>)
+template <cudf::concepts::arithmetic Source>
 struct reduction_function<Source, cudf::aggregation::ALL> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -182,7 +182,7 @@ struct reduction_function<Source, cudf::aggregation::ALL> : public base_reductio
 };
 
 template <typename Source>
-  requires(cudf::is_numeric<Source>() or cudf::is_fixed_point<Source>())
+  requires(cudf::concepts::arithmetic<Source> or cudf::concepts::fixed_point<Source>)
 struct reduction_function<Source, cudf::aggregation::SUM_OF_SQUARES>
   : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
@@ -191,8 +191,7 @@ struct reduction_function<Source, cudf::aggregation::SUM_OF_SQUARES>
   }
 };
 
-template <typename Source>
-  requires(std::is_arithmetic_v<Source>)
+template <cudf::concepts::arithmetic Source>
 struct reduction_function<Source, cudf::aggregation::MEAN> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -200,8 +199,7 @@ struct reduction_function<Source, cudf::aggregation::MEAN> : public base_reducti
   }
 };
 
-template <typename Source>
-  requires(std::is_arithmetic_v<Source>)
+template <cudf::concepts::arithmetic Source>
 struct reduction_function<Source, cudf::aggregation::STD> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -211,8 +209,7 @@ struct reduction_function<Source, cudf::aggregation::STD> : public base_reductio
   }
 };
 
-template <typename Source>
-  requires(std::is_arithmetic_v<Source>)
+template <cudf::concepts::arithmetic Source>
 struct reduction_function<Source, cudf::aggregation::VARIANCE> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -222,7 +219,7 @@ struct reduction_function<Source, cudf::aggregation::VARIANCE> : public base_red
 };
 
 template <typename Source>
-  requires(std::is_arithmetic_v<Source> or cudf::is_fixed_point<Source>())
+  requires(cudf::concepts::arithmetic<Source> or cudf::concepts::fixed_point<Source>)
 struct reduction_function<Source, cudf::aggregation::MEDIAN> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -232,7 +229,7 @@ struct reduction_function<Source, cudf::aggregation::MEDIAN> : public base_reduc
 };
 
 template <typename Source>
-  requires(std::is_arithmetic_v<Source> or cudf::is_fixed_point<Source>())
+  requires(cudf::concepts::arithmetic<Source> or cudf::concepts::fixed_point<Source>)
 struct reduction_function<Source, cudf::aggregation::QUANTILE> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -332,8 +329,7 @@ struct reduction_function<Source, cudf::aggregation::MERGE_HISTOGRAM>
   }
 };
 
-template <typename Source>
-  requires(std::is_integral_v<Source>)
+template <cuda::std::integral Source>
 struct reduction_function<Source, cudf::aggregation::BITWISE_AGG> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
@@ -397,7 +393,7 @@ struct reduction_function<Source, cudf::aggregation::MERGE_SETS> : public base_r
 };
 
 template <typename Source>
-  requires(cudf::is_numeric<Source>() or cudf::is_fixed_point<Source>())
+  requires(cudf::concepts::arithmetic<Source> or cudf::concepts::fixed_point<Source>)
 struct reduction_function<Source, cudf::aggregation::TDIGEST> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {

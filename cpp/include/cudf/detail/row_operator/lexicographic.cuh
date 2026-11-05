@@ -20,9 +20,11 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -30,6 +32,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/std/tuple>
@@ -191,10 +194,9 @@ class device_row_comparator {
     {
     }
 
-    template <typename KeyType>
+    template <cuda::std::totally_ordered KeyType>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type lhs_element_index, size_type rhs_element_index) const noexcept
-      requires(cudf::is_relationally_comparable<KeyType, KeyType>())
     {
       auto const lidx = _lhs.element<cudf::dictionary32>(lhs_element_index).value();
       auto const ridx = _rhs.element<cudf::dictionary32>(rhs_element_index).value();
@@ -208,7 +210,6 @@ class device_row_comparator {
     template <typename KeyType>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type const, size_type const) const noexcept
-      requires(not cudf::is_relationally_comparable<KeyType, KeyType>())
     {
       CUDF_UNREACHABLE("Key types are not comparable");
     }
@@ -267,11 +268,10 @@ class device_row_comparator {
      * @return Indicates the relationship between the elements in the `lhs` and `rhs` columns, along
      * with the depth at which a null value was encountered.
      */
-    template <typename Element>
+    template <cuda::std::totally_ordered Element>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(cudf::is_relationally_comparable<Element, Element>() and
-               not cudf::is_dictionary<Element>())
+      requires(not cudf::concepts::dictionary<Element>)
     {
       if (_check_nulls) {
         bool const lhs_is_null{_lhs.is_null(lhs_element_index)};
@@ -288,13 +288,12 @@ class device_row_comparator {
                              cuda::std::numeric_limits<int>::max());
     }
 
-    template <typename Element>
+    template <cudf::concepts::dictionary Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
     operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(cudf::is_dictionary<Element>())
     {
       if (_check_nulls) {
         bool const lhs_is_null{_lhs.is_null(lhs_element_index)};
@@ -323,8 +322,8 @@ class device_row_comparator {
     template <typename Element>
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int> operator()(
       size_type const, size_type const) const noexcept
-      requires(not cudf::is_relationally_comparable<Element, Element>() and
-               (not has_nested_columns or not cudf::is_nested<Element>()))
+      requires(not cuda::std::totally_ordered<Element> and
+               (not has_nested_columns or not cudf::concepts::nested<Element>))
     {
       CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
     }
@@ -337,13 +336,13 @@ class device_row_comparator {
      * @return Indicates the relationship between the elements in the `lhs` and `rhs` columns, along
      * with the depth at which a null value was encountered.
      */
-    template <typename Element>
+    template <cudf::concepts::struct_view Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
     operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(has_nested_columns and cuda::std::is_same_v<Element, cudf::struct_view>)
+      requires(has_nested_columns)
     {
       column_device_view lcol = _lhs;
       column_device_view rcol = _rhs;
@@ -383,13 +382,13 @@ class device_row_comparator {
      * @return Indicates the relationship between the elements in the `lhs` and `rhs` columns, along
      * with the depth at which a null value was encountered.
      */
-    template <typename Element>
+    template <cudf::concepts::list_view Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ cuda::std::pair<cudf::detail::weak_ordering, int>
     operator()(size_type lhs_element_index, size_type rhs_element_index)
-      requires(has_nested_columns and cuda::std::is_same_v<Element, cudf::list_view>)
+      requires(has_nested_columns)
     {
       auto const is_l_row_null = _lhs.is_null(lhs_element_index);
       auto const is_r_row_null = _rhs.is_null(rhs_element_index);
@@ -571,12 +570,15 @@ struct preprocessed_table {
    *        the input tables that indicates how null values compare to all other. If it is empty,
    *        the order `null_order::BEFORE` will be used for all columns.
    * @param stream The stream to launch kernels and h->d copies on while preprocessing
+   * @param mr Device memory resources used for returned and temporary allocations
    * @return A shared pointer to a preprocessed table
    */
-  static std::shared_ptr<preprocessed_table> create(table_view const& table,
-                                                    host_span<order const> column_order,
-                                                    host_span<null_order const> null_precedence,
-                                                    cuda::stream_ref stream);
+  static std::shared_ptr<preprocessed_table> create(
+    table_view const& table,
+    host_span<order const> column_order,
+    host_span<null_order const> null_precedence,
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Preprocess tables for use with lexicographical comparison
@@ -597,6 +599,7 @@ struct preprocessed_table {
    *        the input tables that indicates how null values compare to all other. If it is empty,
    *        the order `null_order::BEFORE` will be used for all columns.
    * @param stream The stream to launch kernels and h->d copies on while preprocessing
+   * @param mr Device memory resources used for returned and temporary allocations
    * @return A pair of shared pointers to the preprocessed tables
    */
   static std::pair<std::shared_ptr<preprocessed_table>, std::shared_ptr<preprocessed_table>> create(
@@ -604,7 +607,8 @@ struct preprocessed_table {
     table_view const& rhs,
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
  private:
   friend class self_comparator;
@@ -627,6 +631,7 @@ struct preprocessed_table {
    * @param has_ranked_children Flag indicating if the input table was preprocessed to transform
    *        any nested child column into an integer column using `cudf::rank`
    * @param stream The stream to launch kernels and h->d copies on while preprocessing
+   * @param mr Device memory resources used for returned and temporary allocations
    * @return A shared pointer to a preprocessed table
    */
   static std::shared_ptr<preprocessed_table> create(
@@ -636,7 +641,8 @@ struct preprocessed_table {
     host_span<order const> column_order,
     host_span<null_order const> null_precedence,
     bool has_ranked_children,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   /**
    * @brief Construct a preprocessed table for use with lexicographical comparison
@@ -789,12 +795,14 @@ class self_comparator {
    *        `null_order::BEFORE` for all columns.
    * @param stream The stream to construct this object on. Not the stream that will be used for
    *        comparisons using this object.
+   * @param mr Device memory resources used for returned and temporary allocations
    */
   self_comparator(table_view const& t,
                   host_span<order const> column_order         = {},
                   host_span<null_order const> null_precedence = {},
-                  cuda::stream_ref stream                     = cudf::get_default_stream())
-    : d_t{preprocessed_table::create(t, column_order, null_precedence, stream)}
+                  cuda::stream_ref stream                     = cudf::get_default_stream(),
+                  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
+    : d_t{preprocessed_table::create(t, column_order, null_precedence, stream, mr)}
   {
   }
 
@@ -945,12 +953,14 @@ class two_table_comparator {
    *        `null_order::BEFORE` for all columns.
    * @param stream The stream to construct this object on. Not the stream that will be used for
    *        comparisons using this object.
+   * @param mr Device memory resources used for returned and temporary allocations
    */
   two_table_comparator(table_view const& left,
                        table_view const& right,
                        host_span<order const> column_order         = {},
                        host_span<null_order const> null_precedence = {},
-                       cuda::stream_ref stream                     = cudf::get_default_stream());
+                       cuda::stream_ref stream                     = cudf::get_default_stream(),
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct an owning object for performing a lexicographic comparison between two rows of

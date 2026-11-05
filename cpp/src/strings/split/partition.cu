@@ -17,6 +17,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/utility>
@@ -56,9 +57,9 @@ struct partition_fn {
 
   partition_fn(column_device_view const& d_strings,
                string_view const& d_delimiter,
-               rmm::device_uvector<string_index_pair>& indices_left,
-               rmm::device_uvector<string_index_pair>& indices_delim,
-               rmm::device_uvector<string_index_pair>& indices_right)
+               cuda::device_buffer<string_index_pair>& indices_left,
+               cuda::device_buffer<string_index_pair>& indices_delim,
+               cuda::device_buffer<string_index_pair>& indices_right)
     : d_strings(d_strings),
       d_delimiter(d_delimiter),
       d_indices_left(indices_left.data()),
@@ -141,9 +142,9 @@ struct partition_fn {
 struct rpartition_fn : public partition_fn {
   rpartition_fn(column_device_view const& d_strings,
                 string_view const& d_delimiter,
-                rmm::device_uvector<string_index_pair>& indices_left,
-                rmm::device_uvector<string_index_pair>& indices_delim,
-                rmm::device_uvector<string_index_pair>& indices_right)
+                cuda::device_buffer<string_index_pair>& indices_left,
+                cuda::device_buffer<string_index_pair>& indices_delim,
+                cuda::device_buffer<string_index_pair>& indices_right)
     : partition_fn(d_strings, d_delimiter, indices_left, indices_delim, indices_right)
   {
   }
@@ -182,9 +183,12 @@ std::unique_ptr<table> partition(strings_column_view const& strings,
   if (strings_count == 0) return std::make_unique<table>(std::vector<std::unique_ptr<column>>());
   auto strings_column = column_device_view::create(strings.parent(), stream);
   string_view d_delimiter(delimiter.data(), delimiter.size());
-  auto left_indices  = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto delim_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto right_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
+  auto left_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto delim_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto right_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   partition_fn partitioner(
     *strings_column, d_delimiter, left_indices, delim_indices, right_indices);
 
@@ -209,9 +213,12 @@ std::unique_ptr<table> rpartition(strings_column_view const& strings,
   if (strings_count == 0) return std::make_unique<table>(std::vector<std::unique_ptr<column>>());
   auto strings_column = column_device_view::create(strings.parent(), stream);
   string_view d_delimiter(delimiter.data(), delimiter.size());
-  auto left_indices  = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto delim_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
-  auto right_indices = rmm::device_uvector<string_index_pair>(strings_count, stream);
+  auto left_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto delim_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto right_indices = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   rpartition_fn partitioner(
     *strings_column, d_delimiter, left_indices, delim_indices, right_indices);
   thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

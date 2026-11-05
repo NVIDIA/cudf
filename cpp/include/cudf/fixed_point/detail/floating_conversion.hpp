@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,46 +16,6 @@
 
 namespace numeric {
 namespace detail {
-
-/**
- * @brief Determine the number of significant bits in an integer
- *
- * @tparam T Type of input integer value. Must be either uint32_t, uint64_t, or __uint128_t
- * @param value The integer whose bits are being counted
- * @return The number of significant bits: the # of bits - # of leading zeroes
- */
-template <typename T,
-          CUDF_ENABLE_IF(cuda::std::is_same_v<T, uint32_t> || cuda::std::is_same_v<T, uint64_t> ||
-                         cuda::std::is_same_v<T, __uint128_t>)>
-CUDF_HOST_DEVICE inline constexpr int count_significant_bits(T value)
-{
-#ifdef __CUDA_ARCH__
-  if constexpr (cuda::std::is_same_v<T, uint64_t>) {
-    return 64 - __clzll(static_cast<int64_t>(value));
-  } else if constexpr (cuda::std::is_same_v<T, uint32_t>) {
-    return 32 - __clz(static_cast<int32_t>(value));
-  } else if constexpr (cuda::std::is_same_v<T, __uint128_t>) {
-    // 128 bit type, must break up into high and low components
-    auto const high_bits = static_cast<int64_t>(value >> 64);
-    auto const low_bits  = static_cast<int64_t>(value);
-    return 128 - (__clzll(high_bits) + static_cast<int>(high_bits == 0) * __clzll(low_bits));
-  }
-#else
-  if constexpr (cuda::std::is_same_v<T, uint64_t>) {
-    return 64 - cuda::std::countl_zero(value);
-  } else if constexpr (cuda::std::is_same_v<T, uint32_t>) {
-    return 32 - cuda::std::countl_zero(value);
-  } else if constexpr (cuda::std::is_same_v<T, __uint128_t>) {
-    // 128 bit type, must break up into high and low components
-    auto const high_bits = static_cast<uint64_t>(value >> 64);
-    if (high_bits == 0) {
-      return 64 - cuda::std::countl_zero(static_cast<uint64_t>(value));
-    } else {
-      return 128 - cuda::std::countl_zero(high_bits);
-    }
-  }
-#endif
-}
 
 /**
  * @brief Helper struct for getting and setting the components of a floating-point value
@@ -189,7 +149,7 @@ struct floating_converter {
 
       // Line-up denormal to same (understood) bit as normal numbers
       // This is so bit-shifting starts at the same bit index
-      auto const lineup_shift = num_significand_bits - count_significant_bits(significand);
+      auto const lineup_shift = num_significand_bits - cuda::std::bit_width(significand);
       significand <<= lineup_shift;
       floating_pow2 -= lineup_shift;
     } else {
@@ -954,7 +914,7 @@ CUDF_HOST_DEVICE inline auto shift_to_binary_pospow(DecimalRep decimal_rep, int 
   // except our first operation is a multiply, so not quite that far
   // We are bit-shifting down, so we need extra bits on the low-side, which this has.
   static constexpr int shift_up_to = sizeof(ShiftingRep) * 8 - Constants::max_bits_shift;
-  int const shift_from             = count_significant_bits(decimal_rep);
+  int const shift_from             = cuda::std::bit_width(decimal_rep);
   int const num_init_bit_shift     = shift_up_to - shift_from;
   int pow2                         = -num_init_bit_shift;
 
@@ -1017,7 +977,7 @@ CUDF_HOST_DEVICE inline auto shift_to_binary_negpow(DecimalRep decimal_rep, int 
   // so that we lose minimal information we need on intermediary right-shifts.
   // Note that since we're shifting 2s up, we need num_2s_shift_buffer_bits space on the high side
   static constexpr int shift_up_to = sizeof(ShiftingRep) * 8 - Constants::num_2s_shift_buffer_bits;
-  int const shift_from             = count_significant_bits(decimal_rep);
+  int const shift_from             = cuda::std::bit_width(decimal_rep);
   int const num_init_bit_shift     = shift_up_to - shift_from;
   int pow2                         = -num_init_bit_shift;
 

@@ -36,6 +36,9 @@ class Ternary(Expr):
         self.dtype = dtype
         self.children = (when, then, otherwise)
         self.is_pointwise = True
+        if when.dtype.plc_type.id() != plc.TypeId.BOOL8:
+            # polars raises a SchemaError for a non-boolean predicate; let it.
+            raise NotImplementedError("Ternary with a non-boolean predicate")
 
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME

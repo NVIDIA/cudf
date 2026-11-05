@@ -80,12 +80,13 @@ struct unicode_normalizer {
    * @param unicode_data Table with three columns as described above
    * @param form Normalization form to apply
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate internal tables
+   * @param mr Memory resources used for temporary allocations and the returned object's device
+   * memory
    */
   unicode_normalizer(cudf::table_view const& unicode_data,
                      unicode_normalization_form form,
-                     cuda::stream_ref stream           = cudf::get_default_stream(),
-                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                     cuda::stream_ref stream   = cudf::get_default_stream(),
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref());
   ~unicode_normalizer();
 
   struct unicode_normalizer_impl;
@@ -100,14 +101,14 @@ struct unicode_normalizer {
  * @param unicode_data Table with three columns parsed from UnicodeData.txt
  * @param form Normalization form to apply
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate internal tables
+ * @param mr Memory resources used for temporary allocations and the returned object's device memory
  * @return Normalizer object to be reused across calls to nvtext::normalize_unicode
  */
 std::unique_ptr<unicode_normalizer> create_unicode_normalizer(
   cudf::table_view const& unicode_data,
   unicode_normalization_form form,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Normalize a strings column using Unicode TR15 normalization.
@@ -126,19 +127,19 @@ std::unique_ptr<unicode_normalizer> create_unicode_normalizer(
  * @endcode
  *
  * During each call to nvtext::normalize_unicode, the amount of temporary
- * memory required is approximately 16x the input data size.
+ * memory required is approximately 5x the input data size.
  *
  * @param input Strings column to normalize
  * @param normalizer Normalizer object created by nvtext::create_unicode_normalizer
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New strings column of normalized UTF-8 strings
  */
 std::unique_ptr<cudf::column> normalize_unicode(
   cudf::strings_column_view const& input,
   unicode_normalizer const& normalizer,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

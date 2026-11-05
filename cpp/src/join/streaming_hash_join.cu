@@ -14,6 +14,7 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/primitive_equality.cuh>
 #include <cudf/detail/row_operator/primitive_hashing.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -95,7 +96,7 @@ auto make_device_comparators(
                  preprocessed_right.end(),
                  std::back_inserter(host_comparators),
                  factory);
-  auto d_comparators = cudf::detail::make_device_uvector_async(
+  auto d_comparators = cudf::detail::make_device_buffer_async(
     cudf::host_span<Equality const>{
       host_comparators.data(), host_comparators.size(), /*is_device_accessible=*/true},
     stream,
@@ -777,7 +778,7 @@ class streaming_hash_join_impl {
                                                        resources.get_temporary_mr());
       }
     }();
-    auto const d_batch_starts = cudf::detail::make_device_uvector_async(
+    auto const d_batch_starts = cudf::detail::make_device_buffer_async(
       cudf::host_span<size_type const>{batch_starts.data(), static_cast<std::size_t>(num_batches)},
       stream,
       resources.get_temporary_mr());

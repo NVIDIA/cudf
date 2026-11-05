@@ -3970,10 +3970,9 @@ class Distinct(IR):
                 plc.types.NanEquality.ALL_EQUAL,
                 df.stream,
             )
-        # TODO: Is this sortedness setting correct
         result = DataFrame(
             [
-                Column(new, name=old.name, dtype=old.dtype).sorted_like(old)
+                Column(new, name=old.name, dtype=old.dtype)
                 for new, old in zip(table.columns(), df.columns, strict=True)
             ],
             stream=df.stream,

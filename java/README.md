@@ -14,10 +14,13 @@ environment, which is typical for Java processes, using a GPU other than the def
 hard-to-debug problems, including resource leaks, invalid states, application crashes and poor
 performance.
 
-To prevent this, the Java bindings remember the device that was used to initialize NVIDIA RMM and,
-when needed, automatically set the active device of the calling thread to that device. They do not
-restore the previous device when the cuDF call completes. This differs from most CUDA libraries and
-can cause unexpected behavior if you mix them with the Java bindings on the same thread.
+To prevent this, the Java bindings remember the device that was used to initialize NVIDIA RMM and
+set the active device of each thread to that device the first time the thread calls into cuDF. They
+track this per thread and do not check the active device again, so if other code changes the device
+of a thread afterwards, later cuDF calls on that thread do not switch it back. The Java bindings
+also do not restore the previous device when a cuDF call completes. This differs from most CUDA
+libraries and can cause unexpected behavior if you mix them with the Java bindings on the same
+thread.
 
 ## Dependency
 
@@ -47,6 +50,13 @@ classifier:
 
 See [Platform Support](https://docs.nvidia.com/datascience/platform-support/) for the CUDA toolkit
 versions, drivers and GPU architectures supported by each release.
+
+The jar statically links the CUDA runtime, but it requires two CUDA toolkit libraries for its CUDA
+major version to be installed: NVRTC (`libnvrtc.so.12` or `libnvrtc.so.13`) and nvJitLink
+(`libnvJitLink.so.12` or `libnvJitLink.so.13`). They are included in a full CUDA toolkit
+installation and in the `runtime` and `devel` variants of the
+[NVIDIA CUDA container images](https://hub.docker.com/r/nvidia/cuda), but not the `base` variant.
+They can also be installed on their own from the CUDA package repositories.
 
 The jar without a classifier is the same as the `cuda12` jar. For example, to use the CUDA 13 jar
 on x86_64:
@@ -82,7 +92,12 @@ mvn clean install
 The jar gets a classifier based on the CUDA version reported by `nvcc` and the host architecture,
 as listed in the [Dependency](#dependency) section.
 
-If your build system has a compatible GPU, the tests use it. Otherwise, many tests are skipped.
+Without a compatible GPU, most tests are skipped but some fail, so skip the tests when building on
+such a machine:
+
+```shell
+mvn clean install -DskipTests
+```
 
 ### Building Jars Like the Official Releases
 

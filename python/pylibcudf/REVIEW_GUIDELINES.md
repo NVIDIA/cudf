@@ -113,8 +113,9 @@ conversion and validation is complete.
 
 - Do not hold Python-level locks while entering `with nogil:` libcudf calls
   that may allocate device memory or synchronize CUDA work.
-- Watch for lock-order inversions: one path holds the GIL while it waits
-  for CUDA or RMM state, and another path holds CUDA or RMM state while it
+- Watch for lock-order inversions with the CUDA driver's internal locks:
+  one thread holds the GIL while it waits on a driver lock, and another
+  thread holds that driver lock (for example, inside a CUDA call) while it
   tries to reacquire the GIL.
 - If a binding must reacquire the GIL after it launches CUDA work, check
   that the work is ordered on the provided stream and that no

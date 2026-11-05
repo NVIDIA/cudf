@@ -17,8 +17,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -67,6 +65,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          cuda::stream_ref stream,
                                          rmm::device_async_resource_ref mr)
 {
+  cudf::memory_resources mrs{mr};
   // outgoing offsets.
   auto offsets = cudf::make_fixed_width_column(
     data_type{type_id::INT32}, input.num_rows() + 1, mask_state::UNALLOCATED, stream, mr);
@@ -107,7 +106,8 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                     cuda::make_discard_iterator(),
                                     offsets->mutable_view().begin<int32_t>(),
                                     cuda::std::plus<size_type>(),
-                                    stream);
+                                    stream,
+                                    mrs.as_temporary());
 
   // convert to offsets
   auto total_size =
@@ -154,10 +154,11 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
 }
 
 cuda::device_buffer<size_type> generate_null_counts(table_device_view const& input,
-                                                    cuda::stream_ref stream)
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr)
 {
   cuda::device_buffer<size_type> null_counts(
-    stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
+    stream, mr.get_output_mr(), input.num_rows(), cuda::no_init);
 
   auto keys =
     cuda::transform_iterator(cuda::counting_iterator<std::size_t>{0},
@@ -180,7 +181,8 @@ cuda::device_buffer<size_type> generate_null_counts(table_device_view const& inp
                                     cuda::make_discard_iterator(),
                                     null_counts.data(),
                                     cuda::std::plus<size_type>(),
-                                    stream);
+                                    stream,
+                                    mr.as_temporary());
 
   return null_counts;
 }
@@ -227,10 +229,11 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
 
   // if the output needs a null mask, generate a vector of null counts per row of input, where the
   // count is the number of columns that contain a null for a given row.
-  auto row_null_counts = build_null_mask
-                           ? generate_null_counts(*input_dv, stream)
-                           : cuda::device_buffer<size_type>{
-                               stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+  auto row_null_counts =
+    build_null_mask
+      ? generate_null_counts(*input_dv, stream, cudf::get_current_device_resource_ref())
+      : cuda::device_buffer<size_type>{
+          stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
 
   // if we have nulls, overlay an appropriate null mask onto the
   // concatenated column so that gather() sanitizes out the child data of rows that will ultimately

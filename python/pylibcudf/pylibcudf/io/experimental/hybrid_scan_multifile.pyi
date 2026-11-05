@@ -6,7 +6,10 @@ from collections.abc import Sequence
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 from pylibcudf.column import Column
-from pylibcudf.io.experimental.hybrid_scan import ReadColumnsMode
+from pylibcudf.io.experimental.hybrid_scan import (
+    ReadColumnsMode,
+    UseDataPageMask,
+)
 from pylibcudf.io.parquet import ParquetReaderOptions
 from pylibcudf.io.parquet_metadata import FileMetaData
 from pylibcudf.io.text import ByteRangeInfo
@@ -65,6 +68,20 @@ class HybridScanMultiFile:
         row_group_indices: RowGroupIndices,
         options: ParquetReaderOptions,
     ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def filter_row_groups_with_dictionary_pages(
+        self,
+        dictionary_page_data: Sequence[Span],
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+    ) -> RowGroupIndices: ...
+    def filter_row_groups_with_bloom_filters(
+        self,
+        bloom_filter_data: Sequence[Span],
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+    ) -> RowGroupIndices: ...
     def build_all_true_row_mask(
         self,
         row_group_indices: RowGroupIndices,
@@ -78,6 +95,36 @@ class HybridScanMultiFile:
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,
     ) -> Column: ...
+    def filter_column_chunks_byte_ranges(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def materialize_filter_columns(
+        self,
+        row_group_indices: RowGroupIndices,
+        column_chunk_data: Sequence[Span],
+        row_mask: Column,
+        mask_data_pages: UseDataPageMask,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> TableWithMetadata: ...
+    def payload_column_chunks_byte_ranges(
+        self,
+        row_group_indices: RowGroupIndices,
+        options: ParquetReaderOptions,
+    ) -> tuple[list[ByteRangeInfo], list[int]]: ...
+    def materialize_payload_columns(
+        self,
+        row_group_indices: RowGroupIndices,
+        column_chunk_data: Sequence[Span],
+        row_mask: Column,
+        mask_data_pages: UseDataPageMask,
+        options: ParquetReaderOptions,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> TableWithMetadata: ...
     def all_column_chunks_byte_ranges(
         self,
         row_group_indices: RowGroupIndices,
@@ -86,7 +133,7 @@ class HybridScanMultiFile:
     def materialize_all_columns(
         self,
         row_group_indices: RowGroupIndices,
-        column_chunk_data: list[Span],
+        column_chunk_data: Sequence[Span],
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,

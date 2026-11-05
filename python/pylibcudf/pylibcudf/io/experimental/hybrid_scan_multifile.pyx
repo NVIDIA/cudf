@@ -20,11 +20,12 @@ from pylibcudf.io.parquet_metadata cimport FileMetaData as c_FileMetaData
 from pylibcudf.io.text cimport ByteRangeInfo
 from pylibcudf.io.types cimport TableWithMetadata
 from pylibcudf.libcudf.column.column cimport column
-from pylibcudf.libcudf.column.column_view cimport column_view
+from pylibcudf.libcudf.column.column_view cimport column_view, mutable_column_view
 from pylibcudf.libcudf.io.hybrid_scan cimport (
     const_device_span_const_uint8_t,
     const_uint8_t,
     read_columns_mode as cpp_read_columns_mode,
+    use_data_page_mask as cpp_use_data_page_mask,
 )
 from pylibcudf.libcudf.io.hybrid_scan_multifile cimport (
     const_host_span_const_uint8_t,
@@ -400,6 +401,99 @@ cdef class HybridScanMultiFile:
             list(c_result.second),
         )
 
+    def filter_row_groups_with_dictionary_pages(
+        self,
+        list dictionary_page_data,
+        RowGroupIndices row_group_indices not None,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None
+    ) -> RowGroupIndices:
+        """Filter row groups using column chunk dictionary pages.
+
+        Parameters
+        ----------
+        dictionary_page_data : Sequence
+            Span-like objects containing dictionary page data, in the same
+            order as the byte ranges returned by
+            :meth:`dictionary_pages_byte_ranges`
+        row_group_indices : RowGroupIndices
+            Input row group indices, one list per source
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+
+        Returns
+        -------
+        RowGroupIndices
+            Filtered row group indices, one inner list per source
+        """
+        cdef Stream _stream = _get_stream(stream)
+        cdef vector[device_span[const_uint8_t]] spans_vec
+        for span in dictionary_page_data:
+            spans_vec.push_back(_get_device_span(span))
+        cdef vector[vector[size_type]] filtered
+        with nogil:
+            filtered = self.c_obj.get()[0].filter_row_groups_with_dictionary_pages(
+                host_span[const_device_span_const_uint8_t](
+                    <const_device_span_const_uint8_t*>spans_vec.data(),
+                    spans_vec.size()
+                ),
+                host_span[const_vector_size_type](
+                    <const_vector_size_type*>row_group_indices.c_obj.data(),
+                    row_group_indices.c_obj.size()
+                ),
+                options.c_obj,
+                _stream.view().get()
+            )
+        return RowGroupIndices.from_libcudf(move(filtered))
+
+    def filter_row_groups_with_bloom_filters(
+        self,
+        list bloom_filter_data,
+        RowGroupIndices row_group_indices not None,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None
+    ) -> RowGroupIndices:
+        """Filter row groups using column chunk bloom filters.
+
+        Parameters
+        ----------
+        bloom_filter_data : Sequence
+            Span-like objects containing bloom filter data, in the same order
+            as the byte ranges returned by :meth:`bloom_filters_byte_ranges`
+        row_group_indices : RowGroupIndices
+            Input row group indices, one list per source
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+
+        Returns
+        -------
+        RowGroupIndices
+            Filtered row group indices, one inner list per source
+        """
+        cdef Stream _stream = _get_stream(stream)
+        cdef vector[device_span[const_uint8_t]] spans_vec
+        for span in bloom_filter_data:
+            spans_vec.push_back(_get_device_span(span))
+        cdef vector[vector[size_type]] filtered
+        with nogil:
+            filtered = self.c_obj.get()[0].filter_row_groups_with_bloom_filters(
+                std_span[const_device_span_const_uint8_t](
+                    <const_device_span_const_uint8_t*>spans_vec.data(),
+                    spans_vec.size()
+                ),
+                std_span[const_vector_size_type](
+                    <const_vector_size_type*>row_group_indices.c_obj.data(),
+                    row_group_indices.c_obj.size()
+                ),
+                options.c_obj,
+                _stream.view().get()
+            )
+        return RowGroupIndices.from_libcudf(move(filtered))
+
     def build_all_true_row_mask(
         self,
         RowGroupIndices row_group_indices not None,
@@ -475,6 +569,196 @@ cdef class HybridScanMultiFile:
                 mr.get_mr()
             )
         return Column.from_libcudf(move(c_result), _stream, mr)
+
+    def filter_column_chunks_byte_ranges(
+        self,
+        RowGroupIndices row_group_indices not None,
+        ParquetReaderOptions options
+    ) -> tuple[list[ByteRangeInfo], list[int]]:
+        """Get byte ranges of column chunks of filter columns.
+
+        Parameters
+        ----------
+        row_group_indices : RowGroupIndices
+            Input row group indices, one list per source
+        options : ParquetReaderOptions
+            Parquet reader options
+
+        Returns
+        -------
+        tuple[list[ByteRangeInfo], list[int]]
+            Flattened byte ranges to column chunks of filter columns and their
+            corresponding source indices
+        """
+        cdef pair[vector[byte_range_info], vector[size_type]] c_result
+        with nogil:
+            c_result = self.c_obj.get()[0].filter_column_chunks_byte_ranges(
+                host_span[const_vector_size_type](
+                    <const_vector_size_type*>row_group_indices.c_obj.data(),
+                    row_group_indices.c_obj.size()
+                ),
+                options.c_obj
+            )
+        return (
+            [ByteRangeInfo(r.offset(), r.size()) for r in c_result.first],
+            list(c_result.second),
+        )
+
+    def materialize_filter_columns(
+        self,
+        RowGroupIndices row_group_indices not None,
+        list column_chunk_data: list[Span],
+        Column row_mask,
+        cpp_use_data_page_mask mask_data_pages,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None,
+        DeviceMemoryResource mr=None
+    ) -> TableWithMetadata:
+        """Materialize filter columns and update the row mask.
+
+        Parameters
+        ----------
+        row_group_indices : RowGroupIndices
+            Input row group indices, one list per source
+        column_chunk_data : list[Span]
+            Span-like objects containing flattened column chunk data of filter
+            columns, in the same order as ``filter_column_chunks_byte_ranges``
+        row_mask : Column
+            Mutable boolean column spanning all selected rows across all sources
+            and indicating surviving rows
+        mask_data_pages : UseDataPageMask
+            Whether to use a data page mask
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+        mr : DeviceMemoryResource, optional
+            Device memory resource
+
+        Returns
+        -------
+        TableWithMetadata
+            Table of materialized filter columns and metadata
+        """
+        cdef Stream _stream = _get_stream(stream)
+        mr = _get_memory_resource(mr)
+        cdef vector[device_span[const_uint8_t]] spans_vec
+        for span in column_chunk_data:
+            spans_vec.push_back(_get_device_span(span))
+        cdef mutable_column_view mask_view = row_mask.mutable_view()
+        cdef table_with_metadata c_result
+        with nogil:
+            c_result = self.c_obj.get()[0].materialize_filter_columns(
+                host_span[const_vector_size_type](
+                    <const_vector_size_type*>row_group_indices.c_obj.data(),
+                    row_group_indices.c_obj.size()
+                ),
+                host_span[const_device_span_const_uint8_t](
+                    <const_device_span_const_uint8_t*>spans_vec.data(),
+                    spans_vec.size()
+                ),
+                mask_view,
+                mask_data_pages,
+                options.c_obj,
+                _stream.view().get(),
+                mr.get_mr()
+            )
+        return TableWithMetadata.from_libcudf(c_result, _stream, mr)
+
+    def payload_column_chunks_byte_ranges(
+        self,
+        RowGroupIndices row_group_indices not None,
+        ParquetReaderOptions options
+    ) -> tuple[list[ByteRangeInfo], list[int]]:
+        """Get byte ranges of column chunks of payload columns.
+
+        Parameters
+        ----------
+        row_group_indices : RowGroupIndices
+            Input row group indices, one list per source
+        options : ParquetReaderOptions
+            Parquet reader options
+
+        Returns
+        -------
+        tuple[list[ByteRangeInfo], list[int]]
+            Flattened byte ranges to column chunks of payload columns and their
+            corresponding source indices
+        """
+        cdef pair[vector[byte_range_info], vector[size_type]] c_result
+        with nogil:
+            c_result = self.c_obj.get()[0].payload_column_chunks_byte_ranges(
+                host_span[const_vector_size_type](
+                    <const_vector_size_type*>row_group_indices.c_obj.data(),
+                    row_group_indices.c_obj.size()
+                ),
+                options.c_obj
+            )
+        return (
+            [ByteRangeInfo(r.offset(), r.size()) for r in c_result.first],
+            list(c_result.second),
+        )
+
+    def materialize_payload_columns(
+        self,
+        RowGroupIndices row_group_indices not None,
+        list column_chunk_data: list[Span],
+        Column row_mask,
+        cpp_use_data_page_mask mask_data_pages,
+        ParquetReaderOptions options,
+        object stream: CudaStreamLike | None = None,
+        DeviceMemoryResource mr=None
+    ) -> TableWithMetadata:
+        """Materialize payload columns and apply the row mask.
+
+        Parameters
+        ----------
+        row_group_indices : RowGroupIndices
+            Input row group indices, one list per source
+        column_chunk_data : list[Span]
+            Span-like objects containing flattened column chunk data of payload
+            columns, in the same order as ``payload_column_chunks_byte_ranges``
+        row_mask : Column
+            Boolean column spanning all selected rows across all sources and
+            indicating which rows need to be read
+        mask_data_pages : UseDataPageMask
+            Whether to use a data page mask
+        options : ParquetReaderOptions
+            Parquet reader options
+        stream : Stream, optional
+            CUDA stream
+        mr : DeviceMemoryResource, optional
+            Device memory resource
+
+        Returns
+        -------
+        TableWithMetadata
+            Table of materialized payload columns and metadata
+        """
+        cdef Stream _stream = _get_stream(stream)
+        mr = _get_memory_resource(mr)
+        cdef vector[device_span[const_uint8_t]] spans_vec
+        for span in column_chunk_data:
+            spans_vec.push_back(_get_device_span(span))
+        cdef column_view mask_view = row_mask.view()
+        cdef table_with_metadata c_result
+        with nogil:
+            c_result = self.c_obj.get()[0].materialize_payload_columns(
+                host_span[const_vector_size_type](
+                    <const_vector_size_type*>row_group_indices.c_obj.data(),
+                    row_group_indices.c_obj.size()
+                ),
+                host_span[const_device_span_const_uint8_t](
+                    <const_device_span_const_uint8_t*>spans_vec.data(),
+                    spans_vec.size()
+                ),
+                mask_view,
+                mask_data_pages,
+                options.c_obj,
+                _stream.view().get(),
+                mr.get_mr()
+            )
+        return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
     def all_column_chunks_byte_ranges(
         self,

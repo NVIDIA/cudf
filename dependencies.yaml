@@ -342,6 +342,9 @@ files:
     includes:
       - build_base
       - build_python_common
+      # pylibcudf cimports cuda.bindings, so the isolated build env needs the
+      # same pinned version as the runtime dependency.
+      - depends_on_cuda_bindings
       - depends_on_libcudf
       - depends_on_librmm
       - depends_on_rmm

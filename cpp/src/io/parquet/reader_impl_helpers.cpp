@@ -182,20 +182,18 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
 namespace {
 
 /**
- * @brief Check if two logical types describe the same column type.
- *
- * ENUM is read as STRING and `converted_to_logical_type` maps it to STRING, so the two are equal.
+ * @brief Check if two logical types are identical in everything the reader uses.
  */
 bool logical_types_match(LogicalType const& lhs, LogicalType const& rhs)
 {
-  auto const canonical = [](LogicalType const& t) {
-    return t.type == LogicalType::ENUM ? LogicalType::STRING : t.type;
-  };
   auto const unit = [](auto const& t) {
     return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
   };
-  return canonical(lhs) == canonical(rhs) and unit(lhs.time_type) == unit(rhs.time_type) and
+  auto const adjusted_to_utc = [](auto const& t) { return t.has_value() and t->isAdjustedToUTC; };
+  return lhs.type == rhs.type and unit(lhs.time_type) == unit(rhs.time_type) and
          unit(lhs.timestamp_type) == unit(rhs.timestamp_type) and
+         adjusted_to_utc(lhs.time_type) == adjusted_to_utc(rhs.time_type) and
+         adjusted_to_utc(lhs.timestamp_type) == adjusted_to_utc(rhs.timestamp_type) and
          lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
 }
 
@@ -2170,10 +2168,11 @@ aggregate_reader_metadata::select_columns(
         ? lhs.field_id == rhs.field_id
         : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
     // Writers may emit the deprecated converted type, the logical type, or both for the same
-    // column. If both sources carry a logical type, compare those instead of the converted types.
-    auto const types_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
-                               ? logical_types_match(*lhs.logical_type, *rhs.logical_type)
-                               : lhs.converted_type == rhs.converted_type;
+    // column. Sources match if their converted types are equal or their logical types are
+    // identical.
+    auto const types_match = lhs.converted_type == rhs.converted_type or
+                             (lhs.logical_type.has_value() and rhs.logical_type.has_value() and
+                              logical_types_match(*lhs.logical_type, *rhs.logical_type));
     return lhs.type == rhs.type and types_match and lhs.type_length == rhs.type_length and
            identities_match and lhs.decimal_scale == rhs.decimal_scale and
            lhs.decimal_precision == rhs.decimal_precision;

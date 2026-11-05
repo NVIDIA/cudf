@@ -66,6 +66,30 @@ TEST_F(BinaryOperatorParityTest, StringNullMinMaxSupported)
                cudf::data_type_error);
 }
 
+TEST_F(BinaryOperatorParityTest, StringNullMinMaxEmptyStrings)
+{
+  // valid empty strings (whose data pointer may be null) must not become nulls
+  auto const str    = cudf::data_type{cudf::type_id::STRING};
+  auto const valid  = cudf::test::strings_column_wrapper({"", ""});
+  auto const nulls  = cudf::test::strings_column_wrapper({"", ""}, {false, false});
+  auto const mixed  = cudf::test::strings_column_wrapper({"", "x"}, {false, true});
+  auto const expect = cudf::test::strings_column_wrapper({"", ""});
+  for (auto op : {cudf::binary_operator::NULL_MIN, cudf::binary_operator::NULL_MAX}) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect,
+                                        cudf::binary_operation(valid, nulls, op, str)->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect,
+                                        cudf::binary_operation(nulls, valid, op, str)->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect,
+                                        cudf::binary_operation(valid, valid, op, str)->view());
+  }
+  // valid "" combined with a null on the other side, next to a non-empty value
+  auto const expect_mixed = cudf::test::strings_column_wrapper({"", "x"});
+  auto const empty_valid  = cudf::test::strings_column_wrapper({"", ""});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    expect_mixed,
+    cudf::binary_operation(empty_valid, mixed, cudf::binary_operator::NULL_MAX, str)->view());
+}
+
 TEST_F(BinaryOperatorParityTest, CheckedArithmeticPropagates)
 {
   auto max  = std::numeric_limits<int32_t>::max();

@@ -87,13 +87,7 @@ struct sequences_dispatcher {
 };
 
 template <typename T>
-static constexpr bool is_supported()
-{
-  return (cudf::is_numeric<T>() && !cudf::is_boolean<T>()) || cudf::is_duration<T>();
-}
-
-template <typename T>
-  requires(is_supported<T>())
+  requires(cudf::concepts::arithmetic_not_bool<T> or cudf::concepts::duration<T>)
 struct sequences_functor<T> {
   static std::unique_ptr<column> invoke(size_type n_lists,
                                         size_type n_elements,

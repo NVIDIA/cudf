@@ -12,8 +12,6 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cub/block/block_scan.cuh>

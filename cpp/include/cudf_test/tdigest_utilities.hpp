@@ -15,8 +15,6 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>

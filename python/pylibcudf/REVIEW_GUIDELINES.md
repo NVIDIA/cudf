@@ -84,19 +84,14 @@ cpdef Table pack(
     ...
 ```
 
-### Declarations follow the C++ move to `cuda::stream_ref`
+### `cdef extern` declarations take `stream_ref`
 
-`cdef extern` declarations must use the stream type in the current header.
-A "default stream" must be built from `cudaStreamDefault` (or `nullptr`),
-not `cudaStreamLegacy`. The legacy stream changes per-thread default stream
+Declare stream parameters in `cdef extern` blocks as `stream_ref`. Build a
+"default stream" from `cudaStreamDefault` (or `nullptr`), not
+`cudaStreamLegacy`. The legacy stream changes per-thread default stream
 (PTDS) behavior.
 
 ```cython
-# Bad: the header now takes cuda::stream_ref
-cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
-    unique_ptr[table] gather(..., cuda_stream_view stream, ...)
-
-# Good
 cdef extern from "cudf/copying.hpp" namespace "cudf" nogil:
     unique_ptr[table] gather(..., stream_ref stream, ...) \
         except +libcudf_exception_handler

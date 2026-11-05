@@ -10,9 +10,7 @@
 #include "runtime/context.hpp"
 #include "synthetic_column_helpers.hpp"
 
-#include <cudf/detail/gather.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/sequence.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
@@ -22,7 +20,6 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/null_mask.hpp>
-#include <cudf/scalar/scalar.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/unary.hpp>
@@ -1137,7 +1134,8 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     auto read_table         = std::make_unique<table>(std::move(out_columns));
     auto counting_it        = cuda::counting_iterator<std::size_t>{0};
     auto const output_count = read_table->num_columns() - _num_filter_only_columns;
-    auto only_output        = read_table->select(counting_it, counting_it + output_count);
+    // Exclude columns present in filter only in output.
+    auto only_output = read_table->select(counting_it, counting_it + output_count);
 
     if (_num_filter_only_columns > 0) { out_metadata.schema_info.resize(output_count); }
 
@@ -1154,52 +1152,10 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
-    // Exclude columns present in filter only in output. STRING columns to be dictionary encoded
-    // are copied again by the encode, so their surviving rows go to the temporary resource.
-    std::vector<size_type> dict_encode_indices;
-    std::vector<size_type> other_indices;
-    for (size_type i = 0; i < only_output.num_columns(); ++i) {
-      auto const will_dict_encode_strings =
-        _options.output_dict_columns and only_output.column(i).type().id() == type_id::STRING;
-      (will_dict_encode_strings ? dict_encode_indices : other_indices).push_back(i);
-    }
-    if (dict_encode_indices.empty()) {
-      return {cudf::detail::apply_mask(
-                only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr),
-              std::move(out_metadata)};
-    }
-    // Gather map of the surviving rows, computed once for both subsets
-    auto const row_indices = cudf::detail::sequence(read_table->num_rows(),
-                                                    numeric_scalar<size_type>(0, true, _stream),
-                                                    _stream,
-                                                    _mr.get_temporary_mr());
-    auto const gather_map =
-      cudf::detail::apply_mask(table_view{std::vector<column_view>{row_indices->view()}},
-                               *predicate,
-                               cudf::detail::mask_type::RETENTION,
-                               _stream,
-                               _mr.as_temporary());
-    auto const gather_rows = [&](std::vector<size_type> const& indices,
-                                 cudf::memory_resources gather_mr) {
-      return cudf::detail::gather(only_output.select(indices),
-                                  gather_map->get_column(0).view(),
-                                  out_of_bounds_policy::DONT_CHECK,
-                                  negative_index_policy::NOT_ALLOWED,
-                                  _stream,
-                                  gather_mr)
-        ->release();
-    };
-    auto dict_encode_columns = gather_rows(dict_encode_indices, _mr.as_temporary());
-    auto other_columns       = gather_rows(other_indices, _mr);
-    std::vector<std::unique_ptr<column>> output_columns(only_output.num_columns());
-    for (size_t i = 0; i < dict_encode_indices.size(); ++i) {
-      output_columns[dict_encode_indices[i]] = std::move(dict_encode_columns[i]);
-    }
-    for (size_t i = 0; i < other_indices.size(); ++i) {
-      output_columns[other_indices[i]] = std::move(other_columns[i]);
-    }
-    return {encode_output_dict_columns(std::make_unique<table>(std::move(output_columns))),
-            std::move(out_metadata)};
+                 
+    auto output_table = cudf::detail::apply_mask(
+      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
+    return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
   }
   return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
           std::move(out_metadata)};

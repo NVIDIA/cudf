@@ -178,6 +178,7 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
     expect_read_uses_memory_resources(builder().filter(filter).build());
   }
   {
+    // The filter copies STRING columns to the output resource before the dictionary encode
     SCOPED_TRACE("filter with decimal cast, dictionary output and synthetic columns");
     expect_read_uses_memory_resources(builder()
                                         .filter(filter)
@@ -185,7 +186,9 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
                                         .output_dict_columns(true)
                                         .prepend_row_index_column(true)
                                         .prepend_source_index_column(true)
-                                        .build());
+                                        .build(),
+                                      {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,
+                                       cudf::test::temporary_allocation_expectation::SOME});
   }
 }
 
@@ -234,7 +237,9 @@ TEST_F(ParquetReaderTest, ReadAllRowsFilteredUsesMemoryResources)
       .decimal_width(cudf::type_id::DECIMAL128)
       .output_dict_columns(true)
       .prepend_row_index_column(true)
-      .build());
+      .build(),
+    {cudf::test::output_allocation_expectation::AT_LEAST_LIVE,
+     cudf::test::temporary_allocation_expectation::SOME});
 }
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)

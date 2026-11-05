@@ -482,8 +482,20 @@ rtcx_embed_includes(
 )
 
 rtcx_embed_includes(
-  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/reductions/jit DEST_DIRECTORY
-  cudf/cpp/src/reductions/jit INCLUDE_DIRECTORIES cudf/cpp/src
+  cudf_cuda_embed
+  SOURCE_DIRECTORY
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/reductions/jit
+  DEST_DIRECTORY
+  cudf/cpp/src/reductions/jit
+  INCLUDE_DIRECTORIES
+  cudf/cpp/src
+  FILES
+  reduce.cuh
+  reduce_kernel.cu
+  segmented_reduce.cuh
+  segmented_reduce_kernel.cu
+  small_groups_segmented_reduce.cu
+  small_groups_segmented_reduce.cuh
 )
 
 get_target_property(LIBCUDACXX_RAW_INCLUDE_DIRS CCCL::libcudacxx INTERFACE_INCLUDE_DIRECTORIES)

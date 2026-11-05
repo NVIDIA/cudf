@@ -19,6 +19,12 @@ __device__ errc sum_update(size_type,
   return errc::SUCCESS;
 }
 
+__device__ errc sum_segment_update(
+  size_type, size_type row, optional_int64* sum, optional_int64* count, optional_int32 value)
+{
+  return sum_update(row, sum, count, value);
+}
+
 // Value-only callbacks implement COALESCE(SUM(value), 0), skipping null input rows.
 __device__ errc raw_init(int64_t* sum)
 {

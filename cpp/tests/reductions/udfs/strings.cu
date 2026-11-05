@@ -51,6 +51,32 @@ __device__ errc string_max_finalize(optional_string* output,
   return errc::SUCCESS;
 }
 
+__device__ errc string_max_segment_init(size_type, optional_string* state)
+{
+  return string_max_init(state);
+}
+
+__device__ errc string_max_segment_update(size_type,
+                                          size_type row,
+                                          optional_string* state,
+                                          optional_string value)
+{
+  return string_max_update(row, state, value);
+}
+
+__device__ errc string_max_segment_merge(size_type, optional_string* state, optional_string value)
+{
+  return string_max_merge(state, value);
+}
+
+__device__ errc string_max_segment_finalize(size_type,
+                                            optional_string* output,
+                                            optional_int32* length,
+                                            optional_string state)
+{
+  return string_max_finalize(output, length, state);
+}
+
 // Value-only callbacks implement COALESCE(MAX(value), '') and its byte length.
 __device__ errc raw_string_max_init(cudf::string_view* state)
 {

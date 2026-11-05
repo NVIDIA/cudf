@@ -17,8 +17,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
-
-#include <rmm/exec_policy.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cooperative_groups.h>
 #include <cub/block/block_reduce.cuh>
@@ -34,6 +33,7 @@
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
+#include <thrust/execution_policy.h>
 
 #include <bitset>
 
@@ -3474,9 +3474,15 @@ void EncodePages(device_span<EncPage> pages,
 {
   auto num_pages = pages.size();
 
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // determine which kernels to invoke
-  auto kernel_mask = cudf::detail::transform_reduce(
-    pages.begin(), pages.end(), mask_tform{}, uint32_t{0}, cuda::std::bit_or<uint32_t>{}, stream);
+  auto kernel_mask = cudf::detail::transform_reduce(pages.begin(),
+                                                    pages.end(),
+                                                    mask_tform{},
+                                                    uint32_t{0},
+                                                    cuda::std::bit_or<uint32_t>{},
+                                                    stream,
+                                                    mr.as_temporary());
 
   // get the number of streams we need from the pool
   int nkernels = std::bitset<32>(kernel_mask).count();

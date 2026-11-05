@@ -264,6 +264,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
+  cudf::memory_resources mrs{mr};
   auto d_strings = column_device_view::create(input.parent(), stream);
 
   auto const strings_count = input.size();
@@ -301,7 +302,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     copy_itr + chars_bytes,
     targets_positions_storage.begin(),
     [fn] __device__(int64_t idx) -> bool { return fn.is_target_within_row(idx); },
-    stream);
+    stream,
+    mrs.as_temporary());
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(std::distance(targets_positions_storage.begin(), copy_end), target_count);

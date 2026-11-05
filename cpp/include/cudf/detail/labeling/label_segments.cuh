@@ -59,7 +59,7 @@ void label_segments(InputIterator offsets_begin,
                     OutputIterator label_begin,
                     OutputIterator label_end,
                     cuda::stream_ref stream,
-                    cudf::memory_resources mr)
+                    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto const temp_mr    = mr.get_temporary_mr();
   auto const num_labels = cuda::std::distance(label_begin, label_end);

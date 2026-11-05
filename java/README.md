@@ -62,8 +62,8 @@ on x86_64:
 
 ## Build From Source
 
-First build [libcudf](../cpp), and make sure a JDK is installed and available. Pass the following
-CMake option to the libcudf build:
+First build [libcudf](../cpp), and make sure JDK 8 or newer is installed and available. Pass the
+following CMake option to the libcudf build:
 
 ```
 -DCUDF_LARGE_STRINGS_DISABLED=ON

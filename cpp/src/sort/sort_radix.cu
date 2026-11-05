@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "sort_radix.cuh"
+
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -19,35 +21,6 @@
 namespace cudf {
 namespace detail {
 namespace {
-
-template <typename F>
-struct float_pair {
-  size_type s;  // index bias for sorting nan
-  F f;          // actual float value to sort
-};
-
-template <typename F>
-struct float_decomposer {
-  __device__ cuda::std::tuple<size_type&, F&> operator()(float_pair<F>& key) const
-  {
-    return {key.s, key.f};
-  }
-};
-
-template <typename F>
-struct float_to_pair_fn {
-  F const* fs;
-  size_type size;  // number of rows
-  bool ascending;  // sort direction
-  __device__ float_pair<F> operator()(cudf::size_type idx) const
-  {
-    auto const f = fs[idx];
-    // NaNs sort after all other values: a non-zero bias makes them larger than any non-NaN.
-    // The bias is ordered by row index in the sort direction so equal NaNs remain stable.
-    auto const s = isnan(f) * (ascending ? idx + 1 : size - idx);
-    return float_pair<F>{s, f};
-  }
-};
 
 /**
  * @brief Sorts fixed-width columns using cub radix sort

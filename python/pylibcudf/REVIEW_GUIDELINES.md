@@ -15,14 +15,17 @@ instead of a copy. If the wrapper does not hold the Python owner, the owner
 can be garbage collected while C++ still points to it.
 
 ```cython
-# Bad: options only stores a reference to the filter expression
-def set_filter(self, Expression filter):
-    self.c_obj.set_filter(dereference(filter.c_obj))
+# Bad: the C++ parquet_reader_options only stores a reference to the filter
+# expression, so the expression can be freed while the options still use it
+cdef class ParquetReaderOptions:
+    def set_filter(self, Expression filter):
+        self.c_obj.set_filter(dereference(filter.c_obj))
 
 # Good: keep the Python owner alive for as long as the options object lives
-def set_filter(self, Expression filter):
-    self.c_obj.set_filter(dereference(filter.c_obj))
-    self._filter = filter
+cdef class ParquetReaderOptions:
+    def set_filter(self, Expression filter):
+        self.c_obj.set_filter(dereference(filter.c_obj))
+        self._filter = filter
 ```
 
 Sub-views of device memory, such as `gpumemoryview` slices, must also keep a

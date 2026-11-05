@@ -739,7 +739,7 @@ TEST_F(DistinctJoinTest, InvalidLoadFactor)
 TEST_F(DistinctJoinTest, DistinctLargeExtentOverflowPrevention)
 {
   using namespace cudf::test::literals;
-  CUDF_TEST_REQUIRE_DEVICE_MEMORY(24_GiB);
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(24_GiB);
   // Test that validates size_t extent can handle hash table sizes that would
   // overflow int32_t extent when load_factor < 1.0
 

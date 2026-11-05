@@ -1781,7 +1781,7 @@ TEST_F(ContiguousSplitUntypedTest, ManyBuffersPreserveValidity)
 TEST_F(ContiguousSplitUntypedTest, VeryLargeColumnTest)
 {
   using namespace cudf::test::literals;
-  CUDF_TEST_REQUIRE_DEVICE_MEMORY(25_GiB);
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(25_GiB);
   // tests an edge case where buf.elements * buf.element_size overflows an INT32.
   auto col = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT64}, 400 * 1024 * 1024, cudf::mask_state::UNALLOCATED);
@@ -1792,7 +1792,7 @@ TEST_F(ContiguousSplitUntypedTest, VeryLargeColumnTest)
 TEST_F(ContiguousSplitUntypedTest, VeryLargeColumnTestChunked)
 {
   using namespace cudf::test::literals;
-  CUDF_TEST_REQUIRE_DEVICE_MEMORY(25_GiB);
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(25_GiB);
   // tests an edge case where buf.elements * buf.element_size overflows an INT32.
   auto col = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT64}, 400 * 1024 * 1024, cudf::mask_state::UNALLOCATED);
@@ -1804,7 +1804,7 @@ TEST_F(ContiguousSplitUntypedTest, VeryLargeColumnTestChunked)
 TEST_F(ContiguousSplitUntypedTest, ChunkedPackNextReturnValueOver2GB)
 {
   using namespace cudf::test::literals;
-  CUDF_TEST_REQUIRE_DEVICE_MEMORY(7_GiB);
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(7_GiB);
   auto const mr = cudf::get_current_device_resource_ref();
 
   // 270M INT64 elements = 270 * 1024 * 1024 * 8 = 2,264,924,160 bytes > INT32_MAX

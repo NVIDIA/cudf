@@ -43,7 +43,7 @@ inline std::string large_memory_skip_reason(std::size_t bytes)
 }  // namespace cudf::test
 
 /// Skips the current test unless large-memory tests are enabled and the device has `bytes` memory.
-#define CUDF_TEST_REQUIRE_DEVICE_MEMORY(bytes)                                 \
+#define CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(bytes)                         \
   do {                                                                         \
     if (auto const skip_reason_ = cudf::test::large_memory_skip_reason(bytes); \
         not skip_reason_.empty()) {                                            \

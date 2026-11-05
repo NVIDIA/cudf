@@ -83,7 +83,7 @@ TEST_F(BPETest, LargeOutput)
 TEST_F(BPETest, ManySegments)
 {
   using namespace cudf::test::literals;
-  CUDF_TEST_REQUIRE_DEVICE_MEMORY(40_GiB);
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(40_GiB);
   // every character is its own (unpairable) segment so the number
   // of segments exceeds max size_type
   auto const mpt = cudf::test::strings_column_wrapper({"a b", "ab c"});

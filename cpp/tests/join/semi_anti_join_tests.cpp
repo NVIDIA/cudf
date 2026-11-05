@@ -426,7 +426,7 @@ TEST_P(SemiAntiJoinTest, SemiJoinEmptyTables)
 TEST_P(SemiAntiJoinTest, AntiSemiJoinLargeExtentOverflowPrevention)
 {
   using namespace cudf::test::literals;
-  CUDF_TEST_REQUIRE_DEVICE_MEMORY(24_GiB);
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(24_GiB);
   auto const implementation = GetParam();
   if (use_mark_join(implementation)) { GTEST_SKIP(); }
   // Test validates size_t extent can handle bucket storage sizes that would

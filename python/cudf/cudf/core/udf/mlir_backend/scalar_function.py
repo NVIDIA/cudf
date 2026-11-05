@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from functools import cache
-
 from numba_cuda_mlir import cuda
 from numba_cuda_mlir.numba_cuda.np import numpy_support
 
@@ -56,7 +54,6 @@ class SeriesApplyKernel(ApplyKernelBase):
             extra_args=extra_args, masked_initializer=masked_initializer
         )
 
-    @cache
     def _get_kernel_string_exec_context(self):
         # This is the global execution context that will be used
         # to compile the kernel. It contains the function being

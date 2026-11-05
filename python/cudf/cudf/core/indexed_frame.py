@@ -59,7 +59,7 @@ from cudf.core.index import Index, RangeIndex, _index_from_data, ensure_index
 from cudf.core.missing import NA
 from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import _Resampler
-from cudf.core.udf.strings_typing import ManagedStrArrayWrapper
+from cudf.core.udf.mlir_backend.strings_typing import ManagedStrArrayWrapper
 from cudf.core.udf.utils import (
     _get_input_args_from_frame,
     _make_free_string_kernel,

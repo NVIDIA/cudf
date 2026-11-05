@@ -12,7 +12,7 @@ from numba.np.numpy_support import from_dtype
 import cudf
 from cudf import NA
 from cudf.core.udf.api import Masked
-from cudf.core.udf.masked_typing import MaskedType
+from cudf.core.udf.mlir_backend.masked_typing import MaskedType
 from cudf.utils._numba import _CUDFNumbaConfig
 
 arith_ops = (

@@ -2,8 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from functools import cache
-
 import cupy as cp
 import numpy as np
 from numba_cuda_mlir import cuda, types
@@ -19,9 +17,6 @@ from cudf.core.udf.mlir_backend.cooperative_device_funcs import (
 )
 from cudf.core.udf.mlir_backend.cooperative_types import CooperativeArrayType
 from cudf.core.udf.mlir_backend.cooperative_typing import CooperativeArray
-from cudf.core.udf.mlir_backend.groupby_lowering import (
-    register_group_slot_lowering,
-)
 from cudf.core.udf.mlir_backend.groupby_typing import (
     SUPPORTED_GROUPBY_NUMPY_TYPES,
     GroupByJITDataFrame,
@@ -122,10 +117,19 @@ def jit_groupby_apply(offsets, grouped_values, function, *args):
 
     output = column_empty(ngroups, dtype=return_type)
     output = output.set_mask(None, 0)
+
+    # The cooperative idxmin/idxmax device helpers read the group index as
+    # int64. Cast an integer index of any other width (e.g. int32) to int64 so
+    # it is not misread (a narrower index otherwise yields a misaligned /
+    # out-of-bounds device read).
+    index = grouped_values.index
+    if index.dtype.kind in "iu" and index.dtype != np.dtype("int64"):
+        index = index.astype("int64")
+
     launch_args = [
         offsets,
         output,
-        grouped_values.index,
+        index,
     ]
     launch_args += list(
         _supported_cols_from_frame(
@@ -230,11 +234,9 @@ class GroupByApplyKernel(ApplyKernelBase):
             group_initializers="\n".join(initializers),
         )
 
-    @cache
     def _get_kernel_string_exec_context(self):
         dataframe_group_type = self._get_frame_type()
         register_group_slot(dataframe_group_type)
-        register_group_slot_lowering(dataframe_group_type)
         col_names = tuple(
             _supported_cols_from_frame(
                 self.frame, supported_types=SUPPORTED_GROUPBY_NUMPY_TYPES

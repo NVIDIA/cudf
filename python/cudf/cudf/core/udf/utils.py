@@ -21,17 +21,19 @@ from numba_cuda_mlir.numba_cuda.np import numpy_support
 from numba_cuda_mlir.numba_cuda.typing.typeof import typeof
 from numba_cuda_mlir.types import CPointer, Record, Tuple, int64, void
 
+import pylibcudf as plc
 import rmm
+from pylibcudf.gpumemoryview import gpumemoryview
 
 from cudf.api.types import is_string_dtype as _is_string_dtype
-from cudf.core.udf.nrt_utils import nrt_enabled
-from cudf.core.udf.strings_typing import (
+from cudf.core.udf.mlir_backend.strings_typing import (
     ManagedStrArrayWrapper,
     MLIRStringType,
     NRT_decref,
     mlir_string,
     mlir_string_arg_handler,
 )
+from cudf.core.udf.nrt_utils import nrt_enabled
 from cudf.utils.dtypes import (
     BOOL_TYPES,
     DATETIME_TYPES,
@@ -43,8 +45,6 @@ from cudf.utils.dtypes import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    import pylibcudf as plc
 
     from cudf.core.buffer.buffer import Buffer
     from cudf.core.indexed_frame import IndexedFrame
@@ -239,7 +239,7 @@ def compile_udf(udf, type_signature):
     ptx_code, return_type = cuda.compile_ptx_for_current_device(
         udf, type_signature, device=True
     )
-    from cudf.core.udf.masked_typing import MaskedType
+    from cudf.core.udf.mlir_backend.masked_typing import MaskedType
 
     if not isinstance(return_type, MaskedType):
         output_type = numpy_support.as_dtype(return_type).type
@@ -440,8 +440,6 @@ def _column_to_mlir_string_array(plc_col: plc.Column) -> rmm.DeviceBuffer:
     Each element is {meminfo=null, data=chars+offset[i], nbytes=offset[i+1]-offset[i]}.
     Pure Python + cupy, no C++/Cython.
     """
-    import pylibcudf as plc
-
     n = plc_col.size()
     if n == 0:
         return rmm.DeviceBuffer(size=0)
@@ -489,9 +487,6 @@ def _mlir_string_array_to_column(buf: rmm.DeviceBuffer, n: int) -> plc.Column:
     Mask is applied separately by the caller.
     Pure Python + cupy + one scatter kernel, no C++/Cython.
     """
-    import pylibcudf as plc
-    from pylibcudf.gpumemoryview import gpumemoryview
-
     if n == 0:
         offsets_cp = cp.zeros(1, dtype=cp.int32)
         offsets_gmv = gpumemoryview(offsets_cp)
@@ -524,11 +519,22 @@ def _mlir_string_array_to_column(buf: rmm.DeviceBuffer, n: int) -> plc.Column:
         ),
     )
     data_ptrs = cp.ascontiguousarray(raw[:, 1])
-    lengths = cp.ascontiguousarray(raw[:, 2]).astype(cp.int32)
+    lengths64 = cp.ascontiguousarray(raw[:, 2])  # int64 byte lengths
 
+    # Offsets are int32; a total output exceeding the int32 range would overflow
+    # them and silently corrupt the column. Compute the total in int64 and fail
+    # loudly (INT64-offset output is not yet supported on this path).
+    total_chars = int(lengths64.sum())
+    if total_chars > 0x7FFFFFFF:
+        raise OverflowError(
+            "JIT UDF produced more than 2 GiB of string data "
+            f"({total_chars} bytes); string outputs requiring INT64 offsets "
+            "are not supported by the apply engine."
+        )
+
+    lengths = lengths64.astype(cp.int32)
     offsets_cp = cp.zeros(n + 1, dtype=cp.int32)
     cp.cumsum(lengths, out=offsets_cp[1:])
-    total_chars = int(offsets_cp[n])
 
     chars_dev = rmm.DeviceBuffer(size=max(total_chars, 1))
     chars_cp = cp.ndarray(
@@ -567,8 +573,10 @@ def _mlir_string_array_to_column(buf: rmm.DeviceBuffer, n: int) -> plc.Column:
 def _scatter_chars_kernel(data_ptrs, lengths, offsets, chars_out, n):
     """Copy each string's bytes into the contiguous chars buffer.
 
-    Uses a simple cupy raw kernel: thread i copies lengths[i] bytes from
-    data_ptrs[i] to chars_out + offsets[i].
+    Grid-stride cupy raw kernel: each thread handles strings
+    ``gid, gid + stride, ...`` so a fixed (capped) grid correctly covers any
+    ``n``. String ``i`` copies ``lengths[i]`` bytes from ``data_ptrs[i]`` to
+    ``chars_out + offsets[i]``.
     """
     if n == 0:
         return
@@ -582,8 +590,9 @@ def _scatter_chars_kernel(data_ptrs, lengths, offsets, chars_out, n):
         unsigned char* chars_out,
         long long n
     ) {
-        long long gid = blockIdx.x * blockDim.x + threadIdx.x;
-        if (gid < n) {
+        const long long stride = (long long)blockDim.x * gridDim.x;
+        for (long long gid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+             gid < n; gid += stride) {
             const unsigned char* src = (const unsigned char*)data_ptrs[gid];
             int len = lengths[gid];
             int off = offsets[gid];
@@ -596,7 +605,7 @@ def _scatter_chars_kernel(data_ptrs, lengths, offsets, chars_out, n):
         "scatter_chars",
     )
     block = 256
-    grid = (n + block - 1) // block
+    grid = min((n + block - 1) // block, 65535)
     kernel((grid,), (block,), (data_ptrs, lengths, offsets, chars_out, n))
 
 

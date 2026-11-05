@@ -7,7 +7,7 @@ from numba.cuda.memory_management.nrt import rtsys
 
 import cudf
 from cudf.core.column import ColumnBase, as_column
-from cudf.core.udf.scalar_function import SeriesApplyKernel
+from cudf.core.udf.mlir_backend.scalar_function import SeriesApplyKernel
 from cudf.core.udf.utils import (
     _get_input_args_from_frame,
     _make_free_string_kernel,

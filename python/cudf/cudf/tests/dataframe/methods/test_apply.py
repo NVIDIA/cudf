@@ -729,3 +729,33 @@ def test_masked_udf_scalar_args_binops_multiple(data, binary_op):
     run_masked_udf_test(
         func, data, args=(1, 2), check_dtype=False, nullable=True
     )
+
+
+def test_apply_kernel_instance_not_cached():
+    # Regression: the apply kernel classes must not cache per-instance state at
+    # class scope (previously ``@functools.cache`` on
+    # ``_get_kernel_string_exec_context`` kept every kernel instance -- and thus
+    # its frame's GPU buffers -- alive for the life of the process). Verify the
+    # kernel instance is collectable after use, while the separate compiled
+    # kernel cache still works.
+    import gc
+    import weakref
+
+    from cudf.core.udf.mlir_backend.row_function import DataFrameApplyKernel
+    from cudf.core.udf.mlir_backend.scalar_function import SeriesApplyKernel
+
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    row_kr = DataFrameApplyKernel(df, lambda row: row["a"] + row["b"], ())
+    row_kr.get_kernel()
+    row_ref = weakref.ref(row_kr)
+
+    sr = cudf.Series([1, 2, 3])
+    scalar_kr = SeriesApplyKernel(sr, lambda x: x + 1, ())
+    scalar_kr.get_kernel()
+    scalar_ref = weakref.ref(scalar_kr)
+
+    del row_kr, scalar_kr
+    gc.collect()
+
+    assert row_ref() is None
+    assert scalar_ref() is None

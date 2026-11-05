@@ -485,8 +485,9 @@ def _make_lower_masked_unary(op: Callable) -> Callable:
         m_val = convert(m_val, builder.get_mlir_type(operand_inner_ty))
 
         if op is abs and isinstance(operand_inner_ty, types.Boolean):
-            # abs(bool) == int(bool) (0 or 1). The scalar abs builder has no
-            # boolean overload and otherwise triggers a compiler ICE.
+            # abs(bool) is just the boolean's integer value (0 or 1).
+            # numba-cuda-mlir's scalar abs builder has no boolean overload, so
+            # handle it here directly as a widening cast to the result type.
             result_val = convert(m_val, builder.get_mlir_type(result_inner_ty))
             packed = _pack_masked(builder, target_type, result_val, m_valid)
             builder.store_var(target, packed)
@@ -619,17 +620,34 @@ def _make_lower_masked_numeric_cast() -> Callable:
 
 def _const_mlir_for_membership(
     py_const: int | float | bool, mlir_ty: mlir_ir.Type
-) -> mlir_ir.Value:
+) -> mlir_ir.Value | None:
     """Materialize a Python numeric constant as an MLIR value of ``mlir_ty`` for
-    comparison against a masked payload in a membership test.
+    comparison against a masked payload in a membership test, or ``None`` if the
+    constant can never compare equal to a payload of that type.
 
     The constant is materialized to match the *payload* MLIR type, not the
     Python literal's type: ``x in (1, 2, 3)`` where ``x`` is a float must build
     float constants, because ``arith.constant(f64, value=<int>)`` is a malformed
     ``llvm.mlir.constant`` ("expected integer type").
+
+    For an integer payload, a constant that is not an exactly-representable
+    integer value returns ``None`` rather than being truncated: ``x in (1.5,)``
+    with integer ``x`` is always ``False`` (Python semantics), and ``x in (2,)``
+    with a bool (``i1``) payload must not truncate ``2`` to ``0``.
     """
     if isinstance(mlir_ty, mlir_ir.IntegerType):
-        return int_of(int(py_const), mlir_ty)
+        fval = float(py_const)
+        if not fval.is_integer():
+            return None
+        ival = int(fval)
+        width = mlir_ty.width
+        if width == 1:
+            if ival not in (0, 1):
+                return None
+        elif not -(1 << (width - 1)) <= ival <= (1 << width) - 1:
+            # outside both the signed and unsigned ranges of this width
+            return None
+        return int_of(ival, mlir_ty)
     return float_of(float(py_const), mlir_ty)
 
 
@@ -658,6 +676,11 @@ def _lower_masked_literal_tuple_contains(
     result = false()
     for const_val in constant_values:
         c = _const_mlir_for_membership(const_val, m_val.type)
+        if c is None:
+            # Constant can never equal a payload of this type (e.g. a
+            # non-integral float against an integer payload); contributes
+            # nothing to the OR of equalities.
+            continue
         m_v, c_v = coerce_numpy_scalars_for_binary_op(m_val, c)
         result = arith.ori(result, equal(m_v, c_v))
 

@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import math
-from functools import cache
 
 import numpy as np
 from numba_cuda_mlir import cuda, types
@@ -47,16 +46,9 @@ class RowSlotTemplate(AbstractTemplate):
         return None
 
 
-def _lower_row_slot_impl(builder, target, row_type):
-    """Allocate record_size bytes and store the pointer in target (Record = ptr to bytes)."""
-    record_size = row_type.size
-    i8 = builder.get_mlir_type(types.uint8)
-    ptr = builder.alloca(i8, count=record_size)
-    builder.store_var(target, ptr)
-
-
 def _lower_row_slot(builder, target, args, kwargs):
-    """Lowering for ``_row_slot()``.
+    """Lowering for ``_row_slot()``: allocate record_size bytes and store the
+    pointer in target (Record = ptr to bytes).
 
     The row ``Record`` type is the target's numba type, so we derive the slot
     size from it. Registered once at import time (released numba-cuda-mlir
@@ -64,7 +56,9 @@ def _lower_row_slot(builder, target, args, kwargs):
     per-kernel late registration would never be installed).
     """
     row_type = builder.get_numba_type(target.name)
-    _lower_row_slot_impl(builder, target, row_type)
+    i8 = builder.get_mlir_type(types.uint8)
+    ptr = builder.alloca(i8, count=row_type.size)
+    builder.store_var(target, ptr)
 
 
 def register_row_slot(row_type):
@@ -78,10 +72,6 @@ def register_row_slot(row_type):
 def _register_row_slot():
     typing_registry.register_global(_row_slot, types.Function(RowSlotTemplate))
     lowering_registry.lower(_row_slot)(_lower_row_slot)
-
-
-# Backwards-compatible alias (typing-only registration entry point).
-_register_row_slot_typing = _register_row_slot
 
 
 def _get_frame_row_type(dtype):
@@ -140,9 +130,8 @@ def _get_frame_row_type(dtype):
             next_itemsize = sizes[i + 1]
             offset = int(math.ceil(offset / next_itemsize) * next_itemsize)
 
-    # Numba requires that structures are aligned for the CUDA target
-    _is_aligned_struct = True
-    return Row(fields, offset, _is_aligned_struct)
+    # Numba requires that structures are aligned for the CUDA target.
+    return Row(fields, offset, aligned=True)
 
 
 class DataFrameApplyKernel(ApplyKernelBase):
@@ -196,7 +185,6 @@ class DataFrameApplyKernel(ApplyKernelBase):
             row_initializers="\n".join(row_initializers),
         )
 
-    @cache
     def _get_kernel_string_exec_context(self):
         row_type = self._get_frame_type()
         register_row_slot(row_type)

@@ -342,6 +342,9 @@ files:
     includes:
       - build_base
       - build_python_common
+      # pylibcudf cimports cuda.bindings, so the isolated build env needs the
+      # same pinned version as the runtime dependency.
+      - depends_on_cuda_bindings
       - depends_on_libcudf
       - depends_on_librmm
       - depends_on_rmm
@@ -1107,7 +1110,9 @@ dependencies:
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
             packages:
-              - cuda-bindings>=13.0.2,<14.0
+              # cuda-bindings 13.5 requires CUDA 13.5 driver headers, which
+              # break builds against CUDA 13.4.
+              - cuda-bindings>=13.0.2,<13.5
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

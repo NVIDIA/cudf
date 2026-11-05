@@ -20,6 +20,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -519,12 +520,31 @@ class operation : public expression {
    */
   operation(ast_operator op, expression const& left, expression const& right);
 
+  /**
+   * @brief Construct a new ternary operation object.
+   *
+   * @param op Operator
+   * @param first First input expression (first operand)
+   * @param second Second input expression (second operand)
+   * @param third Third input expression (third operand)
+   */
+  operation(ast_operator op,
+            expression const& first,
+            expression const& second,
+            expression const& third);
+
   // operation only stores references to expressions, so it does not accept r-value
   // references: the calling code must own the expressions.
   operation(ast_operator op, expression&& input)                         = delete;
   operation(ast_operator op, expression&& left, expression&& right)      = delete;
   operation(ast_operator op, expression&& left, expression const& right) = delete;
   operation(ast_operator op, expression const& left, expression&& right) = delete;
+  // Deletes every ternary overload with an r-value operand, which avoids spelling out each
+  // combination as the binary overloads above do.
+  template <typename First, typename Second, typename Third>
+    requires(!std::is_lvalue_reference_v<First> || !std::is_lvalue_reference_v<Second> ||
+             !std::is_lvalue_reference_v<Third>)
+  operation(ast_operator op, First&&, Second&&, Third&&) = delete;
 
   /**
    * @brief Get the operator.

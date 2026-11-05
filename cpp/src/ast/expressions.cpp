@@ -40,6 +40,17 @@ operation::operation(ast_operator op, expression const& left, expression const& 
                std::invalid_argument);
 }
 
+operation::operation(ast_operator op,
+                     expression const& first,
+                     expression const& second,
+                     expression const& third)
+  : op{op}, operands{first, second, third}
+{
+  CUDF_EXPECTS(cudf::ast::detail::ast_operator_arity(op) == 3,
+               "The provided operator is not a ternary operator.",
+               std::invalid_argument);
+}
+
 std::vector<std::reference_wrapper<expression const>>
 detail::expression_transformer::visit_operands(
   std::span<std::reference_wrapper<expression const> const> operands)

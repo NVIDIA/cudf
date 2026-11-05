@@ -15,6 +15,7 @@
 #include <cuda/buffer>
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <numeric>
 #include <optional>
@@ -60,6 +61,38 @@ struct alignas(8) device_data_reference {
   bool operator==(device_data_reference const& rhs) const;
 };
 
+/**
+ * @brief The kinds of step that the evaluator executes.
+ */
+enum class plan_entry_kind : std::uint8_t {
+  UNARY,   ///< Apply a unary operator.
+  BINARY,  ///< Apply a binary operator.
+  BRANCH,  ///< Conditionally skip the entries that follow.
+  JUMP     ///< Unconditionally skip the entries that follow.
+};
+
+/**
+ * @brief A step of the plan that the evaluator executes.
+ *
+ * An operator entry reads its operands from the data references `input0` (and `input1` for a binary
+ * operator), and writes to `output`. A branch entry reads its condition from `input0`. If the
+ * condition requests it, the evaluator skips the `skip` entries that follow. For `LOGICAL_AND`,
+ * `NULL_LOGICAL_AND`, `LOGICAL_OR` and `NULL_LOGICAL_OR` that is when the left operand, which is
+ * the condition, decides the result. For `IF_ELSE` that is unless the condition is true. A jump
+ * entry always skips them.
+ *
+ * Indices and `skip` are 16 bits so that an entry fits in 16 bytes, which the device loads at once.
+ */
+struct alignas(16) plan_entry {
+  ast_operator op;
+  plan_entry_kind kind;
+  std::uint16_t input0;
+  std::uint16_t input1;
+  std::uint16_t output;
+  std::uint16_t skip;
+};
+static_assert(sizeof(plan_entry) == 16);
+
 // Type used for intermediate storage in expression evaluation.
 template <bool has_nulls>
 using IntermediateDataType = possibly_null_value_t<std::int64_t, has_nulls>;
@@ -75,9 +108,7 @@ using IntermediateDataType = possibly_null_value_t<std::int64_t, has_nulls>;
 struct expression_device_view {
   device_span<detail::device_data_reference const> data_references;
   device_span<generic_scalar_device_view const> literals;
-  device_span<ast_operator const> operators;
-  device_span<cudf::size_type const> operator_arities;
-  device_span<cudf::size_type const> operator_source_indices;
+  device_span<plan_entry const> entries;
   cudf::size_type num_intermediates;
 };
 
@@ -157,6 +188,15 @@ class expression_parser {
    * @return cudf::size_type Index of device data reference for the expression.
    */
   cudf::size_type visit(operation const& expr);
+
+  /**
+   * @brief Visit an `IF_ELSE` expression so that only the selected branch is evaluated.
+   *
+   * @param expr `IF_ELSE` expression.
+   * @param expression_index Index of the expression, which is 0 for the root.
+   * @return cudf::size_type Index of device data reference for the expression.
+   */
+  cudf::size_type visit_if_else(operation const& expr, cudf::size_type expression_index);
 
   /**
    * @brief Visit a column name reference expression.
@@ -270,6 +310,24 @@ class expression_parser {
    */
   cudf::size_type add_data_reference(detail::device_data_reference data_ref);
 
+  /**
+   * @brief Create the data reference that receives the result of an expression.
+   *
+   * This is separate from `visit` because both branches of an `IF_ELSE` expression must write to
+   * the same output location, so it is created before either branch is visited.
+   *
+   * @param expression_index Index of the expression, which is 0 for the root.
+   * @param data_type Type of the result.
+   * @param intermediate_index Intermediate storage location to use if the expression is not the
+   * root. A new location is taken if not provided.
+   *
+   * @return The data reference for the result.
+   */
+  detail::device_data_reference make_output_reference(
+    cudf::size_type expression_index,
+    cudf::data_type data_type,
+    std::optional<cudf::size_type> intermediate_index = std::nullopt);
+
   cuda::device_buffer<std::byte>
     _device_data_buffer;  ///< The device-side data buffer containing the plan information, which is
                           ///< owned by this class and persists until it is destroyed.
@@ -281,9 +339,7 @@ class expression_parser {
   bool _has_nulls;
   bool _has_complex_type;
   std::vector<detail::device_data_reference> _data_references;
-  std::vector<ast_operator> _operators;
-  std::vector<cudf::size_type> _operator_arities;
-  std::vector<cudf::size_type> _operator_source_indices;
+  std::vector<plan_entry> _plan;
   std::vector<generic_scalar_device_view> _literals;
 };
 

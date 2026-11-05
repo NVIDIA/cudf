@@ -286,6 +286,12 @@ cudf::data_type ast_operator_return_type(ast_operator op,
         op, operand_types, detail::return_type_functor{operand_types}, result);
       break;
     }
+    case 3: {
+      CUDF_EXPECTS(
+        op == ast_operator::IF_ELSE, "Unsupported ternary operator.", std::invalid_argument);
+      result = operand_types[1];
+      break;
+    }
     default: CUDF_FAIL("Unsupported operator return type."); break;
   }
   return result;
@@ -300,6 +306,7 @@ bool is_comparison_operator(ast_operator op)
 
 cudf::size_type ast_operator_arity(ast_operator op)
 {
+  if (op == ast_operator::IF_ELSE) { return 3; }
   cudf::size_type result{};
   ast_operator_dispatcher(op, arity_functor{}, result);
   return result;
@@ -331,6 +338,7 @@ std::string_view ast_operator_string(ast_operator op)
     case ast_operator::NULL_LOGICAL_AND: return "NULL_LOGICAL_AND";
     case ast_operator::LOGICAL_OR: return "LOGICAL_OR";
     case ast_operator::NULL_LOGICAL_OR: return "NULL_LOGICAL_OR";
+    case ast_operator::IF_ELSE: return "IF_ELSE";
     case ast_operator::IDENTITY: return "IDENTITY";
     case ast_operator::IS_NULL: return "IS_NULL";
     case ast_operator::SIN: return "SIN";

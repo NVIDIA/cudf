@@ -1135,8 +1135,8 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   // check if the output filter AST expression (= _expr_conv.get_converted_expr()) exists
   if (final_filter_expr.has_value()) {
     auto const output_count = out_columns.size() - _num_filter_only_columns;
-    auto read_table  = std::make_unique<table>(std::move(out_columns));
-    auto counting_it = cuda::counting_iterator<std::size_t>{0};
+    auto read_table         = std::make_unique<table>(std::move(out_columns));
+    auto counting_it        = cuda::counting_iterator<std::size_t>{0};
     // Exclude columns present in filter only in output.
     auto only_output = read_table->select(counting_it, counting_it + output_count);
 
@@ -1196,7 +1196,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
       };
 
       // STRING columns to be dictionary encoded go to the temporary resource
-      auto dict_columns = gather_rows(dict_indices, _mr.as_temporary());
+      auto dict_columns     = gather_rows(dict_indices, _mr.as_temporary());
       auto non_dict_columns = gather_rows(non_dict_indices, _mr);
 
       // Restore the column order
@@ -1212,7 +1212,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
   }
 
   return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
-    std::move(out_metadata)};
+          std::move(out_metadata)};
 }
 
 table_with_metadata reader_impl::read()

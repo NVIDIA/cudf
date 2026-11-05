@@ -785,6 +785,25 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
 
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/test_sort.py::test_sort_by_scalar_key_29583_29760": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/lazyframe/test_order_observability.py::test_top_k_by_drops_scalar_keys": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[2.0]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[x]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[True]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_fallible_expression_only_over_outer_rows": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.v = (SELECT c.id * 10 FROM c WHERE c.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.id = (SELECT b.id FROM c AS b WHERE b.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_joins.py::test_join_on_subquery_unsupported[a.v = (SELECT x FROM c)-expected no or a single value]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/functions/test_union.py::test_union_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
+    "tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_too_many": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_single_empty": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/test_replace.py::test_replace_invalid_old_dtype": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/functions/test_concat.py::test_concat_horizontal_lazy_strict_raises_shape_error_27415": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
+    "tests/unit/io/test_io_plugin.py::test_defer_validate_true": "correct SchemaError raised but wrapped in an ExceptionGroup under the streaming engine",
+    "tests/unit/operations/test_slice.py::test_hconcat_tail_unequal_heights_strict_raises_27552": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "Passes under the streaming engine but fails under the in-memory engine, which xfails it",
     "tests/unit/operations/aggregation/test_aggregations.py::test_boolean_aggs": "float difference in std/var in the unit of least precision",
     # Crashes the worker instead of raising cleanly; skip rather than xfail
@@ -971,30 +990,10 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
-    "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/test_sort.py::test_sort_by_scalar_key_29583_29760": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/lazyframe/test_order_observability.py::test_top_k_by_drops_scalar_keys": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[2.0]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[x]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[True]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_fallible_expression_only_over_outer_rows": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.v = (SELECT c.id * 10 FROM c WHERE c.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.id = (SELECT b.id FROM c AS b WHERE b.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_joins.py::test_join_on_subquery_unsupported[a.v = (SELECT x FROM c)-expected no or a single value]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/functions/test_union.py::test_union_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
-    "tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
     "tests/unit/functions/test_concat.py::test_concat_horizontal_zero_width_height_mismatch_26876": "https://github.com/NVIDIA/cudf/issues/21644",
-    "tests/unit/operations/test_group_by.py::test_group_by_lit_series": "Incorrect broadcasting of literals in groupby-agg",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_too_many": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_single_empty": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_join.py::test_empty_outer_join_22206": "https://github.com/NVIDIA/cudf/issues/22084",
-    "tests/unit/operations/test_replace.py::test_replace_invalid_old_dtype": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_window.py::test_over_literal_cum_sum_26800": "TODO: https://github.com/NVIDIA/cudf/pull/22048#discussion_r3238041970",
-    "tests/unit/functions/test_concat.py::test_concat_horizontal_lazy_strict_raises_shape_error_27415": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
-    "tests/unit/io/test_io_plugin.py::test_defer_validate_true": "correct SchemaError raised but wrapped in an ExceptionGroup under the streaming engine",
     "tests/unit/lazyframe/test_projections.py::test_merge_sorted_projection_pd": "https://github.com/NVIDIA/cudf/issues/23055",
-    "tests/unit/operations/test_slice.py::test_hconcat_tail_unequal_heights_strict_raises_27552": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
 }
 
 STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {

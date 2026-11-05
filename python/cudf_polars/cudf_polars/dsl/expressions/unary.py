@@ -9,7 +9,7 @@ import math
 from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, assert_never, cast
 
 import polars as pl
-from polars.exceptions import ComputeError
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -20,6 +20,8 @@ from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils import dtypes, sorting
 
 if TYPE_CHECKING:
+    from rmm.pylibrmm.stream import Stream
+
     from cudf_polars.containers import DataFrame
 
 __all__ = ["Cast", "Len", "UnaryFunction"]
@@ -43,6 +45,80 @@ def _integer_range(dtype: plc.DataType) -> tuple[int, int]:
     if signed:
         return -(1 << (bits - 1)), (1 << (bits - 1)) - 1
     return 0, (1 << bits) - 1
+
+
+_TEMPORAL_UNIT_NANOSECONDS = {
+    plc.TypeId.TIMESTAMP_DAYS: 86_400 * 10**9,
+    plc.TypeId.TIMESTAMP_SECONDS: 10**9,
+    plc.TypeId.TIMESTAMP_MILLISECONDS: 10**6,
+    plc.TypeId.TIMESTAMP_MICROSECONDS: 10**3,
+    plc.TypeId.TIMESTAMP_NANOSECONDS: 1,
+    plc.TypeId.DURATION_DAYS: 86_400 * 10**9,
+    plc.TypeId.DURATION_SECONDS: 10**9,
+    plc.TypeId.DURATION_MILLISECONDS: 10**6,
+    plc.TypeId.DURATION_MICROSECONDS: 10**3,
+    plc.TypeId.DURATION_NANOSECONDS: 1,
+}
+
+
+def _temporal_overflow_mask(
+    column: plc.Column, target: plc.DataType, stream: Stream
+) -> plc.Column | None:
+    """
+    Mask of the values of ``column`` that fit in the finer temporal type ``target``.
+
+    Returns None when the cast does not move to a finer unit.
+    """
+    source = column.type()
+    if not (
+        (plc.traits.is_timestamp(source) and plc.traits.is_timestamp(target))
+        or (plc.traits.is_duration(source) and plc.traits.is_duration(target))
+    ):
+        return None
+    source_ns = _TEMPORAL_UNIT_NANOSECONDS[source.id()]
+    target_ns = _TEMPORAL_UNIT_NANOSECONDS[target.id()]
+    if source_ns <= target_ns:
+        return None
+    factor = source_ns // target_ns
+    physical = plc.column.Column(
+        plc.DataType(
+            plc.TypeId.INT32
+            if source.id() in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
+            else plc.TypeId.INT64
+        ),
+        column.size(),
+        column.data(),
+        column.null_mask(),
+        column.null_count(),
+        column.offset(),
+        column.children(),
+    )
+    physical = plc.unary.cast(physical, plc.DataType(plc.TypeId.INT64), stream=stream)
+    int64 = plc.DataType(plc.TypeId.INT64)
+    in_range: plc.Column | None = None
+    for bound, op in (
+        (-((2**63) // factor), plc.binaryop.BinaryOperator.GREATER_EQUAL),
+        ((2**63 - 1) // factor, plc.binaryop.BinaryOperator.LESS_EQUAL),
+    ):
+        check = plc.binaryop.binary_operation(
+            physical,
+            plc.Scalar.from_py(bound, int64, stream=stream),
+            op,
+            plc.DataType(plc.TypeId.BOOL8),
+            stream=stream,
+        )
+        in_range = (
+            check
+            if in_range is None
+            else plc.binaryop.binary_operation(
+                in_range,
+                check,
+                plc.binaryop.BinaryOperator.NULL_LOGICAL_AND,
+                plc.DataType(plc.TypeId.BOOL8),
+                stream=stream,
+            )
+        )
+    return in_range
 
 
 class Cast(Expr):
@@ -111,7 +187,40 @@ class Cast(Expr):
                     ),
                     dtype=self.dtype,
                 )
+        in_range = _temporal_overflow_mask(column.obj, self.dtype.plc_type, df.stream)
+        if in_range is not None:
+            result = self._null_or_raise(result, in_range, column, df)
         return result
+
+    def _null_or_raise(
+        self, result: Column, in_range: plc.Column, column: Column, df: DataFrame
+    ) -> Column:
+        """Null the values flagged out of range, or raise for a strict cast."""
+        in_range = plc.replace.replace_nulls(
+            in_range, plc.Scalar.from_py(py_val=True, stream=df.stream)
+        )
+        if self.strict:
+            if not plc.reduce.reduce(
+                in_range,
+                plc.aggregation.all(),
+                plc.DataType(plc.TypeId.BOOL8),
+                stream=df.stream,
+            ).to_py(stream=df.stream):
+                raise InvalidOperationError(
+                    f"conversion from `{column.dtype.polars_type._string_repr()}` "
+                    f"to `{self.dtype.polars_type._string_repr()}` failed in "
+                    f"column '{column.name}'"
+                )
+            return result
+        return Column(
+            plc.copying.copy_if_else(
+                result.obj,
+                plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                in_range,
+                stream=df.stream,
+            ),
+            dtype=self.dtype,
+        )
 
 
 class Len(Expr):

@@ -326,13 +326,14 @@ def test_rolling_multirank_spmd(spmd_engine, tmp_path, kind) -> None:
 
 
 @pytest.mark.engine_params(["ray"])
-def test_rolling_multirank_ray(streaming_engine_factory, tmp_path) -> None:
+@pytest.mark.parametrize("kind", ["range", "count"])
+def test_rolling_multirank_ray(streaming_engine_factory, tmp_path, kind) -> None:
     engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=2, target_partition_size=32)
     )
     source = tmp_path / "rolling.parquet"
     _write_rolling_source(source)
-    _assert_rolling_result(engine, source, "count", "-2i")
+    _assert_rolling_result(engine, source, kind, "-2i")
 
 
 @pytest.mark.spmd

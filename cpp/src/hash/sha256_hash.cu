@@ -10,8 +10,6 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/stream>
 
 #include <memory>

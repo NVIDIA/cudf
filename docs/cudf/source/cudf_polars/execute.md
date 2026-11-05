@@ -3,9 +3,8 @@
 
 ```{warning}
 `engine.execute()` is **experimental**. Its API may change or be removed in a
-future release. Using it emits a `cudf_polars.UnstableWarning`; set the
-`CUDF_POLARS_WARN_UNSTABLE` environment variable to `1` to have that warning
-raised as an error instead. See {doc}`options`.
+future release. Set the `CUDF_POLARS_WARN_UNSTABLE` environment variable to `1`
+to emit a `cudf_polars.UnstableWarning` whenever it is used. See {doc}`options`.
 ```
 
 [`LazyFrame.collect`](https://docs.pola.rs/api/python/stable/reference/lazyframe/api/polars.LazyFrame.collect.html)

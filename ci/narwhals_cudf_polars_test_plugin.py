@@ -31,6 +31,8 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_plus_w3]": "cudf-polars zfill only supports ascii strings.",
     "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_plus_w4]": "cudf-polars zfill only supports ascii strings.",
     "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_sign_w5]": "cudf-polars zfill only supports ascii strings.",
+    "tests/expr_and_series/first_last_test.py::test_first_expr_in_group_by[polars[lazy]]": "Polars 2.1 panics converting the BinaryOffset dtype of a row-encoded multi-key sort_by to Python, and the panic poisons the visitor so there is no CPU fallback: https://github.com/NVIDIA/cudf/issues/24843",
+    "tests/expr_and_series/first_last_test.py::test_first_expr_broadcasting[polars[lazy]]": "Polars 2.1 panics converting the BinaryOffset dtype of a row-encoded multi-key sort_by to Python, and the panic poisons the visitor so there is no CPU fallback: https://github.com/NVIDIA/cudf/issues/24843",
 }
 
 

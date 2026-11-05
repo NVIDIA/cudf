@@ -28,7 +28,6 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cub/device/device_transform.cuh>
@@ -128,7 +127,7 @@ kernel build_join_filter_kernel(std::string const& predicate_code,
 
   // Get compiled kernel
   return cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, cuda_source);
+    "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, cuda_source, {});
 }
 
 // Launch the JIT kernel for join filtering
@@ -437,6 +436,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> left_indices,
                         cudf::device_span<size_type const> right_indices,
                         ast::expression const& predicate,
+                        cudf::lto_fragments fragments,
                         join_kind join_kind,
                         cuda::stream_ref stream,
                         cudf::memory_resources mr)
@@ -470,6 +470,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                                             device_span<size_type const>{*left_maps.first},
                                             device_span<size_type const>{*left_maps.second},
                                             predicate,
+                                            fragments,
                                             join_kind::LEFT_JOIN,
                                             stream,
                                             mr);
@@ -484,6 +485,7 @@ filter_join_indices_jit(cudf::table_view const& left,
   // Convert AST predicate to JIT code
   auto filter_result = row_ir::ast_converter::filter(row_ir::target::CUDA,
                                                      predicate,
+                                                     fragments,
                                                      left,
                                                      right,
                                                      "filter_operation",
@@ -496,12 +498,15 @@ filter_join_indices_jit(cudf::table_view const& left,
                                       filter_result.user_data.has_value(),
                                       filter_result.is_null_aware == null_aware::YES);
 
-  auto const cuda_source =
-    cudf::jit::parse_single_function_cuda(filter_result.udf, "GENERIC_JOIN_FILTER_OP");
+  // The generated code is compiled as it is, linked with the LTO callees it calls.
+  auto const cuda_source = cudf::jit::define_operation(
+    filter_result.udf, "GENERIC_JOIN_FILTER_OP", filter_result.udf_expression);
 
   auto kernel_name = rtcx::reflect_template("cudf::join::jit::filter_join_kernel", template_args);
-  auto kernel      = cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, cuda_source);
+  auto kernel      = cudf::jit::get_udf_kernel("cudf/cpp/src/join/jit/filter_join_kernel.cu",
+                                          kernel_name,
+                                          cuda_source,
+                                          filter_result.lto_fragments);
 
   // Allocate and compute predicate results
   auto predicate_results =
@@ -547,12 +552,13 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         cudf::ast::expression const& predicate,
                         cudf::join_kind join_kind,
+                        cudf::lto_fragments fragments,
                         cuda::stream_ref stream,
                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices_jit(
-    left, right, left_indices, right_indices, predicate, join_kind, stream, mr);
+    left, right, left_indices, right_indices, predicate, fragments, join_kind, stream, mr);
 }
 
 }  // namespace cudf

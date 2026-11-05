@@ -25,6 +25,7 @@
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
+#include <thrust/reduce.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -94,7 +95,7 @@ struct unmatched_flag {
 struct to_no_match_pair {
   __device__ cuda::std::tuple<size_type, size_type> operator()(size_type idx) const noexcept
   {
-    return cuda::std::make_tuple(cudf::JoinNoMatch, idx);
+    return cuda::std::make_tuple(size_type{cudf::JoinNoMatch}, idx);
   }
 };
 
@@ -247,4 +248,13 @@ VectorPair finalize_full_join(
 }
 
 }  // namespace detail
+
+std::size_t join_match_context::output_size(cuda::stream_ref stream) const
+{
+  auto const counts = match_counts();
+  return thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                        counts.begin(),
+                        counts.end(),
+                        std::size_t{0});
+}
 }  // namespace cudf

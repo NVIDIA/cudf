@@ -27,6 +27,7 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -446,7 +447,8 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
   // This will use a warp-parallel algorithm to compute the output sizes for each string
   // note: tried to use segmented-reduce approach instead here and it was consistently slower
   auto [offsets, bytes] = [&] {
-    rmm::device_uvector<size_type> sizes(input.size(), stream);
+    cuda::device_buffer<size_type> sizes(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     constexpr thread_index_type warp_size = cudf::detail::warp_size;
     auto grid = cudf::detail::grid_1d(input.size() * warp_size, block_size);
     count_bytes_kernel<bytes_per_thread>
@@ -454,14 +456,17 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
         ccfn, *d_strings, sizes.data());
     CUDF_CUDA_TRY(cudaGetLastError());
     // convert sizes to offsets
-    return cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
+    return cudf::strings::detail::make_offsets_child_column(
+      device_span<size_type const>{sizes}, stream, mr);
   }();
 
   // build sub-offsets
   auto const sub_count = chars_size / LS_SUB_BLOCK_SIZE;
-  auto tmp_offsets     = rmm::device_uvector<int64_t>(sub_count + input.size() + 1, stream);
+  auto tmp_offsets     = cuda::device_buffer<int64_t>(
+    stream, cudf::get_current_device_resource_ref(), sub_count + input.size() + 1, cuda::no_init);
   {
-    rmm::device_uvector<int64_t> sub_offsets(sub_count, stream);
+    cuda::device_buffer<int64_t> sub_offsets(
+      stream, cudf::get_current_device_resource_ref(), sub_count, cuda::no_init);
     auto const count_itr = cuda::counting_iterator<int64_t>{0};
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       count_itr,

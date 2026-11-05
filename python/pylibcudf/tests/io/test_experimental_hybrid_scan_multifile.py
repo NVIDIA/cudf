@@ -255,29 +255,27 @@ def test_hybrid_scan_multifile_materialize_payload_pages(
     assert 0 < empty_ranges < len(page_ranges)
 
     # Fetch the surviving pages from their source, passing None for pruned ones
-    host_pages = [
-        None
-        if byte_range.size == 0
-        else memoryview(parquet_bytes[source])[
+    # Keep the host slices alive until synchronize_stream() runs
+    page_bytes = [
+        parquet_bytes[source][
             byte_range.offset : byte_range.offset + byte_range.size
         ]
+        if byte_range.size
+        else None
         for byte_range, source in zip(page_ranges, source_indices, strict=True)
     ]
     page_data = [
         None
-        if host_page is None
+        if src is None
         else plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                host_page,
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for host_page in host_pages
+        for src in page_bytes
     ]
     synchronize_stream(stream)
 
     # The data page mask is inferred from the fetched page data
-    hybrid_scan_multifile_reader.setup_chunking_for_payload_columns(
+    hybrid_scan_multifile_reader.setup_chunking_for_payload_pages(
         1024,  # chunk_read_limit
         0,  # pass_read_limit
         row_groups,
@@ -670,21 +668,16 @@ def test_hybrid_scan_multifile_materialize_all_columns(
         )
     )
 
-    # Keep the host slices alive until the asynchronous copies complete.
-    host_chunks = [
-        memoryview(multifile_parquet_bytes[src_idx])[
-            r.offset : r.offset + r.size
-        ]
+    # Keep the host slices alive until synchronize_stream() runs
+    all_columns_bytes = [
+        multifile_parquet_bytes[src_idx][r.offset : r.offset + r.size]
         for r, src_idx in zip(ranges, source_indices, strict=True)
     ]
     all_columns_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                host_chunk,
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for host_chunk in host_chunks
+        for src in all_columns_bytes
     ]
 
     synchronize_stream(stream)

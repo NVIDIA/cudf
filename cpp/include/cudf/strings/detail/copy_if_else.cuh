@@ -9,9 +9,9 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/optional>
@@ -66,7 +66,8 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
   if (null_count == 0) { null_mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED); }
 
   // build vector of strings
-  rmm::device_uvector<string_index_pair> indices(strings_count, stream);
+  cuda::device_buffer<string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator{static_cast<size_type>(strings_count)},

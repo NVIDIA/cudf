@@ -30,6 +30,8 @@
 #include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/std/algorithm>
+#include <cuda/std/optional>
+#include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/remove.h>
@@ -150,6 +152,28 @@ __device__ __inline__ bool is_floatingpoint(long len,
 }
 
 /*
+ * @brief Returns the content between the enclosing quotes of a quoted field.
+ * A quote is only considered if it opens the field, so a field such as 5" is not quoted.
+ *
+ * @param begin Pointer to the first character of the field
+ * @param end Pointer to the first character after the field
+ * @param opts Parsing options
+ *
+ * @return The range between the quotes, or `cuda::std::nullopt` if the field is not quoted
+ */
+__device__ __inline__ cuda::std::optional<cuda::std::pair<char const*, char const*>>
+quoted_field_content(char const* begin, char const* end, parse_options_view const& opts)
+{
+  auto const trimmed = trim_whitespaces(begin, end);
+  if ((opts.detect_whitespace_around_quotes or trimmed.first == begin) and
+      trimmed.second - trimmed.first >= 2 and *trimmed.first == opts.quotechar and
+      *(trimmed.second - 1) == opts.quotechar) {
+    return cuda::std::pair{trimmed.first + 1, trimmed.second - 1};
+  }
+  return cuda::std::nullopt;
+}
+
+/*
  * @brief CUDA kernel that parses and converts CSV data into cuDF column data.
  *
  * Data is processed in one row/record at a time, so the number of total
@@ -197,19 +221,16 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     if (column_flags[col] & column_parse::inferred) {
       // points to last character in the field
       auto const field_len = static_cast<size_t>(next_delimiter - field_start);
-      // A quote only counts if it opens the field (as in seek_field_end): 5" is not a number
-      auto unquoted_field = trim_whitespaces(field_start, next_delimiter);
-      if (opts.detect_whitespace_around_quotes or unquoted_field.first == field_start) {
-        unquoted_field = trim_quotes(unquoted_field.first, unquoted_field.second, opts.quotechar);
-      }
-      auto const unquoted_len = static_cast<size_t>(unquoted_field.second - unquoted_field.first);
+      auto const quoted    = quoted_field_content(field_start, next_delimiter, opts);
+      auto const token     = quoted.value_or(cuda::std::pair{field_start, next_delimiter});
+      auto const token_len = static_cast<size_t>(token.second - token.first);
       if (serialized_trie_contains(opts.trie_na, {field_start, field_len}) ||
-          serialized_trie_contains(opts.trie_na, {unquoted_field.first, unquoted_len})) {
+          serialized_trie_contains(opts.trie_na, {token.first, token_len})) {
         atomicAdd(&d_column_data[actual_col].null_count, 1);
-      } else if (serialized_trie_contains(opts.trie_true, {unquoted_field.first, unquoted_len}) ||
-                 serialized_trie_contains(opts.trie_false, {unquoted_field.first, unquoted_len})) {
+      } else if (serialized_trie_contains(opts.trie_true, {token.first, token_len}) ||
+                 serialized_trie_contains(opts.trie_false, {token.first, token_len})) {
         atomicAdd(&d_column_data[actual_col].bool_count, 1);
-      } else if (cudf::io::is_infinity(unquoted_field.first, unquoted_field.second)) {
+      } else if (cudf::io::is_infinity(token.first, token.second)) {
         atomicAdd(&d_column_data[actual_col].float_count, 1);
       } else {
         long count_number    = 0;
@@ -222,8 +243,9 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
         long count_string    = 0;
         long count_exponent  = 0;
 
-        auto const trimmed_field_range = unquoted_field;
-        auto const trimmed_field_len   = unquoted_field.second - unquoted_field.first;
+        auto const trimmed_field_range =
+          quoted.value_or(trim_whitespaces(field_start, next_delimiter));
+        auto const trimmed_field_len = trimmed_field_range.second - trimmed_field_range.first;
 
         if (trimmed_field_len == 0) {
           cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device> ref{
@@ -352,25 +374,24 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, options);
 
     if (column_flags[col] & column_parse::enabled) {
-      auto unquoted_field = trim_whitespaces(field_start, next_delimiter);
-      if (options.detect_whitespace_around_quotes or unquoted_field.first == field_start) {
-        unquoted_field =
-          trim_quotes(unquoted_field.first, unquoted_field.second, options.quotechar);
-      }
-      // Match both raw and unquoted NA tokens, as in type inference.
+      // Check for NA values in the same way as type inference
+      auto const token = quoted_field_content(field_start, next_delimiter, options)
+                           .value_or(cuda::std::pair{field_start, next_delimiter});
+      auto const token_len = static_cast<size_t>(token.second - token.first);
       auto const is_valid =
         !serialized_trie_contains(
           options.trie_na, {field_start, static_cast<size_t>(next_delimiter - field_start)}) &&
-        !serialized_trie_contains(
-          options.trie_na,
-          {unquoted_field.first,
-           static_cast<size_t>(unquoted_field.second - unquoted_field.first)});
+        !serialized_trie_contains(options.trie_na, {token.first, token_len});
 
       // Modify field_start & end to ignore whitespace and quotechars
       auto field_end = next_delimiter;
       if (is_valid && dtypes[actual_col].id() != cudf::type_id::STRING) {
+        auto const is_boolean_token =
+          serialized_trie_contains(options.trie_true, {token.first, token_len}) ||
+          serialized_trie_contains(options.trie_false, {token.first, token_len});
         auto const trimmed_field =
-          trim_whitespaces_quotes(field_start, field_end, options.quotechar);
+          is_boolean_token ? token
+                           : trim_whitespaces_quotes(field_start, field_end, options.quotechar);
         field_start = trimmed_field.first;
         field_end   = trimmed_field.second;
       }

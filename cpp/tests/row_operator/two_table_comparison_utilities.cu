@@ -34,7 +34,7 @@ std::unique_ptr<cudf::column> two_table_comparison(cudf::table_view lhs,
                                           lhs.num_rows(),
                                           cudf::mask_state::UNALLOCATED,
                                           stream,
-                                          mr);
+                                          mr.get_output_mr());
 
   if (cudf::has_nested_columns(lhs) || cudf::has_nested_columns(rhs)) {
     thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -82,7 +82,7 @@ std::unique_ptr<cudf::column> sorted_order(
                                           num_rows,
                                           cudf::mask_state::UNALLOCATED,
                                           stream,
-                                          mr);
+                                          mr.get_output_mr());
   auto const out_begin = output->mutable_view().begin<cudf::size_type>();
   thrust::sequence(
     rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), out_begin, out_begin + num_rows, 0);

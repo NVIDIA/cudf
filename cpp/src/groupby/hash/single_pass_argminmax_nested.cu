@@ -51,17 +51,17 @@ std::unique_ptr<column> compute_nested_argminmax(reduction_context const& ctx,
     [&](auto output) {
       // Top-level nulls become the sentinel before comparison. Keep only child nulls in the
       // comparator view, retaining the input offset for sliced lists and structs.
-      auto const values = column_view{ctx.values.type(),
+      auto const values     = column_view{ctx.values.type(),
                                       ctx.values.size(),
                                       ctx.values.head(),
                                       nullptr,
                                       0,
                                       ctx.values.offset(),
-                                      {ctx.values.child_begin(), ctx.values.child_end()}};
-      using generator   = cudf::reduction::detail::arg_minmax_binop_generator;
-      auto const comparator =
-        is_argmin ? generator::create<aggregation::ARGMIN>(values, stream, mr.as_temporary())
-                  : generator::create<aggregation::ARGMAX>(values, stream, mr.as_temporary());
+                                          {ctx.values.child_begin(), ctx.values.child_end()}};
+      using generator       = cudf::reduction::detail::arg_minmax_binop_generator;
+      auto const comparator = is_argmin
+                                ? generator::create<aggregation::ARGMIN>(values, stream, mr)
+                                : generator::create<aggregation::ARGMAX>(values, stream, mr);
       auto const sentinel =
         is_argmin ? cudf::detail::ARGMIN_SENTINEL : cudf::detail::ARGMAX_SENTINEL;
       auto const indices = cuda::transform_iterator{

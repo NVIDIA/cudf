@@ -23,7 +23,6 @@
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
 #include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/row_operator/spark_hashing.cuh>
-#include <cudf/detail/structs/utilities.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/spark_murmurhash3.cuh>
 #include <cudf/hashing/detail/xxhash_64.cuh>
@@ -437,69 +436,6 @@ TEST_F(RowOperatorTest, EqualityPreprocessingMemoryResources)
   }
 }
 
-TEST_F(RowOperatorTest, PushDownNullsMemoryResources)
-{
-  auto const stream = this->stream();
-  for (cudf::size_type offset : {0, 1}) {
-    for (bool dirty : {false, true}) {
-      SCOPED_TRACE(::testing::Message() << "dirty=" << dirty << " offset=" << offset);
-      auto strings =
-        offset == 0
-          ? cudf::test::strings_column_wrapper{{"", "a", "b"}, cudf::test::iterators::null_at(0)}
-              .release()
-          : cudf::test::strings_column_wrapper{{"prefix", "", "a", "b"},
-                                               cudf::test::iterators::null_at(1)}
-              .release();
-      auto parent = cudf::test::fixed_width_column_wrapper<int32_t>{
-        cuda::counting_iterator<int32_t>{0},
-        cuda::counting_iterator<int32_t>{3 + offset},
-        cudf::test::iterators::nulls_at(dirty ? std::vector<cudf::size_type>{offset, offset + 1}
-                                              : std::vector<cudf::size_type>{offset})};
-      auto const parent_view = cudf::column_view{parent};
-      auto const input       = cudf::column_view{cudf::data_type{cudf::type_id::STRUCT},
-                                           3,
-                                           nullptr,
-                                           parent_view.null_mask(),
-                                           parent_view.null_count(),
-                                           offset,
-                                                 {strings->view()}};
-      auto resources         = cudf::test::memory_resource_test_harness{};
-      {
-        auto result = [&] {
-          auto guard = resources.fail_on_current_device_resource_use();
-          auto output =
-            cudf::structs::detail::push_down_nulls(input, stream, resources.resources());
-          resources.synchronize(stream);
-          return output;
-        }();
-        ASSERT_EQ(result.second.new_columns.size(), dirty ? 1 : 0);
-        ASSERT_EQ(result.second.new_null_masks.size(), dirty ? 0 : 1);
-        auto const mask_bytes = cudf::bitmask_allocation_size_bytes(input.offset() + input.size());
-        auto const retained_bytes =
-          dirty ? result.second.new_columns.front()->alloc_size() : mask_bytes;
-        auto const output = resources.expect_output_allocations_live(stream);
-        EXPECT_EQ(output.value, retained_bytes);
-        // A provisional child mask is replaced by the sanitized column only for dirty input.
-        // No null-check, bitmask reduction, or gather scratch may use the output resource.
-        EXPECT_EQ(output.total, retained_bytes + (dirty ? mask_bytes : 0));
-        resources.expect_temporary_allocation_activity(stream);
-        resources.expect_temporary_allocations_released(stream);
-        auto expected =
-          dirty
-            ? cudf::test::strings_column_wrapper{{"", "", "b"},
-                                                 cudf::test::iterators::nulls_at({0, 1})}
-                .release()
-            : cudf::test::strings_column_wrapper{{"", "a", "b"}, cudf::test::iterators::null_at(0)}
-                .release();
-        CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.first.child(0), expected->view());
-        EXPECT_EQ(result.first.offset(), dirty ? 0 : offset);
-        EXPECT_EQ(result.first.size(), 3);
-      }
-      resources.expect_no_live_allocations(stream);
-    }
-  }
-}
-
 TEST_F(RowOperatorTest, TestTwoTableComparatorColumnCountCheck)
 {
   auto const stream = this->stream();
@@ -654,7 +590,7 @@ TEST_F(RowOperatorTest, TestPrimitiveRowHasher64BitHash)
                                             col.size(),
                                             cudf::mask_state::UNALLOCATED,
                                             stream,
-                                            mr);
+                                            mr.get_output_mr());
     thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator<cudf::size_type>{col.size()},

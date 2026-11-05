@@ -18,20 +18,6 @@
 namespace CUDF_EXPORT cudf {
 namespace structs::detail {
 
-/**
- * @brief Return a struct child sliced to its parent's offset and size.
- *
- * @param input The parent struct column
- * @param index The child index
- * @param stream Stream used to compute the sliced child's null count
- * @param temp_mr Resource used for null-count scratch allocations
- * @return The sliced child column view
- */
-[[nodiscard]] column_view get_sliced_child(structs_column_view const& input,
-                                           int index,
-                                           cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref temp_mr);
-
 enum class column_nullability {
   MATCH_INCOMING,  ///< generate a null column if the incoming column has nulls
   FORCE            ///< always generate a null column

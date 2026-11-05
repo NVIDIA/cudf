@@ -7,7 +7,6 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/null_mask.hpp>
-#include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/assert.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
@@ -458,10 +457,8 @@ struct column_gatherer_impl<struct_view> {
     std::transform(cuda::counting_iterator<cudf::size_type>{0},
                    cuda::counting_iterator{column.num_children()},
                    std::back_inserter(sliced_children),
-                   [&stream,
-                    temp_mr      = mr.get_temporary_mr(),
-                    structs_view = structs_column_view{column}](auto const idx) {
-                     return structs::detail::get_sliced_child(structs_view, idx, stream, temp_mr);
+                   [&stream, structs_view = structs_column_view{column}](auto const idx) {
+                     return structs_view.get_sliced_child(idx, stream);
                    });
 
     std::vector<std::unique_ptr<cudf::column>> output_struct_members;

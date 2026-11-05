@@ -31,7 +31,7 @@ std::unique_ptr<cudf::column> self_comparison(cudf::table_view input,
                                           input.num_rows(),
                                           cudf::mask_state::UNALLOCATED,
                                           stream,
-                                          mr);
+                                          mr.get_output_mr());
 
   if (cudf::has_nested_columns(input)) {
     thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),

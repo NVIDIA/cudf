@@ -409,7 +409,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
 
   // Function to rewrite child null mask.
   auto const child_with_new_mask = [&](auto const& child_idx) {
-    auto child = get_sliced_child(structs_view, child_idx, stream, mr.get_temporary_mr());
+    auto child = structs_view.get_sliced_child(child_idx, stream);
 
     // If struct is not nullable, child null mask is retained. NOOP.
     if (not structs_view.nullable()) { return child; }

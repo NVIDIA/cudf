@@ -93,7 +93,6 @@ dremel_data get_encoding(column_view h_col,
     auto empties_idx_end = cudf::detail::copy_if(
       cuda::counting_iterator<size_type>{start},
       cuda::counting_iterator<size_type>{end},
-      cuda::counting_iterator<size_type>{start},
       empties_idx.begin(),
       [d_off] __device__(auto i) -> bool { return d_off[i] == d_off[i + 1]; },
       stream,
@@ -128,7 +127,7 @@ dremel_data get_encoding(column_view h_col,
   std::unique_ptr<column> empty_list_offset_col;
   if (has_empty_list_offsets) {
     empty_list_offset_col = make_fixed_width_column(
-      data_type(type_id::INT32), 1, mask_state::UNALLOCATED, stream, mr.as_temporary());
+      data_type(type_id::INT32), 1, mask_state::UNALLOCATED, stream, temp_mr);
     CUDF_CUDA_TRY(cudaMemsetAsync(
       empty_list_offset_col->mutable_view().head(), 0, sizeof(int32_t), stream.get()));
     std::function<column_view(column_view const&)> normalize_col = [&](column_view const& col) {

@@ -2753,20 +2753,11 @@ TEST_F(ParquetChunkedReaderTest, ReadStringsWithRowBounds)
                          .skip_rows(rows_to_skip)
                          .num_rows(rows_to_read)
                          .build();
-  auto reader = cudf::io::chunked_parquet_reader(output_read_limit, pass_read_limit, options);
-
-  auto num_chunks = 0;
-  auto out_tables = std::vector<std::unique_ptr<cudf::table>>{};
-  while (reader.has_next()) {
-    out_tables.emplace_back(reader.read_chunk().tbl);
-    ++num_chunks;
+  // Without a pass limit, the subpass also holds the pages before and after the row bounds, whose
+  // levels are not decoded
+  for (auto const pass_limit : {pass_read_limit, std::size_t{0}}) {
+    auto const [result, num_chunks] = chunked_read(options, output_read_limit, pass_limit);
+    EXPECT_GT(num_chunks, 1);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected[0], result->view());
   }
-  auto out_tviews = std::vector<cudf::table_view>{};
-  for (auto const& tbl : out_tables) {
-    out_tviews.emplace_back(tbl->view());
-  }
-  auto const chunked_result = cudf::concatenate(out_tviews);
-
-  EXPECT_GT(num_chunks, 1);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected[0], chunked_result->view());
 }

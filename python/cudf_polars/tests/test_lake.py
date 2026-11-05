@@ -1181,6 +1181,32 @@ def test_scan_iceberg_deletion_vector_file_uri(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+@pytest.mark.parametrize("scheme", ["file://", "file:"])
+def test_scan_iceberg_position_delete_file_uri(
+    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, tmp_path: Path, scheme: str
+) -> None:
+    tbl = iceberg_catalog.create_table(
+        "ns.deleted",
+        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
+    )
+    for index in range(2):
+        pl.DataFrame({"a": [4 * index + i for i in range(4)]}).write_iceberg(
+            tbl, mode="append"
+        )
+    paths = [task.file.file_path for task in tbl.scan().plan_files()]
+    position_deletes = {}
+    for index, positions in {0: [0, 3], 1: [1]}.items():
+        delete_file = tmp_path / "deletes" / f"{index}.parquet"
+        pl.LazyFrame({"file_path": [paths[index]] * len(positions)}).with_columns(
+            pos=pl.Series(positions, dtype=pl.Int64)
+        ).sink_parquet(delete_file, mkdir=True)
+        position_deletes[index] = [f"{scheme}{delete_file}"]
+    q = _scan_iceberg_files(
+        tbl, paths, _deletion_files=("iceberg", (position_deletes, {}))
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 def test_scan_iceberg_remote_deletion_vector_unsupported(
     in_memory_engine: pl.GPUEngine, iceberg_catalog: SqlCatalog
 ) -> None:

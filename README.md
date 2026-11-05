@@ -24,6 +24,7 @@ Notable projects that use cuDF include:
 * [Velox-cuDF](https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md): A [Velox](https://velox-lib.io/)
 extension module to execute Velox plans on the GPU
 * [Sirius](https://www.sirius-db.com/): A GPU-native SQL engine providing extensions for libraries like [DuckDB](https://duckdb.org/)
+* [TornadoVM](https://github.com/beehive-lab/TornadoVM): A GPU programming framework for Java that JIT-compiles Java to CUDA and runs [libcudf operations](https://github.com/beehive-lab/TornadoVM/tree/develop/tornado-native-libs/tornado-cudf) as tasks alongside those kernels; used as a GPU engine for [Apache Flink](https://flink.apache.org/)
 
 ## Installation
 

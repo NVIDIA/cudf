@@ -11,6 +11,7 @@
 
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <vector>
@@ -29,5 +30,5 @@ std::vector<cudf::io::table_with_metadata> split_byte_range_reading(
   rmm::device_async_resource_ref mr);
 
 /// Returns length of each string in the column
-rmm::device_uvector<cudf::size_type> string_offset_to_length(
+cuda::device_buffer<cudf::size_type> string_offset_to_length(
   cudf::strings_column_view const& column, cuda::stream_ref stream);

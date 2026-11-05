@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/default_stream.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
@@ -17,6 +18,9 @@
 #include <cudf/strings/split/split_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <cuda/iterator>
 
@@ -591,6 +595,21 @@ TEST_F(StringsSplitTest, SplitRecordRegex)
     // rsplit == split when using default parameters
     result = cudf::strings::rsplit_record_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result->view(), expected);
+  }
+}
+
+TEST_F(StringsSplitTest, SplitRecordRegexOutputResource)
+{
+  auto input  = cudf::test::strings_column_wrapper({"a_b-c", "", "d_e", "f"});
+  auto sv     = cudf::strings_column_view(input);
+  auto prog   = cudf::strings::regex_program::create("[_-]");
+  auto stream = cudf::test::get_default_stream();
+
+  for (auto split_fn : {cudf::strings::split_record_re, cudf::strings::rsplit_record_re}) {
+    auto output_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+    auto result    = split_fn(sv, *prog, -1, stream, output_mr);
+    stream.sync();
+    EXPECT_EQ(result->alloc_size(), static_cast<std::size_t>(output_mr.get_bytes_counter().value));
   }
 }
 

@@ -26,7 +26,6 @@
 #include <cudf/utilities/type_checks.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/extent.cuh>
@@ -34,6 +33,7 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
+#include <thrust/execution_policy.h>
 
 #include <optional>
 #include <ranges>

@@ -86,7 +86,8 @@ std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> ou
 
 kernel get_udf_kernel(std::string const& source_file,
                       std::string const& kernel_name,
-                      std::string const& cuda_source)
+                      std::string const& cuda_source,
+                      cudf::lto_fragments link_fragments)
 {
   CUDF_FUNC_RANGE();
 
@@ -99,7 +100,31 @@ kernel get_udf_kernel(std::string const& source_file,
   char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
     {cuda_source.c_str(), kernel_instance_source.c_str()};
 
-  return get_kernel(source_file, source_file, include_names, include_headers, kernel_name);
+  if (link_fragments.empty()) {
+    return get_kernel(source_file, source_file, include_names, include_headers, kernel_name);
+  }
+  auto kernel_fragment =
+    get_kernel_fragment(source_file, source_file, include_names, include_headers, kernel_name);
+  std::vector<rtcx::memory_fragment> fragments{
+    {.data = kernel_fragment->view(), .type = rtcx::binary_type::LTO_IR, .name = nullptr}};
+  for (auto const& fragment : link_fragments) {
+    fragments.push_back({.data = fragment.data,
+                         .type = fragment.type == lto_binary_type::LTO_IR
+                                   ? rtcx::binary_type::LTO_IR
+                                   : rtcx::binary_type::FATBIN,
+                         .name = nullptr});
+  }
+  return get_lto_linked_kernel(source_file, {}, fragments);
+}
+
+std::string define_operation(std::string const& cuda_source,
+                             std::string_view operation_macro,
+                             std::string_view function_name)
+{
+  // The call stays unqualified, as the call of a renamed function was: a qualified call is checked
+  // when the kernel template is defined, even in a branch the kernel never takes.
+  return std::format(
+    "{}\n#define {}(...) {}(__VA_ARGS__)\n", cuda_source, operation_macro, function_name);
 }
 
 rtcx::blob get_udf_kernel_fragment(std::string const& source_file,

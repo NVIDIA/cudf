@@ -36,7 +36,7 @@ std::unique_ptr<cudf::column> is_valid(cudf::column_view const& input,
 std::unique_ptr<column> cast(column_view const& input,
                              data_type type,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::is_nan

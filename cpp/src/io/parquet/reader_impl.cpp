@@ -972,7 +972,8 @@ cudf::memory_resources reader_impl::column_mr(cudf::memory_resources mr,
   auto const type      = buffer.type;
   auto const will_cast = _options.decimal_width != type_id::EMPTY and cudf::is_fixed_point(type) and
                          type.id() != _options.decimal_width;
-  // Binary columns are returned as LIST<UINT8>, which is not encoded
+  // Binary columns are returned as LIST<UINT8>, which is not encoded. Mirrors make_column via
+  // output_column_schema
   auto const will_encode = _options.output_dict_columns and top_level_index.has_value() and
                            type.id() == type_id::STRING and not buffer.string_as_binary and
                            output_column_schema(*top_level_index)

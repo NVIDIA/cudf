@@ -1136,19 +1136,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
 
   // Create the final output cudf columns.
   for (std::size_t i = 0; i < _output_buffers.size(); ++i) {
-    auto metadata           = _reader_column_schema.has_value()
-                                ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
-                                : std::nullopt;
-    auto const& schema      = _extended_metadata->get_schema(_output_column_schemas[i]);
-    auto const logical_type = schema.logical_type.value_or(LogicalType{});
-    // FIXED_LEN_BYTE_ARRAY never read as string.
-    // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY
-    // as binary and not strings, this test needs to change.
-    if (schema.type == Type::FIXED_LEN_BYTE_ARRAY and logical_type.type != LogicalType::DECIMAL) {
-      metadata = std::make_optional<reader_column_schema>();
-      metadata->set_convert_binary_to_strings(false);
-      metadata->set_type_length(schema.type_length);
-    }
+    auto const metadata = output_column_schema(i);
     // Only construct `out_metadata` if `_output_metadata` has not been cached.
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];

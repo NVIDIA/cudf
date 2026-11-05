@@ -80,8 +80,8 @@ struct row_mask_accessor {
 
   __device__ bool inline operator()(cudf::size_type row_idx) const noexcept
   {
-    if (data[row_idx]) { return true; }
-    return null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx);
+    if (null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx)) { return true; }
+    return data[row_idx];
   }
 };
 

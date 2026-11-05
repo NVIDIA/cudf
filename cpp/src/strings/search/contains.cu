@@ -30,6 +30,8 @@
 #include <thrust/fill.h>
 #include <thrust/transform.h>
 
+#include <algorithm>
+
 namespace cudf {
 namespace strings {
 namespace detail {

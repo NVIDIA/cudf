@@ -334,18 +334,21 @@ lowered = Slice(schema, offset=0, length=10, child=GlobalOrderedConcat(local_sca
 
 ### Join strategies must not drop rows
 
-Broadcast a single-partition side whenever the other side has more than
-one partition. Checking only one side drops rows silently on peer ranks.
-Reject hash-partitioned joins on computed (non-`Col`) keys. Do not pre-filter
-the side whose rows must be preserved (left of a left join, either side of
-a full join).
+The join type decides which side can be broadcast. An inner join can
+broadcast either side. Left, semi, and anti joins can broadcast only the
+right side. A right join can broadcast only the left side. A full join
+cannot broadcast. When a join can broadcast either side, check both sides
+for a single partition. Checking only one side drops rows silently on peer
+ranks. Reject hash-partitioned joins on computed (non-`Col`) keys. Do not
+pre-filter the side whose rows must be preserved (left of a left join,
+either side of a full join).
 
 ```python
-# Bad
+# Bad: an inner join checks only the left side
 if left_count == 1:
     return broadcast_join(...)
 
-# Good
+# Good: an inner join checks both sides
 if left_count == 1 and right_count == 1:
     return local_join(...)
 if left_count == 1 or right_count == 1:

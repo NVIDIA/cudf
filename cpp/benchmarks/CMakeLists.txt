@@ -553,3 +553,30 @@ add_custom_target(
   DEPENDS CUDF_BENCHMARKS
   COMMENT "Custom command for running cudf benchmarks."
 )
+
+rtcx_add_embed(cudf_reduce_lto_benchmark_fragments)
+foreach(fragment IN ITEMS tpcds_q13 segmented_sum_max)
+  add_fragment(
+    cudf_reduce_lto_benchmark_fragments FRAGMENT ${fragment} SOURCE reduction/udfs/${fragment}.cu
+  )
+endforeach()
+rtcx_embed(
+  cudf_reduce_lto_benchmark_fragments COMPRESSION none OUTPUT_DIRECTORY
+  "${CMAKE_CURRENT_BINARY_DIR}/reduce_lto_embed"
+)
+add_executable(
+  REDUCE_LTO_BENCH
+  reduction/reduce_lto.cpp reduction/tpcds_q13.cpp reduction/segmented_lto.cpp
+  ${cudf_reduce_lto_benchmark_fragments_SOURCE_DIR}/cudf_reduce_lto_benchmark_fragments.s
+)
+target_link_libraries(
+  REDUCE_LTO_BENCH PRIVATE cudf_datagen cudf::cudftestutil_objects
+                           $<TARGET_NAME_IF_EXISTS:conda_env>
+)
+target_include_directories(
+  REDUCE_LTO_BENCH PRIVATE ${cudf_reduce_lto_benchmark_fragments_SOURCE_DIR}
+)
+add_dependencies(REDUCE_LTO_BENCH cudf_reduce_lto_benchmark_fragments)
+set_target_properties(
+  REDUCE_LTO_BENCH PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CUDF_BINARY_DIR}/benchmarks"
+)

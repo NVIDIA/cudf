@@ -160,7 +160,7 @@ constexpr inline bool binary_op_has_common_type_v =
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
@@ -174,8 +174,8 @@ std::unique_ptr<column> binary_operation(
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between a scalar and a column, comparing floating-point NaN
@@ -198,7 +198,7 @@ std::unique_ptr<column> binary_operation(
  *                    NULL_NOT_EQUALS) and in NULL_MAX and NULL_MIN. It has no effect on other
  *                    operators or on non-floating-point operands.
  * @param stream      CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  */
@@ -208,8 +208,8 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   nan_semantics semantics,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between a column and a scalar.
@@ -228,7 +228,7 @@ std::unique_ptr<column> binary_operation(
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
@@ -242,8 +242,8 @@ std::unique_ptr<column> binary_operation(
   scalar const& rhs,
   binary_operator op,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between a column and a scalar, comparing floating-point NaN
@@ -266,7 +266,7 @@ std::unique_ptr<column> binary_operation(
  *                    NULL_NOT_EQUALS) and in NULL_MAX and NULL_MIN. It has no effect on other
  *                    operators or on non-floating-point operands.
  * @param stream      CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  */
@@ -276,8 +276,8 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   nan_semantics semantics,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between two columns.
@@ -294,7 +294,7 @@ std::unique_ptr<column> binary_operation(
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
@@ -309,8 +309,8 @@ std::unique_ptr<column> binary_operation(
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between two columns, comparing floating-point NaN values as
@@ -334,7 +334,7 @@ std::unique_ptr<column> binary_operation(
  *                    NULL_NOT_EQUALS) and in NULL_MAX and NULL_MIN. It has no effect on other
  *                    operators or on non-floating-point operands.
  * @param stream      CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  */
@@ -344,8 +344,8 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   nan_semantics semantics,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a checked binary operation between a scalar and a column.
@@ -359,7 +359,7 @@ std::unique_ptr<column> binary_operation(
  * @param output_type Desired output type
  * @param policy Error handling policy
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Output column
  * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
  * @throws cudf::logic_error if @p op is not a checked arithmetic operator
@@ -372,8 +372,8 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   error_policy policy,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a checked binary operation between a column and a scalar.
@@ -387,7 +387,7 @@ std::unique_ptr<column> binary_operation(
  * @param output_type Desired output type
  * @param policy Error handling policy
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Output column
  * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
  * @throws cudf::logic_error if @p op is not a checked arithmetic operator
@@ -400,8 +400,8 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   error_policy policy,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a checked binary operation between two columns.
@@ -415,7 +415,7 @@ std::unique_ptr<column> binary_operation(
  * @param output_type Desired output type
  * @param policy Error handling policy
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Output column
  * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
  * @throws cudf::logic_error if @p op is not a checked arithmetic operator
@@ -429,8 +429,8 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   error_policy policy,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between two columns using a
@@ -448,7 +448,7 @@ std::unique_ptr<column> binary_operation(
  *                    that output_type is compatible with the output data type
  *                    of the function in the PTX code
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
@@ -460,8 +460,8 @@ std::unique_ptr<column> binary_operation(
   column_view const& rhs,
   std::string const& ptx,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the `scale` for a `fixed_point` number based on given binary operator `op`
@@ -507,14 +507,14 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
  * @param col     Column to compute the valid mask from
  * @param s       Scalar to compute the valid mask from
  * @param stream  CUDA stream used for device memory operations and kernel launches
- * @param mr      Device memory resource used to allocate the returned valid mask
+ * @param mr      Memory resources used for temporary allocations and the returned valid mask
  * @return        Computed validity mask
  */
 std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace binops
 

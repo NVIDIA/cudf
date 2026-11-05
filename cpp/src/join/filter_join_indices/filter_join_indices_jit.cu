@@ -28,7 +28,6 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cub/device/device_transform.cuh>

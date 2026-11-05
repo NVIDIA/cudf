@@ -25,6 +25,7 @@
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
+#include <thrust/reduce.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -108,6 +109,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
                               rmm::device_async_resource_ref mr,
                               std::optional<size_type> unmatched_right_count)
 {
+  cudf::memory_resources mrs{mr};
   auto [left_out, right_out] = std::move(indices);
   CUDF_EXPECTS(left_out->size() == right_out->size(),
                "left/right index vectors must have equal size",
@@ -174,7 +176,8 @@ VectorPair finalize_full_join(VectorPair&& indices,
                           cuda::counting_iterator<size_type>{right_table_num_rows},
                           out_iter,
                           unmatched_flag{match_flags},
-                          stream);
+                          stream,
+                          mrs.as_temporary());
 
   auto const comp_size = cuda::std::distance(out_iter, new_end);
   left_out->resize(match_total + comp_size, stream);
@@ -247,4 +250,13 @@ VectorPair finalize_full_join(
 }
 
 }  // namespace detail
+
+std::size_t join_match_context::output_size(cuda::stream_ref stream) const
+{
+  auto const counts = match_counts();
+  return thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                        counts.begin(),
+                        counts.end(),
+                        std::size_t{0});
+}
 }  // namespace cudf

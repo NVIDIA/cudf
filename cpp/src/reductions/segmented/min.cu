@@ -27,8 +27,14 @@ std::unique_ptr<column> string_segmented_minmax(column_view const& col,
     data_type{type_to_id<size_type>()}, num_segments, mask_state::UNALLOCATED, stream, mr);
   auto gather_map_it = gather_map->mutable_view().begin<size_type>();
 
-  cudf::reduction::detail::segmented_reduce(
-    it, offsets.begin(), offsets.end(), gather_map_it, string_comparator, identity, stream);
+  cudf::reduction::detail::segmented_reduce(it,
+                                            offsets.begin(),
+                                            offsets.end(),
+                                            gather_map_it,
+                                            string_comparator,
+                                            identity,
+                                            stream,
+                                            cudf::get_current_device_resource_ref());
 
   auto result = std::move(cudf::detail::gather(table_view{{col}},
                                                *gather_map,

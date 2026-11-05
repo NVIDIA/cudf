@@ -45,6 +45,10 @@ enum class compat_mode : int32_t {
  *
  * @param nthreads Optional thread pool size override. If provided, supersedes KVIKIO_NTHREADS.
  * @param mode Optional compatibility mode override. If provided, supersedes KVIKIO_COMPAT_MODE.
+ *
+ * @note Only the first call takes effect, including the implicit call made when cuDF first opens a
+ * file source or sink. To apply @p nthreads or @p mode, call this before any cuDF I/O; later calls
+ * are ignored.
  */
 void set_up_kvikio(std::optional<uint32_t> nthreads = std::nullopt,
                    std::optional<compat_mode> mode  = std::nullopt);

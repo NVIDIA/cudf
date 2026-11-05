@@ -421,6 +421,84 @@ def pytest_report_header(config: pytest.Config) -> str:
     return f"injected GPU engine: {cls.__module__}.{cls.__name__}"
 
 
+# https://github.com/NVIDIA/cudf/issues/25021
+# libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs
+# polars) that differ only in the legacy converted_type. Whether a test hits
+# this depends on how the engine groups data files into reads, so the set of
+# affected tests differs between the in-memory and streaming engines.
+ICEBERG_MIXED_WRITER_REASON = (
+    "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) "
+    "that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021"
+)
+
+ICEBERG_MIXED_WRITER_TESTS: tuple[str, ...] = (
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate1]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate2]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate3]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate6]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate7]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate8]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate9]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate12]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate17]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate18]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate27]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]",
+)
+
+# Tests in ICEBERG_MIXED_WRITER_TESTS that pass with the streaming engine using
+# the default blocksize. With the small blocksize, every test in
+# ICEBERG_MIXED_WRITER_TESTS passes.
+ICEBERG_MIXED_WRITER_TESTS_PASSING_STREAMING: frozenset[str] = frozenset(
+    {
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate1]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate2]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate3]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate8]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate9]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate12]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
+        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]",
+    }
+)
+
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
     "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
@@ -450,48 +528,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_reader_filter_float_nan[None]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
     "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type0]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
     "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type1]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate1]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate2]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate3]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate6]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate7]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate8]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate9]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate12]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate17]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate18]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate27]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]": "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021",
     "tests/unit/io/test_io_plugin.py::test_datetime_io_predicate_pushdown_21790": "cudf-polars validates the IO source schema exactly and does not coerce datetime time units (us vs ns)",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[small.parquet-4]": "Debug output on stderr doesn't match",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[foods*.parquet-54]": "Debug output on stderr doesn't match",
@@ -545,7 +581,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/sql/test_cast.py::test_cast_errors[values0-values::uint8-InvalidOperationError-conversion from `f64` to `u64` failed]": "Strict cast of out-of-range floats to integers does not raise",
     "tests/unit/sql/test_cast.py::test_cast_errors[values1-values::uint4-InvalidOperationError-conversion from `i64` to `u32` failed]": "Strict cast of out-of-range integers does not raise",
     "tests/unit/sql/test_cast.py::test_cast_errors[values2-values::int1-InvalidOperationError-conversion from `i64` to `i8` failed]": "Strict cast of out-of-range integers does not raise",
-    "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Strict cast failure message differs from polars",
     "tests/unit/sql/test_joins.py::test_constant_key_join_keeps_validation": "Join validation is not supported",
     "tests/unit/operations/namespaces/string/test_pad.py::test_str_zfill_unicode_not_respected": "polars doesn't add zeros for unicode characters.",
     "tests/unit/lazyframe/test_predicates.py::test_predicate_pushdown_split_pushable": "Casting that raises not supported on GPU",
@@ -958,6 +993,7 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
+    "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/lazyframe/test_order_observability.py::test_top_k_by_drops_scalar_keys": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[2.0]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
@@ -990,6 +1026,21 @@ STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 
+def _iceberg_mixed_writer_failures(
+    *, with_streaming_engine: bool, with_small_blocksize: bool
+) -> list[str]:
+    """Return the ICEBERG_MIXED_WRITER_TESTS that still fail for this engine."""
+    if not with_streaming_engine:
+        return list(ICEBERG_MIXED_WRITER_TESTS)
+    if with_small_blocksize:
+        return []
+    return [
+        test
+        for test in ICEBERG_MIXED_WRITER_TESTS
+        if test not in ICEBERG_MIXED_WRITER_TESTS_PASSING_STREAMING
+    ]
+
+
 @pytest.hookimpl(trylast=True, specname="pytest_collection_modifyitems")
 def pytest_mark_and_shard_items(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
@@ -1011,6 +1062,15 @@ def pytest_mark_and_shard_items(
     )
     skips = dict(TESTS_TO_SKIP)
     xfails = dict(EXPECTED_FAILURES)
+    xfails.update(
+        dict.fromkeys(
+            _iceberg_mixed_writer_failures(
+                with_streaming_engine=with_streaming_engine,
+                with_small_blocksize=with_small_blocksize,
+            ),
+            ICEBERG_MIXED_WRITER_REASON,
+        )
+    )
     if with_streaming_engine:
         skips.update(STREAMING_ENGINE_TESTS_TO_SKIP)
         xfails.update(STREAMING_ENGINE_EXPECTED_FAILURES)

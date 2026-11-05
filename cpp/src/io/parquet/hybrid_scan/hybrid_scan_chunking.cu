@@ -15,8 +15,6 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/host_vector.h>

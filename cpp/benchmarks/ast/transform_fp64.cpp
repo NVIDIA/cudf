@@ -52,7 +52,7 @@ void BM_tpch_q1_compute(nvbench::state& state)
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cudf::compute_column_jit(table, root, launch.get_stream().get_stream());
+    cudf::compute_column_jit(table, root, {}, launch.get_stream().get_stream());
   });
 
   state.add_buffer_size(

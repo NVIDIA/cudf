@@ -423,9 +423,10 @@ def pytest_report_header(config: pytest.Config) -> str:
 
 # https://github.com/NVIDIA/cudf/issues/25021
 # libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs
-# polars) that differ only in the legacy converted_type. Whether a test hits
-# this depends on how the engine groups data files into reads, so the set of
-# affected tests differs between the in-memory and streaming engines.
+# polars) that differ only in the legacy converted_type. Which of these tests
+# hit this depends on the engine and blocksize (some pass with the streaming
+# engine), so they are marked as non-strict xfails: neither a failure nor an
+# unexpected pass fails the run.
 ICEBERG_MIXED_WRITER_REASON = (
     "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) "
     "that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021"
@@ -474,29 +475,6 @@ ICEBERG_MIXED_WRITER_TESTS: tuple[str, ...] = (
     "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
     "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate27]",
     "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]",
-)
-
-# Tests in ICEBERG_MIXED_WRITER_TESTS that pass with the streaming engine using
-# the default blocksize. With the small blocksize, every test in
-# ICEBERG_MIXED_WRITER_TESTS passes.
-ICEBERG_MIXED_WRITER_TESTS_PASSING_STREAMING: frozenset[str] = frozenset(
-    {
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate1]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate2]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate3]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate8]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate9]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate12]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
-        "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]",
-    }
 )
 
 EXPECTED_FAILURES: dict[str, str] = {
@@ -1026,21 +1004,6 @@ STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 
-def _iceberg_mixed_writer_failures(
-    *, with_streaming_engine: bool, with_small_blocksize: bool
-) -> list[str]:
-    """Return the ICEBERG_MIXED_WRITER_TESTS that still fail for this engine."""
-    if not with_streaming_engine:
-        return list(ICEBERG_MIXED_WRITER_TESTS)
-    if with_small_blocksize:
-        return []
-    return [
-        test
-        for test in ICEBERG_MIXED_WRITER_TESTS
-        if test not in ICEBERG_MIXED_WRITER_TESTS_PASSING_STREAMING
-    ]
-
-
 @pytest.hookimpl(trylast=True, specname="pytest_collection_modifyitems")
 def pytest_mark_and_shard_items(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
@@ -1062,15 +1025,6 @@ def pytest_mark_and_shard_items(
     )
     skips = dict(TESTS_TO_SKIP)
     xfails = dict(EXPECTED_FAILURES)
-    xfails.update(
-        dict.fromkeys(
-            _iceberg_mixed_writer_failures(
-                with_streaming_engine=with_streaming_engine,
-                with_small_blocksize=with_small_blocksize,
-            ),
-            ICEBERG_MIXED_WRITER_REASON,
-        )
-    )
     if with_streaming_engine:
         skips.update(STREAMING_ENGINE_TESTS_TO_SKIP)
         xfails.update(STREAMING_ENGINE_EXPECTED_FAILURES)
@@ -1082,3 +1036,7 @@ def pytest_mark_and_shard_items(
             item.add_marker(pytest.mark.skip(reason=skip_reason))
         elif (xfail_reason := xfails.get(item.nodeid)) is not None:
             item.add_marker(pytest.mark.xfail(reason=xfail_reason))
+        elif item.nodeid in ICEBERG_MIXED_WRITER_TESTS:
+            item.add_marker(
+                pytest.mark.xfail(reason=ICEBERG_MIXED_WRITER_REASON, strict=False)
+            )

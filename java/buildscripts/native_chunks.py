@@ -407,8 +407,11 @@ def main():
                 )
             with open(args.require_loader) as loader:
                 source = loader.read()
-                if ("CHUNK_COMPRESSION_KEY" not in source or
-                        "ZstdChunkDecompressor.open(resourceStream)" not in source):
+                if (
+                    "CHUNK_COMPRESSION_KEY" not in source
+                    or "ZstdChunkDecompressor.open(resourceStream)"
+                    not in source
+                ):
                     parser.error(
                         "cuDF submodule must contain the optional zstd NativeDepsLoader"
                     )
@@ -428,8 +431,8 @@ def main():
         )
     else:
         sys.stdout.write(
-            "Verified %d zstd native chunks\n" %
-            verify(args.archive, args.require_chunks)
+            "Verified %d zstd native chunks\n"
+            % verify(args.archive, args.require_chunks)
         )
 
 

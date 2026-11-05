@@ -64,14 +64,6 @@ on:
         default: 7140
         description: |
           The maximum time (in seconds) the sccache client should wait for a distributed compilation to complete.
-      alternative-gh-token-secret-name:
-        type: string
-        required: false
-        description: |
-          If provided, should contain the name of a secret in the repo which holds a GitHub API token.
-          When this is non-empty, that secret's value is used in place of the default repo-level token
-          anywhere that environment variable GH_TOKEN is set. This is especially useful for downloading
-          artifacts from other private repos, which repo tokens do not have access to.
 
 defaults:
   run:
@@ -154,14 +146,14 @@ jobs:
               gh api /rate_limit | jq .
           fi
         env:
-          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+          GH_TOKEN: ${{ github.token }}
       - name: Maven build
         run: |
           ulimit -n "$(ulimit -Hn)"
           $INPUTS_SCRIPT
         env:
           INPUTS_SCRIPT: "${{ inputs.script }}"
-          GH_TOKEN: ${{ inputs.alternative-gh-token-secret-name && secrets[inputs.alternative-gh-token-secret-name] || github.token }} # zizmor: ignore[overprovisioned-secrets]
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           if-no-files-found: error

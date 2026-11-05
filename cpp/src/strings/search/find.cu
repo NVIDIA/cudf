@@ -162,7 +162,8 @@ void find_utility(strings_column_view const& input,
                   column& output,
                   size_type start,
                   size_type stop,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
   auto d_results = output.mutable_view().data<size_type>();
@@ -177,7 +178,7 @@ void find_utility(strings_column_view const& input,
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     // string-per-thread function
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -224,7 +225,8 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
   // find-utility function fills in the results column
   auto target_itr      = cuda::make_constant_iterator(d_target);
   using TargetIterator = decltype(target_itr);
-  find_utility<TargetIterator, forward>(input, target_itr, *results, start, stop, stream);
+  find_utility<TargetIterator, forward>(
+    input, target_itr, *results, start, stop, stream, cudf::get_current_device_resource_ref());
   results->set_null_count(input.null_count());
   return results;
 }
@@ -274,7 +276,8 @@ std::unique_ptr<column> find(strings_column_view const& input,
   auto d_targets  = column_device_view::create(target.parent(), stream);
   auto target_itr = cudf::detail::make_null_replacement_iterator<string_view>(
     *d_targets, string_view{}, target.has_nulls());
-  find_utility<decltype(target_itr), forward>(input, target_itr, *results, start, -1, stream);
+  find_utility<decltype(target_itr), forward>(
+    input, target_itr, *results, start, -1, stream, cudf::get_current_device_resource_ref());
 
   // AND the bitmasks from input and target
   auto [null_mask, null_count] =

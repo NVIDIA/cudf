@@ -245,6 +245,15 @@ class datasource {
   }
 
   /**
+   * @brief Returns whether a device read of the given size would transfer the data directly to
+   * device memory, without staging it in host memory.
+   *
+   * @param size Number of bytes to read
+   * @return whether a device read of the given size is direct
+   */
+  [[nodiscard]] virtual bool is_device_read_direct(size_t size) const { return false; }
+
+  /**
    * @brief Returns a device buffer with a subset of data from the source.
    *
    * For optimal performance, should only be called when `is_device_read_preferred` returns `true`.

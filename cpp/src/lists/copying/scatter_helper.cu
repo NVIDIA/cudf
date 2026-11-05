@@ -10,6 +10,7 @@
 #include <cudf/lists/detail/copying.hpp>
 #include <cudf/lists/detail/scatter_helper.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
@@ -120,23 +121,11 @@ std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> construct_child_nu
  *    element sizes.
  */
 struct list_child_constructor {
- private:
-  /**
-   * @brief Determine whether the child column type is supported with scattering lists.
-   *
-   * @tparam T The data type of the child column of the list being scattered.
-   */
-  template <typename T>
-  struct is_supported_child_type {
-    static bool const value = cudf::is_fixed_width<T>() || std::is_same_v<T, string_view> ||
-                              std::is_same_v<T, list_view> || std::is_same_v<T, struct_view>;
-  };
-
- public:
-  // SFINAE catch-all, for unsupported child column types.
+  // Catch-all for unsupported child column types.
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&... args)
-    requires(!is_supported_child_type<T>::value)
+    requires(not(cudf::concepts::fixed_width<T> or cudf::concepts::string_view<T> or
+                 cudf::concepts::nested<T>))
   {
     CUDF_FAIL("list_child_constructor unsupported!");
   }
@@ -144,14 +133,13 @@ struct list_child_constructor {
   /**
    * @brief Implementation for fixed_width child column types.
    */
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(cudf::is_fixed_width<T>())
   {
     auto source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);
@@ -203,14 +191,13 @@ struct list_child_constructor {
   /**
    * @brief Implementation for list child columns that contain strings.
    */
-  template <typename T>
+  template <cudf::concepts::string_view T>
   std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(std::is_same_v<T, string_view>)
   {
     auto source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);
@@ -267,14 +254,13 @@ struct list_child_constructor {
   /**
    * @brief (Recursively) Constructs a child column that is itself a list column.
    */
-  template <typename T>
+  template <cudf::concepts::list_view T>
   std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(std::is_same_v<T, list_view>)
   {
     auto source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);
@@ -362,14 +348,13 @@ struct list_child_constructor {
   /**
    * @brief (Recursively) constructs child columns that are structs.
    */
-  template <typename T>
+  template <cudf::concepts::struct_view T>
   std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(std::is_same_v<T, struct_view>)
   {
     auto const source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);

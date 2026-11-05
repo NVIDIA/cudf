@@ -18,6 +18,7 @@
 #include <cudf/strings/detail/copy_range.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -67,7 +68,7 @@ struct in_place_copy_range_dispatch {
   cudf::column_view const& source;
   cudf::mutable_column_view& target;
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   void operator()(cudf::size_type source_begin,
                   cudf::size_type source_end,
                   cudf::size_type target_begin,
@@ -88,7 +89,7 @@ struct out_of_place_copy_range_dispatch {
   cudf::column_view const& source;
   cudf::column_view const& target;
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   std::unique_ptr<cudf::column> operator()(
     cudf::size_type source_begin,
     cudf::size_type source_end,
@@ -120,8 +121,8 @@ struct out_of_place_copy_range_dispatch {
   }
 
   template <typename T, typename... Args>
-  std::enable_if_t<not cudf::is_rep_layout_compatible<T>(), std::unique_ptr<cudf::column>>
-  operator()(Args...)
+    requires(not cudf::concepts::rep_layout_compatible<T>)
+  std::unique_ptr<cudf::column> operator()(Args...)
   {
     CUDF_FAIL("Unsupported type for out of place copy.", cudf::data_type_error);
   }

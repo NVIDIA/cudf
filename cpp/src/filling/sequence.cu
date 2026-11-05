@@ -12,6 +12,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -51,13 +52,12 @@ struct const_tabulator {
  * by init and step.
  */
 struct sequence_functor {
-  template <typename T>
+  template <cudf::concepts::arithmetic_not_bool T>
   std::unique_ptr<column> operator()(size_type size,
                                      scalar const& init,
                                      scalar const& step,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_numeric<T>() and not cudf::is_boolean<T>())
   {
     auto result = make_fixed_width_column(init.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto result_device_view = mutable_column_device_view::create(*result, stream);
@@ -78,12 +78,11 @@ struct sequence_functor {
     return result;
   }
 
-  template <typename T>
+  template <cudf::concepts::arithmetic_not_bool T>
   std::unique_ptr<column> operator()(size_type size,
                                      scalar const& init,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_numeric<T>() and not cudf::is_boolean<T>())
   {
     auto result = make_fixed_width_column(init.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto result_device_view = mutable_column_device_view::create(*result, stream);
@@ -104,7 +103,7 @@ struct sequence_functor {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(not cudf::is_numeric<T>() or cudf::is_boolean<T>())
+    requires(not cudf::concepts::arithmetic_not_bool<T>)
   {
     CUDF_FAIL("Unsupported sequence scalar type", cudf::data_type_error);
   }

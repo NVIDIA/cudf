@@ -14,6 +14,7 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -23,6 +24,7 @@
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/execution>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
@@ -263,8 +265,8 @@ struct column_sorted_order_fn {
     }
   }
 
-  template <typename T>
-    requires(cudf::is_relationally_comparable<T, T>() and not cudf::is_dictionary<T>())
+  template <cuda::std::totally_ordered T>
+    requires(not cudf::concepts::dictionary<T>)
   void operator()(column_view const& input,
                   mutable_column_view& indices,
                   bool ascending,
@@ -276,7 +278,6 @@ struct column_sorted_order_fn {
   }
 
   template <typename T>
-    requires(not cudf::is_relationally_comparable<T, T>())
   void operator()(column_view const&,
                   mutable_column_view&,
                   bool,
@@ -287,8 +288,7 @@ struct column_sorted_order_fn {
     CUDF_FAIL("Column type must be relationally comparable");
   }
 
-  template <typename T>
-    requires(is_dictionary<T>())
+  template <cudf::concepts::dictionary T>
   void operator()(column_view const& input,
                   mutable_column_view& indices,
                   bool ascending,

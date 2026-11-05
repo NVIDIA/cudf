@@ -10,8 +10,8 @@
 #include <cudf/strings/detail/copy_if_else.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -43,7 +43,7 @@ struct segmented_shift_filter {
   };
 };
 
-template <typename T, typename Enable = void>
+template <typename T>
 struct segmented_shift_functor {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
@@ -55,8 +55,8 @@ struct segmented_shift_functor {
 /**
  * @brief Segmented shift specialization for representation layout compatible types.
  */
-template <typename T>
-struct segmented_shift_functor<T, std::enable_if_t<is_rep_layout_compatible<T>()>> {
+template <cudf::concepts::rep_layout_compatible T>
+struct segmented_shift_functor<T> {
   std::unique_ptr<column> operator()(column_view const& segmented_values,
                                      device_span<size_type const> segment_offsets,
                                      size_type offset,

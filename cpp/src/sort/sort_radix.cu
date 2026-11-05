@@ -5,6 +5,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -13,6 +14,7 @@
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -80,9 +82,8 @@ struct sort_radix_fn {
     }
   }
 
-  template <typename T>
+  template <cuda::std::floating_point T>
   void operator()()
-    requires(cudf::is_floating_point<T>())
   {
     auto pair_in = cuda::device_buffer<float_pair<T>>(
       stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
@@ -125,24 +126,23 @@ struct sort_radix_fn {
                       [] __device__(float_pair<T> const& p) { return p.f; });
   }
 
-  template <typename T>
+  template <cudf::concepts::chrono T>
   void operator()()
-    requires(cudf::is_chrono<T>())
   {
     using rep_type = typename T::rep;
     sort_radix<rep_type>();
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   void operator()()
-    requires(cudf::is_fixed_width<T>() and !cudf::is_chrono<T>() and !cudf::is_floating_point<T>())
+    requires(not cudf::concepts::chrono<T> and not cuda::std::floating_point<T>)
   {
     sort_radix<T>();
   }
 
   template <typename T>
   void operator()()
-    requires(not cudf::is_fixed_width<T>())
+    requires(not cudf::concepts::fixed_width<T>)
   {
     CUDF_UNREACHABLE("invalid type for faster sort");
   }

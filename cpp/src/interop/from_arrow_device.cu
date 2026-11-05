@@ -20,9 +20,9 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/cuda_device.hpp>
@@ -49,7 +49,8 @@ namespace {
 using dispatch_tuple_t = std::tuple<column_view, owned_columns_t>;
 
 struct dispatch_from_arrow_device {
-  template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>() && !is_fixed_point<T>())>
+  template <typename T>
+    requires(not cudf::concepts::rep_layout_compatible<T> and not cudf::concepts::fixed_point<T>)
   dispatch_tuple_t operator()(ArrowSchemaView*,
                               ArrowArray const*,
                               data_type,
@@ -60,7 +61,8 @@ struct dispatch_from_arrow_device {
     CUDF_FAIL("Unsupported type in from_arrow_device", cudf::data_type_error);
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() || is_fixed_point<T>())>
+  template <typename T>
+    requires(cudf::concepts::rep_layout_compatible<T> or cudf::concepts::fixed_point<T>)
   dispatch_tuple_t operator()(ArrowSchemaView* schema,
                               ArrowArray const* input,
                               data_type type,

@@ -92,15 +92,14 @@ struct out_of_place_fill_range_dispatch {
   cudf::column_view const& input;
 
   template <typename T, typename... Args>
-  std::enable_if_t<not cudf::is_rep_layout_compatible<T>() and not cudf::is_fixed_point<T>(),
-                   std::unique_ptr<cudf::column>>
-  operator()(Args...)
+    requires(not cudf::concepts::rep_layout_compatible<T> and not cudf::concepts::fixed_point<T>)
+  std::unique_ptr<cudf::column> operator()(Args...)
   {
     CUDF_FAIL("Unsupported type in fill.");
   }
 
-  template <typename T,
-            CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<T>() or cudf::is_fixed_point<T>())>
+  template <typename T>
+    requires(cudf::concepts::rep_layout_compatible<T> or cudf::concepts::fixed_point<T>)
   std::unique_ptr<cudf::column> operator()(cudf::size_type begin,
                                            cudf::size_type end,
                                            cuda::stream_ref stream,

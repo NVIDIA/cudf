@@ -192,8 +192,8 @@ struct device_json_column {
   device_json_column(cuda::stream_ref stream, cudf::memory_resources mr)
     : string_offsets(0, stream),
       string_lengths(0, stream),
-      child_offsets(0, stream, mr),
-      validity(stream, mr)
+      child_offsets(0, stream, mr.get_output_mr()),
+      validity(stream, mr.get_output_mr())
   {
   }
 };

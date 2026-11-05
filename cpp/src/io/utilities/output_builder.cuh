@@ -222,7 +222,7 @@ class output_builder {
                  size_type max_growth,
                  cuda::stream_ref stream,
                  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-    : _max_write_size{max_write_size}, _max_growth{max_growth}, _mr{mr}
+    : _max_write_size{max_write_size}, _max_growth{max_growth}, _mr{mr.get_output_mr()}
   {
     CUDF_EXPECTS(max_write_size > 0, "Internal error");
     _chunks.emplace_back(max_write_size * 2, stream, mr);
@@ -330,10 +330,10 @@ class output_builder {
   {
     auto output = [&] {
       if constexpr (std::is_same_v<Buffer, cuda::device_buffer<T>>) {
-        return Buffer(stream, mr, size(), cuda::no_init);
+        return Buffer(stream, mr.get_output_mr(), size(), cuda::no_init);
       } else {
         static_assert(std::is_same_v<Buffer, rmm::device_uvector<T>>);
-        return Buffer(size(), stream, mr);
+        return Buffer(size(), stream, mr.get_output_mr());
       }
     }();
     auto output_it = output.begin();
@@ -352,7 +352,7 @@ class output_builder {
   // is done
   struct output_chunk {
     output_chunk(size_type capacity, cuda::stream_ref stream, cudf::memory_resources mr)
-      : storage(stream, mr, capacity, cuda::no_init)
+      : storage(stream, mr.get_output_mr(), capacity, cuda::no_init)
     {
     }
 

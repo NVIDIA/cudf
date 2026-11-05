@@ -100,7 +100,7 @@ void column_buffer_base<string_policy>::create_with_mask(size_type _size,
                "Unexpected column buffer allocation size requested",
                std::overflow_error);
   size = _size;
-  _mr  = mr;
+  _mr  = mr.get_output_mr();
 
   switch (type.id()) {
     case type_id::STRING:

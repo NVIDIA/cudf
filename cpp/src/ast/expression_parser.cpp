@@ -58,7 +58,7 @@ expression_parser::expression_parser(
   bool has_nulls,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
-  : _device_data_buffer{stream, mr},
+  : _device_data_buffer{stream, mr.get_output_mr()},
     _left{left},
     _right{right},
     _expression_count{0},

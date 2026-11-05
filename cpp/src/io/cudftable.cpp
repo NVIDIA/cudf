@@ -113,7 +113,8 @@ packed_table read_cudftable(datasource* source, cuda::stream_ref stream, cudf::m
   packed.metadata->resize(header.metadata_length);
   source->host_read(metadata_offset, header.metadata_length, packed.metadata->data());
 
-  packed.gpu_data = std::make_unique<rmm::device_buffer>(header.data_length, stream, mr);
+  packed.gpu_data =
+    std::make_unique<rmm::device_buffer>(header.data_length, stream, mr.get_output_mr());
   if (source->is_device_read_preferred(header.data_length)) {
     source->device_read(
       data_offset, header.data_length, static_cast<uint8_t*>(packed.gpu_data->data()), stream);

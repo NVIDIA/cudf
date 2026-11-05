@@ -14,6 +14,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
@@ -217,7 +218,8 @@ std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<bool>(ArrowSch
     data = std::move(dest_data);
   }
 
-  auto out_col = mask_to_bools(static_cast<bitmask_type*>(data.data()), 0, num_rows, stream, mr);
+  auto out_col =
+    cudf::detail::mask_to_bools(static_cast<bitmask_type*>(data.data()), 0, num_rows, stream, mr);
 
   if (!skip_mask) {
     auto [out_mask, null_count] = get_mask_buffer(input, stream, mr);
@@ -451,7 +453,7 @@ std::unique_ptr<column> make_fixed_size_list_offsets(size_type num_offsets,
   auto offsets = make_numeric_column(
     data_type{type_id::INT32}, num_offsets, mask_state::UNALLOCATED, stream, mr);
   auto d_offsets = offsets->mutable_view().begin<int32_t>();
-  thrust::sequence(rmm::exec_policy_nosync(stream, mr.get_output_mr()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    d_offsets,
                    d_offsets + num_offsets,
                    int32_t{0},

@@ -65,7 +65,7 @@ struct copy_float_data_fn {
   std::unique_ptr<rmm::device_buffer> operator()() const
   {
     return std::make_unique<rmm::device_buffer>(
-      input.data<T>(), input.size() * sizeof(T), stream, mr);
+      input.data<T>(), input.size() * sizeof(T), stream, mr.get_output_mr());
   }
 
   template <typename T>

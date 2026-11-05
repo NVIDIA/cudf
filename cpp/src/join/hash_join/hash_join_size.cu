@@ -81,6 +81,6 @@ template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::INNER_JOI
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::LEFT_JOIN>(
   cudf::table_view const&, cuda::stream_ref) const;
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::FULL_JOIN>(
-  cudf::table_view const&, cuda::stream_ref, cudf::memory_resources) const;
+  cudf::table_view const&, cuda::stream_ref, rmm::device_async_resource_ref) const;
 
 }  // namespace cudf::detail

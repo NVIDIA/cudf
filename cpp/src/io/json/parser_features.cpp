@@ -123,14 +123,15 @@ struct allnull_column_functor {
   [[nodiscard]] auto make_zeroed_offsets(size_type size) const
   {
     auto offsets_buff =
-      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr);
+      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr.get_output_mr());
     return std::make_unique<column>(
       std::move(offsets_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
 
   [[nodiscard]] auto make_zeroed_indices(size_type size) const
   {
-    auto indices_buff = cudf::detail::make_zeroed_device_uvector_async<size_type>(size, stream, mr);
+    auto indices_buff =
+      cudf::detail::make_zeroed_device_uvector_async<size_type>(size, stream, mr.get_output_mr());
     return std::make_unique<column>(
       std::move(indices_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }

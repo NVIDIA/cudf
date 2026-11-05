@@ -115,7 +115,10 @@ struct dltensor_context {
   int64_t strides[2]{};  // NOLINT
   cuda::device_buffer<std::byte> buffer;
 
-  dltensor_context(cuda::stream_ref stream, cudf::memory_resources mr) : buffer(stream, mr) {}
+  dltensor_context(cuda::stream_ref stream, cudf::memory_resources mr)
+    : buffer(stream, mr.get_output_mr())
+  {
+  }
 
   static void deleter(DLManagedTensor* arg)
   {

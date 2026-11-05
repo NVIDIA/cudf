@@ -40,8 +40,9 @@ namespace cudf {
 column::column(column const& other, cuda::stream_ref stream, cudf::memory_resources mr)
   : _type{other._type},
     _size{other._size},
-    _data{other._data, stream, mr},
-    _null_mask{cudf::detail::copy_bitmask(other._null_mask.data(), 0, other.size(), stream, mr)},
+    _data{other._data, stream, mr.get_output_mr()},
+    _null_mask{cudf::detail::copy_bitmask(
+      other._null_mask.data(), 0, other.size(), stream, mr.get_output_mr())},
     _null_count{other._null_count}
 {
   _children.reserve(other.num_children());
@@ -180,8 +181,8 @@ struct create_column_from_view {
     }
     return std::make_unique<column>(view.type(),
                                     view.size(),
-                                    rmm::device_buffer{0, stream, mr},
-                                    cudf::detail::copy_bitmask(view, stream, mr),
+                                    rmm::device_buffer{0, stream, mr.get_output_mr()},
+                                    cudf::detail::copy_bitmask(view, stream, mr.get_output_mr()),
                                     view.null_count(),
                                     std::move(children));
   }
@@ -201,8 +202,8 @@ struct create_column_from_view {
         static_cast<char const*>(view.head()) + (view.offset() * cudf::size_of(view.type())),
         view.size() * cudf::size_of(view.type()),
         stream,
-        mr},
-      cudf::detail::copy_bitmask(view, stream, mr),
+        mr.get_output_mr()},
+      cudf::detail::copy_bitmask(view, stream, mr.get_output_mr()),
       view.null_count(),
       std::move(children));
   }

@@ -1156,7 +1156,7 @@ struct cast_variant_fn {
   template <variant_fixed_width T>
   std::unique_ptr<column> operator()()
   {
-    rmm::device_buffer data{num_rows * sizeof(T), stream, mr};
+    rmm::device_buffer data{num_rows * sizeof(T), stream, mr.get_output_mr()};
     auto const grid = cudf::detail::grid_1d{num_rows, block_size};
     auto const d_out =
       device_span<T>{static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)};
@@ -1179,7 +1179,7 @@ struct cast_variant_fn {
   std::unique_ptr<column> operator()()
   {
     using Rep = typename T::rep;
-    rmm::device_buffer data{num_rows * sizeof(Rep), stream, mr};
+    rmm::device_buffer data{num_rows * sizeof(Rep), stream, mr.get_output_mr()};
     auto const grid = cudf::detail::grid_1d{num_rows, block_size};
     auto const d_out =
       device_span<Rep>{static_cast<Rep*>(data.data()), static_cast<std::size_t>(num_rows)};
@@ -1201,7 +1201,7 @@ struct cast_variant_fn {
   template <cudf::concepts::boolean T>
   std::unique_ptr<column> operator()()
   {
-    rmm::device_buffer data{num_rows * sizeof(bool), stream, mr};
+    rmm::device_buffer data{num_rows * sizeof(bool), stream, mr.get_output_mr()};
 
     auto* dp_s = d_status;
 

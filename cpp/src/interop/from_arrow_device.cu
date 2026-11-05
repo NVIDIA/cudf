@@ -103,12 +103,12 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<bool>(ArrowSchemaView* s
       {});
   }
 
-  auto out_col =
-    mask_to_bools(static_cast<bitmask_type const*>(input->buffers[fixed_width_data_buffer_idx]),
-                  input->offset,
-                  input->offset + input->length,
-                  stream,
-                  mr);
+  auto out_col = cudf::detail::mask_to_bools(
+    static_cast<bitmask_type const*>(input->buffers[fixed_width_data_buffer_idx]),
+    input->offset,
+    input->offset + input->length,
+    stream,
+    mr);
   auto const has_nulls = skip_mask ? false : input->buffers[validity_buffer_idx] != nullptr;
   if (has_nulls) {
     auto out_mask = cudf::detail::copy_bitmask(

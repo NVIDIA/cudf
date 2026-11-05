@@ -282,7 +282,7 @@ packed_columns pack(cudf::table_view const& input,
   if (contig_split_result.empty()) {
     // Empty buffers still need a valid stream when consumers adopt their storage.
     return packed_columns{std::make_unique<std::vector<uint8_t>>(),
-                          std::make_unique<rmm::device_buffer>(0, stream, mr)};
+                          std::make_unique<rmm::device_buffer>(0, stream, mr.get_output_mr())};
   }
   return std::move(contig_split_result[0].data);
 }

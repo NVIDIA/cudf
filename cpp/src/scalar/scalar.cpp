@@ -50,12 +50,12 @@ fixed_point_scalar<T> const& expect_fixed_point_scalar_type(scalar const& data)
 }
 
 scalar::scalar(data_type type, bool is_valid, cuda::stream_ref stream, cudf::memory_resources mr)
-  : _type(type), _is_valid(is_valid, stream, mr)
+  : _type(type), _is_valid(is_valid, stream, mr.get_output_mr())
 {
 }
 
 scalar::scalar(scalar const& other, cuda::stream_ref stream, cudf::memory_resources mr)
-  : _type(other.type()), _is_valid(other._is_valid, stream, mr)
+  : _type(other.type()), _is_valid(other._is_valid, stream, mr.get_output_mr())
 {
 }
 
@@ -88,12 +88,14 @@ string_scalar::string_scalar(std::string_view string,
 string_scalar::string_scalar(string_scalar const& other,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
-  : scalar(other, stream, mr), _data(other._data, stream, mr)
+  : scalar(other, stream, mr.get_output_mr()), _data(other._data, stream, mr.get_output_mr())
 {
 }
 
 string_scalar::string_scalar(scalar const& data, cuda::stream_ref stream, cudf::memory_resources mr)
-  : string_scalar(expect_scalar_type<string_scalar>(data, data_type{type_id::STRING}), stream, mr)
+  : string_scalar(expect_scalar_type<string_scalar>(data, data_type{type_id::STRING}),
+                  stream,
+                  mr.get_output_mr())
 {
 }
 
@@ -110,7 +112,7 @@ string_scalar::string_scalar(value_type const& source,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
   : scalar(data_type(type_id::STRING), is_valid, stream, mr),
-    _data(source.data(), source.size_bytes(), stream, mr)
+    _data(source.data(), source.size_bytes(), stream, mr.get_output_mr())
 {
 }
 
@@ -118,7 +120,7 @@ string_scalar::string_scalar(rmm::device_buffer&& data,
                              bool is_valid,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
-  : scalar(data_type(type_id::STRING), is_valid, stream, mr), _data(std::move(data))
+  : scalar(data_type(type_id::STRING), is_valid, stream, mr.get_output_mr()), _data(std::move(data))
 {
 }
 
@@ -147,7 +149,7 @@ fixed_point_scalar<T>::fixed_point_scalar(rep_type value,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
   : scalar{data_type{type_to_id<T>(), static_cast<int32_t>(scale)}, is_valid, stream, mr},
-    _data{value, stream, mr}
+    _data{value, stream, mr.get_output_mr()}
 {
 }
 
@@ -156,7 +158,8 @@ fixed_point_scalar<T>::fixed_point_scalar(rep_type value,
                                           bool is_valid,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
-  : scalar{data_type{type_to_id<T>(), 0}, is_valid, stream, mr}, _data{value, stream, mr}
+  : scalar{data_type{type_to_id<T>(), 0}, is_valid, stream, mr.get_output_mr()},
+    _data{value, stream, mr.get_output_mr()}
 {
 }
 
@@ -165,8 +168,8 @@ fixed_point_scalar<T>::fixed_point_scalar(T value,
                                           bool is_valid,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
-  : scalar{data_type{type_to_id<T>(), value.scale()}, is_valid, stream, mr},
-    _data{value.value(), stream, mr}
+  : scalar{data_type{type_to_id<T>(), value.scale()}, is_valid, stream, mr.get_output_mr()},
+    _data{value.value(), stream, mr.get_output_mr()}
 {
 }
 
@@ -174,7 +177,7 @@ template <typename T>
 fixed_point_scalar<T>::fixed_point_scalar(scalar const& data,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
-  : fixed_point_scalar(expect_fixed_point_scalar_type<T>(data), stream, mr)
+  : fixed_point_scalar(expect_fixed_point_scalar_type<T>(data), stream, mr.get_output_mr())
 {
 }
 
@@ -185,7 +188,7 @@ fixed_point_scalar<T>::fixed_point_scalar(rmm::device_scalar<rep_type>&& data,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
   : scalar{data_type{type_to_id<T>(), scale}, is_valid, stream, mr},
-    _data{data.value(stream), stream, mr}
+    _data{data.value(stream), stream, mr.get_output_mr()}
 {
 }
 
@@ -193,7 +196,7 @@ template <typename T>
 fixed_point_scalar<T>::fixed_point_scalar(fixed_point_scalar<T> const& other,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
-  : scalar{other, stream, mr}, _data(other._data, stream, mr)
+  : scalar{other, stream, mr.get_output_mr()}, _data(other._data, stream, mr.get_output_mr())
 {
 }
 
@@ -241,7 +244,8 @@ fixed_width_scalar<T>::fixed_width_scalar(T value,
                                           bool is_valid,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
-  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr), _data(value, stream, mr)
+  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr.get_output_mr()),
+    _data(value, stream, mr.get_output_mr())
 {
 }
 
@@ -250,7 +254,7 @@ fixed_width_scalar<T>::fixed_width_scalar(cudf::detail::device_scalar<T>&& data,
                                           bool is_valid,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
-  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr), _data{std::move(data)}
+  : scalar(data_type(type_to_id<T>()), is_valid, stream, mr.get_output_mr()), _data{std::move(data)}
 {
 }
 
@@ -258,7 +262,7 @@ template <typename T>
 fixed_width_scalar<T>::fixed_width_scalar(fixed_width_scalar<T> const& other,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
-  : scalar{other, stream, mr}, _data(other._data, stream, mr)
+  : scalar{other, stream, mr.get_output_mr()}, _data(other._data, stream, mr.get_output_mr())
 {
 }
 

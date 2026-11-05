@@ -154,7 +154,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          cuda::stream_ref stream,
                          cudf::memory_resources mr)
   : _stream(stream),
-    _mr(mr),
+    _mr(mr.get_output_mr()),
     _options{options.get_timestamp_type(),
              options.is_enabled_use_index(),
              options.is_enabled_use_np_dtypes(),

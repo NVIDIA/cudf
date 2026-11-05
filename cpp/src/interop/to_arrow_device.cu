@@ -392,10 +392,12 @@ int dispatch_to_arrow_device_view::operator()<cudf::string_view>(ArrowArray* out
   if (column.size() == 0) {
     // https://github.com/NVIDIA/cudf/pull/15047#discussion_r1546528552
     if (nanoarrow_type == NANOARROW_TYPE_LARGE_STRING) {
-      auto zero = std::make_unique<cudf::detail::device_scalar<int64_t>>(0, stream, mr);
+      auto zero =
+        std::make_unique<cudf::detail::device_scalar<int64_t>>(0, stream, mr.get_output_mr());
       NANOARROW_RETURN_NOT_OK(set_buffer(std::move(zero), fixed_width_data_buffer_idx, tmp.get()));
     } else {
-      auto zero = std::make_unique<cudf::detail::device_scalar<int32_t>>(0, stream, mr);
+      auto zero =
+        std::make_unique<cudf::detail::device_scalar<int32_t>>(0, stream, mr.get_output_mr());
       NANOARROW_RETURN_NOT_OK(set_buffer(std::move(zero), fixed_width_data_buffer_idx, tmp.get()));
     }
 

@@ -130,7 +130,10 @@ struct [[nodiscard]] instance_context {
   friend struct ast_converter;
   friend struct node;
 
-  instance_context(cuda::stream_ref stream, cudf::memory_resources mr) : stream_(stream), mr_(mr) {}
+  instance_context(cuda::stream_ref stream, cudf::memory_resources mr)
+    : stream_(stream), mr_(mr.get_output_mr())
+  {
+  }
 
   instance_context(instance_context const&) = delete;
 
@@ -530,7 +533,7 @@ struct [[nodiscard]] ast_converter {
                 table_view left_table,
                 table_view right_table)
     : stream_(std::move(stream)),
-      mr_(std::move(mr)),
+      mr_(mr.get_output_mr()),
       instance_(stream_, mr_),
       left_table_(std::move(left_table)),
       right_table_(std::move(right_table))

@@ -830,7 +830,7 @@ cluster_info generate_group_cluster_info(int delta,
     auto p_cluster_start = std::move(cinfo.cluster_start);
     // cluster_start is returned as part of the output, so make sure to use the user supplied mr
     // instead of the current resource.
-    cinfo.cluster_start = rmm::device_uvector(p_cluster_start, stream, mr);
+    cinfo.cluster_start = rmm::device_uvector(p_cluster_start, stream, mr.get_output_mr());
     cudf::detail::sync_stream(stream);
   }
 

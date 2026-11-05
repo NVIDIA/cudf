@@ -3638,11 +3638,25 @@ class Join(IR):
                         zlice
                     )
                 else:
+                    # cross_join is left-major, so for a right-primary order
+                    # swap the inputs and move the columns back.
+                    swap = maintain_order.startswith("right")
+                    major, minor = (right, left) if swap else (left, right)
                     columns = plc.join.cross_join(
-                        left.table, right.table, stream=stream
+                        major.table, minor.table, stream=stream
                     ).columns()
+                    if swap:
+                        columns = (
+                            *columns[major.num_columns :],
+                            *columns[: major.num_columns],
+                        )
+                    # Swapped, each left column repeats once per right row, so
+                    # its sortedness does not carry over.
                     left_cols = Join._build_columns(
-                        columns[: left.num_columns], left.columns, stream=stream
+                        columns[: left.num_columns],
+                        left.columns,
+                        left=not swap,
+                        stream=stream,
                     )
                     right_cols = Join._build_columns(
                         columns[left.num_columns :],

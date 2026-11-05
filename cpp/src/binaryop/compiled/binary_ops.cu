@@ -203,13 +203,14 @@ struct null_considering_binop {
                         cudf::size_type col_size,
                         cuda::stream_ref stream,
                         CompareFunc cfunc,
-                        OutT* out_col) const
+                        OutT* out_col,
+                        cudf::memory_resources mr) const
   {
     // Create binop functor instance
     compare_functor<LhsViewT, RhsViewT, OutT, CompareFunc> binop_func{lhsv, rhsv, cfunc};
 
     // Execute it on every element
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{col_size},
                       out_col,
@@ -257,8 +258,13 @@ struct null_considering_binop {
       });
 
     // Populate output column
-    populate_out_col(
-      lhs_dev_view, rhs_dev_view, col_size, stream, minmax_func, out_col_strings.data());
+    populate_out_col(lhs_dev_view,
+                     rhs_dev_view,
+                     col_size,
+                     stream,
+                     minmax_func,
+                     out_col_strings.data(),
+                     cudf::get_current_device_resource_ref());
 
     // Create an output column with the resultant strings
     return cudf::make_strings_column(out_col_strings, invalid_str, stream, mr);
@@ -379,7 +385,8 @@ void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       column_view const& rhs,
                       binary_operator op,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources)
 {
   operator_dispatcher(out, lhs, rhs, false, false, op, stream);
 }
@@ -388,9 +395,10 @@ void binary_operation(mutable_column_view& out,
                       scalar const& lhs,
                       column_view const& rhs,
                       binary_operator op,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
 {
-  auto [lhsv, aux] = scalar_to_column_view(lhs, stream);
+  auto [lhsv, aux] = scalar_to_column_view(lhs, stream, mr.get_temporary_mr());
   operator_dispatcher(out, lhsv, rhs, true, false, op, stream);
 }
 // vector_scalar
@@ -398,9 +406,10 @@ void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       scalar const& rhs,
                       binary_operator op,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
 {
-  auto [rhsv, aux] = scalar_to_column_view(rhs, stream);
+  auto [rhsv, aux] = scalar_to_column_view(rhs, stream, mr.get_temporary_mr());
   operator_dispatcher(out, lhs, rhsv, false, true, op, stream);
 }
 

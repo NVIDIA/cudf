@@ -11,11 +11,21 @@
 #include <memory>
 #include <span>
 
+/**
+ * @file
+ * @brief APIs for compiling and sharing device code for user-defined functions
+ */
+
 namespace rtcx {
 struct blob_t;
 }
 
 namespace CUDF_EXPORT cudf {
+
+/**
+ * @addtogroup udfs
+ * @{
+ */
 
 /// @brief Device-code formats accepted by LTO execution APIs.
 enum class lto_binary_type : uint8_t { LTO_IR = 0, FATBIN = 1, PTX = 2 };
@@ -23,7 +33,9 @@ enum class lto_binary_type : uint8_t { LTO_IR = 0, FATBIN = 1, PTX = 2 };
 /**
  * @brief Non-owning device-code fragment.
  *
- * Keep the bytes alive throughout the calling operation. PTX must include its terminating zero.
+ * A module may define multiple functions and reference functions in other modules. Keep its bytes
+ * alive until evaluation completes or a reusable transform program has been constructed.
+ * PTX must include its terminating zero.
  * Declare callback symbols with @c extern "C" to avoid C++ name mangling.
  *
  */
@@ -73,5 +85,7 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          std::span<char const*> include_names,
                                          std::span<char const*> includes,
                                          std::span<char const* const> include_paths);
+
+/** @} */  // end of group
 
 }  // namespace CUDF_EXPORT cudf

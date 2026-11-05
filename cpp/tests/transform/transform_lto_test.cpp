@@ -10,6 +10,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/random.hpp>
 #include <cudf_test/table_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/errc.hpp>
@@ -272,3 +273,5 @@ TEST_F(TransformLTOTest, BankersRounding)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
 }
+
+CUDF_TEST_PROGRAM_MAIN()

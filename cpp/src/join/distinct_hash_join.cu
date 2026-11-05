@@ -298,6 +298,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
         return cuda::std::tuple{*(found_iter + idx), idx};
       }));
   auto const output_begin = cuda::make_zip_iterator(right_indices->begin(), left_indices->begin());
+  cudf::memory_resources mrs{mr};
   auto const output_end =
     cudf::detail::copy_if(tuple_iter,
                           tuple_iter + left_table_num_rows,
@@ -305,7 +306,8 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                           output_begin,
                           cuda::proclaim_return_type<bool>(
                             [] __device__(size_type idx) { return idx != cudf::JoinNoMatch; }),
-                          stream);
+                          stream,
+                          mrs.as_temporary());
   auto const actual_size = std::distance(output_begin, output_end);
 
   right_indices->resize(actual_size, stream);

@@ -105,7 +105,8 @@ void reader_impl::build_string_dict_indices()
                                                            str_dict_index_count.end(),
                                                            size_t{0},
                                                            cuda::std::plus<size_t>{},
-                                                           _stream);
+                                                           _stream,
+                                                           _mr.as_temporary());
 
   if (total_str_dict_indexes == 0) { return; }
 
@@ -569,7 +570,8 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                                                       d_page_offset_counts.end(),
                                                       size_t{0},
                                                       cuda::std::plus<size_t>{},
-                                                      _stream);
+                                                      _stream,
+                                                      _mr.as_temporary());
 
   // Allocate the string offset buffer
   subpass.string_offset_buffer = cuda::device_buffer<uint32_t>(
@@ -1204,7 +1206,8 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                                   cuda::make_discard_iterator(),
                                   sizes.d_begin() + (key_start / subpass.pages.size()),
                                   cuda::std::plus<>{},
-                                  _stream);
+                                  _stream,
+                                  _mr.as_temporary());
 
       // For nested hierarchies, compute per-page start offset
       thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
@@ -1338,7 +1341,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
                               reduce_keys.begin(),
                               d_col_sizes.begin(),
                               cuda::std::plus<>{},
-                              _stream);
+                              _stream,
+                              _mr.as_temporary());
 
   return cudf::detail::make_pinned_vector(d_col_sizes, _stream);
 }

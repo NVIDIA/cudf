@@ -979,6 +979,52 @@ TEST_F(StableVarianceReductionTest, InfinityPositionDoesNotChangeResult)
   EXPECT_EQ(std::isinf(first), std::isinf(middle));
 }
 
+TEST_F(StableVarianceReductionTest, Float32Output)
+{
+  // A FLOAT32 output type selects the float merge path. Use enough rows that the top-level merges
+  // exceed 2^24 elements and also take the large-count fallback.
+  constexpr cudf::size_type size = (1 << 24) + 1001;
+  auto const value_at            = [](cudf::size_type i) { return static_cast<float>(i % 9 - 4); };
+  for (bool nullable : {false, true}) {
+    SCOPED_TRACE(nullable ? "nullable" : "non-nullable");
+    auto const valid_at = [&](cudf::size_type i) { return !nullable || i % 33 != 0; };
+    long double sum     = 0;
+    size_t count        = 0;
+    for (cudf::size_type i = 0; i < size; ++i) {
+      if (valid_at(i)) {
+        sum += value_at(i);
+        ++count;
+      }
+    }
+    auto const mean = sum / count;
+    long double m2  = 0;
+    for (cudf::size_type i = 0; i < size; ++i) {
+      if (valid_at(i)) {
+        auto const delta = value_at(i) - mean;
+        m2 += delta * delta;
+      }
+    }
+    auto values = cudf::detail::make_counting_transform_iterator(0, value_at);
+    auto valids = cudf::detail::make_counting_transform_iterator(0, valid_at);
+    cudf::test::fixed_width_column_wrapper<float> col(values, values + size, valids);
+    auto const output_dtype = cudf::data_type{cudf::type_id::FLOAT32};
+    for (int ddof : {0, 1}) {
+      SCOPED_TRACE(ddof == 0 ? "ddof=0" : "ddof=1");
+      auto const expected = static_cast<double>(m2 / (count - ddof));
+      auto const var =
+        cudf::reduce(col, *cudf::make_variance_aggregation<reduce_aggregation>(ddof), output_dtype);
+      auto const std =
+        cudf::reduce(col, *cudf::make_std_aggregation<reduce_aggregation>(ddof), output_dtype);
+      ASSERT_EQ(var->type(), output_dtype);
+      ASSERT_EQ(std->type(), output_dtype);
+      auto const var_value = static_cast<cudf::numeric_scalar<float>*>(var.get())->value();
+      auto const std_value = static_cast<cudf::numeric_scalar<float>*>(std.get())->value();
+      EXPECT_NEAR(var_value, expected, 1e-4 * expected);
+      EXPECT_NEAR(std_value, std::sqrt(expected), 1e-4 * std::sqrt(expected));
+    }
+  }
+}
+
 // ----------------------------------------------------------------------------
 
 template <typename T>

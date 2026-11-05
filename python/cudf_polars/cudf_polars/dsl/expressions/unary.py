@@ -22,7 +22,7 @@ from cudf_polars.utils import dtypes, sorting
 if TYPE_CHECKING:
     from cudf_polars.containers import DataFrame
 
-__all__ = ["Cast", "Len", "UnaryFunction"]
+__all__ = ["Cast", "Len", "OverflowCheckedCast", "UnaryFunction"]
 
 
 _INTEGER_BITS = {
@@ -112,6 +112,27 @@ class Cast(Expr):
                     dtype=self.dtype,
                 )
         return result
+
+
+class OverflowCheckedCast(Cast):
+    """
+    A strict integer cast that raises if a value does not fit the target type.
+
+    libcudf's cast wraps on overflow, whereas a strict polars cast raises.
+    This is only produced where translation knows the narrowing can overflow
+    and polars would report it: the widened sum in polars' rewrite of
+    ``concat(...).select(len())``.
+    """
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate this expression given a dataframe for context."""
+        (child,) = self.children
+        column = child.evaluate(df, context=context)
+        return column.astype(
+            self.dtype, stream=df.stream, strict=self.strict, check_overflow=True
+        )
 
 
 class Len(Expr):

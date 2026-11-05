@@ -436,7 +436,7 @@ TEST_F(StreamCompactionTest, FilterASTJit)
   auto const col_expected = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
   cudf::table_view expected({col_expected});
   auto const predicate =
-    cudf::compute_column_jit(input, expression, cudf::test::get_default_stream());
+    cudf::compute_column_jit(input, expression, {}, cudf::test::get_default_stream());
   auto const result =
     cudf::apply_retention_mask(input, predicate->view(), cudf::test::get_default_stream());
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, *result);

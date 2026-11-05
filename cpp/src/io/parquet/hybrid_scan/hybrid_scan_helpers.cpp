@@ -24,7 +24,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using aggregate_reader_metadata_base = parquet::detail::aggregate_reader_metadata;
 using metadata_base                  = parquet::detail::metadata;
@@ -733,4 +733,4 @@ std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   return std::reference_wrapper<ast::expression const>(_col_ref.back());
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

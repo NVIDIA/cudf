@@ -26,7 +26,6 @@
 #include <cudf/utilities/type_checks.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/extent.cuh>
@@ -34,12 +33,13 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
+#include <thrust/execution_policy.h>
 
 #include <optional>
 #include <ranges>
 #include <span>
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 
 using parquet::detail::chunk_page_info;
 using parquet::detail::ColumnChunkDesc;
@@ -1560,4 +1560,4 @@ simplified_expression_opt dictionary_literals_collector::simplify_comparison(
   return _tree.push(ast::operation{op, col_ref, literal});
 }
 
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail

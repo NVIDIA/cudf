@@ -31,7 +31,7 @@ std::unique_ptr<cudf::column> two_table_equality(cudf::table_view lhs,
                                           lhs.num_rows(),
                                           cudf::mask_state::UNALLOCATED,
                                           stream,
-                                          mr.get_output_mr());
+                                          mr);
 
   if (cudf::has_nested_columns(lhs) or cudf::has_nested_columns(rhs)) {
     auto const equal_comparator =

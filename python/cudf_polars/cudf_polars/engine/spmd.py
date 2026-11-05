@@ -595,7 +595,10 @@ class SPMDEngine(StreamingEngine):
     ...     result = (
     ...         df.lazy().group_by("a").agg(pl.col("b").sum()).collect(engine=engine)
     ...     )
-    ...     full = allgather_polars_dataframe(engine=engine, local_df=result, op_id=0)
+    ...     with reserve_op_id() as op_id:
+    ...         full = allgather_polars_dataframe(
+    ...             engine=engine, local_df=result, op_id=op_id
+    ...         )
 
     Direct style (Jupyter / long-lived clusters):
 

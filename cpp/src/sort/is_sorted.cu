@@ -30,9 +30,9 @@ bool is_sorted(cudf::table_view const& in,
                std::vector<null_order> const& null_precedence,
                cuda::stream_ref stream)
 {
-  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  cudf::memory_resources const mrs{cudf::get_current_device_resource_ref()};
   auto const comparator = detail::row::lexicographic::self_comparator{
-    in, column_order, null_precedence, stream, cudf::memory_resources{temp_mr, temp_mr}};
+    in, column_order, null_precedence, stream, mrs.as_temporary()};
 
   if (cudf::detail::has_nested_columns(in)) {
     auto const device_comparator = comparator.less<true>(has_nested_nulls(in));

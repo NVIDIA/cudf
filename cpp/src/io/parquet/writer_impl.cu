@@ -2559,7 +2559,7 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
   fill_table_meta(*_table_meta);
 
   // The writer has no caller-provided resource; everything it allocates is temporary.
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  cudf::memory_resources const mrs{cudf::get_current_device_resource_ref()};
 
   // All kinds of memory allocation and data compressions/encoding are performed here.
   // If any error occurs, such as out-of-memory exception, the internal state of the current
@@ -2599,7 +2599,7 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
                                   _write_arrow_schema,
                                   _out_sink,
                                   _stream,
-                                  cudf::memory_resources{temp_mr, temp_mr});
+                                  mrs.as_temporary());
 
   // Compression/encoding were all successful. Now write the intermediate results.
   write_parquet_data_to_sink(updated_agg_meta,

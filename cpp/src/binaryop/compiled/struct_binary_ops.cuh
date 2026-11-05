@@ -64,7 +64,7 @@ void apply_struct_binary_op(mutable_column_view& out,
                             PhysicalElementComparator comparator,
                             cuda::stream_ref stream)
 {
-  auto temp_mr              = cudf::get_current_device_resource_ref();
+  cudf::memory_resources mrs{cudf::get_current_device_resource_ref()};
   auto const compare_orders = std::vector<order>(
     lhs.size(),
     is_any_v<BinaryOperator, ops::Greater, ops::GreaterEqual> ? order::DESCENDING
@@ -72,15 +72,15 @@ void apply_struct_binary_op(mutable_column_view& out,
   auto const tlhs             = table_view{{lhs}};
   auto const trhs             = table_view{{rhs}};
   auto const table_comparator = cudf::detail::row::lexicographic::two_table_comparator{
-    tlhs, trhs, compare_orders, {}, stream, cudf::memory_resources{temp_mr, temp_mr}};
-  auto outd = column_device_view::create(out, stream, temp_mr);
+    tlhs, trhs, compare_orders, {}, stream, mrs.as_temporary()};
+  auto outd = column_device_view::create(out, stream, mrs.get_temporary_mr());
   auto optional_iter =
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});
   auto const comparator_nulls = nullate::DYNAMIC{has_nested_nulls(tlhs) || has_nested_nulls(trhs)};
 
   auto tabulate_device_operator = [&](auto device_comparator) {
     thrust::transform(
-      rmm::exec_policy_nosync(stream, temp_mr),
+      rmm::exec_policy_nosync(stream, mrs.get_temporary_mr()),
       cuda::counting_iterator<size_type>(0),
       cuda::counting_iterator<size_type>(out.size()),
       out.begin<bool>(),

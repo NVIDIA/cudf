@@ -104,6 +104,7 @@ class arg_minmax_dispatcher {
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr) const
+    requires(not cudf::is_nested<ElementType>() and not cudf::is_numeric<ElementType>())
   {
     // Nulls are considered "greater" (ARGMIN), or "less" (ARGMAX) than non-null values.
     auto const null_orders =
@@ -177,6 +178,7 @@ class arg_minmax_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const&,
                                      cuda::stream_ref,
                                      cudf::memory_resources) const
+    requires(not is_supported<ElementType>())
   {
     CUDF_FAIL("ARGMIN/ARGMAX is not supported for this type");
   }

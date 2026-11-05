@@ -128,7 +128,7 @@ dremel_data get_encoding(column_view h_col,
   std::unique_ptr<column> empty_list_offset_col;
   if (has_empty_list_offsets) {
     empty_list_offset_col = make_fixed_width_column(
-      data_type(type_id::INT32), 1, mask_state::UNALLOCATED, stream, temp_mr);
+      data_type(type_id::INT32), 1, mask_state::UNALLOCATED, stream, mr.as_temporary());
     CUDF_CUDA_TRY(cudaMemsetAsync(
       empty_list_offset_col->mutable_view().head(), 0, sizeof(int32_t), stream.get()));
     std::function<column_view(column_view const&)> normalize_col = [&](column_view const& col) {

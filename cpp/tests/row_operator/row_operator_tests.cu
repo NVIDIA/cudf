@@ -10,6 +10,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/memory_resource_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column.hpp>
@@ -653,7 +654,7 @@ TEST_F(RowOperatorTest, TestPrimitiveRowHasher64BitHash)
                                             col.size(),
                                             cudf::mask_state::UNALLOCATED,
                                             stream,
-                                            mr.get_output_mr());
+                                            mr);
     thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator<cudf::size_type>{col.size()},
@@ -767,3 +768,5 @@ TEST_F(RowOperatorTest, TestRowHasherDictionaryColumnWithNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     dict_results, int_results, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
+
+CUDF_TEST_PROGRAM_MAIN()

@@ -721,8 +721,7 @@ sort_merge_join::sort_merge_join(table_view const& right,
                std::invalid_argument);
 
   // The run index is owned by this object, which takes no caller-provided resource.
-  auto const object_mr   = cudf::get_current_device_resource_ref();
-  auto const mr          = cudf::memory_resources{object_mr, object_mr};
+  cudf::memory_resources const mr{cudf::get_current_device_resource_ref()};
   auto const& right_view = preprocessed_right._null_processed_table_view;
   auto run_index         = [&] {
     if (preprocessed_right._null_processed_table_sorted_order.has_value()) {
@@ -739,16 +738,18 @@ sort_merge_join::sort_merge_join(table_view const& right,
 cuda::device_buffer<size_type> sort_merge_join::preprocessed_table::map_table_to_unprocessed(
   cuda::stream_ref stream) const
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   CUDF_EXPECTS(_validity_mask.has_value() && _num_nulls.has_value(), "Mapping is not possible");
-  auto temp_mr                  = cudf::get_current_device_resource_ref();
   auto const table_mapping_size = _table_view.num_rows() - _num_nulls.value();
-  cuda::device_buffer<size_type> table_mapping(stream, temp_mr, table_mapping_size, cuda::no_init);
+  cuda::device_buffer<size_type> table_mapping(
+    stream, mr.get_temporary_mr(), table_mapping_size, cuda::no_init);
   cudf::detail::copy_if_async(cuda::counting_iterator<size_type>{0},
                               cuda::counting_iterator<size_type>{_table_view.num_rows()},
                               cuda::counting_iterator<size_type>{0},
                               table_mapping.begin(),
                               is_row_valid{_validity_mask.value().data()},
-                              stream);
+                              stream,
+                              mr.as_temporary());
   return table_mapping;
 }
 
@@ -794,8 +795,7 @@ auto sort_merge_join::invoke_merge(table_view right_view,
   auto const right_offsets = device_span<size_type const>{
     right_run_offsets->data(), static_cast<std::size_t>(num_right_runs) + 1};
   // The merge object is a temporary; this class takes no caller-provided temporary resource.
-  auto const temp_mr           = cudf::get_current_device_resource_ref();
-  auto const merge_mr          = cudf::memory_resources{temp_mr, temp_mr};
+  cudf::memory_resources const merge_mr{cudf::get_current_device_resource_ref()};
   auto has_right_sorting_order = preprocessed_right._null_processed_table_sorted_order.has_value();
   if (has_right_sorting_order) {
     auto r_view = preprocessed_right._null_processed_table_sorted_order.value()->view();
@@ -894,16 +894,17 @@ sort_merge_join::left_join(table_view const& left,
         preprocessed_left_indices->size() + static_cast<int64_t>(num_filtered_nulls);
 
       auto const validity_mask = preprocessed_left._validity_mask.value().data();
-      cuda::device_buffer<size_type> null_left_indices(stream,
-                                                       cudf::get_current_device_resource_ref(),
-                                                       static_cast<std::size_t>(num_filtered_nulls),
-                                                       cuda::no_init);
+      cudf::memory_resources mrs(mr);
+      auto temp_mr = mrs.get_temporary_mr();
+      cuda::device_buffer<size_type> null_left_indices(
+        stream, temp_mr, static_cast<std::size_t>(num_filtered_nulls), cuda::no_init);
       cudf::detail::copy_if_async(cuda::counting_iterator<size_type>{0},
                                   cuda::counting_iterator<size_type>{left.num_rows()},
                                   cuda::counting_iterator<size_type>{0},
                                   null_left_indices.begin(),
                                   is_row_null{validity_mask},
-                                  stream);
+                                  stream,
+                                  mrs.as_temporary());
 
       rmm::device_uvector<size_type> left_result_indices(total_output_size, stream, mr);
       rmm::device_uvector<size_type> right_result_indices(total_output_size, stream, mr);
@@ -942,10 +943,10 @@ std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_cont
   auto preprocessed_left =
     preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream);
 
-  return invoke_merge(
+  auto match_counts = invoke_merge(
     preprocessed_right._null_processed_table_view,
     preprocessed_left._null_processed_table_view,
-    [this, left, &preprocessed_left, stream, mr](auto& obj) mutable {
+    [this, &preprocessed_left, stream, mr](auto& obj) {
       auto matches_per_row = obj.matches_per_row(stream, mr);
       matches_per_row->resize(matches_per_row->size() - 1, stream);
       if (compare_nulls == null_equality::UNEQUAL &&
@@ -961,15 +962,16 @@ std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_cont
                         matches_per_row->end(),
                         mapping.begin(),
                         unprocessed_matches_per_row.begin());
-        return std::make_unique<sort_merge_join_match_context>(
-          left,
-          std::make_unique<rmm::device_uvector<size_type>>(std::move(unprocessed_matches_per_row)),
-          std::move(preprocessed_left));
+        return std::make_unique<rmm::device_uvector<size_type>>(
+          std::move(unprocessed_matches_per_row));
       }
-      return std::make_unique<sort_merge_join_match_context>(
-        left, std::move(matches_per_row), std::move(preprocessed_left));
+      return matches_per_row;
     },
     stream);
+  return std::make_unique<cudf::join_match_context>(join_match_state::make_context(
+    left,
+    std::move(match_counts),
+    std::make_unique<sort_merge_join_match_state>(this, std::move(preprocessed_left))));
 }
 
 // left_partition_end exclusive
@@ -981,10 +983,15 @@ sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& cont
 {
   cudf::scoped_range range{"sort_merge_join::partitioned_inner_join"};
 
-  // Extract preprocessed_left from the context
-  auto const& preprocessed_left =
-    static_cast<sort_merge_join_match_context const*>(context.left_table_context.get())
-      ->preprocessed_left;
+  CUDF_EXPECTS(context.left_table_context != nullptr,
+               "join_partition_context is missing left_table_context",
+               std::invalid_argument);
+  auto const* state = join_match_state::get<sort_merge_join_match_state>(
+    *context.left_table_context, this, join_kind::INNER_JOIN);
+  CUDF_EXPECTS(state != nullptr,
+               "join_match_context was not created by inner_join_match_context()",
+               std::invalid_argument);
+  auto const& preprocessed_left = state->preprocessed_left;
 
   auto const left_partition_start_idx = context.left_start_idx;
   auto const left_partition_end_idx   = context.left_end_idx;

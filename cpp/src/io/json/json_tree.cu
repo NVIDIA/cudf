@@ -208,17 +208,19 @@ std::pair<cuda::device_buffer<KeyType>, cuda::device_buffer<IndexType>> stable_s
  * @param parent_node_ids parent node ids initialized for first child of each push node,
  *                       and other siblings are initialized to -1.
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  */
 void propagate_first_sibling_to_other(cudf::device_span<TreeDepthT const> node_levels,
                                       cudf::device_span<NodeIndexT> parent_node_ids,
-                                      cuda::stream_ref stream)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto [sorted_node_levels, sorted_order] = stable_sorted_key_order<size_type>(node_levels, stream);
   // instead of gather, using permutation_iterator, which is ~17% faster
 
   thrust::inclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     sorted_node_levels.begin(),
     sorted_node_levels.end(),
     cuda::make_permutation_iterator(parent_node_ids.begin(), sorted_order.begin()),
@@ -387,7 +389,8 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
   propagate_first_sibling_to_other(
     cudf::device_span<TreeDepthT const>{node_levels.data(), node_levels.size()},
     parent_node_ids,
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   // Node categories: copy_if with transform.
   cuda::device_buffer<NodeT> node_categories(stream, mr, num_nodes, cuda::no_init);
@@ -506,7 +509,8 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
     propagate_first_sibling_to_other(
       cudf::device_span<TreeDepthT const>{token_levels.data(), token_levels.size()},
       parent_node_ids,
-      stream);
+      stream,
+      cudf::get_current_device_resource_ref());
 
     // scatter to node_range_end for only nested end tokens.
     auto token_indices_it = cuda::transform_iterator(
@@ -629,21 +633,22 @@ std::pair<size_t, cuda::device_buffer<size_type>> remapped_field_nodes_after_uni
  * @param is_enabled_experimental Whether to enable experimental features such as
  * utf8 field name support
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used to allocate the returned vector's device memory
  * @return Vector of node_type ids
  */
 cuda::device_buffer<size_type> hash_node_type_with_field_name(device_span<SymbolT const> d_input,
                                                               tree_meta_t const& d_tree,
                                                               bool is_enabled_experimental,
-                                                              cuda::stream_ref stream)
+                                                              cuda::stream_ref stream,
+                                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
-  auto const num_nodes = d_tree.node_categories.size();
-  auto const num_fields =
-    thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                  d_tree.node_categories.begin(),
-                  d_tree.node_categories.end(),
-                  node_t::NC_FN);
+  auto const num_nodes  = d_tree.node_categories.size();
+  auto const num_fields = thrust::count(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                        d_tree.node_categories.begin(),
+                                        d_tree.node_categories.end(),
+                                        node_t::NC_FN);
 
   auto const d_hasher = cuda::proclaim_return_type<
     typename cudf::hashing::detail::default_hash<cudf::string_view>::result_type>(
@@ -711,8 +716,7 @@ cuda::device_buffer<size_type> hash_node_type_with_field_name(device_span<Symbol
     if (!is_enabled_experimental) { return std::pair{false, make_map(size_type{0})}; }
     // get all unique field node ids for utf8 decoding
     auto num_keys = static_cast<size_type>(key_set.size(stream));
-    cuda::device_buffer<size_type> keys(
-      stream, cudf::get_current_device_resource_ref(), num_keys, cuda::no_init);
+    cuda::device_buffer<size_type> keys(stream, mr.get_temporary_mr(), num_keys, cuda::no_init);
     key_set.retrieve_all(keys.data(), stream.get());
 
     auto [num_unique_fields, found_keys] =
@@ -744,9 +748,8 @@ cuda::device_buffer<size_type> hash_node_type_with_field_name(device_span<Symbol
   };
 
   // convert field nodes to node indices, and other nodes to enum value.
-  cuda::device_buffer<size_type> node_type(
-    stream, cudf::get_current_device_resource_ref(), num_nodes, cuda::no_init);
-  thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  cuda::device_buffer<size_type> node_type(stream, mr.get_output_mr(), num_nodes, cuda::no_init);
+  thrust::tabulate(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                    node_type.begin(),
                    node_type.end(),
                    [node_categories = d_tree.node_categories.data(),
@@ -764,23 +767,23 @@ std::pair<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<NodeIndexT>>
 get_array_children_indices(TreeDepthT row_array_children_level,
                            device_span<TreeDepthT const> node_levels,
                            device_span<NodeIndexT const> parent_node_ids,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   // array children level: (level 2 for values, level 1 for values-JSONLines format)
   // copy nodes id of level 1's children (level 2)
   // exclusive scan by key (on key their parent_node_id, because we need indices in each row.
   // parent_node_id for each row will be same).
   // -> return their indices and their node id
-  auto const num_nodes = node_levels.size();
-  auto num_level2_nodes =
-    thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                  node_levels.begin(),
-                  node_levels.end(),
-                  row_array_children_level);
+  auto const num_nodes  = node_levels.size();
+  auto num_level2_nodes = thrust::count(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                        node_levels.begin(),
+                                        node_levels.end(),
+                                        row_array_children_level);
   cuda::device_buffer<NodeIndexT> level2_nodes(
-    stream, cudf::get_current_device_resource_ref(), num_level2_nodes, cuda::no_init);
+    stream, mr.get_output_mr(), num_level2_nodes, cuda::no_init);
   cuda::device_buffer<NodeIndexT> level2_indices(
-    stream, cudf::get_current_device_resource_ref(), num_level2_nodes, cuda::no_init);
+    stream, mr.get_output_mr(), num_level2_nodes, cuda::no_init);
   cudf::detail::copy_if_async(
     cuda::counting_iterator<std::size_t>{0},
     cuda::counting_iterator{num_nodes},
@@ -792,12 +795,11 @@ get_array_children_indices(TreeDepthT row_array_children_level,
     stream);
   auto level2_parent_nodes =
     cuda::make_permutation_iterator(parent_node_ids.begin(), level2_nodes.cbegin());
-  thrust::exclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    level2_parent_nodes,
-    level2_parent_nodes + num_level2_nodes,
-    cuda::make_constant_iterator(NodeIndexT{1}),
-    level2_indices.begin());
+  thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                level2_parent_nodes,
+                                level2_parent_nodes + num_level2_nodes,
+                                cuda::make_constant_iterator(NodeIndexT{1}),
+                                level2_indices.begin());
   return std::make_pair(std::move(level2_nodes), std::move(level2_indices));
 }
 
@@ -845,7 +847,11 @@ std::pair<cuda::device_buffer<size_type>, cuda::device_buffer<size_type>> hash_n
     // These indices uniquely identify each column in each row. This is used during hashing for
     // level 2 nodes to generate unique column ids, instead of field name for level 2 nodes.
     auto [level2_nodes, level2_indices] =
-      get_array_children_indices(row_array_children_level, node_levels, parent_node_ids, stream);
+      get_array_children_indices(row_array_children_level,
+                                 node_levels,
+                                 parent_node_ids,
+                                 stream,
+                                 cudf::get_current_device_resource_ref());
     // memory usage could be reduced by using different data structure (hashmap)
     // or alternate method to hash it at node_type
     list_indices = cuda::device_buffer<size_type>(
@@ -987,8 +993,8 @@ std::pair<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<NodeIndexT>> gene
   //    which is {node_level, node_type} recursively using parent_node_id
   auto [col_id, unique_keys] = [&]() {
     // Convert node_category + field_name to node_type.
-    cuda::device_buffer<size_type> node_type =
-      hash_node_type_with_field_name(d_input, d_tree, is_enabled_experimental, stream);
+    cuda::device_buffer<size_type> node_type = hash_node_type_with_field_name(
+      d_input, d_tree, is_enabled_experimental, stream, cudf::get_current_device_resource_ref());
 
     // hash entire path from node to root.
     return hash_node_path(d_tree.node_levels,

@@ -306,13 +306,14 @@ TEST_F(StringsDatetimeTest, IsTimestamp)
                                                         "2020-00-31 01:32:03 1AM +0000",
                                                         "2020-02-00 02:32:03 2AM +0000",
                                                         "2022-08-24 02:32:60 2AM +0000",
+                                                        "2022-08-24 02:32:61 2AM +0000",
                                                         "2020-2-9 9:12:13 9AM +1111",
                                                         "9999-08-24 02:32:06 2AM +0000",
                                                         "20220-08-24 02:32:06 2AM +0000"};
   auto const sv      = cudf::strings_column_view(input);
   auto const results = cudf::strings::is_timestamp(sv, "%Y-%m-%d %H:%M:%S %I%p %z");
   auto const expected =
-    cudf::test::fixed_width_column_wrapper<bool>{1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0};
+    cudf::test::fixed_width_column_wrapper<bool>{1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 

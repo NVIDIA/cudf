@@ -105,9 +105,15 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
 {
   if (cache->has_result(col, agg)) { return; }
 
+  // The numerator is MEAN_SUM when SUM accumulates in a different type than MEAN, and SUM
+  // otherwise (see `make_mean_numerator_aggregation`).
+  auto const mean_sum_agg      = cudf::detail::mean_sum_aggregation{};
   auto const sum_agg           = make_sum_aggregation();
+  auto const& numerator_agg    = cache->has_result(col, mean_sum_agg)
+                                   ? static_cast<aggregation const&>(mean_sum_agg)
+                                   : *sum_agg;
   auto const count_agg         = make_count_aggregation();
-  auto const sum_result        = cache->get_result(col, *sum_agg);
+  auto const sum_result        = cache->get_result(col, numerator_agg);
   auto const count_result      = cache->get_result(col, *count_agg);
   auto const sum_without_nulls = column_view{
     sum_result.type(), sum_result.size(), sum_result.head(), nullptr, 0, sum_result.offset()};

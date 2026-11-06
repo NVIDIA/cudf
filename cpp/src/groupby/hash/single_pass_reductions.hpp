@@ -31,7 +31,7 @@ namespace cudf::groupby::detail::hash {
 constexpr bool is_fusable_sum(aggregation::Kind kind)
 {
   return kind == aggregation::SUM || kind == aggregation::SUM_OF_SQUARES ||
-         kind == aggregation::COUNT_VALID;
+         kind == aggregation::MEAN_SUM || kind == aggregation::COUNT_VALID;
 }
 
 constexpr bool is_fusable_minmax_sum(aggregation::Kind kind)
@@ -81,6 +81,8 @@ extern template std::unique_ptr<column> compute_reduction<aggregation::SUM>(
 extern template std::unique_ptr<column> compute_reduction<aggregation::PRODUCT>(
   reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);
 extern template std::unique_ptr<column> compute_reduction<aggregation::SUM_OF_SQUARES>(
+  reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);
+extern template std::unique_ptr<column> compute_reduction<aggregation::MEAN_SUM>(
   reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);
 extern template std::unique_ptr<column> compute_reduction<aggregation::MIN>(
   reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);

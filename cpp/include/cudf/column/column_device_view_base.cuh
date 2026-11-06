@@ -841,8 +841,8 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * `nullopt`.
    *
    * @param element_index Position of the desired element
-   * @return `optional` containing the element at the specified index, or `nullopt` if the element
-   * is null
+   * @return `optional` containing the decoded value returned by `element<T>()`, or `nullopt`
+   * if the element is null. For dictionary tags, the optional contains the decoded key type.
    */
   template <typename T>
   [[nodiscard]] __device__ auto nullable_element(size_type element_index) const noexcept

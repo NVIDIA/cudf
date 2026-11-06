@@ -233,5 +233,15 @@ std::uint8_t const* get_character_flags_table(cuda::stream_ref stream)
   return detail::get_character_flags_table(stream);
 }
 
+std::uint16_t const* get_character_cases_table(cuda::stream_ref stream)
+{
+  return detail::get_character_cases_table(stream);
+}
+
+void const* get_special_case_mapping_table(cuda::stream_ref stream)
+{
+  return detail::get_special_case_mapping_table(stream);
+}
+
 }  // namespace strings
 }  // namespace cudf

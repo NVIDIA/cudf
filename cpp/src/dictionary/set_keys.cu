@@ -15,10 +15,10 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -74,12 +74,11 @@ struct remap_result {
 };
 
 struct remap_indices_dispatch_fn {
-  template <typename T>
+  template <cudf::concepts::dictionary_key T>
   remap_result operator()(cudf::dictionary_column_view const& input,
                           cudf::column_view const& new_keys,
                           cuda::stream_ref stream,
                           rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<T>())
   {
     // compute sorted-order so the new_keys can be searched more quickly
     auto sorted_indices = cudf::detail::sorted_order(
@@ -133,19 +132,18 @@ struct remap_indices_dispatch_fn {
                           cudf::column_view const&,
                           cuda::stream_ref,
                           rmm::device_async_resource_ref)
-    requires(not cudf::is_dictionary_key<T>())
+    requires(not cudf::concepts::dictionary_key<T>)
   {
     CUDF_UNREACHABLE("not a valid dictionary key type");
   }
 };
 
 struct set_keys_dispatch_fn {
-  template <typename T>
+  template <cudf::concepts::dictionary_key T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
                                            cudf::column_view const& new_keys,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<T>())
   {
     auto [indices, null_mask, null_count] = type_dispatcher<dispatch_storage_type>(
       new_keys.type(), remap_indices_dispatch_fn{}, input, new_keys, stream, mr);
@@ -159,7 +157,6 @@ struct set_keys_dispatch_fn {
                                            cudf::column_view const&,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref)
-    requires(not cudf::is_dictionary_key<T>())
   {
     CUDF_UNREACHABLE("not a valid dictionary key type");
   }

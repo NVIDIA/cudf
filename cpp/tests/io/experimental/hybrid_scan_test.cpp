@@ -10,9 +10,11 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
@@ -20,6 +22,7 @@
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
@@ -601,6 +604,127 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
   auto const keep_outer =
     cudf::ast::operation{cudf::ast::ast_operator::LOGICAL_OR, keep_first, keep_last};
   validate(keep_outer, {0, page_size_for_ordered_tests, 3 * page_size_for_ordered_tests, num_rows});
+}
+
+TEST_F(HybridScanTest, MaterializeUsesMemoryResources)
+{
+  auto constexpr num_rows = 10'000;
+  auto const sequence     = cuda::counting_iterator<int32_t>{0};
+  auto const valids       = cuda::transform_iterator(sequence, [](auto i) { return i % 7 != 0; });
+  auto const strings =
+    cuda::transform_iterator(sequence, [](auto i) { return "value_" + std::to_string(i % 100); });
+
+  // Filter column: INT32. Payload columns: nullable STRING, DECIMAL32 and LIST<DECIMAL32>
+  cudf::test::fixed_width_column_wrapper<int32_t> ints(sequence, sequence + num_rows);
+  cudf::test::strings_column_wrapper strs(strings, strings + num_rows, valids);
+  cudf::test::fixed_point_column_wrapper<int32_t> decimals(
+    sequence, sequence + num_rows, valids, numeric::scale_type{-2});
+  auto const offsets = cuda::transform_iterator(sequence, [](auto i) { return 2 * i; });
+  cudf::test::fixed_width_column_wrapper<int32_t> list_offsets(offsets, offsets + num_rows + 1);
+  cudf::test::fixed_point_column_wrapper<int32_t> list_decimals(
+    sequence, sequence + 2 * num_rows, numeric::scale_type{-2});
+  auto const lists =
+    cudf::make_lists_column(num_rows,
+                            list_offsets.release(),
+                            list_decimals.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const input =
+    cudf::table_view{std::vector<cudf::column_view>{ints, strs, decimals, lists->view()}};
+
+  cudf::io::table_input_metadata metadata(input);
+  for (auto i = 0; i < input.num_columns(); ++i) {
+    metadata.column_metadata[i].set_name("col" + std::to_string(i));
+  }
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, input)
+      .metadata(std::move(metadata))
+      .compression(cudf::io::compression_type::SNAPPY)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .row_group_size_rows(num_rows / 4)
+      .max_page_size_rows(num_rows / 16)
+      .build());
+
+  // Filtering AST - col0 < num_rows / 3
+  auto literal_value = cudf::numeric_scalar<int32_t>(num_rows / 3);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_name_reference("col0");
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+  auto const options =
+    cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<char const>(buffer.data(), buffer.size())})
+      .filter(filter)
+      .decimal_width(cudf::type_id::DECIMAL128)
+      .prepend_row_index_column(true)
+      .build();
+
+  auto const stream   = cudf::test::get_default_stream();
+  auto const expected = cudf::io::read_parquet(options, stream);
+
+  auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  auto const row_groups = reader->all_row_groups(options);
+
+  // Inputs to the materialize calls come from the setup resource
+  cudf::test::memory_resource_test_harness harness;
+  auto row_mask =
+    reader->build_all_true_row_mask(row_groups, stream, cudf::memory_resources{harness.setup_mr()});
+  auto row_mask_view = row_mask->mutable_view();
+  auto [filter_buffers, filter_data, filter_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource,
+      reader->filter_column_chunks_byte_ranges(row_groups, options),
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      harness.setup_mr());
+  filter_tasks.get();
+  auto [payload_buffers, payload_data, payload_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource,
+      reader->payload_column_chunks_byte_ranges(row_groups, options),
+      cudf::io::parquet::io_submission_policy::SERIALIZE,
+      stream,
+      harness.setup_mr());
+  payload_tasks.get();
+
+  {
+    auto const filter_table =
+      reader
+        ->materialize_filter_columns(row_groups,
+                                     filter_data,
+                                     row_mask_view,
+                                     cudf::io::parquet::experimental::use_data_page_mask::NO,
+                                     options,
+                                     stream,
+                                     harness.resources())
+        .tbl;
+    auto const payload_table =
+      reader
+        ->materialize_payload_columns(row_groups,
+                                      payload_data,
+                                      row_mask->view(),
+                                      cudf::io::parquet::experimental::use_data_page_mask::NO,
+                                      options,
+                                      stream,
+                                      harness.resources())
+        .tbl;
+    // The reader holds its temporary intermediates until it is destroyed
+    reader.reset();
+    harness.expect_resource_usage(filter_table->alloc_size() + payload_table->alloc_size(),
+                                  {cudf::test::output_allocation_expectation::EXACT,
+                                   cudf::test::temporary_allocation_expectation::SOME},
+                                  stream);
+
+    // Expected columns: row_index, col0, col1, col2, col3
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->view().select({0, 1}), filter_table->view());
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.tbl->view().select({2, 3, 4}),
+                                       payload_table->view());
+  }
+  harness.expect_no_live_allocations(stream);
 }
 
 TEST_F(HybridScanTest, MaterializeStructs)

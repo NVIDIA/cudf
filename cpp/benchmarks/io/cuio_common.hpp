@@ -91,7 +91,7 @@ class cuio_source_sink_pair {
   io_type type;
   std::vector<char> h_buffer;
   cudf::detail::host_vector<char> pinned_buffer;
-  cuda::device_buffer<std::byte> d_buffer;
+  cuda::device_buffer<char> d_buffer;
   std::string file_name;
   std::unique_ptr<cudf::io::data_sink> void_sink;
   bool owns_file;

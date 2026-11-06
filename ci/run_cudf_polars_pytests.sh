@@ -9,9 +9,10 @@ set -euo pipefail
 TIMEOUT_TOOL_PATH="$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/timeout_with_stack.py
 
 test_timeout=5400
-if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
-    test_timeout=1800
-fi
+# TEMPORARY: keep the nightly timeout on PR builds so this PR reproduces nightly.
+# if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+#     test_timeout=1800
+# fi
 
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../python/cudf_polars/
 

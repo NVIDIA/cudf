@@ -22,6 +22,7 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/stream_compaction.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
@@ -241,6 +242,31 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
       tmp_env_var const env{nz_map_env_var, "1"};
       auto const [joined, keep] = read_chunked();
       CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, joined->view());
+    }
+  }
+
+  // A small large-strings threshold sends the string column down the consumer's other epilogue:
+  // lengths stay as lengths and the page records its initial offset instead of running the offsets
+  // scan. Read in full and sliced mid-page.
+  {
+    tmp_env_var const threshold{"LIBCUDF_LARGE_STRINGS_THRESHOLD", "1000"};
+    auto const read_rows = [&](cudf::size_type skip, std::optional<cudf::size_type> rows) {
+      auto opts = cudf::io::parquet_reader_options::builder(
+                    cudf::io::source_info{cudf::host_span<std::byte const>{
+                      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                    .skip_rows(skip)
+                    .build();
+      if (rows) { opts.set_num_rows(*rows); }
+      return cudf::io::read_parquet(opts);
+    };
+    for (auto const* const nz_map : {"0", "1"}) {
+      tmp_env_var const env{nz_map_env_var, nz_map};
+      auto const full = read_rows(0, std::nullopt);
+      EXPECT_EQ(cudf::strings_column_view(full.tbl->view().column(3)).offsets().type(),
+                cudf::data_type{cudf::type_id::INT64});
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected, full.tbl->view());
+      CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {1500, 1500 + 4321}),
+                                    read_rows(1500, 4321).tbl->view());
     }
   }
 }

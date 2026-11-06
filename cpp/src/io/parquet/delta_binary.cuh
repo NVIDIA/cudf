@@ -205,11 +205,11 @@ struct delta_binary_decoder {
     if (value_count > 1) { init_mini_block(false); }
   }
 
-  // Byte length of one mini-block at `bits` per value. Computed in 64 bits because `bits` comes
-  // from the page unchecked, so `bits * values_per_mb` can overflow 32.
-  [[nodiscard]] inline __device__ uint64_t mini_block_bytes(uint32_t bits) const
+  // Bytes taken by `num_values` values packed at `bits` each. Computed in 64 bits because `bits`
+  // comes from the page unchecked, so the product can overflow 32.
+  [[nodiscard]] static inline __device__ uint64_t packed_bytes(uint32_t bits, uint32_t num_values)
   {
-    return static_cast<uint64_t>(bits) * values_per_mb / CHAR_BIT;
+    return static_cast<uint64_t>(bits) * num_values / CHAR_BIT;
   }
 
   // skip to the start of the next mini-block. should only be called on thread 0.
@@ -224,12 +224,12 @@ struct delta_binary_decoder {
 
     // just set pointer to start of next mini_block
     if (cur_mb < mini_block_count - 1) {
-      cur_mb_start += mini_block_bytes(cur_bitwidths[cur_mb]);
+      cur_mb_start += packed_bytes(cur_bitwidths[cur_mb], values_per_mb);
       cur_mb++;
     }
     // out of mini-blocks, start a new block
     else {
-      block_start = cur_mb_start + mini_block_bytes(cur_bitwidths[cur_mb]);
+      block_start = cur_mb_start + packed_bytes(cur_bitwidths[cur_mb], values_per_mb);
       init_mini_block(is_decode);
     }
   }
@@ -286,7 +286,7 @@ struct delta_binary_decoder {
     uint32_t const mb_bits = cur_bitwidths[cur_mb];
 
     // position at the end of this pass's values since the following calculates negative indexes
-    auto const d_start = cur_mb_start + (pass + 1) * (warp_size * mb_bits / CHAR_BIT);
+    auto const d_start = cur_mb_start + packed_bytes(mb_bits, (pass + 1) * warp_size);
 
     // unpack deltas. modified from version in decode_dictionary_indices(), but
     // that one only unpacks up to bitwidths of 24. simplified some since this

@@ -529,7 +529,10 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 // valid values at or after `first_row`. The map also holds the valid values before `first_row`; it
 // is sorted, so there are `first_row`'s lower bound of them. Only the first page of a read has
 // `first_row > 0`, so the search is skipped otherwise.
-__device__ int nz_map_null_count(uint32_t const* nz_idx, int nz_count, int first_row, int num_rows)
+[[nodiscard]] __device__ int nz_map_null_count(uint32_t const* nz_idx,
+                                               int nz_count,
+                                               int first_row,
+                                               int num_rows)
 {
   auto const prefix_valid_count =
     first_row > 0
@@ -561,7 +564,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
 
   if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
   // Pages with a map are decoded here; the level-decoding kernel takes the rest.
-  if (!pages[page_idx].has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
+  if (not pages[page_idx].has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
 
   [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
   if (!setup_local_page_info(s,
@@ -1171,7 +1174,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto* const db     = &db_state;
   if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
   // Pages with a map are decoded here; the level-decoding kernel takes the rest.
-  if (!pages[page_idx].has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
+  if (not pages[page_idx].has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
 
   [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
 
@@ -1295,20 +1298,17 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
       produced                     = db->next_pass_start_idx();
       if (produced == prev_produced && s->progress.src_pos <= src_pos) { break; }
     }
-    // Sync so that every thread has finished reading `s->progress` in the loop condition before
-    // `s->setup.error` is written below.
-    block.sync();
 
     // Report DATA_STREAM_OVERRUN and return before the offsets scan if the loop stopped short:
-    // those rows are marked valid but their lengths were never written.
-    cg::invoke_one(block, [&] {
-      if (s->setup.error == 0 and s->progress.src_pos < s->progress.nz_count) {
-        s->setup.error |= static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
-      }
-    });
-    block.sync();
-    if (s->setup.error != 0) {
-      cg::invoke_one(block, [&] { set_error(s->setup.error, error_code); });
+    // those rows are marked valid but their lengths were never written. Every thread reaches the
+    // same decision from state that is read-only after the loop, so no barrier is needed.
+    if (s->setup.error != 0 or s->progress.src_pos < s->progress.nz_count) {
+      cg::invoke_one(block, [&] {
+        set_error(s->setup.error != 0
+                    ? s->setup.error
+                    : static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN),
+                  error_code);
+      });
       return;
     }
   }
@@ -1343,7 +1343,6 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const dst = ni.string_out;
   auto const src = page_string_data + string_offset;
   memcpy_block<decode_block_size, true>(dst, src, s->setup.page.str_bytes, block);
-  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
 }
 
 }  // anonymous namespace
@@ -1446,6 +1445,9 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
 
   dim3 const dim_block(decode_block_size, 1);
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
+
+  static_assert(delta_rolling_buf_size >= 2 * delta_max_batch_size + 1,
+                "The writer trails the producer by one batch plus the header slot");
 
   // `consumer_stream` is ordered after the producer by the caller. The level-decoding kernel below
   // needs no such ordering because it reads only fields set on the host.

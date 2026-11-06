@@ -1088,7 +1088,7 @@ void write_final_offsets(host_span<size_type const> offsets,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
- * @param[in] has_flat_nz_map Whether any page of this subpass carries a flat nz map
+ * @param[in] has_flat_nz_map Whether any DELTA_BINARY page of this subpass carries a flat nz map
  * @param[in] needs_level_decoder Whether any DELTA_BINARY page of this subpass lacks a flat nz map
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream for the level-decoding kernel
@@ -1144,7 +1144,8 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
- * @param[in] has_flat_nz_map Whether any page of this subpass carries a flat nz map
+ * @param[in] has_flat_nz_map Whether any DELTA_LENGTH_BYTE_ARRAY page of this subpass carries a
+ * flat nz map
  * @param[in] needs_level_decoder Whether any DELTA_LENGTH_BYTE_ARRAY page of this subpass lacks a
  * flat nz map
  * @param[out] initial_str_offsets Vector to store the initial offsets for large nested string cols

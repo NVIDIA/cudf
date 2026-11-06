@@ -271,6 +271,7 @@ files:
       key: test
     includes:
       - cuda_version
+      - depends_on_numba_cuda
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf

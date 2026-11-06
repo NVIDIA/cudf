@@ -165,7 +165,10 @@ public class AssertUtils {
                                                   HostColumnVectorCore cv, String colName, boolean enableNullCountCheck, boolean enableNullabilityCheck) {
     assertEquals(expected.getType(), cv.getType(), "Type For Column " + colName);
     assertEquals(length, cv.getRowCount(), "Row Count For Column " + colName);
-    assertEquals(expected.getNumChildren(), cv.getNumChildren(), "Child Count for Column " + colName);
+    // Dictionaries are compared by value below; an empty one may or may not have children.
+    if (!DType.DICTIONARY32.equals(expected.getType())) {
+      assertEquals(expected.getNumChildren(), cv.getNumChildren(), "Child Count for Column " + colName);
+    }
     if (enableNullCountCheck) {
       assertEquals(expected.getNullCount(), cv.getNullCount(), "Null Count For Column " + colName);
     } else {
@@ -242,6 +245,11 @@ public class AssertUtils {
             break;
           case STRUCT:
             // parent column only has validity which was checked above
+            break;
+          case DICTIONARY32:
+            // Compare decoded values: equal values may use different keys and indices.
+            assertEquals(expected.getElement((int) expectedRow), cv.getElement((int) tableRow),
+                "Column " + colName + " Row " + tableRow);
             break;
           default:
             throw new IllegalArgumentException(type + " is not supported yet");

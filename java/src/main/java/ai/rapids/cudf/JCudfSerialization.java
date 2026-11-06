@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -323,6 +323,10 @@ public class JCudfSerialization {
 
     static SerializedColumnHeader readFrom(DataInputStream din, long rowCount) throws IOException {
       DType dtype = DType.fromNative(din.readInt(), din.readInt());
+      if (DType.DICTIONARY32.equals(dtype)) {
+        throw new UnsupportedOperationException(
+            "DICTIONARY32 columns are not supported by JCudfSerialization");
+      }
       long nullCount = din.readInt();
       SerializedColumnHeader[] children = null;
       if (dtype.isNestedType()) {
@@ -422,6 +426,12 @@ public class JCudfSerialization {
     private final ColumnBufferProvider[] childProviders;
 
     ColumnProvider(HostColumnVectorCore column, boolean closeAtEnd) {
+      // The format only knows LIST and STRUCT children. A DICTIONARY32 column would otherwise be
+      // treated as a leaf with no data and lose its indices and keys.
+      if (DType.DICTIONARY32.equals(column.getType())) {
+        throw new UnsupportedOperationException("DICTIONARY32 columns must be decoded with " +
+            "ColumnView.dictionaryDecode() before JCudfSerialization");
+      }
       this.column = column;
       this.closeAtEnd = closeAtEnd;
       if (getType().isNestedType()) {

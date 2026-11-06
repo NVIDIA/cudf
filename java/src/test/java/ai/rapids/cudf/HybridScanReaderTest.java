@@ -106,6 +106,15 @@ public class HybridScanReaderTest extends CudfTestBase {
     }
   }
 
+  /** Verifies that requesting DICTIONARY32 output columns is rejected by the hybrid scan reader. */
+  @Test
+  void testOutputDictColumnsThrows() {
+    ParquetOptions opts = ParquetOptions.builder().withOutputDictColumns(true).build();
+    try (HostMemoryBuffer footer = HostMemoryBuffer.allocate(8)) {
+      assertThrows(IllegalArgumentException.class, () -> new HybridScanReader(footer, opts));
+    }
+  }
+
   // --------------------------------------------------------------------
   // Tests: setFilter()
   // --------------------------------------------------------------------

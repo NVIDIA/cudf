@@ -140,6 +140,12 @@ public class TableDebug {
       try (ColumnView child = col.getChildColumnView(0)) {
         debugGPUAddrs(name + ":DATA", child);
       }
+    } else if (col.getType() == DType.DICTIONARY32 && col.getNumChildren() == 2) {
+      try (ColumnView indices = col.getChildColumnView(0);
+           ColumnView keys = col.getChildColumnView(1)) {
+        debugGPUAddrs(name + ":INDICES", indices);
+        debugGPUAddrs(name + ":KEYS", keys);
+      }
     }
   }
 
@@ -230,6 +236,16 @@ public class TableDebug {
         }
       }
       debug(name + ":DATA", hostCol.getChildColumnView(0));
+    } else if (DType.DICTIONARY32.equals(type)) {
+      for (int i = 0; i < hostCol.getRowCount(); i++) {
+        if (hostCol.isNull(i)) {
+          output.println(i + " NULL");
+        } // The indices and keys are printed out later on.
+      }
+      if (hostCol.getNumChildren() == 2) {
+        debug(name + ":INDICES", hostCol.getChildColumnView(0));
+        debug(name + ":KEYS", hostCol.getChildColumnView(1));
+      }
     } else {
       output.println("TYPE " + type + " NOT SUPPORTED FOR DEBUG PRINT");
     }

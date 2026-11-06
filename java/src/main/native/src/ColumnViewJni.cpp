@@ -16,6 +16,8 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/datetime.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/json/json.hpp>
 #include <cudf/lists/combine.hpp>
 #include <cudf/lists/contains.hpp>
@@ -91,6 +93,28 @@ std::size_t pad_size(std::size_t size, bool const should_pad_for_cpu)
   }
 }
 
+// LIST, STRUCT and DICTIONARY32 parents own no data buffer; their data lives in child columns.
+bool has_no_data_buffer(cudf::type_id id)
+{
+  return id == cudf::type_id::LIST || id == cudf::type_id::STRUCT ||
+         id == cudf::type_id::DICTIONARY32;
+}
+
+// libcudf does not slice a dictionary's indices child with its parent: the parent's offset
+// applies to the indices. Java expects every child except a LIST's to have the parent's row
+// count, so expose the indices for exactly the parent's rows. The parent's null mask stays on
+// the parent.
+cudf::column_view dictionary_indices_for_parent(cudf::column_view const& dictionary)
+{
+  auto const indices = dictionary.child(cudf::dictionary_column_view::indices_column_index);
+  return cudf::column_view{indices.type(),
+                           dictionary.size(),
+                           indices.head(),
+                           nullptr,
+                           0,
+                           indices.offset() + dictionary.offset()};
+}
+
 std::size_t calc_device_memory_size(cudf::column_view const& view, bool const pad_for_cpu)
 {
   std::size_t total = 0;
@@ -106,6 +130,11 @@ std::size_t calc_device_memory_size(cudf::column_view const& view, bool const pa
   } else if (dtype.id() == cudf::type_id::STRING) {
     auto scv = cudf::strings_column_view(view);
     total += pad_size(scv.chars_size(cudf::get_default_stream()), pad_for_cpu);
+  }
+  if (dtype.id() == cudf::type_id::DICTIONARY32 && view.num_children() > 0) {
+    return total + calc_device_memory_size(dictionary_indices_for_parent(view), pad_for_cpu) +
+           calc_device_memory_size(view.child(cudf::dictionary_column_view::keys_column_index),
+                                   pad_for_cpu);
   }
 
   return std::accumulate(view.child_begin(),
@@ -2340,6 +2369,37 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_makeCudfColumnView(JNIEnv
                                                 j_null_count,
                                                 0,
                                                 children_vector));
+    } else if (n_type == cudf::type_id::DICTIONARY32) {
+      JNI_NULL_CHECK(env, j_children, "children of a dictionary are null", 0);
+      cudf::jni::native_jpointerArray<cudf::column_view> children(env, j_children);
+      if (children.size() == 0) {
+        JNI_ARG_CHECK(
+          env, size == 0, "a DICTIONARY32 column with rows needs indices and keys children", 0);
+        return ptr_as_jlong(new cudf::column_view(
+          cudf::data_type{cudf::type_id::DICTIONARY32}, 0, nullptr, nullptr, 0));
+      }
+      JNI_ARG_CHECK(env, children.size() == 2, "DICTIONARY32 children size is not 2", 0);
+      cudf::column_view const& indices = *children[0];
+      cudf::column_view const& keys    = *children[1];
+      JNI_ARG_CHECK(env,
+                    cudf::is_integral_not_bool(indices.type()) && cudf::is_signed(indices.type()),
+                    "DICTIONARY32 indices must be a signed integer type",
+                    0);
+      JNI_ARG_CHECK(env, !indices.has_nulls(), "DICTIONARY32 indices must not have nulls", 0);
+      JNI_ARG_CHECK(
+        env, indices.size() == size, "DICTIONARY32 indices must have the column's row count", 0);
+      JNI_ARG_CHECK(env,
+                    keys.type().id() == cudf::type_id::STRING,
+                    "Only DICTIONARY32 columns with STRING keys are supported",
+                    0);
+      JNI_ARG_CHECK(env, !keys.has_nulls(), "DICTIONARY32 keys must not have nulls", 0);
+      return ptr_as_jlong(new cudf::column_view(cudf::data_type{cudf::type_id::DICTIONARY32},
+                                                size,
+                                                nullptr,
+                                                valid,
+                                                j_null_count,
+                                                0,
+                                                {indices, keys}));
     } else {
       return ptr_as_jlong(new cudf::column_view(n_data_type, size, data, valid, j_null_count));
     }
@@ -2430,8 +2490,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_getNativeDataAddress(JNIE
         cudf::strings_column_view view = cudf::strings_column_view(*column);
         result = reinterpret_cast<jlong>(view.chars_begin(cudf::get_default_stream()));
       }
-    } else if (column->type().id() != cudf::type_id::LIST &&
-               column->type().id() != cudf::type_id::STRUCT) {
+    } else if (!has_no_data_buffer(column->type().id())) {
       result = reinterpret_cast<jlong>(column->data<char>());
     }
     return result;
@@ -2454,8 +2513,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_getNativeDataLength(JNIEn
         cudf::strings_column_view view = cudf::strings_column_view(*column);
         result                         = view.chars_size(cudf::get_default_stream());
       }
-    } else if (column->type().id() != cudf::type_id::LIST &&
-               column->type().id() != cudf::type_id::STRUCT) {
+    } else if (!has_no_data_buffer(column->type().id())) {
       result = cudf::size_of(column->type()) * column->size();
     }
     return result;
@@ -2478,7 +2536,9 @@ JNIEXPORT jint JNICALL Java_ai_rapids_cudf_ColumnView_getNativeNumChildren(JNIEn
     } else if (column->type().id() == cudf::type_id::LIST) {
       // first child is always offsets in lists which we do not want to count here
       return static_cast<jint>(column->num_children() - 1);
-    } else if (column->type().id() == cudf::type_id::STRUCT) {
+    } else if (column->type().id() == cudf::type_id::STRUCT ||
+               column->type().id() == cudf::type_id::DICTIONARY32) {
+      // DICTIONARY32 has 0 children when empty, otherwise [indices, keys].
       return static_cast<jint>(column->num_children());
     } else {
       return 0;
@@ -2497,8 +2557,12 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_getChildCvPointer(JNIEnv*
   {
     cudf::jni::auto_set_device(env);
     cudf::column_view* column = reinterpret_cast<cudf::column_view*>(handle);
-    auto const is_list        = column->type().id() == cudf::type_id::LIST;
-    auto const child          = column->child(child_index + (is_list ? 1 : 0));
+    if (column->type().id() == cudf::type_id::DICTIONARY32 &&
+        child_index == cudf::dictionary_column_view::indices_column_index) {
+      return ptr_as_jlong(new cudf::column_view(dictionary_indices_for_parent(*column)));
+    }
+    auto const is_list = column->type().id() == cudf::type_id::LIST;
+    auto const child   = column->child(child_index + (is_list ? 1 : 0));
     return ptr_as_jlong(new cudf::column_view(child));
   }
   JNI_CATCH(env, 0);
@@ -2516,6 +2580,48 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_getListOffsetCvPointer(JN
     cudf::lists_column_view view   = cudf::lists_column_view(*column);
     cudf::column_view offsets_view = view.offsets();
     return ptr_as_jlong(new cudf::column_view(offsets_view));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_dictionaryEncode(JNIEnv* env,
+                                                                        jclass,
+                                                                        jlong handle)
+{
+  JNI_NULL_CHECK(env, handle, "native handle is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const input = reinterpret_cast<cudf::column_view const*>(handle);
+    JNI_ARG_CHECK(env,
+                  input->type().id() == cudf::type_id::STRING,
+                  "Only STRING columns can be dictionary encoded",
+                  0);
+    return release_as_jlong(
+      cudf::dictionary::encode(*input, cudf::data_type{cudf::type_id::INT32}));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_dictionaryDecode(JNIEnv* env,
+                                                                        jclass,
+                                                                        jlong handle)
+{
+  JNI_NULL_CHECK(env, handle, "native handle is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const input = reinterpret_cast<cudf::column_view const*>(handle);
+    JNI_ARG_CHECK(env,
+                  input->type().id() == cudf::type_id::DICTIONARY32,
+                  "dictionaryDecode requires a DICTIONARY32 column",
+                  0);
+    // libcudf decodes any empty dictionary to an EMPTY-typed column. Java only supports STRING
+    // keys, so an empty dictionary decodes to an empty STRING column, with or without children.
+    if (input->size() == 0) {
+      return release_as_jlong(cudf::make_empty_column(cudf::type_id::STRING));
+    }
+    return release_as_jlong(cudf::dictionary::decode(cudf::dictionary_column_view(*input)));
   }
   JNI_CATCH(env, 0);
 }

@@ -17,6 +17,7 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/contiguous_split.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/interop.hpp>
@@ -217,8 +218,12 @@ class native_arrow_ipc_writer_handle final {
         col_meta.children_meta.push_back(build_one_column_meta(*itr, idx));
       }
     } else if (cview.type().id() == cudf::type_id::DICTIONARY32) {
-      // not supported yet in JNI, nested type?
-      throw cudf::jni::jni_exception("Unsupported type 'DICTIONARY32'");
+      // to_arrow_schema reads the keys' metadata from children_meta[0]. Like a LIST child, the
+      // keys do not consume a column name. An empty dictionary may have no children.
+      if (cview.num_children() == 2) {
+        col_meta.children_meta = {build_one_column_meta(
+          cview.child(cudf::dictionary_column_view::keys_column_index), idx, false)};
+      }
     }
     return col_meta;
   }
@@ -1084,6 +1089,22 @@ void set_nullable(ArrowSchema* schema)
   for (int i = 0; i < schema->n_children; ++i) {
     set_nullable(schema->children[i]);
   }
+}
+
+// Java supports DICTIONARY32 columns only with STRING keys. Returns true if the type is, or
+// contains, an Arrow dictionary whose values are not strings.
+bool has_non_string_dictionary(arrow::DataType const& type)
+{
+  if (type.id() == arrow::Type::DICTIONARY) {
+    auto const value_type = static_cast<arrow::DictionaryType const&>(type).value_type()->id();
+    if (value_type != arrow::Type::STRING && value_type != arrow::Type::LARGE_STRING) {
+      return true;
+    }
+  }
+  for (auto const& field : type.fields()) {
+    if (has_non_string_dictionary(*field->type())) { return true; }
+  }
+  return false;
 }
 
 }  // namespace
@@ -2085,7 +2106,8 @@ Java_ai_rapids_cudf_Table_readParquetFromDataSource(JNIEnv* env,
                                                     jobjectArray filter_col_names,
                                                     jbooleanArray j_col_binary_read,
                                                     jint unit,
-                                                    jlong ds_handle)
+                                                    jlong ds_handle,
+                                                    jboolean output_dict_columns)
 {
   JNI_NULL_CHECK(env, ds_handle, "no data source handle given", 0);
   JNI_NULL_CHECK(env, j_col_binary_read, "null col_binary_read", 0);
@@ -2110,6 +2132,7 @@ Java_ai_rapids_cudf_Table_readParquetFromDataSource(JNIEnv* env,
         .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
         // Ignore any missing projected column(s) by default
         .ignore_missing_columns(true)
+        .output_dict_columns(output_dict_columns)
         .build();
     return convert_table_for_return(env, cudf::io::read_parquet(opts).tbl);
   }
@@ -2122,7 +2145,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readParquet(JNIEnv* env,
                                                                    jbooleanArray j_col_binary_read,
                                                                    jstring inputfilepath,
                                                                    jlongArray addrs_and_sizes,
-                                                                   jint unit)
+                                                                   jint unit,
+                                                                   jboolean output_dict_columns)
 {
   JNI_NULL_CHECK(env, j_col_binary_read, "null col_binary_read", 0);
   bool read_buffer = true;
@@ -2167,6 +2191,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readParquet(JNIEnv* env,
         .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
         // Ignore any missing projected column(s) by default
         .ignore_missing_columns(true)
+        .output_dict_columns(output_dict_columns)
         .build();
     auto tbl = cudf::io::read_parquet(opts).tbl;
     n_col_binary_read.cancel();
@@ -2996,6 +3021,13 @@ Java_ai_rapids_cudf_Table_convertArrowTableToCudf(JNIEnv* env, jclass, jlong arr
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
+    // Reject unsupported dictionaries before any device memory is allocated.
+    for (auto const& field : handle->get()->schema()->fields()) {
+      JNI_ARG_CHECK(env,
+                    !cudf::jni::has_non_string_dictionary(*field->type()),
+                    "Only Arrow dictionaries with string values are supported",
+                    0);
+    }
 
     ArrowSchema sch;
     if (!arrow::ExportSchema(*handle->get()->schema(), &sch).ok()) {

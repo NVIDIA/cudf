@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -20,10 +20,12 @@ public class ParquetOptions extends ColumnFilterOptions {
 
   private final DType unit;
   private final boolean[] readBinaryAsString;
+  private final boolean outputDictColumns;
 
   private ParquetOptions(Builder builder) {
     super(builder);
     unit = builder.unit;
+    outputDictColumns = builder.outputDictColumns;
     readBinaryAsString = new boolean[builder.binaryAsStringColumns.size()];
     for (int i = 0 ; i < builder.binaryAsStringColumns.size() ; i++) {
       readBinaryAsString[i] = builder.binaryAsStringColumns.get(i);
@@ -38,6 +40,14 @@ public class ParquetOptions extends ColumnFilterOptions {
     return readBinaryAsString;
   }
 
+  /**
+   * Whether flat (non-nested) STRING columns are returned as DICTIONARY32 columns.
+   * @see Builder#withOutputDictColumns(boolean)
+   */
+  public boolean isOutputDictColumns() {
+    return outputDictColumns;
+  }
+
   public static ParquetOptions.Builder builder() {
     return new Builder();
   }
@@ -45,6 +55,7 @@ public class ParquetOptions extends ColumnFilterOptions {
   public static class Builder extends ColumnFilterOptions.Builder<Builder> {
     private DType unit = DType.EMPTY;
     final List<Boolean> binaryAsStringColumns = new ArrayList<>();
+    private boolean outputDictColumns = false;
 
     /**
      * Specify the time unit to use when returning timestamps.
@@ -54,6 +65,20 @@ public class ParquetOptions extends ColumnFilterOptions {
     public Builder withTimeUnit(DType unit) {
       assert unit.isTimestampType();
       this.unit = unit;
+      return this;
+    }
+
+    /**
+     * Specify whether flat STRING columns should be returned as dictionary columns.
+     * When true, flat (non-nested) STRING columns are returned as DICTIONARY32 columns with
+     * INT32 indices and STRING keys. Strings nested inside LIST or STRUCT columns are unchanged
+     * and are still returned as STRING. Defaults to false. {@link HybridScanReader} does not
+     * support this option and throws if it is set.
+     * @param outputDictColumns true to return flat STRING columns as DICTIONARY32
+     * @return builder for chaining
+     */
+    public Builder withOutputDictColumns(boolean outputDictColumns) {
+      this.outputDictColumns = outputDictColumns;
       return this;
     }
 

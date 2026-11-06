@@ -1749,6 +1749,83 @@ public class TableTest extends CudfTestBase {
     }
   }
 
+  /**
+   * Writes a parquet file with a nullable STRING column "s" (with repeated values) and a
+   * nullable INT32 column "i".
+   */
+  private static void writeOutputDictColumnsTestFile(File file) {
+    int numRows = 5000;
+    String[] strs = new String[numRows];
+    Integer[] ints = new Integer[numRows];
+    for (int i = 0; i < numRows; i++) {
+      strs[i] = (i % 7 == 0) ? null : "value_" + (i % 13);
+      ints[i] = i;
+    }
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "s", "i")
+        .build();
+    try (Table table = new Table.TestBuilder().column(strs).column(ints).build();
+         TableWriter writer = Table.writeParquetChunked(options, file)) {
+      writer.write(table);
+    }
+  }
+
+  @Test
+  void testReadParquetOutputDictColumns() throws IOException {
+    assertTrue(!ParquetOptions.DEFAULT.isOutputDictColumns());
+    ParquetOptions dictOpts = ParquetOptions.builder().withOutputDictColumns(true).build();
+    assertTrue(dictOpts.isOutputDictColumns());
+    try (TempFile tempFile = TempFile.create("test-output-dict", ".parquet")) {
+      File file = tempFile.getFile();
+      writeOutputDictColumnsTestFile(file);
+      try (Table expected = Table.readParquet(file);
+           Table actual = Table.readParquet(dictOpts, file)) {
+        assertEquals(DType.STRING, expected.getColumn(0).getType());
+        assertEquals(DType.DICTIONARY32, actual.getColumn(0).getType());
+        assertEquals(DType.INT32, actual.getColumn(1).getType());
+        assertColumnsAreEqual(expected.getColumn(1), actual.getColumn(1));
+        try (ColumnVector decoded = actual.getColumn(0).dictionaryDecode()) {
+          assertColumnsAreEqual(expected.getColumn(0), decoded);
+        }
+      }
+    }
+  }
+
+  @Test
+  void testChunkedReadParquetOutputDictColumns() throws IOException {
+    ParquetOptions dictOpts = ParquetOptions.builder().withOutputDictColumns(true).build();
+    try (TempFile tempFile = TempFile.create("test-chunked-output-dict", ".parquet")) {
+      File file = tempFile.getFile();
+      writeOutputDictColumnsTestFile(file);
+      List<ColumnVector> decodedChunks = new ArrayList<>();
+      List<ColumnVector> intChunks = new ArrayList<>();
+      try (Table expected = Table.readParquet(file);
+           ParquetChunkedReader reader = new ParquetChunkedReader(4096, dictOpts, file)) {
+        while (reader.hasNext()) {
+          try (Table chunk = reader.readChunk()) {
+            assertEquals(DType.DICTIONARY32, chunk.getColumn(0).getType());
+            assertEquals(DType.INT32, chunk.getColumn(1).getType());
+            decodedChunks.add(chunk.getColumn(0).dictionaryDecode());
+            intChunks.add(chunk.getColumn(1).incRefCount());
+          }
+        }
+        assertTrue(!decodedChunks.isEmpty());
+        try (ColumnVector decoded = decodedChunks.size() == 1 ?
+                 decodedChunks.get(0).incRefCount() :
+                 ColumnVector.concatenate(decodedChunks.toArray(new ColumnVector[0]));
+             ColumnVector ints = intChunks.size() == 1 ?
+                 intChunks.get(0).incRefCount() :
+                 ColumnVector.concatenate(intChunks.toArray(new ColumnVector[0]))) {
+          assertColumnsAreEqual(expected.getColumn(0), decoded);
+          assertColumnsAreEqual(expected.getColumn(1), ints);
+        }
+      } finally {
+        decodedChunks.forEach(ColumnVector::close);
+        intChunks.forEach(ColumnVector::close);
+      }
+    }
+  }
+
   @Test
   void testReadAvro() {
     AvroOptions opts = AvroOptions.builder()
@@ -10019,7 +10096,7 @@ public class TableTest extends CudfTestBase {
 
   ColumnView replaceValidity(ColumnView cv, DeviceMemoryBuffer validity, long nullCount) {
     assert (validity.length >= BitVectorHelper.getValidityAllocationSizeInBytes(cv.rows));
-    if (cv.type.isNestedType()) {
+    if (cv.type.hasChildren()) {
       ColumnView[] children = cv.getChildColumnViews();
       try {
         return new ColumnView(cv.type,

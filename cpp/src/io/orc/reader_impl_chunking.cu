@@ -11,6 +11,7 @@
 
 #include <cudf/detail/timezone.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
@@ -512,44 +513,66 @@ void reader_impl::load_next_stripe_data(read_mode mode)
   auto const [read_begin, read_end] =
     merge_selected_ranges(_file_itm_data.stripe_data_read_ranges, load_stripe_range);
 
+  // Reserve before issuing asynchronous reads: an allocation failure must not
+  // destroy an untracked future while its task is still using reader state.
+  device_read_tasks.reserve(read_end - read_begin);
+  host_read_tasks.reserve(read_end - read_begin);
+  std::vector<std::unique_ptr<cudf::io::datasource::buffer>> host_read_buffers;
+  host_read_buffers.reserve(read_end - read_begin);
+  auto device_futures =
+    device_read_tasks | std::views::transform([](auto& task) -> auto& { return task.first; });
+  auto host_futures =
+    host_read_tasks | std::views::transform([](auto& task) -> auto& { return std::get<0>(task); });
+  cudf::detail::futures_wait_guard device_guard{device_futures};
+  cudf::detail::futures_wait_guard host_guard{host_futures};
   bool stream_synchronized{false};
 
-  for (auto read_idx = read_begin; read_idx < read_end; ++read_idx) {
-    auto const& read_info = _file_itm_data.data_read_info[read_idx];
-    auto const source_ptr = _metadata.per_file_metadata[read_info.source_idx].source;
-    auto const dst_base   = static_cast<uint8_t*>(
-      lvl_stripe_data[read_info.level][read_info.stripe_idx - stripe_start].data());
+  try {
+    for (auto read_idx = read_begin; read_idx < read_end; ++read_idx) {
+      auto const& read_info = _file_itm_data.data_read_info[read_idx];
+      auto const source_ptr = _metadata.per_file_metadata[read_info.source_idx].source;
+      auto const dst_base   = static_cast<uint8_t*>(
+        lvl_stripe_data[read_info.level][read_info.stripe_idx - stripe_start].data());
 
-    if (source_ptr->is_device_read_preferred(read_info.length)) {
-      // `device_read_async` may not use _stream at all.
-      // Instead, it may use some other stream(s) to sync the H->D memcpy.
-      // As such, we need to make sure the device buffers in `lvl_stripe_data` are ready first.
-      if (!stream_synchronized) {
-        _stream.sync();
-        stream_synchronized = true;
+      if (source_ptr->is_device_read_preferred(read_info.length)) {
+        // `device_read_async` may not use _stream at all.
+        // Instead, it may use some other stream(s) to sync the H->D memcpy.
+        // As such, we need to make sure the device buffers in `lvl_stripe_data` are ready first.
+        if (!stream_synchronized) {
+          _stream.sync();
+          stream_synchronized = true;
+        }
+        device_read_tasks.emplace_back(
+          source_ptr->device_read_async(
+            read_info.offset, read_info.length, dst_base + read_info.dst_pos, _stream),
+          read_info.length);
+      } else {
+        host_read_tasks.emplace_back(
+          source_ptr->host_read_async(read_info.offset, read_info.length),
+          read_info.length,
+          dst_base + read_info.dst_pos);
       }
-      device_read_tasks.emplace_back(
-        source_ptr->device_read_async(
-          read_info.offset, read_info.length, dst_base + read_info.dst_pos, _stream),
-        read_info.length);
-    } else {
-      host_read_tasks.emplace_back(source_ptr->host_read_async(read_info.offset, read_info.length),
-                                   read_info.length,
-                                   dst_base + read_info.dst_pos);
     }
-  }
-  std::vector<std::unique_ptr<cudf::io::datasource::buffer>> host_read_buffers;
-  for (auto& [fut, expected_size, dev_dst] : host_read_tasks) {  // if there were host reads
-    host_read_buffers.emplace_back(fut.get());
-    auto* host_buffer = host_read_buffers.back().get();
-    CUDF_EXPECTS(host_buffer->size() == expected_size, "Unexpected discrepancy in bytes read.");
-    CUDF_CUDA_TRY(
-      cudf::detail::memcpy_async(dev_dst, host_buffer->data(), host_buffer->size(), _stream));
-  }
-  _stream.sync();
+    for (auto& [fut, expected_size, dev_dst] : host_read_tasks) {  // if there were host reads
+      host_read_buffers.emplace_back(fut.get());
+      auto* host_buffer = host_read_buffers.back().get();
+      CUDF_EXPECTS(host_buffer->size() == expected_size, "Unexpected discrepancy in bytes read.");
+      CUDF_CUDA_TRY(
+        cudf::detail::memcpy_async(dev_dst, host_buffer->data(), host_buffer->size(), _stream));
+    }
+    _stream.sync();
 
-  for (auto& task : device_read_tasks) {  // if there were device reads
-    CUDF_EXPECTS(task.first.get() == task.second, "Unexpected discrepancy in bytes read.");
+    for (auto& task : device_read_tasks) {  // if there were device reads
+      CUDF_EXPECTS(task.first.get() == task.second, "Unexpected discrepancy in bytes read.");
+    }
+  } catch (...) {
+    // Any successful earlier host copies must finish before their source
+    // buffers are destroyed. Preserve the original exception if sync fails.
+    try {
+      _stream.sync();
+    } catch (...) {
+    }
+    throw;
   }
 
   // Compute number of rows in the loading stripes.

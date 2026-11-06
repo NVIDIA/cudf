@@ -110,15 +110,13 @@ void stabilize_rows(hash::grouped_keys& groups,
   // exclusions, retain its exact-sized allocation for the sorted prefix instead.
   auto alternate_rows = cuda::device_buffer<size_type>(
     stream, mr.get_temporary_mr(), filtered ? num_rows : 0, cuda::no_init);
-  auto const end_bit =
-    cuda::std::bit_width(static_cast<cuda::std::uint32_t>(filtered ? num_groups : num_groups - 1));
-  auto const sorted = hash::sort_pairs(
+  auto const sorted = hash::sort_by_label(
     {row_labels, ordered_rows.data()},
     {row_labels == input_labels.data() ? ordered_labels.data() : input_labels.data(),
      filtered ? alternate_rows.data() : groups.grouped_rows->data()},
     num_rows,
-    0,
-    end_bit,
+    num_groups,
+    filtered,
     stream,
     mr);
   if (filtered) {
@@ -128,8 +126,7 @@ void stabilize_rows(hash::grouped_keys& groups,
   }
   // The sorted labels are the group of each grouped row; keep them for group_labels().
   if (store_labels) {
-    auto labels =
-      sorted.keys == input_labels.data() ? std::move(input_labels) : std::move(ordered_labels);
+    auto labels = hash::take_buffer(sorted.keys, input_labels, ordered_labels);
     if (labels.size() != static_cast<std::size_t>(size)) {
       labels = cuda::device_buffer<size_type>{
         stream, mr.get_temporary_mr(), labels.begin(), labels.begin() + size};

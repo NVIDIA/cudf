@@ -39,6 +39,11 @@ constexpr auto regex_launch_kernel_block_size = 256;
  * The search below adds roughly 5us of host overhead per launch which is only noticeable
  * for very small inputs. The result could be cached per kernel and `shmem_size` if needed.
  *
+ * The carveout is a process-wide attribute of the kernel and the search sets intermediate values
+ * before the final one. A concurrent launch of the same kernel from another host thread may use
+ * one of those values. The carveout is only a hint so this can only affect that launch's occupancy
+ * and never its correctness.
+ *
  * @param kernel The kernel to be launched
  * @param shmem_size Dynamic shared memory size per block in bytes
  */

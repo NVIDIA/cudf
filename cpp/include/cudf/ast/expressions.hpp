@@ -511,6 +511,15 @@ class operation : public expression {
   operation(ast_operator op, expression const& input);
 
   /**
+   * @brief Construct a scale-aware RESCALE operation.
+   *
+   * @param op Operator; must be `ast_operator::RESCALE`
+   * @param input Input fixed-point expression
+   * @param target_scale Desired output scale
+   */
+  operation(ast_operator op, expression const& input, int32_t target_scale);
+
+  /**
    * @brief Construct a new binary operation object.
    *
    * @param op Operator
@@ -522,6 +531,7 @@ class operation : public expression {
   // operation only stores references to expressions, so it does not accept r-value
   // references: the calling code must own the expressions.
   operation(ast_operator op, expression&& input)                         = delete;
+  operation(ast_operator op, expression&& input, int32_t target_scale)   = delete;
   operation(ast_operator op, expression&& left, expression&& right)      = delete;
   operation(ast_operator op, expression&& left, expression const& right) = delete;
   operation(ast_operator op, expression const& left, expression&& right) = delete;
@@ -532,6 +542,13 @@ class operation : public expression {
    * @return The operator
    */
   [[nodiscard]] ast_operator get_operator() const { return op; }
+
+  /**
+   * @brief Get the optional target scale for a scale-aware operation.
+   *
+   * @return Target scale for RESCALE, or `std::nullopt` otherwise
+   */
+  [[nodiscard]] std::optional<int32_t> get_target_scale() const { return target_scale; }
 
   /**
    * @brief Get the operands.
@@ -567,6 +584,7 @@ class operation : public expression {
  private:
   ast_operator op;
   std::vector<std::reference_wrapper<expression const>> operands;
+  std::optional<int32_t> target_scale;
 };
 
 namespace detail {

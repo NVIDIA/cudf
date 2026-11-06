@@ -298,7 +298,11 @@ std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   if (operator_arity == 2) {
     _operators.emplace_back(op, new_operands.front(), new_operands.back());
   } else if (operator_arity == 1) {
-    _operators.emplace_back(op, new_operands.front());
+    if (expr.get_target_scale().has_value()) {
+      _operators.emplace_back(op, new_operands.front(), expr.get_target_scale().value());
+    } else {
+      _operators.emplace_back(op, new_operands.front());
+    }
   }
   _converted_expr = std::reference_wrapper<ast::expression const>(_operators.back());
   return std::reference_wrapper<ast::expression const>(_operators.back());
@@ -410,7 +414,12 @@ std::reference_wrapper<ast::expression const> offset_column_references::visit(
 {
   auto const new_operands = visit_operands(expr.get_operands());
   auto const arity        = cudf::ast::detail::ast_operator_arity(expr.get_operator());
-  if (arity == 1) { return _tree.push(ast::operation{expr.get_operator(), new_operands.front()}); }
+  if (arity == 1) {
+    return expr.get_target_scale().has_value()
+             ? _tree.push(ast::operation{
+                 expr.get_operator(), new_operands.front(), expr.get_target_scale().value()})
+             : _tree.push(ast::operation{expr.get_operator(), new_operands.front()});
+  }
   return _tree.push(ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()});
 }
 

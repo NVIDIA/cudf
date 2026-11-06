@@ -29,6 +29,7 @@
 
 #include <bit>
 #include <cmath>
+#include <concepts>
 #include <numeric>
 #include <span>
 #include <string_view>
@@ -39,8 +40,8 @@ namespace cudf::io::parquet::detail {
 /// Initial capacity for the chars host vector in host_column
 constexpr size_t initial_chars_capacity = 1024;
 
-/// Number of statistics columns per input table column: min, max and all-nulls
-auto constexpr stats_cols_per_column = 3;
+/// Number of statistics columns per input table column: min, max, all-nulls and has-NaN
+auto constexpr stats_cols_per_column = 4;
 
 /**
  * @brief Base utilities for converting and casting stats values
@@ -253,6 +254,23 @@ class stats_caster_base {
       }
     }
 
+    /**
+     * @brief Sets whether a column chunk or page holds any `NaN`, or null if its NaN count is
+     * unknown or invalid (negative) and so `NaN`s may be present
+     *
+     * @param index Row of the column chunk or page in this column
+     * @param nan_count Optional NaN count from the statistics or the column index
+     */
+    void inline set_has_nan(size_type index, std::optional<int64_t> nan_count)
+      requires std::same_as<T, bool>
+    {
+      if (nan_count.has_value() and nan_count.value() >= 0) {
+        val[index] = nan_count.value() > 0;
+      } else {
+        set_index(index, std::nullopt, {});
+      }
+    }
+
     static inline std::tuple<rmm::device_uvector<char>,
                              rmm::device_uvector<size_type>,
                              cuda::device_buffer<size_type>>
@@ -374,9 +392,10 @@ class stats_columns_collector final : public parquet_expression_simplifier {
  * @brief Converts AST expression to StatsAST for comparing with column statistics
  *
  * This is used in row group filtering based on predicate.
- * statistics min value of a column is referenced by column_index*3
- * statistics max value of a column is referenced by column_index*3+1
- * statistics all_nulls value of a column is referenced by column_index*3+2
+ * statistics min value of a column is referenced by column_index*stats_cols_per_column
+ * statistics max value of a column is referenced by column_index*stats_cols_per_column+1
+ * statistics all_nulls value of a column is referenced by column_index*stats_cols_per_column+2
+ * statistics has_nan value of a column is referenced by column_index*stats_cols_per_column+3
  */
 class stats_expression_converter final : public parquet_expression_simplifier {
  public:
@@ -436,6 +455,48 @@ class stats_expression_converter final : public parquet_expression_simplifier {
    */
   [[nodiscard]] ast::expression const& push_non_null_guard(size_type col_index,
                                                            ast::expression const& stats_expr);
+
+  /**
+   * @brief Wraps `stats_expr` so that a chunk that may hold a `NaN` is never pruned
+   *
+   * Min/max statistics exclude `NaN`s, but a `NaN` satisfies `col != x` and `NOT(col < x)`.
+   * For a floating-point column, this function wraps `stats_expr` as
+   * `(literal != literal OR has_nan) OR stats_expr`, where:
+   * - `literal != literal` is true only for a `NaN` literal
+   * - `has_nan` is true if the NaN count is > 0, false if 0, and null if absent, which keeps
+   *   the chunk
+   *
+   * Returns `stats_expr` unchanged for other column types. An all-null chunk holds no `NaN`, so
+   * the caller's non-null guard around the result still prunes it.
+   *
+   * @param col_index Index of the column in the input table
+   * @param literal Literal the column is compared against, already pushed onto the tree
+   * @param stats_expr Statistics expression to guard, already pushed onto the tree
+   * @return The guarded statistics expression
+   */
+  [[nodiscard]] ast::expression const& push_nan_guard(size_type col_index,
+                                                      ast::expression const& literal,
+                                                      ast::expression const& stats_expr);
+
+  /**
+   * @brief Converts a prunable comparison to its statistics expression
+   *
+   * Returns `not_all_null AND (nan_matches OR stats_expr)`, where `nan_matches` is only included
+   * if `nan_satisfies` is true. For example:
+   * - `col < 5`      --> `stats_expr = vmin < 5`
+   * - `col != 5`     --> `stats_expr = vmin != vmax OR vmax != 5`, with `nan_matches`
+   * - `NOT(col < 5)` --> `stats_expr = vmax >= 5` (`op` is `>=`), with `nan_matches`
+   *
+   * @param op Prunable comparison operator
+   * @param col_index Input table column index
+   * @param literal_ref Reference to the literal
+   * @param nan_satisfies Whether a `NaN` value or literal satisfies the comparison
+   * @return Converted statistics expression
+   */
+  [[nodiscard]] ast::expression const& push_comparison(ast::ast_operator op,
+                                                       size_type col_index,
+                                                       ast::literal const& literal_ref,
+                                                       bool nan_satisfies);
 
   simplified_expression_opt _stats_expr;
 };

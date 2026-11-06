@@ -30,7 +30,7 @@ namespace cudf::io::parquet::detail {
  * @brief Converts row-group column chunk statistics to device columns.
  *
  * Each output column has one row for every selected row group. The min and max columns are always
- * returned, followed by the all-null column if `has_is_null_operator` is set.
+ * returned, followed by the all-null and has-NaN columns if `with_null_and_nan_stats` is set.
  */
 struct row_group_stats_caster : public stats_caster_base {
   using result_type = std::vector<std::unique_ptr<column>>;
@@ -50,7 +50,7 @@ struct row_group_stats_caster : public stats_caster_base {
   size_type total_row_groups;
   std::vector<metadata> const& per_file_metadata;
   std::span<std::vector<size_type> const> row_group_indices;
-  bool has_is_null_operator;
+  bool with_null_and_nan_stats;
 
   template <typename T>
   result_type operator()(std::span<int const> schema_indices_per_source,
@@ -81,7 +81,11 @@ struct row_group_stats_caster : public stats_caster_base {
       host_column<T> min(total_row_groups, stream);
       host_column<T> max(total_row_groups, stream);
       std::optional<host_column<bool>> is_null;
-      if (has_is_null_operator) { is_null = host_column<bool>(total_row_groups, stream); }
+      std::optional<host_column<bool>> has_nan;
+      if (with_null_and_nan_stats) {
+        is_null = host_column<bool>(total_row_groups, stream);
+        has_nan = host_column<bool>(total_row_groups, stream);
+      }
 
       size_type stats_idx = 0;
       for (size_t src_idx = 0; src_idx < row_group_indices.size(); ++src_idx) {
@@ -125,8 +129,9 @@ struct row_group_stats_caster : public stats_caster_base {
             // translate binary data to Type then to <T>
             min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
             max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
-            // Check the nullability of this column chunk
-            if (has_is_null_operator) {
+            // Check the nullability and NaN presence of this column chunk
+            if (with_null_and_nan_stats) {
+              has_nan->set_has_nan(stats_idx, stats.nan_count);
               if (colchunk.meta_data.statistics.null_count.has_value()) {
                 auto const& null_count = colchunk.meta_data.statistics.null_count.value();
                 if (null_count == 0) {
@@ -150,7 +155,10 @@ struct row_group_stats_caster : public stats_caster_base {
             // Mark it null if the column chunk is absent from this row group.
             min.set_index(stats_idx, std::nullopt, {});
             max.set_index(stats_idx, std::nullopt, {});
-            if (has_is_null_operator) { is_null->set_index(stats_idx, std::nullopt, {}); }
+            if (with_null_and_nan_stats) {
+              is_null->set_index(stats_idx, std::nullopt, {});
+              has_nan->set_index(stats_idx, std::nullopt, {});
+            }
           }
           stats_idx++;
         }
@@ -159,8 +167,9 @@ struct row_group_stats_caster : public stats_caster_base {
       columns.reserve(stats_cols_per_column);
       columns.emplace_back(min.to_device(dtype, stream, mr));
       columns.emplace_back(max.to_device(dtype, stream, mr));
-      if (has_is_null_operator) {
+      if (with_null_and_nan_stats) {
         columns.emplace_back(is_null->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
+        columns.emplace_back(has_nan->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
       }
       return columns;
     }

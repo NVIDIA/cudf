@@ -114,6 +114,16 @@ cdef vector[cpp_FileMetaData*] _parquet_metadata_ptrs(
     return metadata_ptrs
 
 
+cdef vector[string] _encode_dictionary32_columns(list col_names) except *:
+    cdef vector[string] vec
+    vec.reserve(len(col_names))
+    for name in col_names:
+        if not isinstance(name, str):
+            raise TypeError("Dictionary32 column names must be strings")
+        vec.push_back(name.encode())
+    return vec
+
+
 cdef class ParquetReaderOptions:
     """The settings to use for ``read_parquet``
     For details, see :cpp:class:`cudf::io::parquet_reader_options`
@@ -383,6 +393,12 @@ cdef class ParquetReaderOptions:
         val : bool
             Enables returning flat string columns as DICTIONARY32 columns
 
+        Raises
+        ------
+        RuntimeError
+            If ``val`` is ``True`` and ``set_dictionary32_columns`` was
+            previously called with a non-empty list.
+
         Returns
         -------
         None
@@ -399,6 +415,50 @@ cdef class ParquetReaderOptions:
             Whether flat string columns are returned as DICTIONARY32 columns
         """
         return self.c_obj.is_enabled_output_dict_columns()
+
+    cpdef void set_dictionary32_columns(self, list col_names: list[str]):
+        """
+        Sets names of top-level string columns to read as DICTIONARY32 columns.
+
+        Names that match a non-string or nested column, or that match a
+        column not selected for output, are ignored. Names that do not exist
+        in the input files are ignored unless ``ignore_missing_columns`` is
+        set to ``False``, in which case reading raises a ``ValueError``.
+
+        Parameters
+        ----------
+        col_names : list[str]
+            Names of top-level string columns
+
+        Raises
+        ------
+        TypeError
+            If any name is not a string.
+        RuntimeError
+            If ``col_names`` is non-empty and ``enable_output_dict_columns``
+            was previously set to ``True``.
+
+        Returns
+        -------
+        None
+        """
+        self.c_obj.set_dictionary32_columns(_encode_dictionary32_columns(col_names))
+
+    cpdef list get_dictionary32_columns(self):
+        """
+        Returns configured names of columns to read as DICTIONARY32 columns.
+
+        The names are returned as set, including names that do not match an
+        output column or that match a non-string or nested column.
+
+        Returns
+        -------
+        list[str]
+            Configured names of columns to read as DICTIONARY32 columns
+        """
+        cdef vector[string] names = self.c_obj.get_dictionary32_columns()
+        return [name.decode() for name in names]
+
 
 cdef class ParquetReaderOptionsBuilder:
     """Builder to build options for ``read_parquet``."""
@@ -641,11 +701,48 @@ cdef class ParquetReaderOptionsBuilder:
             ``True`` to return flat string columns as DICTIONARY32 columns,
             ``False`` otherwise (default).
 
+        Raises
+        ------
+        RuntimeError
+            If ``val`` is ``True`` and ``dictionary32_columns`` was
+            previously called with a non-empty list.
+
         Returns
         -------
         ParquetReaderOptionsBuilder
         """
         self.c_obj.output_dict_columns(val)
+        return self
+
+    cpdef ParquetReaderOptionsBuilder dictionary32_columns(
+        self, list col_names: list[str]
+    ):
+        """
+        Sets names of top-level string columns to read as DICTIONARY32 columns.
+
+        Names that match a non-string or nested column, or that match a
+        column not selected for output, are ignored. Names that do not exist
+        in the input files are ignored unless ``ignore_missing_columns`` is
+        set to ``False``, in which case reading raises a ``ValueError``.
+
+        Parameters
+        ----------
+        col_names : list[str]
+            Names of top-level string columns
+
+        Raises
+        ------
+        TypeError
+            If any name is not a string.
+        RuntimeError
+            If ``col_names`` is non-empty and ``output_dict_columns`` was
+            previously set to ``True``.
+
+        Returns
+        -------
+        ParquetReaderOptionsBuilder
+        """
+        self.c_obj.dictionary32_columns(_encode_dictionary32_columns(col_names))
         return self
 
     cpdef ParquetReaderOptionsBuilder decimal_width(self, type_id width):

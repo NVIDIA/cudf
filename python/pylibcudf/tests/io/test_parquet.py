@@ -1753,6 +1753,203 @@ def test_read_parquet_output_dict_columns(tmp_path, use_builder):
     ]
 
 
+@pytest.fixture
+def dictionary32_source(tmp_path) -> os.PathLike[str]:
+    path = tmp_path / "dictionary32.parquet"
+    write_table(
+        pa.table(
+            {
+                "key": pa.array([0, 1, 2, 3], type=pa.int64()),
+                "a": pa.array(["x", "y", None, "x"]),
+                "b": pa.array(["bar", "foo", "foo", None]),
+            }
+        ),
+        path,
+    )
+    return path
+
+
+def test_read_parquet_dictionary32_columns_default(
+    dictionary32_source,
+) -> None:
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([dictionary32_source])
+    ).build()
+
+    assert options.is_enabled_output_dict_columns() is False
+    assert options.get_dictionary32_columns() == []
+
+
+@pytest.mark.parametrize("use_builder", [False, True])
+def test_read_parquet_output_dict_columns_all_strings(
+    dictionary32_source, use_builder
+) -> None:
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([dictionary32_source])
+    )
+    if use_builder:
+        options = builder.output_dict_columns(True).build()
+    else:
+        options = builder.build()
+        options.enable_output_dict_columns(True)
+
+    assert options.is_enabled_output_dict_columns() is True
+
+    expect = read_table(dictionary32_source)
+    dictionary32_type = pa.dictionary(pa.int32(), pa.string())
+    expect = expect.set_column(
+        1, "a", expect["a"].cast(dictionary32_type)
+    ).set_column(2, "b", expect["b"].cast(dictionary32_type))
+    assert_table_and_meta_eq(
+        expect,
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
+    )
+
+
+@pytest.mark.parametrize("use_builder", [False, True])
+def test_read_parquet_dictionary32_columns(
+    dictionary32_source, use_builder
+) -> None:
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([dictionary32_source])
+    )
+    if use_builder:
+        options = builder.dictionary32_columns(["b", "missing"]).build()
+    else:
+        options = builder.build()
+        options.set_dictionary32_columns(["b", "missing"])
+
+    assert options.get_dictionary32_columns() == ["b", "missing"]
+
+    expect = read_table(dictionary32_source)
+    expect = expect.set_column(
+        2, "b", expect["b"].cast(pa.dictionary(pa.int32(), pa.string()))
+    )
+    assert_table_and_meta_eq(
+        expect,
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
+    )
+
+
+def test_chunked_parquet_reader_dictionary32_columns(
+    dictionary32_source,
+) -> None:
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([dictionary32_source])
+        )
+        .dictionary32_columns(["a"])
+        .build()
+    )
+    reader = plc.io.parquet.ChunkedParquetReader(options)
+
+    expect = read_table(dictionary32_source)
+    expect = expect.set_column(
+        1, "a", expect["a"].cast(pa.dictionary(pa.int32(), pa.string()))
+    )
+    assert_table_and_meta_eq(
+        expect,
+        reader.read_chunk(),
+        check_field_nullability=False,
+    )
+
+
+def test_read_parquet_dictionary32_columns_with_filter(
+    dictionary32_source,
+) -> None:
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([dictionary32_source])
+        )
+        .dictionary32_columns(["b"])
+        .prepend_source_index_column(True)
+        .filter(
+            Operation(
+                ASTOperator.GREATER_EQUAL,
+                ColumnNameReference("key"),
+                Literal(plc.Scalar.from_arrow(pa.scalar(1, type=pa.int64()))),
+            )
+        )
+        .build()
+    )
+
+    expect = pa.table(
+        {
+            "source_index": pa.array([0, 0, 0], type=pa.int32()),
+            "key": pa.array([1, 2, 3], type=pa.int64()),
+            "a": pa.array(["y", None, "x"]),
+            "b": pa.array(
+                ["foo", "foo", None],
+                type=pa.dictionary(pa.int32(), pa.string()),
+            ),
+        }
+    )
+    assert_table_and_meta_eq(
+        expect,
+        plc.io.parquet.read_parquet(options),
+        check_field_nullability=False,
+    )
+
+
+@pytest.mark.parametrize("output_dict_columns_first", [True, False])
+def test_read_parquet_dictionary32_columns_and_output_dict_columns_exclusive(
+    dictionary32_source, output_dict_columns_first
+) -> None:
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([dictionary32_source])
+    ).build()
+    if output_dict_columns_first:
+        options.enable_output_dict_columns(True)
+        with pytest.raises(RuntimeError, match="DICTIONARY32"):
+            options.set_dictionary32_columns(["a"])
+    else:
+        options.set_dictionary32_columns(["a"])
+        with pytest.raises(RuntimeError, match="DICTIONARY32"):
+            options.enable_output_dict_columns(True)
+
+
+@pytest.mark.parametrize("output_dict_columns_first", [True, False])
+def test_read_parquet_builder_dictionary32_columns_and_output_dict_columns_exclusive(
+    dictionary32_source, output_dict_columns_first
+) -> None:
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([dictionary32_source])
+    )
+    if output_dict_columns_first:
+        with pytest.raises(RuntimeError, match="DICTIONARY32"):
+            builder.output_dict_columns(True).dictionary32_columns(["a"])
+    else:
+        with pytest.raises(RuntimeError, match="DICTIONARY32"):
+            builder.dictionary32_columns(["a"]).output_dict_columns(True)
+
+
+def test_read_parquet_dictionary32_columns_missing_raises(
+    dictionary32_source,
+) -> None:
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([dictionary32_source])
+        )
+        .dictionary32_columns(["b", "missing"])
+        .ignore_missing_columns(False)
+        .build()
+    )
+    with pytest.raises(ValueError, match="missing"):
+        plc.io.parquet.read_parquet(options)
+
+
+def test_read_parquet_dictionary32_columns_non_string_raises(
+    dictionary32_source,
+) -> None:
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([dictionary32_source])
+    ).build()
+    with pytest.raises(TypeError, match="must be strings"):
+        options.set_dictionary32_columns([1])
+
+
 @pytest.mark.parametrize(
     "decimal_width,pa_decimal",
     [

@@ -224,7 +224,7 @@ void reader_impl::prepare_dict_transcode(read_mode mode)
 
   _dict_transcode_eligible.assign(_input_columns.size(), false);
 
-  if (not _options.output_dict_columns) { return; }
+  if (not has_output_dict_columns()) { return; }
 
   // The fast path requires the whole column to live in a single subpass. For chunked / multi-pass
   // reads (non-zero chunk or pass read limit) we skip it and let `finalize_output` produce the
@@ -245,10 +245,13 @@ void reader_impl::prepare_dict_transcode(read_mode mode)
   if (pass.chunks.empty() or subpass.pages.size() == 0) { return; }
 
   auto const elig = compute_dict_transcode_eligibility(pass, _input_columns, _output_buffers);
-  std::transform(
-    elig.begin(), elig.end(), _dict_transcode_eligible.begin(), [](column_eligibility const& e) {
-      return e.is_eligible();
-    });
+  std::transform(cuda::counting_iterator<size_t>{0},
+                 cuda::counting_iterator{_input_columns.size()},
+                 _dict_transcode_eligible.begin(),
+                 [&](size_t i) {
+                   return elig[i].is_eligible() and
+                          _output_dict_column_mask[_input_columns[i].nesting[0]];
+                 });
 
   auto const num_eligible =
     std::count(_dict_transcode_eligible.begin(), _dict_transcode_eligible.end(), true);

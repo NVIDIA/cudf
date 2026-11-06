@@ -210,8 +210,6 @@ class MemoryResourceSampler:
         # after a full interval.
         while not stop.wait(self._interval_s):
             with self._lock:
-                if stop.is_set():
-                    return
                 self._reads_in_flight += 1
             # We explicitly release the lock for `_read()`, which calls
             # the callback.

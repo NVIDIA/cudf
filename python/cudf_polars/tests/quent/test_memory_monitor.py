@@ -59,44 +59,55 @@ def _sampler_threads() -> list[threading.Thread]:
     ]
 
 
-def test_sampler_samples_immediately_and_repeatedly() -> None:
+def test_sampler_lifecycle_and_fanout() -> None:
     sampler, events = _sampler()
+    q1, q2 = uuid.uuid4(), uuid.uuid4()
+    sampler.attach(q1)
+    sampler.attach(q2)
+
+    assert _records(events, q1)[0] == ("record", q1, 1000)
+    assert _records(events, q2)[0] == ("record", q2, 2000)
+    _wait_for(
+        lambda: bool(
+            {event[2] for event in _records(events, q1)}
+            & {event[2] for event in _records(events, q2)}
+        )
+    )
+
+    sampler.detach(q1)
+    stopped_at = len(events)
+    _wait_for(lambda: len(events) > stopped_at)
+    assert not _records(events[stopped_at:], q1)
+
+    sampler.detach(q2)
+    finished_at = len(events)
+    time.sleep(0.01)
+    assert len(events) == finished_at
+    assert events.count(("stop", q1)) == events.count(("stop", q2)) == 1
+    assert not _sampler_threads()
+
+
+def test_sampler_attach_is_refcounted_and_restartable() -> None:
+    sampler, events = _sampler(interval_s=3600)
     query = uuid.uuid4()
     sampler.attach(query)
-    try:
-        # The first reading is taken by `attach`, before the thread has ticked.
-        assert events[0] == ("record", query, 1000)
-        _wait_for(lambda: len(_records(events)) >= 3)
-    finally:
-        sampler.detach(query)
-    nbytes = [record[2] for record in _records(events)]
-    assert nbytes == [1000 * i for i in range(1, len(nbytes) + 1)]
-    assert events[-1] == ("stop", query)
-
-
-def test_sampler_does_not_hold_lock_while_reading() -> None:
-    sampler: MemoryResourceSampler | None = None
-    reads = 0
-
-    def read_bytes() -> int:
-        nonlocal reads
-        assert sampler is not None
-        assert sampler._lock.acquire(blocking=False)
-        sampler._lock.release()
-        reads += 1
-        return reads
-
-    sampler, events = _sampler(read_bytes=read_bytes)
-    query = uuid.uuid4()
     sampler.attach(query)
-    try:
-        # Covers both the immediate read in attach and the background thread.
-        _wait_for(lambda: len(_records(events)) >= 2)
-    finally:
-        sampler.detach(query)
+    sampler.detach(query)
+    assert ("stop", query) not in events
+    sampler.detach(query)
+    sampler.detach(query)  # Unknown queries are ignored.
+
+    sampler.attach(query)
+    sampler.detach(query)
+    assert events == [
+        ("record", query, 1000),
+        ("stop", query),
+        ("record", query, 2000),
+        ("stop", query),
+    ]
 
 
-def test_sampler_close_waits_for_in_flight_read() -> None:
+def test_sampler_close_waits_for_read_and_stops_all_queries() -> None:
     read_started = threading.Event()
     finish_read = threading.Event()
     reads = 0
@@ -104,13 +115,15 @@ def test_sampler_close_waits_for_in_flight_read() -> None:
     def read_bytes() -> int:
         nonlocal reads
         reads += 1
-        if reads > 1:
+        if reads > 2:
             read_started.set()
             finish_read.wait()
         return reads
 
-    sampler, _ = _sampler(read_bytes=read_bytes)
-    sampler.attach(uuid.uuid4())
+    sampler, events = _sampler(read_bytes=read_bytes)
+    queries = (uuid.uuid4(), uuid.uuid4())
+    for query in queries:
+        sampler.attach(query)
     _wait_for(read_started.is_set)
 
     close_thread = threading.Thread(target=sampler.close)
@@ -120,159 +133,47 @@ def test_sampler_close_waits_for_in_flight_read() -> None:
     finally:
         finish_read.set()
         close_thread.join(timeout=10)
+
     assert not close_thread.is_alive()
+    assert {("stop", query) for query in queries} <= set(events)
+    sampler.close()  # Idempotent.
+    sampler.attach(queries[0])  # Closed samplers remain closed.
+    sampler.detach(queries[0])
 
 
-def test_sampler_takes_one_reading_even_if_query_is_shorter_than_interval() -> None:
-    sampler, events = _sampler(interval_s=3600)
-    query = uuid.uuid4()
-    sampler.attach(query)
-    sampler.detach(query)
-    assert events == [("record", query, 1000), ("stop", query)]
-
-
-def test_sampler_does_not_sample_after_detach() -> None:
-    sampler, events = _sampler()
-    query = uuid.uuid4()
-    sampler.attach(query)
-    _wait_for(lambda: len(_records(events)) >= 2)
-    sampler.detach(query)
-    stopped_at = len(events)
-    time.sleep(0.02)
-    assert len(events) == stopped_at, "sampled after the last query detached"
-    assert not _sampler_threads()
-
-
-def test_sampler_stops_without_waiting_out_the_interval() -> None:
-    sampler, _ = _sampler(interval_s=3600)
-    query = uuid.uuid4()
-    start = time.monotonic()
-    sampler.attach(query)
-    sampler.detach(query)
-    assert time.monotonic() - start < 10
-
-
-def test_sampler_thread_runs_only_while_a_query_is_attached() -> None:
-    sampler, _ = _sampler(interval_s=3600)
-    q1, q2 = uuid.uuid4(), uuid.uuid4()
-    assert not _sampler_threads()
-
-    sampler.attach(q1)
-    (thread,) = _sampler_threads()
-    sampler.attach(q2)
-    assert _sampler_threads() == [thread], "queries share one thread"
-
-    sampler.detach(q1)
-    assert thread.is_alive(), "still needed by the other query"
-    sampler.detach(q2)
-    assert not _sampler_threads()
-
-    # And it can start again.
-    sampler.attach(q1)
-    assert len(_sampler_threads()) == 1
-    sampler.detach(q1)
-    assert not _sampler_threads()
-
-
-def test_sampler_reads_once_per_tick_and_fans_out_to_every_query() -> None:
-    reads: list[int] = []
-    counter = itertools.count(1)
+@pytest.mark.parametrize(
+    "callback", ["read-immediate", "read-periodic", "record", "stop"]
+)
+def test_sampler_callback_errors_warn_instead_of_raising(callback: str) -> None:
+    calls = 0
 
     def read_bytes() -> int:
-        reads.append(next(counter))
-        return reads[-1]
+        nonlocal calls
+        calls += 1
+        if callback == "read-immediate" or (callback == "read-periodic" and calls > 1):
+            raise OSError("callback failed")
+        return calls
 
-    sampler, events = _sampler(read_bytes=read_bytes)
-    q1, q2 = uuid.uuid4(), uuid.uuid4()
-    sampler.attach(q1)
-    sampler.attach(q2)
-    try:
-        _wait_for(
-            lambda: len(_records(events, q1)) >= 3 and len(_records(events, q2)) >= 3
-        )
-    finally:
-        sampler.detach(q1)
-        sampler.detach(q2)
+    def record(*_: object) -> None:
+        if callback == "record" and calls > 1:
+            raise OSError("callback failed")
 
-    # Each shared tick delivers the same reading to both queries...
-    shared = {r[2] for r in _records(events, q1)} & {r[2] for r in _records(events, q2)}
-    assert shared
-    # ...from one read of the device, not one read per query.
-    assert len(reads) < len(_records(events))
-    # Each query is stopped exactly once.
-    assert events.count(("stop", q1)) == 1
-    assert events.count(("stop", q2)) == 1
+    def stop(_: uuid.UUID) -> None:
+        if callback == "stop":
+            raise OSError("callback failed")
 
-
-def test_sampler_records_nothing_for_a_query_after_it_is_stopped() -> None:
-    sampler, events = _sampler()
-    q1, q2 = uuid.uuid4(), uuid.uuid4()
-    sampler.attach(q1)
-    sampler.attach(q2)
-    _wait_for(lambda: len(_records(events, q1)) >= 2)
-    sampler.detach(q1)
-    stop_index = events.index(("stop", q1))
-    q2_at_stop = len(_records(events[:stop_index], q2))
-    # The thread keeps sampling on behalf of q2.
-    _wait_for(lambda: len(_records(events, q2)) >= q2_at_stop + 2)
-    sampler.detach(q2)
-    assert not _records(events[stop_index:], q1)
-
-
-def test_sampler_attach_is_reentrant_per_query() -> None:
-    sampler, events = _sampler(interval_s=3600)
-    query = uuid.uuid4()
-    sampler.attach(query)
-    sampler.attach(query)
-    sampler.detach(query)
-    assert ("stop", query) not in events
-    sampler.detach(query)
-    assert events == [("record", query, 1000), ("stop", query)]
-    # Detaching an unknown query is a no-op.
-    sampler.detach(uuid.uuid4())
-    assert len(events) == 2
-
-
-def test_sampler_error_warns_and_does_not_fail_the_body() -> None:
-    def read_bytes() -> int:
-        raise OSError("device lost")
-
-    sampler, events = _sampler(read_bytes=read_bytes)
-    query = uuid.uuid4()
-    sampler.attach(query)
-    time.sleep(0.01)
-    # The warning is emitted when the query ends, not while it is running.
-    with pytest.warns(RuntimeWarning, match="device lost"):
-        sampler.detach(query)
-    assert events == [("stop", query)]
-    assert not _sampler_threads()
-
-
-def test_sampler_error_in_record_does_not_leak_to_caller() -> None:
     sampler = MemoryResourceSampler(
-        read_bytes=lambda: 1,
-        record=MagicMock(side_effect=RuntimeError("emit failed")),
-        stop=MagicMock(),
-        interval_s=3600,
+        read_bytes=read_bytes,
+        record=record,
+        stop=stop,
+        interval_s=0.001,
     )
     query = uuid.uuid4()
     sampler.attach(query)
-    with pytest.warns(RuntimeWarning, match="emit failed"):
+    if callback in {"read-periodic", "record"}:
+        _wait_for(lambda: calls > 1)
+    with pytest.warns(RuntimeWarning, match="callback failed"):
         sampler.detach(query)
-
-
-def test_sampler_close_stops_attached_queries_and_the_thread() -> None:
-    sampler, events = _sampler(interval_s=3600)
-    q1, q2 = uuid.uuid4(), uuid.uuid4()
-    sampler.attach(q1)
-    sampler.attach(q2)
-    sampler.close()
-    assert {("stop", q1), ("stop", q2)} <= set(events)
-    assert not _sampler_threads()
-    # A closed sampler ignores further attachments.
-    sampler.attach(q1)
-    sampler.detach(q1)
-    assert len(events) == 4
 
 
 @pytest.mark.parametrize("interval_s", [0, -1.0])

@@ -28,6 +28,52 @@ namespace detail {
 
 constexpr auto regex_launch_kernel_block_size = 256;
 
+/**
+ * @brief Requests the smallest shared memory carveout that does not reduce the
+ * occupancy of the given regex kernel
+ *
+ * Each regex thread scans its own string so these kernels are sensitive to the L1 cache size.
+ * By default, the driver may reserve much more shared memory than these kernels need.
+ * Requesting a smaller carveout leaves more of the unified L1/shared storage for L1.
+ *
+ * The search below adds roughly 5us of host overhead per launch which is only noticeable
+ * for very small inputs. The result could be cached per kernel and `shmem_size` if needed.
+ *
+ * The carveout is a process-wide attribute of the kernel and the search sets intermediate values
+ * before the final one. A concurrent launch of the same kernel from another host thread may use
+ * one of those values. The carveout is only a hint so this can only affect that launch's occupancy
+ * and never its correctness.
+ *
+ * @param kernel The kernel to be launched
+ * @param shmem_size Dynamic shared memory size per block in bytes
+ */
+template <typename Kernel>
+void set_regex_carveout(Kernel kernel, int32_t shmem_size)
+{
+  auto const blocks_per_sm = [&](int percent) {
+    CUDF_CUDA_TRY(
+      cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, percent));
+    int blocks = 0;
+    CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+      &blocks, kernel, regex_launch_kernel_block_size, shmem_size));
+    return blocks;
+  };
+  // binary search for the smallest carveout percentage that keeps the maximum occupancy
+  auto const max_blocks = blocks_per_sm(100);
+  if (max_blocks <= 0) { return; }
+  int lo = 0;
+  int hi = 100;
+  while (lo < hi) {
+    auto const mid = (lo + hi) / 2;
+    if (blocks_per_sm(mid) >= max_blocks) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  CUDF_CUDA_TRY(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, hi));
+}
+
 template <typename ForEachFunction, typename ProgDevice>
 CUDF_KERNEL void for_each_kernel(ForEachFunction fn, ProgDevice const d_prog, size_type size)
 {
@@ -59,6 +105,7 @@ void launch_for_each_kernel(ForEachFunction fn,
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
+  set_regex_carveout(for_each_kernel<ForEachFunction, ProgDevice>, shmem_size);
   cudf::detail::grid_1d grid{thread_count, regex_launch_kernel_block_size};
   for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
     fn, d_prog, size);
@@ -100,6 +147,7 @@ void launch_transform_kernel(TransformFunction fn,
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
+  set_regex_carveout(transform_kernel<TransformFunction, ProgDevice, OutputType>, shmem_size);
   cudf::detail::grid_1d grid{thread_count, regex_launch_kernel_block_size};
   transform_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(
     fn, d_prog, d_output, size);
@@ -123,7 +171,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
     stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
   auto const shmem_size = d_prog.compute_shared_memory_size();
-  cudf::detail::grid_1d grid{thread_count, 256};
+  set_regex_carveout(for_each_kernel<SizeAndExecuteFunction, ProgDevice>, shmem_size);
+  cudf::detail::grid_1d grid{thread_count, regex_launch_kernel_block_size};
 
   // Compute the output size for each row
   if (strings_count > 0) {

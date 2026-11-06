@@ -13,9 +13,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -38,7 +38,7 @@ struct gather_data {
   // If the offsets[3] == 6  (representing row 3 of the new column)
   // And the original value it was itself gathered from was 15, then
   // base_offsets[3] == 15
-  rmm::device_uvector<int32_t> base_offsets;
+  cuda::device_buffer<int32_t> base_offsets;
   // size of the gather map that will be generated from this data
   size_type gather_map_size;
 };
@@ -58,7 +58,7 @@ template <bool NullifyOutOfBounds, typename MapItType>
 gather_data make_gather_data(cudf::lists_column_view const& source_column,
                              MapItType gather_map,
                              size_type gather_map_size,
-                             rmm::device_uvector<int32_t>&& prev_base_offsets,
+                             cuda::device_buffer<int32_t>&& prev_base_offsets,
                              cuda::stream_ref stream,
                              rmm::device_async_resource_ref mr)
 {
@@ -104,7 +104,8 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
       : 0;
 
   // generate the base offsets
-  rmm::device_uvector<int32_t> base_offsets = rmm::device_uvector<int32_t>(output_count, stream);
+  cuda::device_buffer<int32_t> base_offsets(
+    stream, cudf::get_current_device_resource_ref(), output_count, cuda::no_init);
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     gather_map,
@@ -247,7 +248,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
     source_column,
     gather_map,
     gather_map_size,
-    rmm::device_uvector<int32_t>{0, stream, mr},
+    cuda::device_buffer<int32_t>{stream, mr, 0, cuda::no_init},
     stream,
     mr);
 }

@@ -65,8 +65,8 @@ namespace {
   return std::string{tail.substr(0, n + 1)};  // include the closing ']'
 }
 
-// A prefix-tree node built while merging paths. Children are keyed by step token, which is also how
-// the device walk tells the steps apart, so an index step and a same-spelled name cannot collide.
+// A prefix-tree node built while merging paths. Children are keyed by step token, which keeps an
+// index step's brackets, so the index step `[0]` and a field named `0` are different children.
 // The map keeps the child order deterministic across runs.
 struct trie_builder_node {
   std::map<std::string, std::size_t> children;
@@ -75,6 +75,14 @@ struct trie_builder_node {
   // A prefix is worth caching only if more than one path continues past it, or a path ends there.
   // Any other prefix is folded into its single descendant's step range.
   [[nodiscard]] bool needs_slot() const { return ends_a_path || children.size() > 1; }
+};
+
+// A node waiting to be visited by the slot-emitting descent. `pending` carries the steps of the
+// collapsed single-child chain since the last slot, and becomes that slot's step range.
+struct descent_state {
+  std::size_t node;
+  size_type depth;
+  std::vector<std::string> pending;
 };
 
 }  // namespace
@@ -144,13 +152,7 @@ variant_path_trie build_variant_path_trie(std::span<std::string_view const> path
   trie.slot_steps.push_back(0);
   std::vector<size_type> slot_of_node(nodes.size(), -1);
 
-  // Depth-first descent from the root, emitting slots in pre-order. `pending` carries the steps of
-  // the collapsed single-child chain since the last slot, and becomes that slot's step range.
-  struct descent_state {
-    std::size_t node;
-    size_type depth;
-    std::vector<std::string> pending;
-  };
+  // Depth-first descent from the root, emitting slots in pre-order
   std::vector<descent_state> stack;
   stack.push_back({0, 0, {}});
 
@@ -180,19 +182,19 @@ variant_path_trie build_variant_path_trie(std::span<std::string_view const> path
 
   // Invert the path-to-slot mapping into CSR form, counting then filling.
   auto const num_slots = trie.slot_depth.size();
-  trie.output_offsets.assign(num_slots + 1, 0);
+  trie.path_offsets.assign(num_slots + 1, 0);
   for (auto const node : path_end_node) {
     CUDF_EXPECTS(slot_of_node[node] >= 0, "VARIANT path did not reach a trie slot");
-    ++trie.output_offsets[slot_of_node[node] + 1];
+    ++trie.path_offsets[slot_of_node[node] + 1];
   }
   std::inclusive_scan(
-    trie.output_offsets.cbegin(), trie.output_offsets.cend(), trie.output_offsets.begin());
+    trie.path_offsets.cbegin(), trie.path_offsets.cend(), trie.path_offsets.begin());
   // Place each path at its slot's next free position, using a copy of the offsets as cursors
-  trie.output_paths.resize(paths.size());
-  auto fill_position   = trie.output_offsets;
+  trie.path_indices.resize(paths.size());
+  auto fill_position   = trie.path_offsets;
   size_type path_index = 0;
   for (auto const node : path_end_node) {
-    trie.output_paths[fill_position[slot_of_node[node]]++] = path_index++;
+    trie.path_indices[fill_position[slot_of_node[node]]++] = path_index++;
   }
 
   return trie;

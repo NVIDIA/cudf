@@ -27,7 +27,9 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace avf = cudf::test::apache_variant_fixtures;
@@ -1350,6 +1352,18 @@ struct status_buffers {
   }
 };
 
+// Checks each path's status column against its expected values, naming the path on a mismatch
+void expect_path_statuses(std::span<std::string_view const> paths,
+                          status_buffers const& status,
+                          std::vector<std::vector<uint8_t>> const& expected)
+{
+  ASSERT_EQ(status.columns.size(), expected.size());
+  for (std::size_t path_idx = 0; path_idx < expected.size(); ++path_idx) {
+    SCOPED_TRACE("path: " + std::string{paths[path_idx]});
+    expect_status_values(*status.columns[path_idx], expected[path_idx]);
+  }
+}
+
 // The batched APIs must agree with the single-path API applied to each path in turn, which is what
 // most of the tests below check: the single-path behavior is the specification. Both the values and
 // the per-row statuses are compared, since the batched walk derives a status for a whole subtree
@@ -1411,7 +1425,7 @@ TEST_F(GetVariantFieldsTest, WideAndDeepTrieUsesGlobalScratch)
   auto const keys     = make_numeric_keys(depth + 1);
   auto value          = enc_int32(7);
   for (int level = depth - 1; level >= 0; --level) {
-    value = build_single_field_object(static_cast<uint8_t>(level), value);
+    value = build_single_field_object(/*fid=*/static_cast<uint8_t>(level), value);
   }
   auto const col = wrap_single_variant(build_metadata(keys, /*sorted=*/true), value);
 
@@ -1450,9 +1464,9 @@ void expect_large_mixed_input(std::vector<std::string> const& chain)
     switch (row % 5) {
       case 0: row_valid[row] = false; break;
       case 1: break;
-      case 2: val_rows[row] = build_single_field_object(0, k00); break;
+      case 2: val_rows[row] = build_single_field_object(/*fid=*/0, k00); break;
       default: {
-        auto const k01 = build_single_field_object(2, enc_int32(-row));
+        auto const k01 = build_single_field_object(/*fid=*/2, enc_int32(-row));
         auto& out      = val_rows[row];
         out            = {make_variant_object_header(),
                           0x02,
@@ -3330,10 +3344,7 @@ TEST_F(GetVariantFieldsStatusTest, FailedPrefixReasonReachesItsWholeSubtree)
   auto const got = expns::get_variant_fields(col, paths, status.views, stream, cmr());
 
   ASSERT_EQ(got->num_columns(), 4);
-  expect_status_values(*status.columns[0], {ST_VNULL});
-  expect_status_values(*status.columns[1], {ST_MISSING});
-  expect_status_values(*status.columns[2], {ST_MISSING});
-  expect_status_values(*status.columns[3], {ST_MISSING});
+  expect_path_statuses(paths, status, {{ST_VNULL}, {ST_MISSING}, {ST_MISSING}, {ST_MISSING}});
 }
 
 TEST_F(GetVariantFieldsStatusTest, MalformedMetadataFailsEveryPath)
@@ -3347,9 +3358,7 @@ TEST_F(GetVariantFieldsStatusTest, MalformedMetadataFailsEveryPath)
   status_buffers status{paths.size(), cudf::column_view{col}.size()};
   static_cast<void>(expns::get_variant_fields(col, paths, status.views, stream, cmr()));
 
-  for (auto const& column : status.columns) {
-    expect_status_values(*column, {ST_MALFORMED});
-  }
+  expect_path_statuses(paths, status, {{ST_MALFORMED}, {ST_MALFORMED}, {ST_MALFORMED}});
 }
 
 TEST_F(GetVariantFieldsStatusTest, RejectsMalformedStatusColumns)
@@ -3406,9 +3415,11 @@ TEST_F(ExtractVariantFieldsStatusTest, CastStatusReachesBatchedOutput)
   auto const got = expns::extract_variant_fields(col, paths, types, status.views, stream, cmr());
 
   ASSERT_EQ(got->num_columns(), 3);
-  expect_status_values(*status.columns[0], {ST_SUCCESS, ST_SUCCESS, ST_MISSING});
-  expect_status_values(*status.columns[1], {ST_MISMATCH, ST_MISSING, ST_MISMATCH});
-  expect_status_values(*status.columns[2], {ST_MISSING, ST_MISSING, ST_MISSING});
+  expect_path_statuses(paths,
+                       status,
+                       {{ST_SUCCESS, ST_SUCCESS, ST_MISSING},
+                        {ST_MISMATCH, ST_MISSING, ST_MISMATCH},
+                        {ST_MISSING, ST_MISSING, ST_MISSING}});
 }
 
 CUDF_TEST_PROGRAM_MAIN()

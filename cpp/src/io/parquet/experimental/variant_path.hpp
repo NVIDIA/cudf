@@ -45,9 +45,9 @@ namespace cudf::io::parquet::experimental::detail {
  * Slots are in depth-first pre-order, so a walk can keep one located value per depth rather than
  * one per slot.
  *
- * `output_offsets` and `output_paths` invert the path-to-slot mapping in CSR form: slot `k`'s value
- * is the output of paths `output_paths[output_offsets[k] : output_offsets[k + 1]]`, which is empty
- * for a slot that only exists as a shared prefix.
+ * `path_offsets` and `path_indices` invert the path-to-slot mapping in CSR form: slot `k`'s value
+ * is the output of the input paths at indices `path_indices[path_offsets[k] : path_offsets[k +
+ * 1]]`, which is empty for a slot that only exists as a shared prefix.
  */
 struct variant_path_trie {
   std::vector<std::string> steps;     ///< Step tokens of every slot, concatenated in slot order
@@ -55,14 +55,15 @@ struct variant_path_trie {
 
   std::vector<size_type> slot_depth;  ///< Depth of each slot; 0 starts from the value blob
 
-  std::vector<size_type> output_offsets;  ///< Size `num_slots + 1`; CSR offsets into `output_paths`
-  std::vector<size_type> output_paths;    ///< Input paths that each slot's value is the output of
+  std::vector<size_type> path_offsets;  ///< Size `num_slots + 1`; CSR offsets into `path_indices`
+  std::vector<size_type>
+    path_indices;  ///< Indices of the input paths each slot's value is output for
 };
 
 /**
  * @brief Merge VARIANT paths into a `variant_path_trie`.
  *
- * Each path is parsed with `parse_variant_path`, so every path is validated before any of them is
+ * Each path is parsed with `parse_variant_path`, so every path is validated before any path is
  * used.
  *
  * @param paths JSONPath-like path strings, in output order

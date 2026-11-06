@@ -60,7 +60,9 @@
 #include <cstdint>
 #include <iterator>
 #include <limits>
+#include <numeric>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -965,6 +967,12 @@ constexpr std::size_t max_global_scratch_bytes = std::size_t{32} * 1024 * 1024;
 // Dynamic shared memory up to this size needs no opt-in on any supported architecture
 constexpr std::size_t max_shared_trie_bytes = std::size_t{48} * 1024;
 
+// Index of `row` of path `path` in the per-path outputs, which are stored one path after another
+CUDF_HOST_DEVICE constexpr int64_t flat_index(size_type path, size_type row, size_type num_rows)
+{
+  return static_cast<int64_t>(path) * num_rows + row;
+}
+
 /**
  * @brief Resolves a whole trie of VARIANT paths in each row, recording each path's result.
  *
@@ -984,8 +992,8 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_field_trie_kernel(
   column_device_view steps,
   device_span<size_type const> slot_steps,
   device_span<size_type const> slot_depth,
-  device_span<size_type const> output_offsets,
-  device_span<size_type const> output_paths,
+  device_span<size_type const> path_offsets,
+  device_span<size_type const> path_indices,
   bitmask_type const* d_row_valid,
   bool stage_trie,
   device_span<size_type> d_sizes,
@@ -1014,8 +1022,8 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_field_trie_kernel(
     };
     stage(slot_steps);
     stage(slot_depth);
-    stage(output_offsets);
-    stage(output_paths);
+    stage(path_offsets);
+    stage(path_indices);
     __syncthreads();
   }
 
@@ -1035,7 +1043,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_field_trie_kernel(
 
     if (!row_valid) {
       for (size_type path = 0; path < num_paths; ++path) {
-        auto const out     = static_cast<int64_t>(path) * num_rows + row;
+        auto const out     = flat_index(path, row, num_rows);
         d_sizes[out]       = 0;
         d_src_offsets[out] = 0;
         cudf::clear_bit(d_null_masks[path], row);
@@ -1068,9 +1076,9 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_field_trie_kernel(
         result = make_slot_result(field, val.data(), status);
       }
 
-      for (auto out_idx = output_offsets[slot]; out_idx < output_offsets[slot + 1]; ++out_idx) {
-        auto const path = output_paths[out_idx];
-        auto const out  = static_cast<int64_t>(path) * num_rows + row;
+      for (auto out_idx = path_offsets[slot]; out_idx < path_offsets[slot + 1]; ++out_idx) {
+        auto const path = path_indices[out_idx];
+        auto const out  = flat_index(path, row, num_rows);
         if (!d_statuses.empty()) { d_statuses[path][row] = result.status; }
         if (result.is_valid()) {
           d_sizes[out]       = result.size;
@@ -1359,7 +1367,9 @@ void validate_cast_type(data_type desired_type)
     case type_id::DECIMAL32:
     case type_id::DECIMAL64:
     case type_id::DECIMAL128: break;
-    default: CUDF_FAIL("unsupported type for variant cast", std::invalid_argument);
+    default:
+      CUDF_FAIL("unsupported type for variant cast: " + cudf::type_to_name(desired_type),
+                std::invalid_argument);
   }
 }
 
@@ -1565,10 +1575,11 @@ std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> ste
 {
   auto const depth = steps.size();
 
-  auto host_offsets = cudf::detail::make_pinned_vector_async<size_type>(depth + 1, stream);
-  for (size_t i = 0; i < depth; ++i) {
-    host_offsets[i + 1] = host_offsets[i] + static_cast<size_type>(steps[i].size());
-  }
+  auto host_offsets     = cudf::detail::make_pinned_vector_async<size_type>(depth + 1, stream);
+  auto const step_sizes = steps | std::views::transform([](std::string const& step) {
+                            return static_cast<size_type>(step.size());
+                          });
+  std::inclusive_scan(step_sizes.begin(), step_sizes.end(), host_offsets.begin() + 1);
   auto host_chars = cudf::detail::make_pinned_vector_async<char>(host_offsets[depth], stream);
   for (size_t i = 0; i < depth; ++i) {
     std::ranges::copy(steps[i], host_chars.begin() + host_offsets[i]);
@@ -1646,12 +1657,12 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   auto steps_device_view = column_device_view::create(steps_column->view(), stream);
   // The trie arrays are staged with a single copy, since each transfer costs more than its contents
   auto h_trie_arrays = cudf::detail::make_pinned_vector_async<size_type>(
-    trie.slot_steps.size() + trie.slot_depth.size() + trie.output_offsets.size() +
-      trie.output_paths.size(),
+    trie.slot_steps.size() + trie.slot_depth.size() + trie.path_offsets.size() +
+      trie.path_indices.size(),
     stream);
   auto next_host = h_trie_arrays.begin();
   for (auto const* array :
-       {&trie.slot_steps, &trie.slot_depth, &trie.output_offsets, &trie.output_paths}) {
+       {&trie.slot_steps, &trie.slot_depth, &trie.path_offsets, &trie.path_indices}) {
     next_host = std::ranges::copy(*array, next_host).out;
   }
   auto const d_trie_arrays =
@@ -1662,10 +1673,10 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
     next_array += array.size();
     return span;
   };
-  auto const d_slot_steps     = next_span(trie.slot_steps);
-  auto const d_slot_depth     = next_span(trie.slot_depth);
-  auto const d_output_offsets = next_span(trie.output_offsets);
-  auto const d_output_paths   = next_span(trie.output_paths);
+  auto const d_slot_steps   = next_span(trie.slot_steps);
+  auto const d_slot_depth   = next_span(trie.slot_depth);
+  auto const d_path_offsets = next_span(trie.path_offsets);
+  auto const d_path_indices = next_span(trie.path_indices);
 
   // Resolve children with respect to any slice/offset on the parent struct
   structs_column_view const variant_struct{variant_column};
@@ -1729,7 +1740,7 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   // Room for the trie arrays in shared memory, kept within the default per-block limit so that the
   // launch needs no opt-in; a trie too large for it is read from global memory instead
   auto const trie_bytes = sizeof(size_type) * (d_slot_steps.size() + d_slot_depth.size() +
-                                               d_output_offsets.size() + d_output_paths.size());
+                                               d_path_offsets.size() + d_path_indices.size());
   bool const stage_trie = trie_bytes <= max_shared_trie_bytes;
   auto const launch     = [&](auto use_local) {
     // Reserving any shared memory otherwise lets the driver shrink L1, which the metadata lookups
@@ -1744,8 +1755,8 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
         *steps_device_view,
         d_slot_steps,
         d_slot_depth,
-        d_output_offsets,
-        d_output_paths,
+        d_path_offsets,
+        d_path_indices,
         d_row_valid,
         stage_trie,
         d_sizes,
@@ -1786,7 +1797,7 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
     auto const path_sizes = cudf::detail::make_counting_transform_iterator(
       size_type{0},
       cuda::proclaim_return_type<size_type>(
-        [sizes = d_sizes.data() + static_cast<int64_t>(path_idx) * num_rows, num_rows] __device__(
+        [sizes = d_sizes.data() + flat_index(path_idx, 0, num_rows), num_rows] __device__(
           size_type row) -> size_type { return row < num_rows ? sizes[row] : 0; }));
     // Offsets are narrowed to size_type on the way out while the scan accumulates in 64 bits, so
     // the total still reveals an overflow that the offsets themselves would have wrapped away.

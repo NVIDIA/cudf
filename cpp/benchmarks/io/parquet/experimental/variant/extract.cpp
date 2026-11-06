@@ -22,6 +22,9 @@
 #include <algorithm>
 #include <cstring>
 #include <format>
+#include <functional>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -107,41 +110,45 @@ std::string field_key(int i)
 
 // A field of an object under construction: its dictionary id and its already-encoded value bytes,
 // which the caller keeps alive.
-using object_field = std::pair<uint8_t, std::span<uint8_t const>>;
+struct object_field {
+  uint8_t id;
+  std::span<uint8_t const> value;
+};
 
 // Build a VARIANT object from (field id, value) pairs. Ids must be ascending, which for a
 // name-sorted dictionary is also name order, as the spec requires. Field offsets widen to 2 bytes
 // once the values region outgrows a single byte.
 std::vector<uint8_t> build_object(std::vector<object_field> const& fields)
 {
-  constexpr std::size_t max_single_byte_offset = 255;
-  CUDF_EXPECTS(fields.size() <= max_single_byte_offset + 1,
+  constexpr std::size_t max_one_byte = std::numeric_limits<uint8_t>::max();
+  CUDF_EXPECTS(fields.size() <= max_one_byte,
                "object field count must fit the 1-byte num_fields this writes");
   CUDF_EXPECTS(std::ranges::adjacent_find(
-                 fields, [](auto const& lhs, auto const& rhs) { return lhs.first >= rhs.first; }) ==
-                 fields.end(),
+                 fields, std::ranges::greater_equal{}, &object_field::id) == fields.end(),
                "object field ids must be unique and ascending");
 
   auto const values_bytes =
     std::accumulate(fields.begin(), fields.end(), std::size_t{0}, [](auto acc, auto const& field) {
-      return acc + field.second.size();
+      return acc + field.value.size();
     });
-  int const offset_size = values_bytes > max_single_byte_offset ? 2 : 1;
+  int const offset_size = values_bytes > max_one_byte ? 2 : 1;
+  auto const values     = std::views::transform(fields, &object_field::value);
 
   // object value_header: | is_large (1) | field_id_size-1 (2) | field_offset_size-1 (2) |
-  std::vector<uint8_t> out{
-    make_variant_header(variant_basic_type::OBJECT, static_cast<uint8_t>(offset_size - 1)),
-    static_cast<uint8_t>(fields.size())};
-  auto const ids = std::views::keys(fields);
-  out.insert(out.end(), ids.begin(), ids.end());
+  std::vector<uint8_t> out;
+  out.reserve(2 + fields.size() + (fields.size() + 1) * offset_size + values_bytes);
+  out.push_back(
+    make_variant_header(variant_basic_type::OBJECT, static_cast<uint8_t>(offset_size - 1)));
+  out.push_back(static_cast<uint8_t>(fields.size()));
+  std::ranges::copy(std::views::transform(fields, &object_field::id), std::back_inserter(out));
 
   std::size_t running = 0;
-  for (auto const& value : std::views::values(fields)) {
+  for (auto const& value : values) {
     append_le(out, running, offset_size);
     running += value.size();
   }
   append_le(out, running, offset_size);  // sentinel offset after the last field
-  for (auto const& value : std::views::values(fields)) {
+  for (auto const& value : values) {
     out.insert(out.end(), value.begin(), value.end());
   }
   return out;

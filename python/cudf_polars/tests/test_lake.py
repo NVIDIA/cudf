@@ -419,10 +419,49 @@ def test_scan_lake_predicate_pushdown(
     )
 
 
-def test_scan_iceberg_partition_predicate_without_file_columns(
-    engine: pl.GPUEngine, partitioned_iceberg: str
+def test_scan_lake_hive_partition_predicate_on_column_missing_from_files(
+    engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
-    q = pl.scan_iceberg(partitioned_iceberg).filter(pl.col("part") != "w")
+    # The predicate keeps a filter on the scan, but the only column it uses is
+    # missing from every file. No column is read from the files, yet each row
+    # still needs the hive value of the file it comes from.
+    paths = []
+    for index, values in enumerate(([1, 2], [3, 4, 5])):
+        path = tmp_path / f"part={index}" / "data.parquet"
+        pl.DataFrame({"a": values}).write_parquet(path, mkdir=True)
+        paths.append(str(path))
+
+    def no_deletions(requested: pl.DataFrame) -> pl.DataFrame:
+        return pl.DataFrame(
+            {"selection_vector": [None] * requested.height},
+            schema={"selection_vector": pl.List(pl.Boolean)},
+        )
+
+    q = pl.scan_parquet(
+        paths,
+        schema={"a": pl.Int64, "b": pl.Int64},
+        missing_columns="insert",
+        extra_columns="ignore",
+        cast_options=pl.ScanCastOptions._default_iceberg(),
+        hive_partitioning=True,
+        hive_schema={"part": pl.Int64},
+        _deletion_files=("delta-deletion-vector", no_deletions),
+    )
+    assert_gpu_result_equal(
+        q.filter(pl.col("b").is_null()).select("part"),
+        engine=engine,
+        check_row_order=False,
+    )
+
+
+@pytest.mark.parametrize("table", ["partitioned_iceberg", "partitioned_delta"])
+def test_scan_lake_partition_predicate_without_file_columns(
+    request: pytest.FixtureRequest, engine: pl.GPUEngine, table: str
+) -> None:
+    # No column is read from the files, but the filter still has to know which
+    # file each row comes from to pick its partition value.
+    scan = pl.scan_iceberg if table.endswith("iceberg") else pl.scan_delta
+    q = scan(request.getfixturevalue(table)).filter(pl.col("part") != "w")
     assert_gpu_result_equal(q.select("part"), engine=engine, check_row_order=False)
 
 

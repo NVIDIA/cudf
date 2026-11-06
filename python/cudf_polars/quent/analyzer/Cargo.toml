@@ -9,22 +9,22 @@ publish = false
 # here would build a second copy of these crates and the two `QuentViewer`
 # traits would not unify.
 [dependencies]
-quent-analyzer = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
-quent-dynamic-attributes = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
-quent-events = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef", features = ["serde"] }
-quent-io = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef", default-features = false }
-quent-query-engine-analyzer = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
-quent-query-engine-ui = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
-quent-store = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef", default-features = false, features = ["io-ndjson"] }
-quent-time = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
-quent-ui = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
+quent-analyzer = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
+quent-dynamic-attributes = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
+quent-events = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d", features = ["serde"] }
+quent-io = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d", default-features = false }
+quent-query-engine-analyzer = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
+quent-query-engine-ui = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
+quent-store = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d", default-features = false, features = ["io-ndjson"] }
+quent-time = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
+quent-ui = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["serde"] }
 
 [build-dependencies]
-quent-store-build = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
-quent-yaml = { git = "https://github.com/rapidsai/quent", rev = "4049c42d8665a9319724b5f6aab5c68d009114ef" }
+quent-store-build = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
+quent-yaml = { git = "https://github.com/rapidsai/quent", rev = "a14d2a732b3c127968c2f363fcd7186fdff2d51d" }
 
 [dev-dependencies]
 tempfile = "3"

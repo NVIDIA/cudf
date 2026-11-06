@@ -29,6 +29,7 @@ from cudf_polars.containers import DataType
 from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import IR, Distinct, GroupBy, Select, Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.collectives.ordering import adjust_ordering
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
@@ -57,6 +58,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     gather_in_task_group,
     process_children,
     recv_metadata,
+    reservation_context,
     send_metadata,
     shutdown_channels_on_error,
     shutdown_on_error,
@@ -74,6 +76,7 @@ from cudf_polars.utils.cuda_stream import stream_ordered_after
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
+    from rapidsmpf.memory.reservation_events import ReservationContext
     from rapidsmpf.streaming.core.channel import Channel
     from rmm.pylibrmm.stream import Stream
 
@@ -420,6 +423,10 @@ async def _shuffle_reduce(
         shuffle_comm,
         modulus,
         collective_id,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            ReservationSite.SHUFFLE_DATA,
+        ),
     )
     async with shuffle.inserting() as inserter:
         await inserter.insert_hash(
@@ -1141,6 +1148,7 @@ async def _choose_strategy(
     skip_global_comm: bool,  # noqa: FBT001
     maintain_order: bool,  # noqa: FBT001
     tracer: ActorTracer | None,
+    reservation_context: ReservationContext,
 ) -> int:
     """
     Select the best algorithm for the given context and metadata.
@@ -1159,6 +1167,8 @@ async def _choose_strategy(
         The number of chunks received from the input channel.
     input_drained
         Whether the input channel is drained.
+    reservation_context
+        Reservation telemetry reservation_context for planning collectives.
     collective_ids
         The collective IDs.
     target_partition_size
@@ -1203,6 +1213,7 @@ async def _choose_strategy(
             local_estimated_rows,
             local_count,
             int(not input_drained),
+            reservation_context=reservation_context,
         )
 
     min_row_limit_count = 1
@@ -1399,6 +1410,10 @@ async def groupby_actor(
             skip_global_comm,
             maintain_order and ordered_keys is None,
             tracer,
+            reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.SHUFFLE_STATISTICS,
+            ),
         )
 
         # RapidsMPF permits ID reuse after AllGather.extract_all completes.

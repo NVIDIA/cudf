@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from rapidsmpf.memory.reservation_events import ReservationContext
 from collections.abc import Iterable
 from typing import Self
 
@@ -38,6 +39,8 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[BloomFilterChunk],
         tag: int,
+        *,
+        reservation_context: ReservationContext | None = None,
     ) -> None: ...
     async def apply(
         self,
@@ -46,4 +49,6 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[TableChunk],
         keys: Iterable[int],
+        *,
+        reservation_context: ReservationContext | None = None,
     ) -> None: ...

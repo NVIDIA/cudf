@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from rapidsmpf.memory.reservation_events import ReservationContext
 from collections.abc import Iterable
 
 from cudf_streaming.table_chunk import TableChunk
@@ -19,6 +20,8 @@ def partition_and_pack(
     columns_to_hash: Iterable[int],
     num_partitions: int,
     seed: int = ...,
+    *,
+    reservation_context: ReservationContext | None = None,
 ) -> CppActor: ...
 def unpack_and_concat(
     ctx: Context,
@@ -26,4 +29,6 @@ def unpack_and_concat(
     | Channel[PartitionVectorChunk]
     | Channel[PartitionMapChunk | PartitionVectorChunk],
     ch_out: Channel[TableChunk],
+    *,
+    reservation_context: ReservationContext | None = None,
 ) -> CppActor: ...

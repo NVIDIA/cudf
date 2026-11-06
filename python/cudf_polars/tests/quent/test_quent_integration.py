@@ -137,6 +137,8 @@ def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
         session=session,
         worker_resources=MagicMock(),
         _worker_handle=worker_handle,
+        _buffer_resource=None,
+        _reservation_ingestor=None,
     )
 
     with pytest.raises(ExceptionGroup, match="Quent worker shutdown failed"):
@@ -295,7 +297,31 @@ def test_quent_lifecycle(
         for terminal in terminal_actor_events
     )
     assert _of_type(events, "DeviceMemory")
+    reservable_memory_events = _of_type(events, "ReservableMemory")
+    assert reservable_memory_events
+    assert all(
+        event["data"]["ReservableMemory"]["Declared"]["limits"]["bytes"] >= 0
+        for event in reservable_memory_events
+        if "Declared" in event["data"]["ReservableMemory"]
+    )
     assert _of_type(events, "Storage")
+    occupancy_events = _of_type(events, "ReservationOccupancy")
+    assert occupancy_events
+    occupancy_states: dict[str, list[str]] = {}
+    attributed_bytes = 0
+    for event in occupancy_events:
+        state, values = next(iter(event["data"]["ReservationOccupancy"].items()))
+        occupancy_states.setdefault(event["id"], []).append(state)
+        if state == "Created":
+            assert values["actor"] is None or values["site"] is not None
+        if state == "Held":
+            assert values["memory"]["data"]["bytes"] >= 0
+            attributed_bytes += values["memory"]["data"]["bytes"]
+    assert all(
+        states[0] == "Created" and states[1] == "Held" and states[-1] == "Released"
+        for states in occupancy_states.values()
+    )
+    assert attributed_bytes > 0
     evaluate_events = _of_type(events, "Evaluate")
     assert evaluate_events
     evaluate_states: dict[str, list[str]] = {}

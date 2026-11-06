@@ -15,8 +15,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let generated = quent_store_build::generate(
         &parsed.schema,
         &quent_store_build::Options {
-            combined_event: true,
-            record_derives: &["Clone"],
+            events: quent_store_build::EventOptions {
+                combined_event: true,
+                record_derives: &["Clone"],
+                serde: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
     )?;

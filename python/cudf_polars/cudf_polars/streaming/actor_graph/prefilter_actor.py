@@ -10,6 +10,7 @@ from cudf_streaming import CardinalityEstimator
 from rapidsmpf.streaming.core.actor import define_actor
 
 from cudf_polars.dsl.utils.naming import names_to_indices
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -27,6 +28,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     process_children,
     recv_metadata,
     replay_buffered_channel,
+    reservation_context,
     sample_inputs,
     shutdown_on_error,
 )
@@ -104,6 +106,10 @@ async def pushdown_filter_actor(
                     ),
                 ),
                 collective_id,
+                reservation_context=reservation_context(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    ReservationSite.PREFILTER_SAMPLE_INPUTS,
+                ),
             )
             if len(collected_samples) != 2:
                 raise ValueError("Standalone prefilters require two input samples")

@@ -359,8 +359,8 @@ dependencies = [
 
 [[package]]
 name = "quent-analyzer"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-dynamic-attributes",
  "quent-events",
@@ -374,8 +374,8 @@ dependencies = [
 
 [[package]]
 name = "quent-build-info"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "serde",
  "serde_json",
@@ -383,8 +383,8 @@ dependencies = [
 
 [[package]]
 name = "quent-constraints"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "petgraph",
  "quent-schema",
@@ -394,8 +394,8 @@ dependencies = [
 
 [[package]]
 name = "quent-dag"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-constraints",
  "quent-ref-target",
@@ -406,8 +406,8 @@ dependencies = [
 
 [[package]]
 name = "quent-dynamic-attributes"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "serde",
  "ts-rs",
@@ -415,8 +415,8 @@ dependencies = [
 
 [[package]]
 name = "quent-events"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-build-info",
  "quent-dynamic-attributes",
@@ -426,9 +426,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "quent-events-build"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
+dependencies = [
+ "convert_case",
+ "prettyplease",
+ "proc-macro2",
+ "quent-constraints",
+ "quent-ref-target",
+ "quent-schema",
+ "quote",
+ "syn 3.0.9",
+ "thiserror",
+]
+
+[[package]]
 name = "quent-fsm"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "petgraph",
  "quent-constraints",
@@ -439,26 +455,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "quent-instrumentation-build"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
-dependencies = [
- "convert_case",
- "prettyplease",
- "proc-macro2",
- "quent-constraints",
- "quent-fsm",
- "quent-ref-target",
- "quent-schema",
- "quote",
- "syn 3.0.9",
- "thiserror",
-]
-
-[[package]]
 name = "quent-io"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "async-trait",
  "quent-events",
@@ -470,8 +469,8 @@ dependencies = [
 
 [[package]]
 name = "quent-io-ndjson"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "async-trait",
  "quent-events",
@@ -485,8 +484,8 @@ dependencies = [
 
 [[package]]
 name = "quent-io-types"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "async-trait",
  "quent-events",
@@ -497,8 +496,8 @@ dependencies = [
 
 [[package]]
 name = "quent-log"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-constraints",
  "quent-schema",
@@ -509,8 +508,8 @@ dependencies = [
 
 [[package]]
 name = "quent-os"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-constraints",
  "quent-ref-target",
@@ -522,8 +521,8 @@ dependencies = [
 
 [[package]]
 name = "quent-query-engine-analyzer"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-analyzer",
  "quent-events",
@@ -537,8 +536,8 @@ dependencies = [
 
 [[package]]
 name = "quent-query-engine-ui"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "async-trait",
  "quent-analyzer",
@@ -552,8 +551,8 @@ dependencies = [
 
 [[package]]
 name = "quent-ref-target"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-constraints",
  "quent-schema",
@@ -562,8 +561,8 @@ dependencies = [
 
 [[package]]
 name = "quent-ref-tree"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "petgraph",
  "quent-constraints",
@@ -575,8 +574,8 @@ dependencies = [
 
 [[package]]
 name = "quent-resource"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "indexmap",
  "quent-constraints",
@@ -590,8 +589,8 @@ dependencies = [
 
 [[package]]
 name = "quent-schema"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "indexmap",
  "rustc-hash",
@@ -602,8 +601,8 @@ dependencies = [
 
 [[package]]
 name = "quent-store"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-build-info",
  "quent-events",
@@ -619,12 +618,12 @@ dependencies = [
 
 [[package]]
 name = "quent-store-build"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "prettyplease",
  "proc-macro2",
- "quent-instrumentation-build",
+ "quent-events-build",
  "quent-schema",
  "quote",
  "syn 3.0.9",
@@ -633,8 +632,8 @@ dependencies = [
 
 [[package]]
 name = "quent-time"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "serde",
  "thiserror",
@@ -643,8 +642,8 @@ dependencies = [
 
 [[package]]
 name = "quent-ui"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "quent-analyzer",
  "quent-dynamic-attributes",
@@ -656,8 +655,8 @@ dependencies = [
 
 [[package]]
 name = "quent-yaml"
-version = "0.1.0"
-source = "git+https://github.com/rapidsai/quent?rev=4049c42d8665a9319724b5f6aab5c68d009114ef#4049c42d8665a9319724b5f6aab5c68d009114ef"
+version = "0.2.0"
+source = "git+https://github.com/rapidsai/quent?rev=a14d2a732b3c127968c2f363fcd7186fdff2d51d#a14d2a732b3c127968c2f363fcd7186fdff2d51d"
 dependencies = [
  "indexmap",
  "quent-constraints",

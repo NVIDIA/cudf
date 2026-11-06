@@ -12,7 +12,7 @@ use quent_time::{span::SpanUnixNanoSec, to_nanosecs};
 use quent_ui::entities::request::{EntityListRequest, EntityScope, SortDir};
 
 use super::CudfPolarsUiAnalyzer;
-use crate::resource::EVALUATE_ENTITY_TYPE;
+use crate::{reservation::OCCUPANCY_ENTITY_TYPE, resource::EVALUATE_ENTITY_TYPE};
 
 impl CudfPolarsUiAnalyzer {
     pub(super) fn build_entity_list(
@@ -30,7 +30,7 @@ impl CudfPolarsUiAnalyzer {
             .filter
             .entity_type_name
             .as_deref()
-            .is_some_and(|name| name != EVALUATE_ENTITY_TYPE)
+            .is_some_and(|name| !matches!(name, EVALUATE_ENTITY_TYPE | OCCUPANCY_ENTITY_TYPE))
         {
             return Ok(EntityListResponse {
                 items: vec![],
@@ -75,42 +75,90 @@ impl CudfPolarsUiAnalyzer {
                 .as_ref()
                 .is_none_or(|resource_ids| resource_ids.contains(&resource_id))
         };
-        let mut ranked: Vec<_> = self
-            .evaluates
-            .iter()
-            .filter_map(|evaluate| {
-                let operator_id = self.evaluate_operator_id(evaluate)?;
-                if !query_operator_ids.contains(&operator_id)
-                    || (!requested_operator_ids.is_empty()
-                        && !requested_operator_ids.contains(&operator_id))
-                {
-                    return None;
-                }
-                let lifecycle =
-                    SpanUnixNanoSec::try_new(evaluate.queued_at, evaluate.span.end()).ok()?;
-                if !lifecycle.intersects(&window) {
-                    return None;
-                }
-                let metric = [
-                    Some(evaluate.processor_id),
-                    evaluate.channel.map(|(id, _)| id),
-                ]
-                .into_iter()
-                .flatten()
-                .filter(|&resource_id| uses_scope(resource_id))
-                .filter_map(|_| evaluate.span.intersection(&window))
-                .map(|span| span.duration())
-                .max();
-                let metric = match (&scope, metric) {
-                    (Some(_), None) => return None,
-                    (_, metric) => metric.unwrap_or(0),
-                };
-                if min_usage.is_some_and(|minimum| metric < minimum) {
-                    return None;
-                }
-                Some((evaluate.to_ui_fsm(epoch), operator_id, metric, evaluate.id))
-            })
-            .collect();
+        // No entity type means "All": list every entity kind that can use a resource.
+        let requested_type = entry.filter.entity_type_name.as_deref();
+        let include_occupancies = matches!(requested_type, None | Some(OCCUPANCY_ENTITY_TYPE));
+        let include_evaluates = matches!(requested_type, None | Some(EVALUATE_ENTITY_TYPE));
+        let mut ranked: Vec<_> = Vec::new();
+        if include_occupancies {
+            ranked.extend(
+                self.occupancies
+                    .iter()
+                    .filter_map(|occupancy| {
+                        let operator_id = occupancy
+                            .actor_id
+                            .and_then(|actor_id| self.actors.get(&actor_id))
+                            .map(|actor| actor.operator_id)?;
+                        if !query_operator_ids.contains(&operator_id)
+                            || (!requested_operator_ids.is_empty()
+                                && !requested_operator_ids.contains(&operator_id))
+                            || !occupancy.lifecycle().ok()?.intersects(&window)
+                        {
+                            return None;
+                        }
+                        let matching_segments = occupancy.segments.iter().filter(|segment| {
+                            uses_scope(segment.resource_id) && segment.bytes.value.unwrap_or(0) > 0
+                        });
+                        let metric: u64 = matching_segments
+                            .filter_map(|segment| segment.span.intersection(&window))
+                            .map(|span| span.duration())
+                            .sum();
+                        if scope.is_some() && metric == 0 {
+                            return None;
+                        }
+                        if min_usage.is_some_and(|minimum| metric < minimum) {
+                            return None;
+                        }
+                        Some((
+                            occupancy.to_ui_fsm(epoch),
+                            operator_id,
+                            metric,
+                            occupancy.id,
+                        ))
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        if include_evaluates {
+            ranked.extend(
+                self.evaluates
+                    .iter()
+                    .filter_map(|evaluate| {
+                        let operator_id = self.evaluate_operator_id(evaluate)?;
+                        if !query_operator_ids.contains(&operator_id)
+                            || (!requested_operator_ids.is_empty()
+                                && !requested_operator_ids.contains(&operator_id))
+                        {
+                            return None;
+                        }
+                        let lifecycle =
+                            SpanUnixNanoSec::try_new(evaluate.queued_at, evaluate.span.end())
+                                .ok()?;
+                        if !lifecycle.intersects(&window) {
+                            return None;
+                        }
+                        let metric = [
+                            Some(evaluate.processor_id),
+                            evaluate.channel.map(|(id, _)| id),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .filter(|&resource_id| uses_scope(resource_id))
+                        .filter_map(|_| evaluate.span.intersection(&window))
+                        .map(|span| span.duration())
+                        .max();
+                        let metric = match (&scope, metric) {
+                            (Some(_), None) => return None,
+                            (_, metric) => metric.unwrap_or(0),
+                        };
+                        if min_usage.is_some_and(|minimum| metric < minimum) {
+                            return None;
+                        }
+                        Some((evaluate.to_ui_fsm(epoch), operator_id, metric, evaluate.id))
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
         ranked.sort_by(
             |(_, _, left_metric, left_id), (_, _, right_metric, right_id)| {
                 let order = left_metric.cmp(right_metric);

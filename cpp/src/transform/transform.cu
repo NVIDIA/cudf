@@ -501,34 +501,6 @@ void perform_checks(std::variant<udf_source_type, lto_binary_type> source_type,
                     std::span<transform_output const> outputs,
                     std::span<std::unique_ptr<column> const> string_offsets)
 {
-  if (auto* udf_source = std::get_if<udf_source_type>(&source_type);
-      udf_source != nullptr && *udf_source == udf_source_type::PTX) {
-    static constexpr auto is_input_value_supported = [](auto const& c) {
-      return is_integral(c.type()) || is_floating_point(c.type());
-    };
-    static constexpr auto is_supported_input_type = [](auto const& c) {
-      auto col = std::visit([](auto& c) { return jit::as_column_view(c); }, c);
-      return is_input_value_supported(col) ||
-             (is_dictionary(col.type()) &&
-              is_input_value_supported(col.child(dictionary_keys_column_index)));
-    };
-    CUDF_EXPECTS(
-      std::none_of(
-        inputs.begin(), inputs.end(), [](auto const& in) { return !is_supported_input_type(in); }),
-      "Transforms with PTX UDFs only support integer, floating-point, and boolean",
-      std::invalid_argument);
-    CUDF_EXPECTS(std::none_of(outputs.begin(),
-                              outputs.end(),
-                              [](auto& out) {
-                                return !is_integral(out.type) && !is_floating_point(out.type);
-                              }),
-                 "Transforms with PTX UDFs only support integer, floating-point, and boolean types",
-                 std::invalid_argument);
-    CUDF_EXPECTS(is_null_aware == null_aware::NO,
-                 "PTX UDFs do not support null-aware transformations",
-                 std::invalid_argument);
-  }
-
   CUDF_EXPECTS(std::none_of(outputs.begin(),
                             outputs.end(),
                             [](auto& out) {

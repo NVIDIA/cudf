@@ -647,9 +647,14 @@ void aggregate_result_functor::operator()<aggregation::MERGE_TDIGEST>(aggregatio
 
   auto const max_centroids =
     dynamic_cast<cudf::detail::merge_tdigest_aggregation const&>(agg).max_centroids;
+  // tdigest_column_view rejects a sliced column, so merge a copy of sliced presorted values.
+  auto const grouped = get_grouped_values();
+  auto const copy    = grouped.offset() == 0
+                         ? nullptr
+                         : std::make_unique<column>(grouped, stream, mr.get_temporary_mr());
   cache.add_result(values,
                    agg,
-                   cudf::tdigest::detail::group_merge_tdigest(get_grouped_values(),
+                   cudf::tdigest::detail::group_merge_tdigest(copy ? copy->view() : grouped,
                                                               helper.group_offsets(stream, mr),
                                                               helper.group_labels(stream, mr),
                                                               helper.num_groups(stream, mr),

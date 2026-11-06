@@ -33,6 +33,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 
 template <typename T>
 class PartitionTest : public cudf::test::BaseFixture {
@@ -1037,6 +1038,111 @@ TEST_F(PartitionTestNotTyped, StringPermutationCopyGridStride)
     }
   }
 }
+
+class PartitionLargeFixedWidthTest
+  : public cudf::test::BaseFixture,
+    public ::testing::WithParamInterface<std::tuple<int, int, int, bool>> {};
+
+TEST_P(PartitionLargeFixedWidthTest, HostOracle)
+{
+  // Exceed the large-plan threshold and leave the last tile and mask word incomplete.
+  constexpr cudf::size_type rows                    = 1'000'003;
+  constexpr cudf::size_type slice_offset            = 7;
+  auto const [count, partitions, null_percent, hot] = GetParam();
+  auto stream_owner       = cuda::stream{cuda::device_ref{rmm::get_current_cuda_device().value()}};
+  cuda::stream_ref stream = stream_owner;
+  auto const valid        = [null_percent](int row, int col) {
+    return (row * 17 + col * 13) % 100 >= null_percent;
+  };
+  auto const value = [](int row, int col) { return int64_t{row} * (37 + col * 2) + col * 11; };
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  for (int c = 0; c < count; ++c) {
+    auto const values =
+      cudf::detail::make_counting_transform_iterator(0, [=](auto i) { return value(i, c); });
+    auto const validity =
+      cudf::detail::make_counting_transform_iterator(0, [=](auto i) { return valid(i, c); });
+    if (null_percent == 0) {
+      columns.push_back(
+        fixed_width_column_wrapper<int64_t>(values, values + rows + slice_offset, stream)
+          .release());
+    } else {
+      columns.push_back(
+        fixed_width_column_wrapper<int64_t>(values, values + rows + slice_offset, validity, stream)
+          .release());
+    }
+  }
+  auto const owner = cudf::table{std::move(columns)};
+  auto const input = cudf::slice(owner.view(), {slice_offset, rows + slice_offset}, stream)[0];
+  std::vector<int32_t> assignments(rows + 3, 0);
+  std::vector<cudf::size_type> expected_offsets(partitions + 1, 0);
+  std::vector<cudf::size_type> expected_all_null(partitions, 0);
+  for (int i = 0; i < rows; ++i) {
+    auto const p       = hot && i % 10 != 0 ? partitions - 1 : (i * 17 + 3) % partitions;
+    assignments[i + 3] = p;
+    ++expected_offsets[p + 1];
+    bool any_valid = false;
+    for (int c = 0; c < count; ++c)
+      any_valid |= valid(i + slice_offset, c);
+    if (!any_valid) ++expected_all_null[p];
+  }
+  std::partial_sum(expected_offsets.begin(), expected_offsets.end(), expected_offsets.begin());
+  fixed_width_column_wrapper<int32_t> map(assignments.begin(), assignments.end(), stream);
+  auto const map_view    = cudf::slice(map, {3, rows + 3}, stream)[0];
+  auto [output, offsets] = cudf::partition(input, map_view, partitions, stream, mr());
+  ASSERT_EQ(offsets, expected_offsets);
+  ASSERT_EQ(output->num_rows(), rows);
+  ASSERT_EQ(output->num_columns(), count);
+  // This oracle uses host values and validity, independent of gather and GPU sorting.
+  using host_column = decltype(cudf::test::to_host<int64_t>(output->get_column(0), stream));
+  std::vector<host_column> actual;
+  for (int c = 0; c < count; ++c) {
+    EXPECT_EQ(output->get_column(c).type(), input.column(c).type());
+    EXPECT_EQ(output->get_column(c).null_count(), input.column(c).null_count());
+    actual.push_back(cudf::test::to_host<int64_t>(output->get_column(c), stream));
+  }
+  auto const is_valid = [&](int c, int i) {
+    auto const& mask = actual[c].second;
+    return mask.empty() || (mask[i / 32] & (1u << (i % 32))) != 0;
+  };
+  std::vector<bool> seen(rows, false);
+  for (int p = 0; p < partitions; ++p) {
+    cudf::size_type all_null = 0;
+    for (int i = offsets[p]; i < offsets[p + 1]; ++i) {
+      int first_valid = 0;
+      while (first_valid < count && !is_valid(first_valid, i))
+        ++first_valid;
+      if (first_valid == count) {
+        ++all_null;
+        continue;
+      }
+      auto const source =
+        (actual[first_valid].first[i] - first_valid * 11) / (37 + first_valid * 2) - slice_offset;
+      ASSERT_GE(source, 0);
+      ASSERT_LT(source, rows);
+      ASSERT_EQ(assignments[source + 3], p);
+      ASSERT_FALSE(seen[source]);
+      seen[source] = true;
+      for (int c = 0; c < count; ++c) {
+        ASSERT_EQ(is_valid(c, i), valid(source + slice_offset, c));
+        if (is_valid(c, i)) { ASSERT_EQ(actual[c].first[i], value(source + slice_offset, c)); }
+      }
+    }
+    ASSERT_EQ(all_null, expected_all_null[p]);
+  }
+  for (int i = 0; i < rows; ++i) {
+    bool any_valid = false;
+    for (int c = 0; c < count; ++c)
+      any_valid |= valid(i + slice_offset, c);
+    ASSERT_EQ(seen[i], any_valid);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(LargePlans,
+                         PartitionLargeFixedWidthTest,
+                         ::testing::Combine(::testing::Values(1, 2, 4, 8),
+                                            ::testing::Values(2, 100),
+                                            ::testing::Values(0, 10, 90),
+                                            ::testing::Bool()));
 
 TEST_F(PartitionTestNotTyped, LargeSparseStringCopy)
 {

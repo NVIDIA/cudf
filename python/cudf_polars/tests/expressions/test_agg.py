@@ -425,6 +425,21 @@ def test_arg_max_min(engine: pl.GPUEngine, agg: str) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("agg", ["arg_max", "arg_min"])
+@pytest.mark.parametrize(
+    "data",
+    [
+        [1.0, float("nan"), 3.0, None],
+        [None, float("nan"), float("nan")],
+    ],
+)
+def test_arg_max_min_nan(engine: pl.GPUEngine, agg: str, data: list) -> None:
+    # NaN is ignored unless every non-null value is NaN
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Float64)})
+    q = df.select(getattr(pl.col("a"), agg)())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "data",
     [

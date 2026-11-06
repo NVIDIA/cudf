@@ -294,13 +294,13 @@ ConfigureTest(ROUND_TEST round/round_tests.cpp)
 # * binary tests ----------------------------------------------------------------------------------
 ConfigureTest(
   BINARYOP_TEST
-  binaryop/binop-verify-input-test.cpp
-  binaryop/binop-null-test.cpp
-  binaryop/binop-compiled-test.cpp
   binaryop/binop-compiled-fixed_point-test.cpp
+  binaryop/binop-compiled-test.cpp
   binaryop/binop-generic-ptx-test.cpp
-  binaryop/operator_parity_test.cpp
   binaryop/binop-nan-semantics-test.cpp
+  binaryop/binop-null-test.cpp
+  binaryop/binop-verify-input-test.cpp
+  binaryop/operator_parity_test.cpp
   GPUS 1
   PERCENT 100
 )

@@ -164,10 +164,11 @@ class DataFrame:
         cast_dtypes: dict[str, PolarsDataType] = {
             column.name: column.dtype.polars_type
             for column in self.columns
-            if isinstance(column.dtype.polars_type, (pl.Array, pl.Time))
+            if isinstance(column.dtype.polars_type, (pl.Array, pl.Time, pl.Null))
         }
         if cast_dtypes:
-            # TODO: Remove this cast when:
+            # Null columns are stored as all-null INT8 (see DataType).
+            # TODO: Remove the other casts when:
             # 1. libcudf can export Arrow fixed-size lists.
             # 2. libcudf natively supports TIME64 type
             df = df.cast(pl.Schema(cast_dtypes), strict=True)
@@ -238,7 +239,14 @@ class DataFrame:
         -------
         New dataframe representing the input.
         """
-        plc_table = plc.Table.from_arrow(df, stream=stream)
+        if null_columns := [
+            name for name, dtype in df.schema.items() if isinstance(dtype, pl.Null)
+        ]:
+            # Null columns are stored as all-null INT8 (see DataType).
+            device_df = df.cast(dict.fromkeys(null_columns, pl.Int8()))
+        else:
+            device_df = df
+        plc_table = plc.Table.from_arrow(device_df, stream=stream)
         return cls(
             (
                 Column(d_col, name=name, dtype=DataType(h_col.dtype)).copy_metadata(

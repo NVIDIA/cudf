@@ -124,10 +124,10 @@ def test_repeat_len(engine: pl.GPUEngine):
     )
 
 
-def test_repeat_null_unsupported(engine: pl.GPUEngine):
+def test_repeat_null(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3]})
     q = df.select(pl.repeat(None, 2))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_repeat_negative_literal_raises(engine: pl.GPUEngine):
@@ -149,9 +149,7 @@ def test_repeat_negative_expression_result_raises(engine: pl.GPUEngine):
             q.collect(engine=engine)
 
 
-@pytest.mark.parametrize(
-    "expr", [pl.lit(None), pl.lit(datetime.time(12, 0), dtype=pl.Time())]
-)
+@pytest.mark.parametrize("expr", [pl.lit(datetime.time(12, 0), dtype=pl.Time())])
 def test_unsupported_literal_raises(engine: pl.GPUEngine, expr):
     df = pl.LazyFrame({})
 

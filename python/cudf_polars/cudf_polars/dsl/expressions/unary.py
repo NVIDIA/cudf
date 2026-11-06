@@ -498,7 +498,7 @@ class UnaryFunction(Expr):
         column: Column, out_type: DataType, df: DataFrame
     ) -> Column:
         """Cast a ``replace`` operand, mapping an all-null operand onto ``out_type``."""
-        if column.obj.type().id() == plc.TypeId.EMPTY:
+        if isinstance(column.dtype.polars_type, pl.Null):
             return Column(
                 plc.Column.from_scalar(
                     plc.Scalar.from_py(None, out_type.plc_type, stream=df.stream),

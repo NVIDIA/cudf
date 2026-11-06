@@ -348,6 +348,24 @@ def test_to_datetime(
         assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("format", ["%Y-%m-%dT%H:%M:%S%#z", "%#z"])
+def test_to_datetime_unsupported_format_raises(engine: pl.GPUEngine, format):
+    df = pl.LazyFrame({"a": ["2020-01-01T00:00:00Z", "invalid"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime, format, strict=False, cache=False)
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_to_datetime_escaped_percent_hash(engine: pl.GPUEngine):
+    # "%%" is a literal "%", so "%%#z" is literal text, not the "#" flag.
+    df = pl.LazyFrame({"a": ["2020-01-01 %#z", "2021-06-15 %#z"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime("ms"), "%Y-%m-%d %%#z", cache=False)
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "target, repl",
     [("a", "a"), ("Wı", "☺"), ("FG", ""), ("doesnotexist", "blahblah")],  # noqa: RUF001

@@ -2394,22 +2394,35 @@ make_byte_stream_split_table(bool as_struct)
   auto col1_data = random_values<int64_t>(num_rows);
   auto col2_data = random_values<float>(num_rows);
   auto col3_data = random_values<double>(num_rows);
+  auto col4_data = random_values<int8_t>(num_rows);
+  auto col5_data = random_values<int16_t>(num_rows);
+  auto col6_data = random_values<uint8_t>(num_rows);
+  auto col7_data = random_values<uint16_t>(num_rows);
 
   column_wrapper<int32_t> col0{col0_data.begin(), col0_data.end(), no_nulls()};
   column_wrapper<int64_t> col1{col1_data.begin(), col1_data.end(), no_nulls()};
   column_wrapper<float> col2{col2_data.begin(), col2_data.end(), no_nulls()};
   column_wrapper<double> col3{col3_data.begin(), col3_data.end(), no_nulls()};
+  // 8- and 16-bit integers are stored as INT32
+  column_wrapper<int8_t> col4{col4_data.begin(), col4_data.end(), no_nulls()};
+  column_wrapper<int16_t> col5{col5_data.begin(), col5_data.end(), no_nulls()};
+  column_wrapper<uint8_t> col6{col6_data.begin(), col6_data.end(), no_nulls()};
+  column_wrapper<uint16_t> col7{col7_data.begin(), col7_data.end(), no_nulls()};
 
   // throw in a list to make sure both decoders are working
-  auto col4 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
+  auto col8 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
 
   std::vector<std::unique_ptr<cudf::column>> columns;
-  columns.reserve(5);
+  columns.reserve(9);
   columns.push_back(col0.release());
   columns.push_back(col1.release());
   columns.push_back(col2.release());
   columns.push_back(col3.release());
-  columns.push_back(std::move(col4));
+  columns.push_back(col4.release());
+  columns.push_back(col5.release());
+  columns.push_back(col6.release());
+  columns.push_back(col7.release());
+  columns.push_back(std::move(col8));
 
   return [&]() -> std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata> {
     auto const encoding = cudf::io::column_encoding::BYTE_STREAM_SPLIT;
@@ -2434,11 +2447,15 @@ make_byte_stream_split_table(bool as_struct)
       expected_metadata.column_metadata[0].child(1).set_name("int64s");
       expected_metadata.column_metadata[0].child(2).set_name("floats");
       expected_metadata.column_metadata[0].child(3).set_name("doubles");
-      expected_metadata.column_metadata[0].child(4).set_name("int32list");
-      for (int idx = 0; idx <= 3; idx++) {
+      expected_metadata.column_metadata[0].child(4).set_name("int8s");
+      expected_metadata.column_metadata[0].child(5).set_name("int16s");
+      expected_metadata.column_metadata[0].child(6).set_name("uint8s");
+      expected_metadata.column_metadata[0].child(7).set_name("uint16s");
+      expected_metadata.column_metadata[0].child(8).set_name("int32list");
+      for (int idx = 0; idx <= 7; idx++) {
         expected_metadata.column_metadata[0].child(idx).set_encoding(encoding);
       }
-      expected_metadata.column_metadata[0].child(4).child(1).set_encoding(encoding);
+      expected_metadata.column_metadata[0].child(8).child(1).set_encoding(encoding);
 
       return {std::move(tbl), expected_metadata};
     }
@@ -2452,12 +2469,16 @@ make_byte_stream_split_table(bool as_struct)
     expected_metadata.column_metadata[1].set_name("int64s");
     expected_metadata.column_metadata[2].set_name("floats");
     expected_metadata.column_metadata[3].set_name("doubles");
-    expected_metadata.column_metadata[4].set_name("int32list");
-    for (int idx = 0; idx <= 3; idx++) {
+    expected_metadata.column_metadata[4].set_name("int8s");
+    expected_metadata.column_metadata[5].set_name("int16s");
+    expected_metadata.column_metadata[6].set_name("uint8s");
+    expected_metadata.column_metadata[7].set_name("uint16s");
+    expected_metadata.column_metadata[8].set_name("int32list");
+    for (int idx = 0; idx <= 7; idx++) {
       expected_metadata.column_metadata[idx].set_encoding(encoding);
     }
 
-    expected_metadata.column_metadata[4].child(1).set_encoding(encoding);
+    expected_metadata.column_metadata[8].child(1).set_encoding(encoding);
     return {std::move(tbl), expected_metadata};
   }();
 }

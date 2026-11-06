@@ -12,6 +12,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/errc.hpp>
 #include <cudf/join/conditional_join.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -679,10 +680,14 @@ TEST_F(MixedInnerJoinTestInt32, LargeDataMultiBlockCoordination)
   EXPECT_GT(expected_size, 0);
 
   auto to_sorted_pairs = [](PairJoinReturn const& join_result) {
+    auto const left_indices =
+      cudf::detail::make_std_vector(*join_result.first, cudf::get_default_stream());
+    auto const right_indices =
+      cudf::detail::make_std_vector(*join_result.second, cudf::get_default_stream());
     std::vector<std::pair<cudf::size_type, cudf::size_type>> result_pairs;
-    for (size_t i = 0; i < join_result.first->size(); ++i) {
-      result_pairs.emplace_back(join_result.first->element(i, cudf::get_default_stream()),
-                                join_result.second->element(i, cudf::get_default_stream()));
+    result_pairs.reserve(left_indices.size());
+    for (size_t i = 0; i < left_indices.size(); ++i) {
+      result_pairs.emplace_back(left_indices[i], right_indices[i]);
     }
     std::sort(result_pairs.begin(), result_pairs.end());
     return result_pairs;
@@ -695,6 +700,9 @@ TEST_F(MixedInnerJoinTestInt32, LargeDataMultiBlockCoordination)
 
   EXPECT_EQ(result.first->size(), result2.first->size());
   EXPECT_EQ(result.first->size(), result3.first->size());
+  ASSERT_EQ(result.first->size(), result.second->size());
+  ASSERT_EQ(result2.first->size(), result2.second->size());
+  ASSERT_EQ(result3.first->size(), result3.second->size());
 
   auto pairs1 = to_sorted_pairs(result);
   auto pairs2 = to_sorted_pairs(result2);
@@ -703,10 +711,7 @@ TEST_F(MixedInnerJoinTestInt32, LargeDataMultiBlockCoordination)
   EXPECT_TRUE(std::equal(pairs1.begin(), pairs1.end(), pairs2.begin()));
   EXPECT_TRUE(std::equal(pairs1.begin(), pairs1.end(), pairs3.begin()));
 
-  for (size_t i = 0; i < result.first->size(); ++i) {
-    auto left_idx  = result.first->element(i, cudf::get_default_stream());
-    auto right_idx = result.second->element(i, cudf::get_default_stream());
-
+  for (auto const& [left_idx, right_idx] : pairs1) {
     EXPECT_GE(left_idx, 0);
     EXPECT_LT(left_idx, left_size);
     EXPECT_GE(right_idx, 0);

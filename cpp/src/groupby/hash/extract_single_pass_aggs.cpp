@@ -23,6 +23,16 @@
 
 namespace cudf::groupby::detail::hash {
 
+std::unique_ptr<aggregation> make_mean_numerator_aggregation(data_type values_type)
+{
+  // Share the accumulator with a requested SUM when it already has MEAN's target type.
+  if (cudf::detail::target_type(values_type, aggregation::SUM) ==
+      cudf::detail::target_type(values_type, aggregation::MEAN)) {
+    return make_sum_aggregation();
+  }
+  return std::make_unique<cudf::detail::mean_sum_aggregation>();
+}
+
 // Groupby-specific functor for collecting simple aggregations
 struct simple_aggregation_collector {
   // Default case: return clone of the aggregation
@@ -70,7 +80,7 @@ simple_aggregation_collector::operator()<aggregation::MEAN>(data_type col_type,
 {
   CUDF_EXPECTS(is_fixed_width(col_type), "MEAN aggregation expects fixed width type");
   std::vector<std::unique_ptr<aggregation>> aggs;
-  aggs.push_back(make_sum_aggregation());
+  aggs.push_back(make_mean_numerator_aggregation(col_type));
   // COUNT_VALID
   aggs.push_back(make_count_aggregation());
   return aggs;

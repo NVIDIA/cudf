@@ -33,6 +33,8 @@ constexpr bool is_reduction_supported(aggregation::Kind kind)
     case aggregation::PRODUCT: return cudf::detail::is_valid_aggregation<T, aggregation::PRODUCT>();
     case aggregation::SUM_OF_SQUARES:
       return cudf::detail::is_valid_aggregation<T, aggregation::SUM_OF_SQUARES>();
+    case aggregation::MEAN_SUM:
+      return cudf::detail::is_valid_aggregation<T, aggregation::MEAN_SUM>();
     case aggregation::SUM_OVERFLOW:
       return cudf::detail::is_valid_aggregation<T, aggregation::SUM_OVERFLOW>();
     // Target-type validity alone does not constrain extrema's storage or comparisons.

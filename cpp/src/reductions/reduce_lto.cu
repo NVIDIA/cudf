@@ -9,7 +9,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
-#include <cudf/detail/utilities/string_utils.hpp>
+#include <cudf/detail/utilities/strings.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/errc.hpp>
 #include <cudf/null_mask.hpp>
@@ -239,13 +239,7 @@ std::tuple<detail::memory_layout, std::vector<value_reflection>> reflect_state(
     layout            = layout.append(field_layout);
   }
 
-  layout = layout
-             // end of tuple struct
-             .aligned()
-             // append the error code layout
-             .append(detail::memory_layout_of<errc>)
-             // end of the state struct
-             .aligned();
+  layout = layout.aligned().append(detail::memory_layout_of<errc>).aligned();
 
   return {layout, reflect_value_parameters(state_types, is_optional)};
 }
@@ -348,7 +342,7 @@ callback_reflection reflect_callback(std::string_view stage,
                                      std::string_view symbol)
 {
   auto udf_params =
-    detail::join_strings(parameters.begin(), parameters.end(), ", ", &value_reflection::physical);
+    detail::string_join(parameters.begin(), parameters.end(), ", ", &value_reflection::physical);
   return {.stage            = stage,
           .target           = target,
           .udf_params_macro = udf_params_macro,
@@ -452,25 +446,26 @@ std::optional<rtcx::blob> compile_udf_dispatcher(std::span<callback_reflection c
     // The early return handles only all-default callbacks. For mixed default/custom symbols,
     // skip matching callbacks to avoid duplicate definitions and wrappers that call themselves.
     if (callback.symbol == callback.target) { continue; }
-    auto const parameter_types = detail::join_strings(
+    auto const parameter_types = detail::string_join(
       callback.parameters.begin(), callback.parameters.end(), ", ", &value_reflection::logical);
     auto const indices = std::views::iota(size_t{0}, callback.parameters.size());
     auto const declarations =
-      detail::join_strings(indices.begin(), indices.end(), ", ", [&](size_t i) {
+      detail::string_join(indices.begin(), indices.end(), ", ", [&](size_t i) {
         return std::format("{} arg{}", callback.parameters[i].logical, i);
       });
-    auto const arguments = detail::join_strings(
+    auto const arguments = detail::string_join(
       indices.begin(), indices.end(), ", ", [](size_t i) { return std::format("arg{}", i); });
-    source += std::format(
-      R"CUDA(
+    source = std::format(
+      R"CUDA({}
+
 extern "C" __device__ ::cudf::errc {}({});
 
 extern "C" __device__ ::cudf::errc {}({})
 {{
   return {}({});
 }}
-
 )CUDA",
+      source,
       callback.symbol,
       parameter_types,
       callback.target,
@@ -492,7 +487,7 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
   // Physical storage and launch specialization determine the kernel fragment. Logical UDF types
   // and entry-point names occur only in the independently cached dispatcher fragment.
 
-  auto const callbacks_defines = detail::join_strings(
+  auto const callbacks_defines = detail::string_join(
     callbacks.begin(), callbacks.end(), "\n", [](callback_reflection const& callback) {
       return std::format("#define {} {}", callback.udf_params_macro, callback.udf_params);
     });

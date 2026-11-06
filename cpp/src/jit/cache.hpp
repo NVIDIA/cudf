@@ -102,7 +102,26 @@ kernel get_kernel(std::string const& name,
                   std::string const& kernel_instance);
 
 /**
- * @brief Gets a kernel fragment from an embedded CUDA source file
+ * @brief Gets a cached LTO fragment compiled from caller-provided CUDA source.
+ *
+ * Filesystem headers and their dependencies must remain unchanged while caches may be reused.
+ *
+ * @param name Translation-unit name used for compilation and logging
+ * @param source_code Null-terminated CUDA source
+ * @param header_include_names Names of additional in-memory headers
+ * @param headers Matching null-terminated header contents
+ * @param include_paths Filesystem header directories, searched before bundled directories
+ * @param use_pch Enable automatic precompiled headers on supported NVRTC versions
+ */
+rtcx::blob get_user_fragment(char const* name,
+                             char const* source_code,
+                             std::span<char const* const> header_include_names,
+                             std::span<char const* const> headers,
+                             std::span<char const* const> include_paths,
+                             bool use_pch);
+
+/**
+ * @brief Gets a cached kernel LTO fragment from an embedded CUDA source file
  * @param name Debug name for the kernel fragment (used for caching and logging)
  * @param source_file_id Identifier for the embedded source file (used to locate the source and for
  * caching)

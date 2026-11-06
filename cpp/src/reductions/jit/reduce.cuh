@@ -72,8 +72,8 @@ __device__ void update_row(State& state,
                            Context... context)
 {
   Inputs::map([&]<typename... A> {
-    // TODO: we could potentialy optimize this to prevent loading values that the predicate rejects.
-    // The non-null-aware path always loads the null-masks to check validity first.
+    // TODO: we could potentially optimize this to prevent loading values that the predicate
+    // rejects. The non-null-aware path always loads the null-masks to check validity first.
     if constexpr (!NullAware) {
       if (!(A::is_valid(inputs, row) && ... && true)) { return; }
     }
@@ -248,48 +248,28 @@ __device__ void finalize(State const& state,
  * `MERGE`. This requires a single-block launch; the function has no grid-wide synchronization.
  * Dependent phases must execute in stream order. Empty inputs still reduce the identity state.
  *
- * With `NullAware`, inputs are passed through nullable accessors and output values use
- * `cuda::std::optional`. Otherwise, rows with any null column/scalar input are skipped and outputs
- * are valid.
- * User-data accessors always pass a plain `void*`. Callback errors do not stop processing:
- * states retain the greatest error code, which is combined with the finalizer's code in `error`.
- *
- * Finalization writes row zero of each output view and overwrites its first validity word,
- * when present. Output views must have offset zero and independent single-row storage.
- *
- * @pre Launch one-dimensional blocks of exactly `BlockSize` threads, with all threads calling
- * this function. `BlockSize` must be a power of two between 32 and 1024.
- * @pre When `UseWarpReduce` is true, `State` must support bytewise copying and warp shuffles.
- *
  * @tparam NullAware Whether callbacks receive nullable input/output values
  * @tparam Inputs Type list of input accessors in update-parameter order
  * @tparam Outputs Type list of output accessors in finalization-parameter order
  * @tparam BlockSize Number of threads per block
  * @tparam UseWarpReduce Use warp shuffles and shared warp leaders; otherwise use global scratch
  * @tparam Filter Callable selecting rows before the update callback
- * @tparam State State containing `values`, `error`, and the field type list `types`
+ * @tparam State State containing values and error
  * @tparam Init Callable `errc(state pointers...)` that initializes every field to its identity
  * @tparam Update Callable `errc(row, state pointers..., input values...)`
- * @tparam Merge Callable `errc(destination pointers..., source values...)`; must be associative
- * and preserve the identity. Update/merge order and grouping are unspecified.
+ * @tparam Merge Callable `errc(destination pointers..., source values...)`
  * @tparam Finalize Callable `errc(output pointers..., state values...)`
  *
  * @param phase Reduction phase to execute
- * @param num_rows Nonnegative count of input rows in `REDUCE`, or partial states in `MERGE`;
- * unused in `FINALIZE`
+ * @param num_rows Count of input rows
  * @param inputs Device input views consumed by the input accessors in `REDUCE`
  * @param outputs Device array of `Outputs::size` single-row views, used only during finalization
- * @param partials Source states for `MERGE`, or one final state for `FINALIZE`; unused in `REDUCE`
- * @param results Writable array of `gridDim.x` states; unused in `FINALIZE`
- * @param scratch Writable array of `gridDim.x * BlockSize` states when `UseWarpReduce` is false
- * and the phase is not `FINALIZE`; may be null otherwise
+ * @param partials Source states for `MERGE`, or one final state for `FINALIZE`
+ * @param results Writable array of `gridDim.x` states
+ * @param scratch Writable array of `gridDim.x * BlockSize` states when `UseWarpReduce` is false and
+ * the phase is not `FINALIZE`
  * @param error Device error slot written only when finalization runs
  * @param finalize_inline Whether to finalize `results[0]` in a single-block reduction/merge launch
- * @param init State initialization callback
- * @param filter Row filter callback, called only during input reduction
- * @param update Row update callback
- * @param merge State merge callback
- * @param finalize Output finalization callback
  */
 template <bool NullAware,
           typename Inputs,

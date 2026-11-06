@@ -300,19 +300,16 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  *
  * Initialize every independent state to its identity. Merge must be associative and preserve
  * that identity; update/merge order is unspecified. An empty filter symbol selects all rows.
- * A false selection or filter error skips update. Row indices refer to the input views.
+ * A false selection skips update.
  *
  * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
- * State and outputs support fixed-width types and strings. Keep referenced string characters
- * alive until stream work completes; returned string columns own a copy.
+ * State and outputs support fixed-width types and strings.
  *
  * With @c null_aware::YES, inputs, state and outputs use @c cuda::std::optional<T>, with mutable
  * parameters passed as pointers to optionals. Empty optionals represent nulls. Callbacks define
- * null-state identities and output validity. With @c null_aware::NO, use plain values; rows with
- * any null column/scalar input are skipped before filtering. Indices, the filter's bool pointer
- * and @c void* user-data inputs are never optional. Filter and update share one set of row loads.
- *
- * Fragment bytes and symbol names are non-owning and must outlive the call. See @ref lto_fragment.
+ * null-state identities and output validity.
+ * With @c null_aware::NO, use plain values; rows with any null column/scalar input are skipped
+ * before filtering.
  */
 struct reduce_udf {
   lto_fragments fragments{};    ///< Device-code fragments
@@ -324,11 +321,7 @@ struct reduce_udf {
 };
 
 /**
- * @brief Reduces rows into one single-row column per requested output, in specification order.
- *
- * Column lengths must match; scalars and user data broadcast. With no column input there are
- * zero rows. Empty inputs and selections finalize the identity state; callbacks determine
- * values and validity. Input/state/output types and callback signatures follow @ref reduce_udf.
+ * @brief Reduces rows into one single-row column per requested output.
  *
  * @throws std::invalid_argument for mismatched input lengths or unsupported state/output types
  * @throws cudf::evaluation_error for callback failures

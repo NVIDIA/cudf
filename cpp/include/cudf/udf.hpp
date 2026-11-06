@@ -27,24 +27,26 @@ namespace CUDF_EXPORT cudf {
  * @{
  */
 
-/// @brief Device-code formats accepted by LTO execution APIs.
-enum class lto_binary_type : uint8_t { LTO_IR = 0, FATBIN = 1, PTX = 2 };
+/**
+ * @brief The type of LTO Binary
+ */
+enum class lto_binary_type : uint8_t {
+  LTO_IR = 0,  //< LTO-IR binary
+  FATBIN = 1   //< FATBIN binary
+};
 
 /**
- * @brief Non-owning device-code fragment.
+ * @brief A compiled device module to link into a JIT kernel.
  *
  * A module may define multiple functions and reference functions in other modules. Keep its bytes
  * alive until evaluation completes or a reusable transform program has been constructed.
- * PTX must include its terminating zero.
- * Declare callback symbols with @c extern "C" to avoid C++ name mangling.
- *
  */
 struct lto_fragment {
-  lto_binary_type type = lto_binary_type::LTO_IR;  ///< Device-code format
-  std::span<uint8_t const> data{};                 ///< Compiled bytes
+  lto_binary_type type          = lto_binary_type::LTO_IR;  ///< Binary format of the module
+  std::span<uint8_t const> data = {};                       ///< The module's bytes
 };
 
-/// @brief Non-owning collection of compiled device-code fragments.
+/// @brief Device modules linked into a JIT kernel.
 using lto_fragments = std::span<lto_fragment const>;
 
 /**
@@ -54,10 +56,8 @@ using lto_fragments = std::span<lto_fragment const>;
  */
 struct [[nodiscard]] compiled_fragment {
   /// @brief Returns a non-owning view of the compiled fragment
+  /// @return Non-owning view of the compiled fragment
   [[nodiscard]] lto_fragment view() const noexcept;
-
-  /// @brief Returns a non-owning view of the compiled fragment
-  [[nodiscard]] operator lto_fragment() const noexcept { return view(); }
 
  private:
   std::shared_ptr<rtcx::blob_t> blob_;
@@ -65,26 +65,37 @@ struct [[nodiscard]] compiled_fragment {
   compiled_fragment(std::shared_ptr<rtcx::blob_t> blob) : blob_(std::move(blob)) {}
 
   friend compiled_fragment compile_cuda_to_lto_ir(char const*,
-                                                  std::span<char const*>,
-                                                  std::span<char const*>,
-                                                  std::span<char const* const>);
+                                                  std::span<char const* const>,
+                                                  std::span<char const* const>,
+                                                  std::span<char const* const>,
+                                                  bool);
 };
 
 /**
  * @brief Compiles CUDA device source into an owning LTO IR fragment.
  *
+ * Compiled fragments are cached by source, in-memory headers, ordered include paths and PCH use.
+ *
+ * Filesystem headers and their dependencies must remain unchanged while caches may be reused;
+ * use versioned include paths when changing filesystem dependencies.
+ *
+ * When PCH is enabled, headers used to build it must remain unchanged while it may be reused.
+ * Place changing headers after `#pragma nv_hdrstop` or disable PCH.
+ *
  * @param source_code Null-terminated CUDA source
  * @param include_names Null-terminated names of additional in-memory headers
  * @param includes Matching null-terminated header contents
- * @param include_paths Filesystem header directories
+ * @param include_paths Filesystem header directories, searched before bundled header directories
+ * @param use_pch Enable automatic precompiled headers on supported NVRTC versions
  * @return Shared ownership of the compiled bytes
- * @throws std::invalid_argument for null source or mismatched header spans
+ * @throws std::invalid_argument for mismatched header spans
  * @throws std::runtime_error if compilation fails
  */
 compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
-                                         std::span<char const*> include_names,
-                                         std::span<char const*> includes,
-                                         std::span<char const* const> include_paths);
+                                         std::span<char const* const> include_names,
+                                         std::span<char const* const> includes,
+                                         std::span<char const* const> include_paths,
+                                         bool use_pch = true);
 
 /** @} */  // end of group
 

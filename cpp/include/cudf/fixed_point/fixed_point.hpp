@@ -9,6 +9,7 @@
 #include <cudf/fixed_point/temporary.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/cmath>
 #include <cuda/numeric>
 #include <cuda/std/cassert>
 #include <cuda/std/cmath>
@@ -83,22 +84,10 @@ template <typename Rep,
 CUDF_HOST_DEVICE inline constexpr Rep ipow(T exponent)
 {
   cudf_assert(exponent >= 0 && "integer exponentiation with negative exponent is not possible.");
-
+  // cuda::ipow returns 0 when a power-of-two base yields exactly the top bit (NVIDIA/cccl#12322)
   if constexpr (Base == numeric::Radix::BASE_2) { return static_cast<Rep>(1) << exponent; }
 
-  // Note: Including an array here introduces too much register pressure
-  // https://simple.wikipedia.org/wiki/Exponentiation_by_squaring
-  // This is the iterative equivalent of the recursive definition (faster)
-  // Quick-bench for squaring: https://quick-bench.com:443/q/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
-  if (exponent == 0) { return static_cast<Rep>(1); }
-  auto extra  = static_cast<Rep>(1);
-  auto square = static_cast<Rep>(Base);
-  while (exponent > 1) {
-    if (exponent & 1) { extra *= square; }
-    exponent >>= 1;
-    square *= square;
-  }
-  return square * extra;
+  return cuda::ipow(static_cast<Rep>(Base), exponent);
 }
 
 /** @brief Function that performs a `right shift` scale "times" on the `val`

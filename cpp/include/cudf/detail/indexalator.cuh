@@ -9,6 +9,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/normalizing_iterator.cuh>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
@@ -64,12 +65,12 @@ struct input_indexalator : base_normalator<input_indexalator, cudf::size_type> {
    * @brief Dispatch functor for resolving a Integer value from any integer type
    */
   struct normalize_type {
-    template <typename T, CUDF_ENABLE_IF(cudf::is_index_type<T>())>
+    template <cudf::concepts::index_type T>
     __device__ cudf::size_type operator()(void const* tp)
     {
       return static_cast<cudf::size_type>(*static_cast<T const*>(tp));
     }
-    template <typename T, CUDF_ENABLE_IF(not cudf::is_index_type<T>())>
+    template <typename T>
     __device__ cudf::size_type operator()(void const*)
     {
       CUDF_UNREACHABLE("only integral types are supported");
@@ -162,12 +163,12 @@ struct output_indexalator : base_normalator<output_indexalator, cudf::size_type>
    * @brief Dispatch functor for setting the index value from a size_type value.
    */
   struct normalize_type {
-    template <typename T, CUDF_ENABLE_IF(cudf::is_index_type<T>())>
+    template <cudf::concepts::index_type T>
     __device__ void operator()(void* tp, cudf::size_type const value)
     {
       (*static_cast<T*>(tp)) = static_cast<T>(value);
     }
-    template <typename T, CUDF_ENABLE_IF(not cudf::is_index_type<T>())>
+    template <typename T>
     __device__ void operator()(void*, cudf::size_type const)
     {
       CUDF_UNREACHABLE("only index types are supported");
@@ -207,12 +208,13 @@ struct indexalator_factory {
    * @brief A type_dispatcher functor to create an input iterator from an indices column.
    */
   struct input_indexalator_fn {
-    template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
+    template <cudf::concepts::index_type IndexType>
     input_indexalator operator()(column_view const& indices)
     {
       return input_indexalator(indices.data<IndexType>(), indices.type());
     }
-    template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
+    template <typename IndexType, typename... Args>
+      requires(not cudf::concepts::index_type<IndexType>)
     input_indexalator operator()(Args&&... args)
     {
       CUDF_FAIL("indices must be an index type");
@@ -223,14 +225,15 @@ struct indexalator_factory {
    * @brief Use this class to create an indexalator to a scalar index.
    */
   struct input_indexalator_scalar_fn {
-    template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
+    template <cudf::concepts::index_type IndexType>
     input_indexalator operator()(scalar const& index)
     {
       // note: using static_cast<scalar_type_t<IndexType> const&>(index) creates a copy
       auto const scalar_impl = static_cast<scalar_type_t<IndexType> const*>(&index);
       return input_indexalator(scalar_impl->data(), index.type());
     }
-    template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
+    template <typename IndexType, typename... Args>
+      requires(not cudf::concepts::index_type<IndexType>)
     input_indexalator operator()(Args&&... args)
     {
       CUDF_FAIL("scalar must be an index type");
@@ -241,12 +244,13 @@ struct indexalator_factory {
    * @brief A type_dispatcher functor to create an output iterator from an indices column.
    */
   struct output_indexalator_fn {
-    template <typename IndexType, CUDF_ENABLE_IF(is_index_type<IndexType>())>
+    template <cudf::concepts::index_type IndexType>
     output_indexalator operator()(mutable_column_view const& indices)
     {
       return output_indexalator(indices.data<IndexType>(), indices.type());
     }
-    template <typename IndexType, typename... Args, CUDF_ENABLE_IF(not is_index_type<IndexType>())>
+    template <typename IndexType, typename... Args>
+      requires(not cudf::concepts::index_type<IndexType>)
     output_indexalator operator()(Args&&... args)
     {
       CUDF_FAIL("indices must be an index type");

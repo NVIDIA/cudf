@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
 /**
@@ -84,6 +85,9 @@ namespace detail {
  *
  */
 struct contiguous_split_state;
+
+/// Reads the payload offsets that `packed_metadata_view::column_view` keeps private.
+struct packed_metadata_access;
 }  // namespace detail
 
 /**
@@ -268,6 +272,377 @@ std::size_t packed_size(
   cuda::stream_ref stream                = cudf::get_default_stream(),
   rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
+namespace experimental {
+
+/**
+ * @brief Compression algorithms supported by prepared pack operations.
+ *
+ * A concrete codec is applied to every block of a region, even when that expands the block.
+ * Values are recorded in packed metadata and must not change.
+ */
+enum class pack_compression : int32_t {
+  none      = 0,  ///< Preserve the current uncompressed packed representation
+  automatic = 1,  ///< Cascaded, except that string characters and small regions stay
+                  ///< uncompressed, and so do blocks that Cascaded shrinks too little
+  cascaded = 2,   ///< nvCOMP Cascaded, on values of each region's native width and signedness.
+                  ///< Values wider than 64 bits, such as `DECIMAL128`, and string characters are
+                  ///< treated as bytes.
+  zstd   = 3,     ///< Zstandard
+  snappy = 4,     ///< Snappy
+};
+
+/**
+ * @brief Physical role of a region in a prepared pack operation.
+ */
+enum class pack_region_kind {
+  data,              ///< Fixed-width or other ordinary column data
+  validity,          ///< Null-validity bitmask
+  offsets,           ///< String or list offsets
+  string_characters  ///< String character bytes
+};
+
+/**
+ * @brief One physical buffer of a column in the packed payload.
+ *
+ * A column has a region for each of its data, validity, offsets and characters buffers, and each
+ * region is compressed independently with its own codec.
+ */
+struct pack_region_info {
+  std::size_t region_index;  ///< Stable index within this prepared pack operation
+  /// Path to the column owning this region: the top-level input column index, followed by a
+  /// `column_view::child()` index per nesting level. Validity and offsets regions belong to the
+  /// column they describe, so a list's offsets region has the list's path.
+  std::vector<size_type> column_path;
+  pack_region_kind kind;           ///< Physical role of the region
+  type_id type;                    ///< Logical/native type used to configure the codec
+  std::size_t uncompressed_bytes;  ///< Size in the uncompressed payload, including padding
+};
+
+/**
+ * @brief A region's description and the codec applied to it.
+ */
+class pack_region {
+ public:
+  /**
+   * @brief Construct a region.
+   *
+   * @param info Region description
+   * @param codec Codec applied to the region
+   */
+  pack_region(pack_region_info info, pack_compression codec) : codec{codec}, _info{std::move(info)}
+  {
+  }
+
+  /**
+   * @brief Return the region description.
+   *
+   * @return Region description
+   */
+  [[nodiscard]] pack_region_info const& info() const noexcept { return _info; }
+
+  pack_compression codec;  ///< Codec applied to this region
+
+ private:
+  pack_region_info _info;
+};
+
+/**
+ * @brief Options controlling a prepared pack operation.
+ */
+struct pack_options {
+  /// Codec for every region; with `make_pack_plan_builder()`, each region's initial codec
+  pack_compression compression{pack_compression::automatic};
+  /// Device memory `pack_into()` uses to stage host output and to compact compressed output
+  std::size_t staging_buffer_bytes{128 * 1024 * 1024};
+};
+
+/**
+ * @brief Storage requirements for a prepared pack operation.
+ */
+struct pack_sizes {
+  std::size_t metadata_bytes;     ///< Exact host metadata size
+  std::size_t payload_bytes;      ///< Required destination capacity (an upper bound if compressed)
+  std::size_t payload_alignment;  ///< Required alignment for the payload base address
+  std::size_t uncompressed_payload_bytes;  ///< Exact contiguous size before compression
+};
+
+struct pack_result;
+class pack_plan_builder;
+
+/**
+ * @brief Prepared state for repeatedly packing one table into caller-owned memory.
+ *
+ * Construction performs layout planning once. The input table or packed columns and all referenced
+ * buffers must remain alive and unchanged until every operation using the plan has completed. A
+ * plan is bound to the stream passed to `prepare_pack()`.
+ */
+class pack_plan {
+ public:
+  pack_plan(pack_plan const&)            = delete;
+  pack_plan& operator=(pack_plan const&) = delete;
+  pack_plan(pack_plan&&) noexcept;             ///< Move constructor
+  pack_plan& operator=(pack_plan&&) noexcept;  ///< Move assignment @return `*this`
+  ~pack_plan();
+
+  /**
+   * @brief Return the exact storage requirements for this plan.
+   *
+   * @return Metadata and payload sizes and the payload alignment
+   */
+  [[nodiscard]] pack_sizes sizes() const;
+
+ private:
+  class impl;
+  std::unique_ptr<impl> _impl;
+
+  explicit pack_plan(std::unique_ptr<impl>&& implementation);
+
+  friend pack_plan prepare_pack(cudf::table_view const&,
+                                pack_options const&,
+                                cuda::stream_ref,
+                                cudf::memory_resources);
+  friend class pack_plan_builder;
+  friend pack_result pack_into(pack_plan const&, std::span<uint8_t>, cudf::memory_resources);
+};
+
+/**
+ * @brief Two-stage configuration for a prepared pack operation.
+ *
+ * The builder discovers physical regions once. Callers may edit each `pack_region::codec`.
+ * `build()` finalizes compressor state and destination capacity.
+ */
+class pack_plan_builder {
+ public:
+  pack_plan_builder(pack_plan_builder const&)            = delete;
+  pack_plan_builder& operator=(pack_plan_builder const&) = delete;
+  pack_plan_builder(pack_plan_builder&&) noexcept;             ///< Move constructor
+  pack_plan_builder& operator=(pack_plan_builder&&) noexcept;  ///< Move assignment @return `*this`
+  ~pack_plan_builder();
+
+  [[nodiscard]] std::span<pack_region> regions();              ///< @return Editable regions
+  [[nodiscard]] std::span<pack_region const> regions() const;  ///< @return Read-only regions
+  /**
+   * @brief Consume the builder.
+   *
+   * @throw std::invalid_argument if a region's codec is not a `pack_compression` value
+   *
+   * @return The configured plan
+   */
+  [[nodiscard]] pack_plan build() &&;
+
+ private:
+  struct impl;
+  std::unique_ptr<impl> _impl;
+
+  explicit pack_plan_builder(std::unique_ptr<impl>&& implementation);
+
+  friend pack_plan_builder make_pack_plan_builder(cudf::table_view const&,
+                                                  pack_options const&,
+                                                  cuda::stream_ref,
+                                                  cudf::memory_resources);
+  friend pack_plan_builder make_pack_plan_builder(cudf::packed_columns const&,
+                                                  pack_options const&,
+                                                  cuda::stream_ref,
+                                                  cudf::memory_resources);
+};
+
+/**
+ * @brief Discover configurable physical regions for per-region codec selection.
+ *
+ * Each region initially inherits the codec in `options`. Callers may edit the
+ * returned regions before consuming the builder with `build()`.
+ *
+ * @throw std::invalid_argument if `options.staging_buffer_bytes` is less than 1 MiB
+ *
+ * @param input View of the table to pack
+ * @param options Pack options; `options.compression` is each region's initial codec
+ * @param stream Stream used for planning and subsequent `pack_into()` operations
+ * @param mr Memory resources used by the returned plan. Planning allocates only from the output
+ *           resource, and those allocations live as long as the plan
+ * @return A builder exposing the discovered regions
+ */
+pack_plan_builder make_pack_plan_builder(
+  cudf::table_view const& input,
+  pack_options const& options = {},
+  cuda::stream_ref stream     = cudf::get_default_stream(),
+  cudf::memory_resources mr   = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Discover configurable physical regions of an existing uncompressed `packed_columns`.
+ *
+ * The resulting plan compresses directly from `input.gpu_data` without repacking, for example each
+ * partition produced by `cudf::contiguous_split()`. Each region initially inherits the codec in
+ * `options`. Call `build()` directly to apply `options` to every region.
+ *
+ * @throw std::invalid_argument if `input.metadata` or `input.gpu_data` is null
+ * @throw std::invalid_argument if `input.metadata` does not describe the layout of `input.gpu_data`
+ * @throw std::invalid_argument if `options.staging_buffer_bytes` is less than 1 MiB
+ * @throw cudf::logic_error if `input.metadata` is truncated or malformed
+ *
+ * @param input Existing ordinary, uncompressed packed columns
+ * @param options Pack options; `options.compression` is each region's initial codec
+ * @param stream Stream used for planning and subsequent `pack_into()` operations
+ * @param mr Memory resources used by the returned plan. Planning allocates only from the output
+ *           resource, and those allocations live as long as the plan
+ * @return A builder exposing the discovered regions; its plan borrows `input`
+ */
+pack_plan_builder make_pack_plan_builder(
+  cudf::packed_columns const& input,
+  pack_options const& options = {},
+  cuda::stream_ref stream     = cudf::get_default_stream(),
+  cudf::memory_resources mr   = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Prepare a reusable pack plan for `input`.
+ *
+ * Each physical column buffer (data, offsets, characters or validity) is compressed independently,
+ * in blocks. For compressed plans, `sizes().payload_bytes` is an upper bound; `pack_into()`
+ * reports the actual size.
+ *
+ * Payloads are compressed with `pack_compression::automatic` by default. Only
+ * `pack_compression::none` produces the exact uncompressed layout that `unpack_view()` accepts.
+ *
+ * @throw std::invalid_argument if `options.staging_buffer_bytes` is less than 1 MiB
+ * @throw std::invalid_argument if `options.compression` is not a `pack_compression` value
+ *
+ * @param input View of the table to pack
+ * @param options Compression and codec options
+ * @param stream Stream used for planning and subsequent `pack_into()` operations
+ * @param mr Memory resources used by the returned plan. Planning allocates only from the output
+ *           resource, and those allocations live as long as the plan
+ * @return A move-only plan bound to `input` and `stream`
+ */
+pack_plan prepare_pack(cudf::table_view const& input,
+                       pack_options const& options = {},
+                       cuda::stream_ref stream     = cudf::get_default_stream(),
+                       cudf::memory_resources mr   = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Host metadata and payload size produced by `pack_into()`.
+ */
+struct pack_result {
+  /// Metadata describing the packed payload. Uncompressed output has the same metadata as
+  /// `packed_columns`; compressed output extends it with each region's codec and block layout.
+  std::vector<uint8_t> metadata;
+  std::size_t payload_bytes;  ///< Number of payload bytes written
+};
+
+/**
+ * @brief Execute a prepared pack into caller-owned device or host memory.
+ *
+ * `destination` may be device, pinned host or pageable host memory of at least
+ * `plan.sizes().payload_bytes` bytes. Host and compressed output are staged in windows through
+ * `pack_options::staging_buffer_bytes` of device memory, doubled for compressed host output.
+ * Compressed output synchronizes the stream.
+ *
+ * Work is submitted to the stream captured by the plan. The caller must preserve the input and
+ * destination until that stream reaches the operation.
+ *
+ * The same plan may be executed repeatedly while its input remains valid and unchanged.
+ *
+ * @throw std::invalid_argument if `destination` is smaller than `plan.sizes().payload_bytes`
+ * @throw std::invalid_argument if `destination` is not aligned to `plan.sizes().payload_alignment`
+ * @throw cudf::logic_error if compression fails for a region with a forced codec
+ *
+ * @param plan Prepared pack plan
+ * @param destination Caller-owned output span
+ * @param mr Memory resources for allocations freed before the call returns, including the staging
+ *           buffers; allocations that live as long as the plan use the resources given to it
+ * @return Host metadata and the number of payload bytes written
+ */
+pack_result pack_into(pack_plan const& plan,
+                      std::span<uint8_t> destination,
+                      cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Non-owning view of packed host metadata and device-accessible payload bytes.
+ *
+ * The metadata identifies whether the payload is compressed and which codec each region uses.
+ */
+struct packed_data_view {
+  std::span<uint8_t const> metadata;  ///< Host metadata from `pack_into()`
+  std::span<uint8_t const> payload;   ///< Device, pinned, or pageable bytes
+};
+
+/**
+ * @brief Construct a zero-copy table view over an uncompressed packed payload.
+ *
+ * The returned view must not outlive either buffer in `input`.
+ * Compressed inputs must be passed to `materialize()` instead.
+ *
+ * @throw std::invalid_argument if `input.metadata` describes a compressed payload
+ * @throw cudf::logic_error if the payload is pageable host memory and the device cannot access
+ * pageable memory
+ * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed
+ *
+ * @param input Packed metadata and payload
+ * @return A non-owning table view into `input.payload`
+ */
+table_view unpack_view(packed_data_view input);
+
+/**
+ * @brief Materialize an owning table from any supported packed representation.
+ *
+ * A pageable host payload is first copied to temporary device memory, and can be released once
+ * this call returns. Device and pinned payloads are read in stream order and must remain valid
+ * until the work on `stream` completes.
+ *
+ * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
+ * `payload_alignment` it was packed with
+ * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed
+ *
+ * @param input Packed metadata and payload
+ * @param stream Stream used for the deep copy
+ * @param mr Memory resources used for temporary allocations and the returned table
+ * @return An owning table independent of the packed buffers
+ */
+std::unique_ptr<table> materialize(
+  packed_data_view input,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Materialize an owning table from a subset of the packed top-level columns.
+ *
+ * Only the selected columns are copied or decompressed, and only their bytes are read from a
+ * pageable host payload. Indices may repeat and appear in any order; each one produces an
+ * independent column.
+ *
+ * A pageable payload can be released once this call returns. Device and pinned payloads are read
+ * in stream order and must remain valid until the work on `stream` completes.
+ *
+ * @throw std::out_of_range if an index is not in `[0, num_columns)`
+ * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
+ * `payload_alignment` it was packed with
+ * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed
+ *
+ * @param input Packed metadata and payload
+ * @param column_indices Indices of the top-level columns to materialize, in output order
+ * @param stream Stream used for the deep copy
+ * @param mr Memory resources used for temporary allocations and the returned table
+ * @return An owning table with one column per entry of `column_indices`
+ */
+std::unique_ptr<table> materialize(
+  packed_data_view input,
+  std::span<size_type const> column_indices,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Describe the physical regions of a packed table from its host metadata alone.
+ *
+ * Accepts metadata from `pack_into()`, `cudf::pack()` and `chunked_pack`. Regions are listed in
+ * payload order, with the descriptions `make_pack_plan_builder()` reports for the packed table.
+ *
+ * @throw cudf::logic_error if `metadata` is truncated or malformed
+ *
+ * @param metadata Host metadata of a packed table
+ * @return One description per physical region
+ */
+std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> metadata);
+
+}  // namespace experimental
+
 /**
  * @brief Produce the metadata used for packing a table stored in a contiguous buffer.
  *
@@ -402,9 +777,12 @@ class packed_metadata_view {
 
    private:
     friend class packed_metadata_view;
+    friend struct detail::packed_metadata_access;
     data_type _type{type_id::EMPTY};
     size_type _size{};
     size_type _null_count{};
+    int64_t _data_offset{-1};
+    int64_t _null_mask_offset{-1};
     size_type _num_children{};
     // Span from this entry to the end of the metadata buffer (needed for child traversal).
     std::span<std::uint8_t const> _buffer;
@@ -445,6 +823,8 @@ class packed_metadata_view {
  private:
   // Span from the first top-level column entry to the end of the metadata buffer.
   std::span<std::uint8_t const> _entries;
+  // Byte offset of each top-level column's entry within `_entries`.
+  std::vector<std::size_t> _column_offsets;
   size_type _num_columns{};
   // Table row count, read directly from the serialized table header.
   size_type _num_rows{};

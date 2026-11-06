@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 
 namespace cudf {
 namespace detail {
@@ -32,6 +33,26 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 packed_columns pack(cudf::table_view const& input,
                     cuda::stream_ref stream,
                     rmm::device_async_resource_ref mr);
+
+/**
+ * @copydoc cudf::unpack(std::span<uint8_t const>, uint8_t const*)
+ **/
+table_view unpack(std::span<uint8_t const> metadata, uint8_t const* gpu_data);
+
+/// Reads the payload offsets that `packed_metadata_view::column_view` keeps private.
+struct packed_metadata_access {
+  /// Byte offset of the column's data in the uncompressed payload, or -1 if it has none.
+  [[nodiscard]] static int64_t data_offset(packed_metadata_view::column_view const& column)
+  {
+    return column._data_offset;
+  }
+
+  /// Byte offset of the column's validity mask in the uncompressed payload, or -1 if it has none.
+  [[nodiscard]] static int64_t null_mask_offset(packed_metadata_view::column_view const& column)
+  {
+    return column._null_mask_offset;
+  }
+};
 
 // opaque implementation of `metadata_builder` since it needs to use
 // `serialized_column`, which is only defined in pack.cpp

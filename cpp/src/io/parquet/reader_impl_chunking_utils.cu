@@ -953,6 +953,22 @@ struct compute_page_level_decode_size {
   }
 };
 
+/**
+ * @brief Functor to compute the nz map scratch size needed for a page.
+ */
+struct compute_page_nz_map_size_fn {
+  cudf::device_span<ColumnChunkDesc const> chunks;
+  int level_type_size;
+  size_t skip_rows;
+  size_t num_rows;
+
+  __device__ size_t operator()(PageInfo const& page) const
+  {
+    return compute_page_nz_map_size(
+      page, chunks[page.chunk_idx], level_type_size, skip_rows, num_rows);
+  }
+};
+
 }  // anonymous namespace
 
 cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
@@ -992,6 +1008,25 @@ cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
                     compute_page_level_decode_size{chunks, level_type_size, skip_rows, num_rows});
 
   return level_decode_sizes;
+}
+
+cuda::device_buffer<size_t> compute_nz_map_sizes(device_span<ColumnChunkDesc const> chunks,
+                                                 device_span<PageInfo const> pages,
+                                                 int level_type_size,
+                                                 size_t skip_rows,
+                                                 size_t num_rows,
+                                                 cuda::stream_ref stream,
+                                                 rmm::device_async_resource_ref mr)
+{
+  cuda::device_buffer<size_t> nz_map_sizes(stream, mr, pages.size(), cuda::no_init);
+
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    pages.begin(),
+                    pages.end(),
+                    nz_map_sizes.begin(),
+                    compute_page_nz_map_size_fn{chunks, level_type_size, skip_rows, num_rows});
+
+  return nz_map_sizes;
 }
 
 row_group_pass_data compute_row_group_passes(std::span<row_group_size_info const> row_group_sizes,

@@ -16,6 +16,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/detail/utilities.cuh>
+#include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/replace.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
@@ -306,6 +307,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
+  cudf::memory_resources mrs{mr};
   auto d_strings = column_device_view::create(input.parent(), stream);
 
   auto const strings_count = input.size();
@@ -328,8 +330,9 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   // Count the number of targets in the entire column.
   // Note this may over-count in the case where a target spans adjacent strings.
   cudf::detail::device_scalar<int64_t> d_count(0, stream, cudf::get_current_device_resource_ref());
-  auto const num_blocks = util::div_rounding_up_safe(
-    util::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)), block_size);
+  auto const num_blocks = cudf::detail::div_rounding_up_safe(
+    cudf::detail::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)),
+    block_size);
   count_targets<<<num_blocks, block_size, 0, stream.get()>>>(fn, chars_bytes, d_count.data());
   CUDF_CUDA_TRY(cudaGetLastError());
   auto target_count = d_count.value(stream);
@@ -349,8 +352,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cuda::transform_iterator(cuda::counting_iterator<int64_t>{0}, pair_generator{fn, chars_bytes});
   auto const out_itr = cuda::make_zip_iterator(
     cuda::std::make_tuple(targets_positions.begin(), targets_indices.begin()));
-  auto const copy_end =
-    cudf::detail::copy_if(copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream);
+  auto const copy_end = cudf::detail::copy_if(
+    copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream, mrs.as_temporary());
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(static_cast<int64_t>(std::distance(out_itr, copy_end)), target_count);
@@ -415,7 +418,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   // build the strings columns from the chars and offsets
   return make_strings_column(strings_count,
                              std::move(offsets),
-                             std::move(chars_data.release()[0]),
+                             std::move(*chars_data),
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }

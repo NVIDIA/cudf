@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/interop.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -155,6 +156,34 @@ TEST_F(ToArrowDeviceTest, EmptyDictionary)
   auto dictionary = got_arrow_device->array.children[0]->dictionary;
   ASSERT_NE(dictionary, nullptr);
   EXPECT_EQ(dictionary->n_children, 0);
+}
+
+TEST_F(ToArrowDeviceTest, EmptyDictionaryWithKeys)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b"});
+  auto const meta = std::vector<cudf::column_metadata>({cudf::column_metadata{"d"}});
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.emplace_back(cudf::empty_like(input));
+  cudf::table table(std::move(columns));
+
+  auto schema = cudf::to_arrow_schema(table.view(), meta);
+  ASSERT_NE(schema->children[0]->dictionary, nullptr);
+  EXPECT_STREQ(schema->children[0]->dictionary->format, "u");
+
+  auto from_view         = cudf::to_arrow_device(table.view());
+  auto view_roundtripped = cudf::from_arrow_device(schema.get(), from_view.get());
+  auto const view_after  = cudf::dictionary_column_view(view_roundtripped->column(0));
+  EXPECT_EQ(view_after.size(), 0);
+  ASSERT_EQ(view_after.parent().num_children(), 2);
+  EXPECT_EQ(view_after.keys().type().id(), cudf::type_id::STRING);
+
+  auto from_owned         = cudf::to_arrow_device(std::move(table));
+  auto owned_roundtripped = cudf::from_arrow_device(schema.get(), from_owned.get());
+  auto const owned_after  = cudf::dictionary_column_view(owned_roundtripped->column(0));
+  EXPECT_EQ(owned_after.size(), 0);
+  ASSERT_EQ(owned_after.parent().num_children(), 2);
+  EXPECT_EQ(owned_after.keys().type().id(), cudf::type_id::STRING);
 }
 
 TEST_F(ToArrowDeviceTest, DateTimeTable)

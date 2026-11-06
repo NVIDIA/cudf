@@ -62,7 +62,7 @@ std::unique_ptr<column> from_arrow_string(
                              std::move(offsets_column),
                              std::move(chars),
                              null_count,
-                             std::move(*mask.release()));
+                             std::move(*mask));
 }
 
 constexpr int stringview_vector_idx = 1;

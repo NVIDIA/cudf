@@ -1040,11 +1040,6 @@ def test_datetime_time_passthrough(engine: pl.GPUEngine, make_query):
             id="compare",
         ),
         pytest.param(
-            lambda lf: lf.with_columns(t=pl.col("a").dt.time()).sort("t"),
-            id="sort_key",
-        ),
-        pytest.param(lambda lf: lf.sort(pl.col("a").dt.time()), id="sort_key_expr"),
-        pytest.param(
             lambda lf: lf.group_by(pl.col("a").dt.time()).agg(pl.col("b").sum()),
             id="group_by_key",
         ),

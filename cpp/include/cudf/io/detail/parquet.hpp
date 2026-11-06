@@ -55,13 +55,13 @@ class reader {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader(std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                   std::vector<FileMetaData>&& parquet_metadatas,
                   parquet_reader_options const& options,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr);
+                  cudf::memory_resources mr);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header
@@ -140,7 +140,7 @@ class chunked_reader : private reader {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit chunked_reader(std::size_t chunk_read_limit,
                           std::size_t pass_read_limit,
@@ -148,7 +148,7 @@ class chunked_reader : private reader {
                           std::vector<parquet::FileMetaData>&& parquet_metadatas,
                           parquet_reader_options const& options,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr);
+                          cudf::memory_resources mr);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header.

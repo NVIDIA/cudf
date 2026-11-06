@@ -78,6 +78,7 @@ from cudf_polars.dsl.ir import (
     Distinct,
     Filter,
     GroupBy,
+    HConcat,
     HStack,
     Join,
     Projection,
@@ -360,7 +361,7 @@ def blocks_pushdown(node: IR, facts: PlanFacts) -> bool:
         #   groupby keys.
         # TODO: We can push through an unsliced Union, but need to
         # distribute the filter onto every child.
-        isinstance(node, (Distinct, Rolling, Slice, Union))
+        isinstance(node, (Distinct, HConcat, Rolling, Slice, Union))
         # Can't push through anything that is sliced.
         or (isinstance(node, (GroupBy, Sort)) and node.zlice is not None)
         or (isinstance(node, (ConditionalJoin, Join)) and node.options[2] is not None)

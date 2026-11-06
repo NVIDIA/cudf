@@ -8,9 +8,8 @@
 #include <cudf_test/default_stream.hpp>
 
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
-
-#include <rmm/device_uvector.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/std/utility>
 
@@ -26,12 +25,12 @@ TEST_F(StringsFactoryTest, StringConstructionFromPairs)
   auto const stream = cudf::test::get_default_stream();
 
   auto const h_data = std::vector<char>{'a', 'b', 'c'};
-  auto const d_data = cudf::detail::make_device_uvector_async(
-    h_data, stream, cudf::get_current_device_resource_ref());
+  auto const d_data =
+    cudf::detail::make_device_buffer_async(h_data, stream, cudf::get_current_device_resource_ref());
 
   auto const h_input =
     std::vector<string_pair>{{d_data.data(), 1}, {d_data.data() + 1, 1}, {d_data.data() + 2, 1}};
-  auto const d_input = cudf::detail::make_device_uvector_async(
+  auto const d_input = cudf::detail::make_device_buffer_async(
     h_input, stream, cudf::get_current_device_resource_ref());
   auto const input = cudf::device_span<string_pair const>{d_input.data(), d_input.size()};
   cudf::make_strings_column(input, stream);
@@ -42,12 +41,12 @@ TEST_F(StringsFactoryTest, StringBatchConstruction)
   auto const stream = cudf::test::get_default_stream();
 
   auto const h_data = std::vector<char>{'a', 'b', 'c'};
-  auto const d_data = cudf::detail::make_device_uvector_async(
-    h_data, stream, cudf::get_current_device_resource_ref());
+  auto const d_data =
+    cudf::detail::make_device_buffer_async(h_data, stream, cudf::get_current_device_resource_ref());
 
   auto const h_input =
     std::vector<string_pair>{{d_data.data(), 1}, {d_data.data() + 1, 1}, {d_data.data() + 2, 1}};
-  auto const d_input = cudf::detail::make_device_uvector_async(
+  auto const d_input = cudf::detail::make_device_buffer_async(
     h_input, stream, cudf::get_current_device_resource_ref());
 
   std::vector<cudf::device_span<string_pair const>> input(
@@ -63,7 +62,8 @@ TEST_F(StringsFactoryTest, StructConstruction)
   children.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3}.release());
   children.push_back(cudf::test::strings_column_wrapper{"a", "b", "c"}.release());
 
-  auto result = cudf::make_structs_column(3, std::move(children), 0, rmm::device_buffer{}, stream);
+  auto result = cudf::make_structs_column(
+    3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), stream);
   EXPECT_EQ(result->size(), 3);
 }
 
@@ -75,7 +75,7 @@ TEST_F(StringsFactoryTest, StructHierarchyConstruction)
   children.push_back(cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3}.release());
   children.push_back(cudf::test::strings_column_wrapper{"a", "b", "c"}.release());
 
-  auto result =
-    cudf::create_structs_hierarchy(3, std::move(children), 0, rmm::device_buffer{}, stream);
+  auto result = cudf::create_structs_hierarchy(
+    3, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), stream);
   EXPECT_EQ(result->size(), 3);
 }

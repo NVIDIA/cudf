@@ -22,10 +22,10 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/for_each.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -124,7 +124,9 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::struc
 
     // Only create null mask if at least one input structs column is nullable.
     auto [null_mask, null_count] =
-      create_mask ? create_mask_fn() : std::pair{rmm::device_buffer{0, stream, mr}, size_type{0}};
+      create_mask ? create_mask_fn()
+                  : std::pair{cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+                              size_type{0}};
     return make_structs_column(
       output_size, std::move(output_struct_members), null_count, std::move(null_mask), stream, mr);
   }
@@ -169,7 +171,8 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     auto d_table     = table_device_view::create(strings_columns, stream);
     auto num_strings = num_columns * strings_count;
 
-    rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(num_strings, stream);
+    cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
+      stream, cudf::get_current_device_resource_ref(), num_strings, cuda::no_init);
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{num_strings},

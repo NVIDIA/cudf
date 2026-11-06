@@ -6,10 +6,9 @@
 #include "detail/optimized_unbounded_window.hpp"
 #include "detail/range_window_bounds.hpp"
 #include "detail/rolling.cuh"
-#include "detail/rolling_udf.cuh"
 #include "detail/rolling_utils.cuh"
 
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
@@ -74,11 +73,11 @@ std::unique_ptr<column> grouped_rolling_window(table_view const& group_keys,
       input, default_outputs, preceding_window, following_window, min_periods, aggr, stream, mr);
   }
 
-  using sort_groupby_helper = cudf::groupby::detail::sort::sort_groupby_helper;
+  using cudf::groupby::detail::groupby_helper;
 
-  sort_groupby_helper helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES, {}};
-  auto const& group_offsets{helper.group_offsets(stream)};
-  auto const& group_labels{helper.group_labels(stream)};
+  groupby_helper helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
+  auto const& group_offsets{helper.group_offsets(stream, cudf::get_current_device_resource_ref())};
+  auto const& group_labels{helper.group_labels(stream, cudf::get_current_device_resource_ref())};
 
   // `group_offsets` are interpreted in adjacent pairs, each pair representing the offsets
   // of the first, and one past the last elements in a group.
@@ -94,33 +93,14 @@ std::unique_ptr<column> grouped_rolling_window(table_view const& group_keys,
   //   groups.)
   //   3. [0, 500, 1000] indicates two equal-sized groups: [0,500), and [500,1000).
 
-  if (aggr.kind == aggregation::CUDA || aggr.kind == aggregation::PTX) {
-    cudf::detail::preceding_window_wrapper grouped_preceding_window{
-      group_offsets.data(), group_labels.data(), preceding_window};
-
-    cudf::detail::following_window_wrapper grouped_following_window{
-      group_offsets.data(), group_labels.data(), following_window};
-
-    return cudf::detail::rolling_window_udf(
-      input,
-      cudf::detail::preceding_window_wrapper{
-        group_offsets.data(), group_labels.data(), preceding_window},
-      cudf::detail::following_window_wrapper{
-        group_offsets.data(), group_labels.data(), following_window},
-      min_periods,
-      aggr,
-      stream,
-      mr);
-  } else {
-    namespace utils = cudf::detail::rolling;
-    auto groups     = utils::grouped{group_labels.data(), group_offsets.data()};
-    auto preceding =
-      utils::make_clamped_window_iterator<utils::direction::PRECEDING>(preceding_window, groups);
-    auto following =
-      utils::make_clamped_window_iterator<utils::direction::FOLLOWING>(following_window, groups);
-    return cudf::detail::rolling_window(
-      input, default_outputs, preceding, following, min_periods, aggr, stream, mr);
-  }
+  namespace utils = cudf::detail::rolling;
+  auto groups     = utils::grouped{group_labels.data(), group_offsets.data()};
+  auto preceding =
+    utils::make_clamped_window_iterator<utils::direction::PRECEDING>(preceding_window, groups);
+  auto following =
+    utils::make_clamped_window_iterator<utils::direction::FOLLOWING>(following_window, groups);
+  return cudf::detail::rolling_window(
+    input, default_outputs, preceding, following, min_periods, aggr, stream, mr);
 }
 
 }  // namespace detail
@@ -364,9 +344,10 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
 [[nodiscard]] static null_order deduce_null_order(
   column_view const& orderby,
   order order,
-  rmm::device_uvector<size_type> const& offsets,
+  device_span<size_type const> offsets,
   rmm::device_uvector<size_type> const& per_group_nulls,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto d_orderby = column_device_view::create(orderby, stream);
   if (order == order::ASCENDING) {
@@ -384,12 +365,11 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
           return nulls_per_group[i] < (d_offsets[i + 1] - d_offsets[i]) &&
                  d_orderby.is_null_nocheck(d_offsets[i]);
         }));
-    auto is_before =
-      thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     it,
-                     it + offsets.size() - 1,
-                     false,
-                     cuda::std::logical_or<>{});
+    auto is_before = thrust::reduce(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                    it,
+                                    it + offsets.size() - 1,
+                                    false,
+                                    cuda::std::logical_or<>{});
     return is_before ? null_order::BEFORE : null_order::AFTER;
   } else {
     // Sort order is DESCENDING
@@ -406,12 +386,11 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
           return nulls_per_group[i] < (d_offsets[i + 1] - d_offsets[i]) &&
                  d_orderby.is_null_nocheck(d_offsets[i + 1] - 1);
         }));
-    auto is_before =
-      thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     it,
-                     it + offsets.size() - 1,
-                     false,
-                     cuda::std::logical_or<>{});
+    auto is_before = thrust::reduce(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                    it,
+                                    it + offsets.size() - 1,
+                                    false,
+                                    cuda::std::logical_or<>{});
     return is_before ? null_order::BEFORE : null_order::AFTER;
   }
 }
@@ -467,15 +446,22 @@ std::unique_ptr<column> grouped_range_rolling_window(table_view const& group_key
   };
   auto [preceding_column, following_column] = [&]() {
     if (group_keys.num_columns() > 0 && order_by_column.has_nulls()) {
-      using sort_helper = cudf::groupby::detail::sort::sort_groupby_helper;
-      sort_helper helper{group_keys, null_policy::INCLUDE, sorted::YES, {}};
-      auto const& labels   = helper.group_labels(stream);
-      auto const& offsets  = helper.group_offsets(stream);
-      auto per_group_nulls = order_by_column.has_nulls()
-                               ? detail::nulls_per_group(order_by_column, offsets, stream)
-                               : rmm::device_uvector<size_type>{0, stream};
+      using cudf::groupby::detail::groupby_helper;
+      groupby_helper helper{group_keys, null_policy::INCLUDE, sorted::YES};
+      auto const& labels  = helper.group_labels(stream, cudf::get_current_device_resource_ref());
+      auto const& offsets = helper.group_offsets(stream, cudf::get_current_device_resource_ref());
+      auto per_group_nulls =
+        order_by_column.has_nulls()
+          ? detail::nulls_per_group(
+              order_by_column, offsets, stream, cudf::get_current_device_resource_ref())
+          : rmm::device_uvector<size_type>{0, stream};
       detail::rolling::preprocessed_group_info grouping{labels, offsets, per_group_nulls};
-      auto null_order = deduce_null_order(order_by_column, order, offsets, per_group_nulls, stream);
+      auto null_order = deduce_null_order(order_by_column,
+                                          order,
+                                          offsets,
+                                          per_group_nulls,
+                                          stream,
+                                          cudf::get_current_device_resource_ref());
       // Don't use make_range_windows since that reconstructs the grouping info.
       // This is polyfill code anyway, so can be removed after this public API is deprecated and
       // removed.

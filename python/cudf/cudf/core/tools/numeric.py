@@ -299,12 +299,14 @@ def _convert_str_col(
 
     # TODO: This can be handled by libcudf in
     # future see StringColumn.as_numerical_column
+    # Keep plus signs for the float validator to check their placement.
+    # Removing every "+" would turn malformed values like "1+2" into 12.
     converted_col = (
         string_col.to_lower()
         .find_and_replace(as_column("", length=1), as_column("NaN", length=1))
         .replace_multiple(
-            as_column(["+", "inf", "inity"]),  # type: ignore[arg-type]
-            as_column(["", "Inf", ""]),  # type: ignore[arg-type]
+            as_column(["inf", "inity"]),  # type: ignore[arg-type]
+            as_column(["Inf", ""]),  # type: ignore[arg-type]
         )
     )
 

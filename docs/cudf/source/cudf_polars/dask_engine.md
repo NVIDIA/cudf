@@ -120,9 +120,10 @@ with Client("SCHEDULER_ADDRESS:8786") as dc:
         result = pl.scan_parquet("/data/*.parquet").collect(engine=engine)
 ```
 
-Hardware binding (CPU affinity, NUMA, network) is handled automatically by
+Hardware binding (CPU affinity and NUMA memory) is handled automatically by
 {class}`~cudf_polars.engine.dask.DaskEngine`; the nanny preload only
-deals with GPU assignment.
+deals with GPU assignment. Network device binding is disabled by default; enable it with
+`HardwareBindingPolicy(network=True)`.
 
 See the [Dask CLI deployment guide][dask-cli] for more on `dask worker` options.
 
@@ -184,8 +185,8 @@ with DaskEngine() as engine:
     print(f"cluster has {engine.nranks} workers")
     for info in engine.gather_cluster_info():
         print(
-            f"hostname={info['hostname']}, pid={info['pid']}, "
-            f"CUDA_VISIBLE_DEVICES={info['cuda_visible_devices']}"
+            f"hostname={info.hostname}, pid={info.pid}, "
+            f"CUDA_VISIBLE_DEVICES={info.cuda_visible_devices}"
         )
 ```
 
@@ -194,5 +195,5 @@ created inside an `rrun` cluster.
 
 [dask-distributed]: https://distributed.dask.org/en/stable/
 [dask-cli]: https://docs.dask.org/en/latest/deploying-cli.html
-[dask-cuda]: https://docs.rapids.ai/api/dask-cuda/nightly/
-[dask-cuda-worker]: https://docs.rapids.ai/api/dask-cuda/nightly/quickstart/#dask-cuda-worker
+[dask-cuda]: inv:dask-cuda:std:doc:#index
+[dask-cuda-worker]: <inv:dask-cuda:std:label:#quickstart:``dask cuda worker``>

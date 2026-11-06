@@ -22,6 +22,7 @@
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
@@ -30,6 +31,8 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
+#include <cub/device/device_segmented_sort.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/span>
@@ -106,9 +109,10 @@ struct make_centroid_no_nulls {
 };
 
 // make a centroid from an input stream of mean/weight values.
+template <typename MeanIterator, typename WeightIterator>
 struct make_weighted_centroid {
-  double const* mean;
-  double const* weight;
+  MeanIterator mean;
+  WeightIterator weight;
 
   centroid operator() __device__(size_type index) { return {mean[index], weight[index], true}; }
 };
@@ -356,11 +360,13 @@ struct cluster_info {
   // separately, instead of using traditional offsets.
 
   // cluster weight limits
-  rmm::device_uvector<double> cluster_wl{0, cudf::get_default_stream()};
+  cuda::device_buffer<double> cluster_wl{
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 0, cuda::no_init};
   // start index of weight limits, per group
   rmm::device_uvector<int32_t> cluster_start{0, cudf::get_default_stream()};
   // number of weight limits, per group
-  rmm::device_uvector<size_type> num_clusters{0, cudf::get_default_stream()};
+  cuda::device_buffer<size_type> num_clusters{
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 0, cuda::no_init};
   bool requires_rescan =
     true;  // in the case of our worst-case memory optimization, this flag
            // is set to true to indicate that cluster_start needs to be rescanned
@@ -648,14 +654,15 @@ template <typename GroupInfo>
 size_t compute_simple_cluster_count(int delta,
                                     GroupInfo group_info,
                                     cudf::device_span<size_type> group_num_clusters,
-                                    cuda::stream_ref stream)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto const num_groups = group_num_clusters.size();
 
   // worst-case sizes
   auto iter = cuda::counting_iterator<cudf::size_type>{0};
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     iter,
     iter + num_groups,
     group_num_clusters.begin(),
@@ -668,7 +675,7 @@ size_t compute_simple_cluster_count(int delta,
     }));
 
   // total size
-  return thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  return thrust::reduce(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                         group_num_clusters.begin(),
                         group_num_clusters.end());
 }
@@ -678,7 +685,7 @@ size_t compute_simple_cluster_count(int delta,
  * the terminology 'start' here instead of 'offsets' because our allocations strategy may
  * cause us to overallocate buffers within each group.
  */
-void compute_cluster_starts(cluster_info& cinfo, cuda::stream_ref stream)
+void compute_cluster_starts(cluster_info& cinfo, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const num_groups = cinfo.num_clusters.size();
   auto cluster_size     = cudf::detail::make_counting_transform_iterator(
@@ -687,7 +694,7 @@ void compute_cluster_starts(cluster_info& cinfo, cuda::stream_ref stream)
       [group_num_clusters = cinfo.num_clusters.begin(), num_groups] __device__(size_type index) {
         return index == num_groups ? 0 : group_num_clusters[index];
       }));
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          cluster_size,
                          cluster_size + num_groups + 1,
                          cinfo.cluster_start.begin(),
@@ -746,13 +753,13 @@ cluster_info generate_group_cluster_info(int delta,
 
   // output from the function
   cluster_info cinfo;
-  cinfo.num_clusters = rmm::device_uvector<size_type>(num_groups, stream, temp_mr);
+  cinfo.num_clusters = cuda::device_buffer<size_type>(stream, temp_mr, num_groups, cuda::no_init);
 
   // compute the number of clusters we'd need to allocate for the fast path. the 'fast path' just
   // means using the worst case number of clusters instead of accurately computing the exact cluster
   // count via the kernel.
-  size_t const simple_cluster_count =
-    compute_simple_cluster_count(delta, group_info, cinfo.num_clusters, stream);
+  size_t const simple_cluster_count = compute_simple_cluster_count(
+    delta, group_info, cinfo.num_clusters, stream, cudf::get_current_device_resource_ref());
   size_t const simple_mem_usage = simple_cluster_count * sizeof(double);
 
   // if we can't go down the fast path, run the kernel to compute accurate cluster sizes
@@ -767,7 +774,7 @@ cluster_info generate_group_cluster_info(int delta,
                             group_info,
                             cumulative_weight,
                             nullptr,
-                            cinfo.num_clusters.begin(),
+                            cinfo.num_clusters.data(),
                             nullptr,
                             has_nulls,
                             stream);
@@ -777,7 +784,7 @@ cluster_info generate_group_cluster_info(int delta,
   // these are not traditional offsets because in the simple case, we will be over-allocating a
   // worse case estimate)
   cinfo.cluster_start = rmm::device_uvector<size_type>(num_groups + 1, stream, temp_mr);
-  compute_cluster_starts(cinfo, stream);
+  compute_cluster_starts(cinfo, stream, cudf::get_current_device_resource_ref());
 
   // because of the simple path, the number of allocated clusters may not end up being the same as
   // the number of real clusters.
@@ -789,7 +796,8 @@ cluster_info generate_group_cluster_info(int delta,
     // otherwise the simple count we've computed earlier is sufficient
     return simple_cluster_count;
   }();
-  cinfo.cluster_wl = rmm::device_uvector<double>(allocated_clusters, stream, temp_mr);
+  cinfo.cluster_wl =
+    cuda::device_buffer<double>(stream, temp_mr, allocated_clusters, cuda::no_init);
 
   // sync required after compute_cluster_starts() and before generate_cluster_limits()
   cudf::detail::sync_stream(stream);
@@ -802,9 +810,9 @@ cluster_info generate_group_cluster_info(int delta,
                           nearest_weight,
                           group_info,
                           cumulative_weight,
-                          cinfo.cluster_wl.begin(),
-                          cinfo.num_clusters.begin(),
-                          cinfo.cluster_start.begin(),
+                          cinfo.cluster_wl.data(),
+                          cinfo.num_clusters.data(),
+                          cinfo.cluster_start.data(),
                           has_nulls,
                           stream);
 
@@ -815,10 +823,10 @@ cluster_info generate_group_cluster_info(int delta,
   if (use_cpu) {
     auto p_cluster_wl = std::move(cinfo.cluster_wl);
     cinfo.cluster_wl =
-      rmm::device_uvector(p_cluster_wl, stream, cudf::get_current_device_resource_ref());
+      cuda::device_buffer<double>(stream, cudf::get_current_device_resource_ref(), p_cluster_wl);
     auto p_num_clusters = std::move(cinfo.num_clusters);
-    cinfo.num_clusters =
-      rmm::device_uvector(p_num_clusters, stream, cudf::get_current_device_resource_ref());
+    cinfo.num_clusters  = cuda::device_buffer<size_type>(
+      stream, cudf::get_current_device_resource_ref(), p_num_clusters);
     auto p_cluster_start = std::move(cinfo.cluster_start);
     // cluster_start is returned as part of the output, so make sure to use the user supplied mr
     // instead of the current resource.
@@ -899,7 +907,8 @@ std::unique_ptr<column> build_output_column(size_type num_rows,
   auto _weights = remove_stubs(*weights, num_stubs);
 
   // adjust offsets.
-  rmm::device_uvector<size_type> sizes(num_rows, stream);
+  cuda::device_buffer<size_type> sizes(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<cudf::size_type>{0},
@@ -934,12 +943,15 @@ std::unique_ptr<column> build_output_column(size_type num_rows,
  * @brief A functor which returns the cluster index within a group that the value at
  * the given value index falls into.
  */
-template <typename CumulativeWeight>
+template <typename WeightIterator,
+          typename ClusterStartIterator,
+          typename ClusterSizeIterator,
+          typename CumulativeWeight>
 struct compute_tdigests_keys_fn {
   int const delta;
-  double const* group_cluster_wl;
-  size_type const* group_cluster_start;
-  size_type const* group_cluster_size;
+  WeightIterator group_cluster_wl;
+  ClusterStartIterator group_cluster_start;
+  ClusterSizeIterator group_cluster_size;
   CumulativeWeight group_cumulative_weight;
 
   __device__ size_type operator()(size_type value_index)
@@ -952,7 +964,7 @@ struct compute_tdigests_keys_fn {
     if (num_clusters == 0) { return group_cluster_start[group_index]; }
 
     // compute start of cluster weight limits for this group
-    double const* weight_limits = group_cluster_wl + group_cluster_start[group_index];
+    auto const weight_limits = group_cluster_wl + group_cluster_start[group_index];
 
     // local cluster index
     size_type const group_cluster_index =
@@ -1027,13 +1039,12 @@ std::unique_ptr<column> compute_tdigests(int delta,
   // to represent cluster indices (for example, if a tdigest had 100 clusters, the keys should fall
   // into the range 0-99).  But since we have multiple tdigests, we need to keep the keys unique
   // between the groups, so we add our group start offset.
-  auto keys =
-    cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
-                             compute_tdigests_keys_fn<CumulativeWeight>{delta,
-                                                                        cinfo.cluster_wl.begin(),
-                                                                        cinfo.cluster_start.begin(),
-                                                                        cinfo.num_clusters.begin(),
-                                                                        group_cumulative_weight});
+  auto keys = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                       compute_tdigests_keys_fn{delta,
+                                                                cinfo.cluster_wl.begin(),
+                                                                cinfo.cluster_start.begin(),
+                                                                cinfo.num_clusters.begin(),
+                                                                group_cumulative_weight});
 
   // mean and weight data
   auto centroid_means = cudf::make_numeric_column(
@@ -1068,9 +1079,13 @@ std::unique_ptr<column> compute_tdigests(int delta,
   // be accurate, so we need to compute with a scan. in the non-simple case, cinfo.cluster_start
   // will already be accurate
   auto offsets = [&]() {
-    if (cinfo.requires_rescan) { compute_cluster_starts(cinfo, stream); }
+    if (cinfo.requires_rescan) {
+      compute_cluster_starts(cinfo, stream, cudf::get_current_device_resource_ref());
+    }
     return std::make_unique<cudf::column>(
-      std::move(cinfo.cluster_start), rmm::device_buffer{0, stream, mr}, 0);
+      std::move(cinfo.cluster_start),
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      0);
   }();
 
   // create final tdigest column
@@ -1129,25 +1144,24 @@ struct typed_group_tdigest {
                                      int delta,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     // first, generate cluster weight information for each input group
     auto cinfo = [&]() {
       // if we will be at least partially using the CPU here, move the important values into pinned
       // and reference those instead
       if (use_cpu_for_cluster_computation(num_groups)) {
-        auto temp_mr = cudf::get_pinned_memory_resource();
-        auto p_group_offsets =
-          cudf::detail::make_device_uvector_async(group_offsets, stream, temp_mr);
+        auto temp_mr         = cudf::get_pinned_memory_resource();
+        auto p_group_offsets = cuda::device_buffer<size_type>(stream, temp_mr, group_offsets);
         auto p_group_valid_counts =
-          cudf::detail::make_device_uvector_async(group_valid_counts, stream, temp_mr);
+          cuda::device_buffer<size_type>(stream, temp_mr, group_valid_counts);
         auto ret = generate_group_cluster_info(
           delta,
           num_groups,
-          nearest_value_scalar_weights_grouped{p_group_offsets.begin()},
-          scalar_group_info_grouped{p_group_valid_counts.begin(), p_group_offsets.begin()},
+          nearest_value_scalar_weights_grouped{p_group_offsets.data()},
+          scalar_group_info_grouped{p_group_valid_counts.data(), p_group_offsets.data()},
           cumulative_scalar_weight_grouped{
-            cuda::std::span<size_type const>{p_group_offsets.begin(), p_group_offsets.size()}},
+            cuda::std::span<size_type const>{p_group_offsets.data(), p_group_offsets.size()}},
           col.null_count() > 0,
           stream,
           mr);
@@ -1203,7 +1217,7 @@ struct typed_group_tdigest {
 
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::arithmetic<T> and not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("Non-numeric type in group_tdigest");
   }
@@ -1216,7 +1230,7 @@ struct typed_reduce_tdigest {
                                      int delta,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     CUDF_FUNC_RANGE();
 
@@ -1283,7 +1297,7 @@ struct typed_reduce_tdigest {
 
   template <typename T, typename... Args>
   std::unique_ptr<scalar> operator()(Args&&...)
-    requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::arithmetic<T> and not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("Non-numeric type in group_tdigest");
   }
@@ -1346,21 +1360,24 @@ struct group_key_func {
 // merges all the tdigests within each group. returns a table containing 2 columns:
 // the sorted means and weights.
 template <typename GroupOffsetIter>
-std::pair<rmm::device_uvector<double>, rmm::device_uvector<double>> generate_merged_centroids(
+std::pair<cuda::device_buffer<double>, cuda::device_buffer<double>> generate_merged_centroids(
   tdigest_column_view const& tdv,
   GroupOffsetIter group_offsets,
   size_type num_groups,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
 
   auto const total_merged_centroids = tdv.means().size();
 
   // output is the merged centroids (means, weights)
-  rmm::device_uvector<double> output_means(total_merged_centroids, stream, temp_mr);
-  rmm::device_uvector<double> output_weights(total_merged_centroids, stream, temp_mr);
+  cuda::device_buffer<double> output_means(
+    stream, mr.get_output_mr(), total_merged_centroids, cuda::no_init);
+  cuda::device_buffer<double> output_weights(
+    stream, mr.get_output_mr(), total_merged_centroids, cuda::no_init);
 
   // each group represents a collection of tdigest columns. each row is 1 tdigest.
   // within each group, we want to sort all the centroids within all the tdigests
@@ -1390,22 +1407,22 @@ std::pair<rmm::device_uvector<double>, rmm::device_uvector<double>> generate_mer
   CUDF_CUDA_TRY(cub::DeviceSegmentedSort::SortPairs(nullptr,
                                                     temp_size,
                                                     tdv.means().begin<double>(),
-                                                    output_means.begin(),
+                                                    output_means.data(),
                                                     tdv.weights().begin<double>(),
-                                                    output_weights.begin(),
+                                                    output_weights.data(),
                                                     total_merged_centroids,
                                                     num_groups,
                                                     centroid_offsets,
                                                     centroid_offsets + 1,
                                                     stream.get()));
 
-  rmm::device_buffer temp_mem(temp_size, stream, temp_mr);
+  cuda::device_buffer<std::byte> temp_mem(stream, temp_mr, temp_size, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceSegmentedSort::SortPairs(temp_mem.data(),
                                                     temp_size,
                                                     tdv.means().begin<double>(),
-                                                    output_means.begin(),
+                                                    output_means.data(),
                                                     tdv.weights().begin<double>(),
-                                                    output_weights.begin(),
+                                                    output_weights.data(),
                                                     total_merged_centroids,
                                                     num_groups,
                                                     centroid_offsets,
@@ -1500,17 +1517,18 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
   auto temp_mr = cudf::get_current_device_resource_ref();
 
   // merge the centroids
-  auto [merged_means, merged_weights] =
-    generate_merged_centroids(tdv, group_offsets, num_groups, stream);
+  auto [merged_means, merged_weights] = generate_merged_centroids(
+    tdv, group_offsets, num_groups, stream, cudf::get_current_device_resource_ref());
   size_t const num_centroids = tdv.means().size();
   CUDF_EXPECTS(merged_means.size() == num_centroids,
                "Unexpected number of centroids in merged result");
 
   // generate cumulative weights
-  rmm::device_uvector<double> cumulative_weights(merged_weights.size(), stream, temp_mr);
+  cuda::device_buffer<double> cumulative_weights(
+    stream, temp_mr, merged_weights.size(), cuda::no_init);
 
   // generate group keys for all centroids in the entire column
-  rmm::device_uvector<size_type> group_keys(num_centroids, stream, temp_mr);
+  cuda::device_buffer<size_type> group_keys(stream, temp_mr, num_centroids, cuda::no_init);
   auto iter = cuda::counting_iterator<cudf::size_type>{0};
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     iter,
@@ -1538,22 +1556,25 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
     if (use_cpu_for_cluster_computation(num_groups)) {
       auto pinned_mr = cudf::get_pinned_memory_resource();
 
-      rmm::device_uvector<size_type> _p_group_offsets(num_groups + 1, stream, pinned_mr);
+      cuda::device_buffer<size_type> _p_group_offsets(
+        stream, pinned_mr, num_groups + 1, cuda::no_init);
       thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    group_offsets,
                    group_offsets + _p_group_offsets.size(),
                    _p_group_offsets.begin());
       cudf::device_span<size_type const> p_group_offsets(_p_group_offsets);
 
-      rmm::device_uvector<double> p_cumulative_weights(cumulative_weights, stream, pinned_mr);
+      cuda::device_buffer<double> p_cumulative_weights(stream, pinned_mr, cumulative_weights);
 
-      rmm::device_uvector<int32_t> p_tdigest_offsets(tdigest_offsets.size(), stream, pinned_mr);
+      cuda::device_buffer<int32_t> p_tdigest_offsets(
+        stream, pinned_mr, tdigest_offsets.size(), cuda::no_init);
       thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    tdigest_offsets.begin<int32_t>(),
                    tdigest_offsets.begin<int32_t>() + p_tdigest_offsets.size(),
                    p_tdigest_offsets.begin());
 
-      rmm::device_uvector<size_type> _p_group_labels(num_group_labels, stream, pinned_mr);
+      cuda::device_buffer<size_type> _p_group_labels(
+        stream, pinned_mr, num_group_labels, cuda::no_init);
       thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    group_labels,
                    group_labels + num_group_labels,
@@ -1565,14 +1586,13 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
         delta,
         num_groups,
         nearest_value_centroid_weights{
-          p_cumulative_weights.begin(), p_group_offsets, p_tdigest_offsets.begin()},
-        centroid_group_info{
-          p_cumulative_weights.begin(), p_group_offsets, p_tdigest_offsets.begin()},
+          p_cumulative_weights.data(), p_group_offsets, p_tdigest_offsets.data()},
+        centroid_group_info{p_cumulative_weights.data(), p_group_offsets, p_tdigest_offsets.data()},
         cumulative_centroid_weight{
-          p_cumulative_weights.begin(),
+          p_cumulative_weights.data(),
           p_group_labels,
           p_group_offsets,
-          cuda::std::span<int32_t const>{p_tdigest_offsets.begin(), p_tdigest_offsets.size()}},
+          cuda::std::span<int32_t const>{p_tdigest_offsets.data(), p_tdigest_offsets.size()}},
         has_nulls,
         stream,
         mr);
@@ -1583,11 +1603,11 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
       delta,
       num_groups,
       nearest_value_centroid_weights{
-        cumulative_weights.begin(), group_offsets, tdigest_offsets.begin<int32_t>()},
+        cumulative_weights.data(), group_offsets, tdigest_offsets.begin<int32_t>()},
       centroid_group_info{
-        cumulative_weights.begin(), group_offsets, tdigest_offsets.begin<int32_t>()},
+        cumulative_weights.data(), group_offsets, tdigest_offsets.begin<int32_t>()},
       cumulative_centroid_weight{
-        cumulative_weights.begin(),
+        cumulative_weights.data(),
         group_labels,
         group_offsets,
         cuda::std::span<int32_t const>{tdigest_offsets.begin<int32_t>(),
@@ -1607,7 +1627,7 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
     centroids,
     centroids + merged_means.size(),
     cumulative_centroid_weight{
-      cumulative_weights.begin(),
+      cumulative_weights.data(),
       group_labels,
       group_offsets,
       cuda::std::span<int32_t const>{tdigest_offsets.begin<int32_t>(),

@@ -9,15 +9,14 @@ such as shuffles, all-gathers, and joins to produce a globally correct result.
 The entry point in all cases is the Polars `GPUEngine` with `executor="streaming"`.
 The `cluster` option selects the execution model:
 
-| `cluster`       | Description                                          | Status            |
-| --------------- | ---------------------------------------------------- | ----------------- |
-| `"single"`      | Single-GPU, in-process execution                     | Stable (legacy)   |
-| `"distributed"` | Multi-GPU via [Dask Distributed][dask-distributed]   | Stable (legacy)   |
-| `"ray"`         | Multi-GPU via [Ray][ray-docs] actors                 | Preview (new API) |
-| `"dask"`        | Multi-GPU via [Dask Distributed][dask-distributed]   | Preview (new API) |
-| `"spmd"`        | Multi-GPU via [SPMD][spmd-wiki] launched with `rrun` | Preview (new API) |
+| `cluster`             | Description                                          |
+| --------------------- | ---------------------------------------------------- |
+| `"default_singleton"` | Single-GPU, in-process execution                     |
+| `"ray"`               | Multi-GPU via [Ray][ray-docs] actors                 |
+| `"dask"`              | Multi-GPU via [Dask Distributed][dask-distributed]   |
+| `"spmd"`              | Multi-GPU via [SPMD][spmd-wiki] launched with `rrun` |
 
-Three preview execution modes are available:
+Three multi-GPU execution modes are available:
 
 * **Ray mode** — a single-client model where a driver program coordinates GPU
   workers implemented as Ray actors.
@@ -779,6 +778,6 @@ argument; user-supplied keys are merged with reserved entries set by `SPMDEngine
 [spmd-wiki]: https://en.wikipedia.org/wiki/Single_program,_multiple_data
 [ray-docs]: https://docs.ray.io/en/latest/
 [ray-actors]: https://docs.ray.io/en/latest/ray-core/actors.html
-[rapidsmpf-communicator]: https://docs.rapids.ai/api/rapidsmpf/stable/glossary/#term-Communicator
-[rapidsmpf-context]: https://docs.rapids.ai/api/rapidsmpf/stable/glossary/#term-Context
+[rapidsmpf-communicator]: https://docs.nvidia.com/rapidsmpf/latest/glossary/#term-Communicator
+[rapidsmpf-context]: https://docs.nvidia.com/rapidsmpf/latest/glossary/#term-Context
 [polars-gpuengine]: https://docs.pola.rs/api/python/stable/reference/api/polars.GPUEngine.html

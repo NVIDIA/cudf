@@ -193,7 +193,7 @@ cdef class ChunkedPack:
         cdef Stream _stream = _get_stream(stream)
         temp_mr = _get_memory_resource(temp_mr)
         cdef unique_ptr[chunked_pack] obj = chunked_pack.create(
-            input.view(), user_buffer_size, _stream.view().value(), temp_mr.get_mr()
+            input.view(), user_buffer_size, _stream.view().get(), temp_mr.get_mr()
         )
 
         cdef ChunkedPack out = ChunkedPack.__new__(ChunkedPack)
@@ -299,7 +299,7 @@ cdef class ChunkedPack:
             )
         )
         cdef Stream py_stream = self.stream
-        cdef cudaStream_t stream = py_stream.view().value()
+        cdef cudaStream_t stream = py_stream.view().get()
         with nogil:
             while dereference(self.c_obj).has_next():
                 size = dereference(self.c_obj).next(d_span)
@@ -354,7 +354,7 @@ cpdef PackedColumns pack(Table input, object stream: CudaStreamLike | None = Non
     """
     cdef unique_ptr[packed_columns] pack
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     mr = _get_memory_resource(mr)
     cdef table_view c_input = input.view()

@@ -53,6 +53,8 @@ void hash(XXH3_state_t* ctx, std::span<rtcx::memory_fragment const> memory_fragm
       XXH3_128bits_update(ctx, fragment.name, std::strlen(fragment.name));
       XXH3_128bits_update(ctx, "\0", 1);  // null terminator
     } else {
+      // The bytes are linked as the given type, so both identify an unnamed fragment.
+      XXH3_128bits_update(ctx, &fragment.type, sizeof(fragment.type));
       XXH3_128bits_update(ctx, fragment.data.data(), fragment.data.size());
       XXH3_128bits_update(ctx, "\0", 1);  // null terminator
     }
@@ -300,7 +302,6 @@ rtcx::blob compile_fragment(char const* name,
   auto& bundle = ctx.jit_bundle();
 
   auto include_dirs = bundle.get_include_directories();
-  auto pch_dir      = ctx.get_jit_pch_dir();
 
   auto nvrtc_version = ctx.nvrtc_version().value();
 
@@ -333,7 +334,6 @@ rtcx::blob compile_fragment(char const* name,
 
   if (use_pch) {
     options.emplace_back("--pch");
-    options.emplace_back(std::format("--pch-dir={}", pch_dir));
 
     if (cfg.jit_verbose) {
       options.emplace_back("--pch-verbose=true");

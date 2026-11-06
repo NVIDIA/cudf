@@ -15,8 +15,6 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -80,8 +78,7 @@ inline std::unique_ptr<column> generate_typed_percentile_distribution(
   cuda::stream_ref stream   = get_default_stream(),
   cudf::memory_resources mr = get_current_device_resource_ref())
 {
-  auto const temporary_mr        = mr.get_temporary_mr();
-  auto const temporary_resources = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources = mr.as_temporary();
   srand(0);
 
   std::vector<double> values;
@@ -203,7 +200,7 @@ void tdigest_simple_aggregation(Func op,
                                 cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =
@@ -211,16 +208,13 @@ void tdigest_simple_aggregation(Func op,
 
     // create a tdigest that has far fewer values in it than the delta value. this should result
     // in every value remaining uncompressed
-    fixed_width_column_wrapper<T> values(
-      {126, 15, 1, 99, 67}, rmm::cuda_stream_view{stream}, temporary_resources);
+    fixed_width_column_wrapper<T> values({126, 15, 1, 99, 67}, stream, temporary_resources);
     int const delta = 1000;
     auto result     = cudf::type_dispatcher(
       static_cast<column_view>(values).type(), tdigest_gen{}, op, values, delta);
 
-    fixed_width_column_wrapper<T> raw_mean(
-      {1, 15, 67, 99, 126}, rmm::cuda_stream_view{stream}, temporary_resources);
-    fixed_width_column_wrapper<double> weight(
-      {1, 1, 1, 1, 1}, rmm::cuda_stream_view{stream}, temporary_resources);
+    fixed_width_column_wrapper<T> raw_mean({1, 15, 67, 99, 126}, stream, temporary_resources);
+    fixed_width_column_wrapper<double> weight({1, 1, 1, 1, 1}, stream, temporary_resources);
     auto mean        = cudf::cast(raw_mean, data_type{type_id::FLOAT64}, stream, temporary_mr);
     double const min = 1;
     double const max = 126;
@@ -243,7 +237,7 @@ void tdigest_simple_with_nulls_aggregation(
   cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =
@@ -253,16 +247,14 @@ void tdigest_simple_with_nulls_aggregation(
     // in every value remaining uncompressed
     fixed_width_column_wrapper<T> values({122, 15, 1, 99, 67, 101, 100, 84, 44, 2},
                                          {1, 0, 1, 0, 1, 0, 1, 0, 1, 0},
-                                         rmm::cuda_stream_view{stream},
+                                         stream,
                                          temporary_resources);
     int const delta = 1000;
     auto result     = cudf::type_dispatcher(
       static_cast<column_view>(values).type(), tdigest_gen{}, op, values, delta);
 
-    fixed_width_column_wrapper<T> raw_mean(
-      {1, 44, 67, 100, 122}, rmm::cuda_stream_view{stream}, temporary_resources);
-    fixed_width_column_wrapper<double> weight(
-      {1, 1, 1, 1, 1}, rmm::cuda_stream_view{stream}, temporary_resources);
+    fixed_width_column_wrapper<T> raw_mean({1, 44, 67, 100, 122}, stream, temporary_resources);
+    fixed_width_column_wrapper<double> weight({1, 1, 1, 1, 1}, stream, temporary_resources);
     auto mean        = cudf::cast(raw_mean, data_type{type_id::FLOAT64}, stream, temporary_mr);
     double const min = 1;
     double const max = 122;
@@ -285,7 +277,7 @@ void tdigest_simple_all_nulls_aggregation(
   cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =
@@ -295,7 +287,7 @@ void tdigest_simple_all_nulls_aggregation(
     // in every value remaining uncompressed
     fixed_width_column_wrapper<T> values({122, 15, 1, 99, 67, 101, 100, 84, 44, 2},
                                          {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-                                         rmm::cuda_stream_view{stream},
+                                         stream,
                                          temporary_resources);
     int const delta = 1000;
     auto result     = cudf::type_dispatcher(
@@ -317,7 +309,7 @@ void tdigest_merge_simple(Func op,
                           cudf::memory_resources mr = get_current_device_resource_ref())
 {
   auto const temporary_mr                     = mr.get_temporary_mr();
-  auto const temporary_resources              = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources              = mr.as_temporary();
   bool is_cpu_cluster_computation_disabled[2] = {true, false};
   for (int idx = 0; idx < 2; idx++) {
     cudf::tdigest::detail::is_cpu_cluster_computation_disabled =

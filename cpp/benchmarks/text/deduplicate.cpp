@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,7 +25,7 @@ static void bench_suffix_array(nvbench::state& state)
     create_random_table({cudf::type_id::STRING}, row_count{num_rows}, strings_profile);
   cudf::strings_column_view input(strings_table->view().column(0));
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
 
   auto chars_size = input.chars_size(cudf::get_default_stream());
   state.add_global_memory_reads<nvbench::int8_t>(chars_size);
@@ -55,7 +55,7 @@ static void bench_resolve_duplicates(nvbench::state& state)
   cudf::strings_column_view input2(strings_table->view().column(1));
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto sa1 = nvtext::build_suffix_array(input1, 0);
   auto sa2 = nvtext::build_suffix_array(input2, 0);

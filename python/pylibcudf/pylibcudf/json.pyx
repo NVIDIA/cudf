@@ -164,7 +164,7 @@ cpdef Column get_json_object(
 
     cdef cpp_json.get_json_object_options c_options = options.options
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     c_col = col.view()

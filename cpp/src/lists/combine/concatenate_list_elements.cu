@@ -21,13 +21,13 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/logical.h>
-#include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
 
@@ -96,7 +96,9 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
                            std::move(out_offsets),
                            std::move(out_entries),
                            null_count,
-                           null_count > 0 ? std::move(null_mask) : rmm::device_buffer{});
+                           null_count > 0
+                             ? std::move(null_mask)
+                             : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 /**
@@ -104,7 +106,7 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
  *
  * This function is called only when (has_null_list == true and null_policy == NULLIFY_OUTPUT_ROW).
  */
-std::pair<std::unique_ptr<column>, rmm::device_uvector<int8_t>>
+std::pair<std::unique_ptr<column>, cuda::device_buffer<int8_t>>
 generate_list_offsets_and_validities(column_view const& input,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
@@ -117,7 +119,8 @@ generate_list_offsets_and_validities(column_view const& input,
   auto const d_list_offsets = lists_column_view(lists_column_view(input).child()).offsets_begin();
 
   // The array of int8_t stores validities for the output list elements.
-  auto validities = rmm::device_uvector<int8_t>(num_rows, stream);
+  auto validities = cuda::device_buffer<int8_t>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
 
   // Compute output list sizes and validities.
   auto sizes_itr = cudf::detail::make_counting_transform_iterator(
@@ -168,7 +171,8 @@ std::unique_ptr<column> gather_list_entries(column_view const& input,
   auto const entry_col      = lists_column_view(child_col).child();
   auto const d_row_offsets  = lists_column_view(input).offsets_begin();
   auto const d_list_offsets = lists_column_view(child_col).offsets_begin();
-  auto gather_map           = rmm::device_uvector<size_type>(num_output_entries, stream);
+  auto gather_map           = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_output_entries, cuda::no_init);
 
   // Fill the gather map with indices of the lists from the child column of the input column.
   thrust::for_each_n(
@@ -215,11 +219,12 @@ std::unique_ptr<column> concatenate_lists_nullifying_rows(column_view const& inp
   auto [null_mask, null_count] = cudf::detail::valid_if(
     list_validities.begin(), list_validities.end(), cuda::std::identity{}, stream, mr);
 
-  return make_lists_column(num_rows,
-                           std::move(list_offsets),
-                           std::move(list_entries),
-                           null_count,
-                           null_count ? std::move(null_mask) : rmm::device_buffer{});
+  return make_lists_column(
+    num_rows,
+    std::move(list_offsets),
+    std::move(list_entries),
+    null_count,
+    null_count ? std::move(null_mask) : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace

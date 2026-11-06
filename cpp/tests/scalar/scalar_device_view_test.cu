@@ -8,7 +8,7 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -26,6 +26,11 @@ template <typename T>
 struct TypedScalarDeviceViewTest : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(TypedScalarDeviceViewTest, cudf::test::FixedWidthTypesWithoutFixedPoint);
+
+template <typename T>
+struct FixedPointScalarDeviceViewTest : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(FixedPointScalarDeviceViewTest, cudf::test::FixedPointTypes);
 
 template <typename ScalarDeviceViewType>
 CUDF_KERNEL void test_set_value(ScalarDeviceViewType s, ScalarDeviceViewType s1)
@@ -51,18 +56,87 @@ TYPED_TEST(TypedScalarDeviceViewTest, Value)
   auto scalar_device_view1 = cudf::get_scalar_device_view(s1);
   cudf::detail::device_scalar<bool> result{cudf::get_default_stream()};
 
-  test_set_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(scalar_device_view,
-                                                                  scalar_device_view1);
+  test_set_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view,
+                                                                scalar_device_view1);
   CUDF_CHECK_CUDA(0);
 
   EXPECT_EQ(s1.value(), value);
   EXPECT_TRUE(s1.is_valid());
 
-  test_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(
+  test_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(
     scalar_device_view, scalar_device_view1, result.data());
   CUDF_CHECK_CUDA(0);
 
   EXPECT_TRUE(result.value(cudf::get_default_stream()));
+}
+
+template <typename ScalarDeviceViewType, typename T>
+CUDF_KERNEL void test_fixed_point_value(ScalarDeviceViewType s, T expected, bool* result)
+{
+  auto const actual = s.value();
+  *result           = actual.value() == expected.value() and actual.scale() == expected.scale();
+}
+
+TYPED_TEST(FixedPointScalarDeviceViewTest, Value)
+{
+  using rep_type = typename TypeParam::rep;
+
+  auto constexpr value = rep_type{12'345};
+  auto constexpr scale = numeric::scale_type{-2};
+  auto const expected  = TypeParam{numeric::scaled_integer<rep_type>{value, scale}};
+  cudf::fixed_point_scalar<TypeParam> s{value, scale};
+
+  auto scalar_device_view = cudf::get_scalar_device_view(s);
+  cudf::detail::device_scalar<bool> result{cudf::get_default_stream()};
+
+  test_fixed_point_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(
+    scalar_device_view, expected, result.data());
+  CUDF_CHECK_CUDA(0);
+
+  EXPECT_TRUE(result.value(cudf::get_default_stream()));
+}
+
+template <typename ScalarDeviceViewType>
+CUDF_KERNEL void test_set_fixed_point_rep(ScalarDeviceViewType s,
+                                          typename ScalarDeviceViewType::rep_type value)
+{
+  s.set_value(value);
+}
+
+TYPED_TEST(FixedPointScalarDeviceViewTest, SetRepresentation)
+{
+  using rep_type = typename TypeParam::rep;
+
+  auto constexpr initial_value = rep_type{0};
+  auto constexpr value         = rep_type{12'345};
+  auto constexpr scale         = numeric::scale_type{-2};
+  cudf::fixed_point_scalar<TypeParam> s{initial_value, scale};
+
+  auto scalar_device_view = cudf::get_scalar_device_view(s);
+  test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view,
+                                                                          value);
+  CUDF_CHECK_CUDA(0);
+
+  EXPECT_EQ(s.value(), value);
+}
+
+TYPED_TEST(FixedPointScalarDeviceViewTest, SetValue)
+{
+  using rep_type = typename TypeParam::rep;
+
+  auto constexpr source_rep   = rep_type{12'345};
+  auto constexpr initial_rep  = rep_type{0};
+  auto constexpr source_scale = numeric::scale_type{-2};
+  cudf::fixed_point_scalar<TypeParam> source{source_rep, source_scale};
+  cudf::fixed_point_scalar<TypeParam> target{initial_rep, source_scale};
+
+  auto source_device_view = cudf::get_scalar_device_view(source);
+  auto target_device_view = cudf::get_scalar_device_view(target);
+  test_set_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(source_device_view,
+                                                                target_device_view);
+  CUDF_CHECK_CUDA(0);
+
+  EXPECT_EQ(target.value(), source_rep);
 }
 
 template <typename ScalarDeviceViewType>
@@ -78,7 +152,7 @@ TYPED_TEST(TypedScalarDeviceViewTest, ConstructNull)
   auto scalar_device_view = cudf::get_scalar_device_view(s);
   cudf::detail::device_scalar<bool> result{cudf::get_default_stream()};
 
-  test_null<<<1, 1, 0, cudf::get_default_stream().value()>>>(scalar_device_view, result.data());
+  test_null<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view, result.data());
   CUDF_CHECK_CUDA(0);
 
   EXPECT_FALSE(result.value(cudf::get_default_stream()));
@@ -98,7 +172,7 @@ TYPED_TEST(TypedScalarDeviceViewTest, SetNull)
   s.set_valid_async(true);
   EXPECT_TRUE(s.is_valid());
 
-  test_setnull<<<1, 1, 0, cudf::get_default_stream().value()>>>(scalar_device_view);
+  test_setnull<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view);
   CUDF_CHECK_CUDA(0);
 
   EXPECT_FALSE(s.is_valid());
@@ -121,11 +195,11 @@ TEST_F(StringScalarDeviceViewTest, Value)
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
   cudf::detail::device_scalar<bool> result{cudf::get_default_stream()};
-  auto value_v = cudf::detail::make_device_uvector(cudf::host_span<char const>{value},
-                                                   cudf::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
+  auto value_v = cudf::detail::make_device_buffer(cudf::host_span<char const>{value},
+                                                  cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref());
 
-  test_string_value<<<1, 1, 0, cudf::get_default_stream().value()>>>(
+  test_string_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(
     scalar_device_view, value_v.data(), value.size(), result.data());
   CUDF_CHECK_CUDA(0);
 

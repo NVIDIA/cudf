@@ -12,6 +12,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/scatter.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -34,6 +35,7 @@
 #include <cub/device/device_histogram.cuh>
 #include <cub/thread/thread_load.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/cstdint>
 #include <cuda/std/type_traits>
@@ -89,7 +91,7 @@ class modulo_partitioner {
 template <typename T>
 bool is_power_two(T number)
 {
-  return std::has_single_bit(static_cast<std::make_unsigned_t<T>>(number));
+  return cuda::std::has_single_bit(static_cast<cuda::std::make_unsigned_t<T>>(number));
 }
 
 /**
@@ -581,7 +583,7 @@ struct staged_scatter_smem {
     // The slot region is followed by `size_type` arrays, so round its end up to that alignment
     // rather than relying on `element_width` and the block size to happen to leave it aligned.
     local_slots_offset =
-      cudf::util::round_up_safe(rows_per_block * element_width, alignof(size_type));
+      cudf::detail::round_up_safe(rows_per_block * element_width, alignof(size_type));
     local_partition_offsets_offset = local_slots_offset + rows_per_block * sizeof(size_type);
     global_partition_offsets_offset =
       local_partition_offsets_offset +
@@ -966,8 +968,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
                "num_partitions exceeds cudf's supported limit",
                std::invalid_argument);
 
-  auto row_partition_numbers =
-    rmm::device_uvector<size_type>(num_rows, stream, mr.get_temporary_mr());
+  cuda::device_buffer<size_type> row_partition_numbers(
+    stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
 
   // Compute partition number for each row
   if (is_power_two(num_partitions)) {
@@ -993,7 +995,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
   // Build histogram via cub::DeviceHistogram::HistogramEven.
   // HistogramEven writes num_partitions bins; the extra element is used by the exclusive scan
   // below to produce the total row count as the last offset. Zero-initialize to avoid UB.
-  auto histogram = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto histogram = cudf::detail::make_zeroed_device_buffer_async<size_type>(
     num_partitions + 1, stream, cudf::get_current_device_resource_ref());
   {
     auto const num_levels  = num_partitions + 1;
@@ -1010,7 +1012,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
                                         upper_level,
                                         num_rows,
                                         stream.get());
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream, mr.get_temporary_mr());
+    cuda::device_buffer<std::byte> temp_storage(
+      stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
     cub::DeviceHistogram::HistogramEven(temp_storage.data(),
                                         temp_storage_bytes,
                                         row_partition_numbers.data(),
@@ -1033,7 +1036,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition_global_scatt
   auto const pinned_offsets = cudf::detail::make_pinned_vector_async(histogram, stream);
 
   // Build scatter map: atomically increment partition offsets
-  rmm::device_uvector<size_type> scatter_map(num_rows, stream);
+  cuda::device_buffer<size_type> scatter_map(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   thrust::transform(
     rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     row_partition_numbers.begin(),
@@ -1648,7 +1652,8 @@ struct dispatch_map_type {
     requires(is_index_type<MapType>())
   {
     // Build a histogram of the number of rows in each partition
-    rmm::device_uvector<size_type> histogram(num_partitions + 1, stream);
+    cuda::device_buffer<size_type> histogram(
+      stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);
     std::size_t temp_storage_bytes{};
     std::size_t const num_levels = num_partitions + 1;
     size_type const lower_level  = 0;
@@ -1663,7 +1668,8 @@ struct dispatch_map_type {
                                         partition_map.size(),
                                         stream.get());
 
-    rmm::device_buffer temp_storage(temp_storage_bytes, stream);
+    cuda::device_buffer<std::byte> temp_storage(
+      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
 
     cub::DeviceHistogram::HistogramEven(temp_storage.data(),
                                         temp_storage_bytes,
@@ -1687,7 +1693,8 @@ struct dispatch_map_type {
 
     // Unfortunately need to materialize the scatter map because
     // `detail::scatter` requires multiple passes through the iterator
-    rmm::device_uvector<size_type> scatter_map(partition_map.size(), stream);
+    cuda::device_buffer<size_type> scatter_map(
+      stream, cudf::get_current_device_resource_ref(), partition_map.size(), cuda::no_init);
 
     // For each `partition_map[i]`, atomically increment the corresponding
     // partition offset to determine `i`s location in the output

@@ -12,6 +12,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/sorting.hpp>
@@ -101,7 +102,7 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
 
   // Zero-initialized because resolve_segment_indices writes a segment's size only from its
   // first element; an empty segment has none, so its slot must remain 0, not uninitialized.
-  auto segment_sizes = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto segment_sizes = cudf::detail::make_zeroed_device_buffer_async<size_type>(
     segment_offsets.size() - 1, stream, temp_mr);
   auto span_indices = device_span<size_type>{d_indices, static_cast<std::size_t>(indices->size())};
   auto const grid   = cudf::detail::grid_1d(indices->size(), 256);
@@ -122,8 +123,11 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
                       -1);
 
   auto const num_rows = static_cast<size_type>(offsets->size() - 1);
-  return make_lists_column(
-    num_rows, std::move(offsets), std::move(result), 0, rmm::device_buffer{});
+  return make_lists_column(num_rows,
+                           std::move(offsets),
+                           std::move(result),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 std::unique_ptr<column> segmented_top_k(column_view const& col,
@@ -148,8 +152,11 @@ std::unique_ptr<column> segmented_top_k(column_view const& col,
                                      mr);
   auto offsets        = std::move(ordered->release().children.front());
   auto const num_rows = static_cast<size_type>(offsets->size() - 1);
-  return make_lists_column(
-    num_rows, std::move(offsets), std::move(result->release().front()), 0, rmm::device_buffer{});
+  return make_lists_column(num_rows,
+                           std::move(offsets),
+                           std::move(result->release().front()),
+                           0,
+                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail

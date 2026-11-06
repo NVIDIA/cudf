@@ -72,7 +72,8 @@ def run_masked_udf_test(func, data, args=(), nullable=True, **kwargs):
     assert_eq(expect, obtain, **kwargs)
 
 
-@pytest.fixture
+# String UDF tests only read this input, so one instance is sufficient per worker.
+@pytest.fixture(scope="module")
 def str_udf_data():
     return cudf.DataFrame(
         {

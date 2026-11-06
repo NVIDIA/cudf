@@ -9,11 +9,13 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/functional>
@@ -29,6 +31,14 @@ constexpr bool is_m2_supported()
 {
   return is_numeric<Source>() && !is_fixed_point<Source>();
 }
+
+struct is_m2_supported_fn {
+  template <typename Source>
+  bool operator()() const
+  {
+    return is_m2_supported<Source>();
+  }
+};
 
 struct m2_functor {
   template <typename Source, typename... Args>
@@ -85,6 +95,11 @@ struct m2_functor {
 
 }  // namespace
 
+bool is_m2_supported(data_type type)
+{
+  return type.id() != type_id::EMPTY && type_dispatcher(type, is_m2_supported_fn{});
+}
+
 std::unique_ptr<column> compute_m2(data_type source_type,
                                    column_view const& sum_sqr,
                                    column_view const& sum,
@@ -131,7 +146,8 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
 
   // Since we may have new null rows depending on the group count, we need to generate a new null
   // mask from scratch.
-  rmm::device_uvector<bool> validity(size, stream);
+  cuda::device_buffer<bool> validity(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
 
   auto const out_it =
     cuda::make_zip_iterator(output->mutable_view().begin<TargetType>(), validity.begin());

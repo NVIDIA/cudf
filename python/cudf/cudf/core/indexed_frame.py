@@ -434,7 +434,7 @@ class IndexedFrame(Frame):
 
         The available flags are
 
-        * :attr:`pandas.Flags.allows_duplicate_labels`
+        * ``allows_duplicate_labels``
 
         See Also
         --------
@@ -3911,8 +3911,10 @@ class IndexedFrame(Frame):
                 keep_index=True,
             )
         elif keep == "last":
+            # The sort order is reversed and read from the end, so nulls
+            # must go first to end up after the valid values.
             indices = self._get_columns_by_label(columns)._get_sorted_inds(
-                ascending=largest
+                ascending=largest, na_position="first"
             )
 
             if n <= 0:

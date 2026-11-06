@@ -30,6 +30,7 @@ from cudf_polars.streaming.io import (
     ParquetSourceInfo,
     _build_parquet_source,
     _clear_source_info_cache,
+    _resolve_max_footer_samples,
 )
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
@@ -56,6 +57,19 @@ def df_and_schema() -> tuple[pl.DataFrame, Schema]:
     df_ = cudf_polars.containers.DataFrame.from_polars(df, stream=stream)
     schema = {column.name: column.dtype for column in df_.columns}
     return df, schema
+
+
+@pytest.mark.parametrize(
+    "paths, expected",
+    [
+        (("s3://bucket/data.parquet",), 0),
+        (("/tmp/data.parquet",), 3),
+    ],
+)
+def test_default_max_footer_samples_depends_on_path(
+    paths: tuple[str, ...], expected: int
+) -> None:
+    assert _resolve_max_footer_samples(paths, None) == expected
 
 
 # Simple engine for IR translation / stats collection only (no actual GPU execution)

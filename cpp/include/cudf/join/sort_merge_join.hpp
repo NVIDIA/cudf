@@ -93,31 +93,6 @@ class sort_merge_join {
 
   /**
    * @brief Returns the row indices that can be used to construct the result of performing
-   * an inner join between the right table passed while creating the sort_merge_join object, and the
-   * left table.
-   *
-   * @deprecated in release 26.10. The `is_left_sorted` parameter is ignored. Use the overload
-   * without `is_left_sorted` instead.
-   *
-   * @param left The left table
-   * @param is_left_sorted Ignored
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the join indices' device memory
-   *
-   * @return A pair of device vectors [`left_indices`, `right_indices`] that can be used to
-   * construct the result of performing an inner join between two tables
-   */
-  [[deprecated(
-    "The is_left_sorted parameter is ignored; use inner_join(left, stream, mr) "
-    "instead.")]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-                            std::unique_ptr<rmm::device_uvector<size_type>>>
-  inner_join(table_view const& left,
-             sorted is_left_sorted,
-             cuda::stream_ref stream           = cudf::get_default_stream(),
-             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
-
-  /**
-   * @brief Returns the row indices that can be used to construct the result of performing
    * a left join between the right table passed while creating the sort_merge_join object, and the
    * left table.
    * @see cudf::left_join().
@@ -138,31 +113,6 @@ class sort_merge_join {
             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
   /**
-   * @brief Returns the row indices that can be used to construct the result of performing
-   * a left join between the right table passed while creating the sort_merge_join object, and the
-   * left table.
-   *
-   * @deprecated in release 26.10. The `is_left_sorted` parameter is ignored. Use the overload
-   * without `is_left_sorted` instead.
-   *
-   * @param left The left table
-   * @param is_left_sorted Ignored
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the join indices' device memory
-   *
-   * @return A pair of device vectors [`left_indices`, `right_indices`] that can be used to
-   * construct the result of performing a left join between two tables
-   */
-  [[deprecated(
-    "The is_left_sorted parameter is ignored; use left_join(left, stream, mr) "
-    "instead.")]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
-                            std::unique_ptr<rmm::device_uvector<size_type>>>
-  left_join(table_view const& left,
-            sorted is_left_sorted,
-            cuda::stream_ref stream           = cudf::get_default_stream(),
-            rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
-
-  /**
    * @brief Returns context information about matches between the left and right tables.
    *
    * This method computes, for each row in the left table, how many matching rows exist in
@@ -175,7 +125,7 @@ class sort_merge_join {
    * - Determining the total size of a potential join result without materializing it
    * - Planning partitioned join operations for large datasets
    *
-   * The returned sort_merge_join_match_context can be used directly with partitioned_inner_join()
+   * The returned join_match_context can be used directly with partitioned_inner_join()
    * to process large joins in manageable chunks.
    *
    * @param left The left table to join with the pre-processed right table
@@ -188,28 +138,6 @@ class sort_merge_join {
    */
   std::unique_ptr<join_match_context> inner_join_match_context(
     table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
-
-  /**
-   * @brief Returns context information about matches between the left and right tables.
-   *
-   * @deprecated in release 26.10. The `is_left_sorted` parameter is ignored. Use the overload
-   * without `is_left_sorted` instead.
-   *
-   * @param left The left table to join with the pre-processed right table
-   * @param is_left_sorted Ignored
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the result device memory
-   *
-   * @return A unique_ptr to join_match_context
-   */
-  [[deprecated(
-    "The is_left_sorted parameter is ignored; use inner_join_match_context(left, "
-    "stream, mr) instead.")]] std::unique_ptr<join_match_context>
-  inner_join_match_context(
-    table_view const& left,
-    sorted is_left_sorted,
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
 
@@ -231,6 +159,9 @@ class sort_merge_join {
    * The returned indices can be used to construct the join result for this partition. The
    * left_indices are relative to the original complete left table (not just the partition), so they
    * can be used directly with the original left table to extract matching rows.
+   *
+   * @throw std::invalid_argument If `context.left_table_context` was not created by this object's
+   * inner_join_match_context().
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches

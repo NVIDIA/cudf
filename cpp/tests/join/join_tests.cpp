@@ -30,6 +30,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -40,6 +41,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -52,7 +54,7 @@ using Table                         = cudf::table;
 constexpr cudf::size_type NoneValue = cudf::JoinNoMatch;
 enum class algorithm { HASH, HASH_PARTITIONED, STREAMING_HASH, SORT_MERGE, MERGE };
 
-void expect_match_counts_equal(rmm::device_uvector<cudf::size_type> const& actual_counts,
+void expect_match_counts_equal(cudf::device_span<cudf::size_type const> actual_counts,
                                std::vector<cudf::size_type> const& expected_counts,
                                cuda::stream_ref stream)
 {
@@ -163,7 +165,7 @@ std::unique_ptr<cudf::table> inner_join(
       [](cudf::table_view const& left,
          cudf::table_view const& right,
          cudf::null_equality compare_nulls,
-         rmm::cuda_stream_view stream,
+         cuda::stream_ref stream,
          rmm::device_async_resource_ref mr) {
         std::vector<cudf::size_type> right_key_indices(right.num_columns());
         std::iota(right_key_indices.begin(), right_key_indices.end(), 0);
@@ -224,7 +226,7 @@ std::vector<cudf::size_type> inner_join_size_per_row(
   auto per_row_counts =
     obj.inner_join_match_context(left_selected, stream, cudf::get_current_device_resource_ref());
 
-  return cudf::detail::make_std_vector<cudf::size_type>(*per_row_counts->_match_counts, stream);
+  return cudf::detail::make_std_vector<cudf::size_type>(per_row_counts->match_counts(), stream);
 }
 
 std::unique_ptr<cudf::table> left_join(
@@ -1092,7 +1094,8 @@ TEST_F(JoinTest, SortMergeInnerJoinMatchContextMemoryResource)
   auto match_context = obj.inner_join_match_context(left, stream, mr);
 
   EXPECT_GT(mr.get_bytes_counter().peak, 0);
-  expect_match_counts_equal(*match_context->_match_counts, {1, 0, 2, 1, 2}, stream);
+  expect_match_counts_equal(match_context->match_counts(), {1, 0, 2, 1, 2}, stream);
+  EXPECT_EQ(match_context->output_size(), 6);
 }
 
 TEST_F(JoinTest, SortMergeInnerJoinSizePerRowWithNulls)
@@ -1234,7 +1237,7 @@ TEST_F(JoinTest, PartitionedInnerJoinWithNestedNullsUnequal)
 
   cudf::sort_merge_join obj(right, cudf::sorted::NO, cudf::null_equality::UNEQUAL, stream);
   auto match_context = obj.inner_join_match_context(left, stream, mr);
-  expect_match_counts_equal(*match_context->_match_counts, {1, 0, 1, 1, 1}, stream);
+  expect_match_counts_equal(match_context->match_counts(), {1, 0, 1, 1, 1}, stream);
   auto partition_context = cudf::join_partition_context{std::move(match_context), 2, 4};
 
   auto const [left_indices, right_indices] =
@@ -1959,6 +1962,74 @@ TEST_F(JoinTest, EmptyRightTableFullJoin)
   }
 }
 
+// A caller-supplied output size is validated on every path, including the trivial ones.
+TEST_F(JoinTest, HashJoinIncorrectOutputSize)
+{
+  column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 3}};
+  column_wrapper<int32_t> col1_0{{2, 2, 0, 4, 3}};
+  column_wrapper<int32_t> col_empty;
+
+  CVector cols0, cols1, cols_empty;
+  cols0.push_back(col0_0.release());
+  cols1.push_back(col1_0.release());
+  cols_empty.push_back(col_empty.release());
+
+  Table t0(std::move(cols0));
+  Table t1(std::move(cols1));
+  Table empty(std::move(cols_empty));
+
+  // Non-trivial: a correct size passes, a wrong size throws for every join kind.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+
+    auto const inner_size = hash_join.inner_join_size(t0);
+    auto const left_size  = hash_join.left_join_size(t0);
+    auto const full_size  = hash_join.full_join_size(t0);
+    EXPECT_EQ(inner_size, std::size_t{5});
+    EXPECT_EQ(left_size, std::size_t{6});
+    EXPECT_EQ(full_size, std::size_t{7});
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, inner_size));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, left_size));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, inner_size + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, left_size + 1), cudf::logic_error);
+    // The full-join size includes the unmatched right rows; a left-join-sized value must fail.
+    EXPECT_THROW((void)hash_join.full_join(t0, left_size), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, full_size + 1), cudf::logic_error);
+  }
+
+  // Trivial, empty right table: left and full joins emit one row per left row, inner emits none.
+  {
+    cudf::hash_join hash_join(empty, cudf::null_equality::EQUAL);
+    auto const num_left = static_cast<std::size_t>(t0.num_rows());
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(t0, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(t0, num_left));
+    EXPECT_NO_THROW((void)hash_join.full_join(t0, num_left));
+
+    EXPECT_THROW((void)hash_join.inner_join(t0, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(t0, num_left + 1), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(t0, std::size_t{0}), cudf::logic_error);
+  }
+
+  // Empty left table: inner and left joins emit nothing, a full join emits every right row.
+  {
+    cudf::hash_join hash_join(t1, cudf::null_equality::EQUAL);
+    auto const full_size = hash_join.full_join_size(empty);
+    EXPECT_EQ(full_size, static_cast<std::size_t>(t1.num_rows()));
+
+    EXPECT_NO_THROW((void)hash_join.inner_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.left_join(empty, std::size_t{0}));
+    EXPECT_NO_THROW((void)hash_join.full_join(empty, full_size));
+
+    EXPECT_THROW((void)hash_join.inner_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.left_join(empty, std::size_t{1}), cudf::logic_error);
+    EXPECT_THROW((void)hash_join.full_join(empty, std::size_t{0}), cudf::logic_error);
+  }
+}
+
 // Both tables empty
 TEST_P(InnerJoinParameterizedTest, BothEmptyInnerJoin)
 {
@@ -2424,9 +2495,11 @@ TEST_F(JoinTest, HashJoinLargeOutputSize)
 {
   // self-join a table of zeroes to generate an output row count that would overflow int32_t
   std::size_t col_size = 65567;
-  rmm::device_buffer zeroes(col_size * sizeof(int32_t), cudf::get_default_stream());
-  CUDF_CUDA_TRY(
-    cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().value()));
+  cuda::device_buffer<std::byte> zeroes(cudf::get_default_stream(),
+                                        cudf::get_current_device_resource_ref(),
+                                        col_size * sizeof(int32_t),
+                                        cuda::no_init);
+  CUDF_CUDA_TRY(cudaMemsetAsync(zeroes.data(), 0, zeroes.size(), cudf::get_default_stream().get()));
   cudf::column_view col_zeros(
     cudf::data_type{cudf::type_id::INT32}, col_size, zeroes.data(), nullptr, 0);
   cudf::table_view tview{{col_zeros}};
@@ -2490,15 +2563,16 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
     cudf::hash_join const hash_join(t1.select({0}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.inner_join_match_context(t0.select({0}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 0, 2, 1, 2}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 0, 2, 1, 2}, stream);
 
     auto const host_match_counts =
-      cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
+      cudf::detail::make_host_vector_async(match_context.match_counts(), stream);
     stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));
     EXPECT_EQ(total_matches, inner_join_size);
+    EXPECT_EQ(match_context.output_size(), inner_join_size);
   }
 
   // Test multi-column join with null_equality::EQUAL
@@ -2506,7 +2580,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
     cudf::hash_join const hash_join(t1.select({0, 1}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.inner_join_match_context(t0.select({0, 1}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 0, 1, 0, 0}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 0, 1, 0, 0}, stream);
   }
 
   // Test single column join with null_equality::UNEQUAL
@@ -2514,7 +2588,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
     cudf::hash_join const hash_join(t1.select({0}), cudf::null_equality::UNEQUAL);
     auto const match_context = hash_join.inner_join_match_context(t0.select({0}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 0, 2, 1, 2}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 0, 2, 1, 2}, stream);
   }
 
   // Test multi-column join with null_equality::UNEQUAL
@@ -2522,7 +2596,7 @@ TEST_F(JoinTest, HashJoinInnerMatchContext)
     cudf::hash_join const hash_join(t1.select({0, 1}), cudf::null_equality::UNEQUAL);
     auto const match_context = hash_join.inner_join_match_context(t0.select({0, 1}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 0, 0, 0, 0}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 0, 0, 0, 0}, stream);
   }
 }
 
@@ -2550,15 +2624,16 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
     cudf::hash_join const hash_join(t1.select({0}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.left_join_match_context(t0.select({0}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 1, 2, 1, 2}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 1, 2, 1, 2}, stream);
 
     auto const host_match_counts =
-      cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
+      cudf::detail::make_host_vector_async(match_context.match_counts(), stream);
     stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const left_join_size = hash_join.left_join_size(t0.select({0}));
     EXPECT_EQ(total_matches, left_join_size);
+    EXPECT_EQ(match_context.output_size(), left_join_size);
   }
 
   // Test multi-column join with null_equality::EQUAL
@@ -2566,7 +2641,7 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
     cudf::hash_join const hash_join(t1.select({0, 1}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.left_join_match_context(t0.select({0, 1}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 1, 1, 1, 1}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 1, 1, 1, 1}, stream);
   }
 
   // Test multi-column join with null_equality::UNEQUAL
@@ -2574,7 +2649,7 @@ TEST_F(JoinTest, HashJoinLeftMatchContext)
     cudf::hash_join const hash_join(t1.select({0, 1}), cudf::null_equality::UNEQUAL);
     auto const match_context = hash_join.left_join_match_context(t0.select({0, 1}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 1, 1, 1, 1}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 1, 1, 1, 1}, stream);
   }
 }
 
@@ -2602,7 +2677,9 @@ TEST_F(JoinTest, HashJoinFullMatchContext)
     cudf::hash_join const hash_join(t1.select({0}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.full_join_match_context(t0.select({0}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 1, 2, 1, 2}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 1, 2, 1, 2}, stream);
+    // The output size excludes the unmatched right row
+    EXPECT_EQ(match_context.output_size(), 7);
   }
 
   // Test multi-column join
@@ -2610,7 +2687,7 @@ TEST_F(JoinTest, HashJoinFullMatchContext)
     cudf::hash_join const hash_join(t1.select({0, 1}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.full_join_match_context(t0.select({0, 1}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {1, 1, 1, 1, 1}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 1, 1, 1, 1}, stream);
   }
 }
 
@@ -2633,19 +2710,22 @@ TEST_F(JoinTest, HashJoinMatchContextEmptyRight)
   // Test inner join match context
   {
     auto const match_context = hash_join.inner_join_match_context(t0, stream);
-    expect_match_counts_equal(*match_context._match_counts, {0, 0, 0}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {0, 0, 0}, stream);
+    EXPECT_EQ(match_context.output_size(), 0);
   }
 
   // Test left join match context
   {
     auto const match_context = hash_join.left_join_match_context(t0, stream);
-    expect_match_counts_equal(*match_context._match_counts, {1, 1, 1}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 1, 1}, stream);
+    EXPECT_EQ(match_context.output_size(), 3);
   }
 
   // Test full join match context
   {
     auto const match_context = hash_join.full_join_match_context(t0, stream);
-    expect_match_counts_equal(*match_context._match_counts, {1, 1, 1}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {1, 1, 1}, stream);
+    EXPECT_EQ(match_context.output_size(), 3);
   }
 }
 
@@ -2674,15 +2754,16 @@ TEST_F(JoinTest, HashJoinMatchContextDuplicatesAndEdgeCases)
     cudf::hash_join const hash_join(t1.select({0}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.inner_join_match_context(t0.select({0}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {3, 3, 1, 1, 0}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {3, 3, 1, 1, 0}, stream);
 
     auto const host_match_counts =
-      cudf::detail::make_host_vector_async(*match_context._match_counts, stream);
+      cudf::detail::make_host_vector_async(match_context.match_counts(), stream);
     stream.sync();
     cudf::size_type const total_matches =
       std::accumulate(host_match_counts.begin(), host_match_counts.end(), cudf::size_type{0});
     auto const inner_join_size = hash_join.inner_join_size(t0.select({0}));
     EXPECT_EQ(total_matches, inner_join_size);
+    EXPECT_EQ(match_context.output_size(), inner_join_size);
   }
 
   // Test multi-column join
@@ -2690,7 +2771,7 @@ TEST_F(JoinTest, HashJoinMatchContextDuplicatesAndEdgeCases)
     cudf::hash_join const hash_join(t1.select({0, 1}), cudf::null_equality::EQUAL);
     auto const match_context = hash_join.inner_join_match_context(t0.select({0, 1}), stream);
 
-    expect_match_counts_equal(*match_context._match_counts, {3, 3, 1, 1, 0}, stream);
+    expect_match_counts_equal(match_context.match_counts(), {3, 3, 1, 1, 0}, stream);
   }
 }
 
@@ -3321,7 +3402,7 @@ TEST_F(SortMergeJoinThreadSafetyTest, ConcurrentMatchContext)
   // Get expected result from single-threaded execution
   auto expected_ctx    = join_obj.inner_join_match_context(t0);
   auto expected_counts = cudf::detail::make_std_vector<cudf::size_type>(
-    *expected_ctx->_match_counts, cudf::get_default_stream());
+    expected_ctx->match_counts(), cudf::get_default_stream());
 
   // Run concurrent calls
   constexpr int num_threads = 4;
@@ -3331,7 +3412,7 @@ TEST_F(SortMergeJoinThreadSafetyTest, ConcurrentMatchContext)
     futures.push_back(std::async(std::launch::async, [&]() {
       auto ctx = join_obj.inner_join_match_context(
         t0, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-      auto counts = cudf::detail::make_std_vector<cudf::size_type>(*ctx->_match_counts,
+      auto counts = cudf::detail::make_std_vector<cudf::size_type>(ctx->match_counts(),
                                                                    cudf::get_default_stream());
       return counts;
     }));
@@ -3442,20 +3523,49 @@ TEST_F(JoinTest, HashJoinPartitionedInnerJoin)
   };
 
   // Process row by row
-  std::vector<std::unique_ptr<cudf::table>> partials;
-  std::vector<cudf::table_view> partial_views;
-  for (cudf::size_type i = 0; i < t0.num_rows(); i++) {
-    part_ctx.left_start_idx = i;
-    part_ctx.left_end_idx   = i + 1;
-    partials.push_back(join_and_gather(part_ctx));
-    partial_views.push_back(partials.back()->view());
-  }
+  auto expect_row_by_row_equal = [&](cudf::join_partition_context& ctx) {
+    std::vector<std::unique_ptr<cudf::table>> partials;
+    std::vector<cudf::table_view> partial_views;
+    for (cudf::size_type i = 0; i < t0.num_rows(); i++) {
+      ctx.left_start_idx = i;
+      ctx.left_end_idx   = i + 1;
+      partials.push_back(join_and_gather(ctx));
+      partial_views.push_back(partials.back()->view());
+    }
 
-  auto concat_result     = cudf::concatenate(partial_views, stream, mr);
-  auto concat_sort_order = cudf::sorted_order(concat_result->view());
-  auto concat_sorted     = cudf::gather(concat_result->view(), *concat_sort_order);
+    auto concat_result     = cudf::concatenate(partial_views, stream, mr);
+    auto concat_sort_order = cudf::sorted_order(concat_result->view());
+    auto concat_sorted     = cudf::gather(concat_result->view(), *concat_sort_order);
 
-  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sorted, *concat_sorted);
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sorted, *concat_sorted);
+  };
+  expect_row_by_row_equal(part_ctx);
+
+  // A context belongs to the join object and join kind that created it
+  cudf::hash_join other_joiner(t1.select(right_on), compare_nulls, stream);
+  EXPECT_THROW(std::ignore = other_joiner.partitioned_inner_join(part_ctx, stream, mr),
+               std::invalid_argument);
+  EXPECT_THROW(std::ignore = hash_joiner.partitioned_left_join(part_ctx, stream, mr),
+               std::invalid_argument);
+  cudf::sort_merge_join sort_merge_joiner(
+    t1.select(right_on), cudf::sorted::NO, compare_nulls, stream);
+  EXPECT_THROW(std::ignore = sort_merge_joiner.partitioned_inner_join(part_ctx, stream, mr),
+               std::invalid_argument);
+  EXPECT_THROW(std::ignore = sort_merge_joiner.partitioned_inner_join(
+                 cudf::join_partition_context{nullptr, 0, 0}, stream, mr),
+               std::invalid_argument);
+
+  // A caller-constructed context probes each partition again
+  // TODO: Remove this case with the deprecated constructor in 27.02 (#20958).
+  auto counts =
+    std::make_unique<rmm::device_uvector<cudf::size_type>>(cudf::detail::make_device_uvector_async(
+      part_ctx.left_table_context->match_counts(), stream, mr));
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  auto uncached_ctx = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(t0.select(left_on), std::move(counts)), 0, 0};
+#pragma GCC diagnostic pop
+  expect_row_by_row_equal(uncached_ctx);
 }
 
 TEST_F(JoinTest, HashJoinPartitionedLeftJoin)
@@ -3677,6 +3787,50 @@ TEST_F(JoinTest, HashJoinPartitionedWholeTable)
 
 // Exercises both a sliced (non-zero offset) left view and a partition size large enough
 // to span multiple kernel blocks.
+// An empty build table sends the partitioned join down the trivial path, which must still emit
+// left indices in the coordinate space of the whole left table rather than of the partition.
+TEST_F(JoinTest, HashJoinPartitionedEmptyBuildTableUsesGlobalLeftIndices)
+{
+  auto constexpr left_rows  = 10;
+  auto constexpr part_start = 4;
+  auto constexpr part_end   = 9;
+
+  column_wrapper<int32_t> left_col{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}};
+  CVector left_cols;
+  left_cols.push_back(left_col.release());
+  Table left(std::move(left_cols));
+  EXPECT_EQ(left.num_rows(), left_rows);
+
+  // Build side is empty, so every left row is unmatched.
+  column_wrapper<int32_t> empty_col{};
+  CVector empty_cols;
+  empty_cols.push_back(empty_col.release());
+  Table empty_right(std::move(empty_cols));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  cudf::hash_join hash_joiner(empty_right.view(), cudf::null_equality::EQUAL, stream);
+  auto match_ctx = hash_joiner.left_join_match_context(left.view(), stream, mr);
+  auto part_ctx  = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(std::move(match_ctx)), part_start, part_end};
+
+  auto const [left_idx, right_idx] = hash_joiner.partitioned_left_join(part_ctx, stream, mr);
+
+  // Left indices must be the global rows [part_start, part_end), not [0, part_end - part_start).
+  column_wrapper<cudf::size_type> expected_left{{4, 5, 6, 7, 8}};
+  column_wrapper<cudf::size_type> expected_right{{cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch,
+                                                  cudf::JoinNoMatch}};
+
+  auto const left_view  = cudf::column_view{cudf::device_span<cudf::size_type const>{*left_idx}};
+  auto const right_view = cudf::column_view{cudf::device_span<cudf::size_type const>{*right_idx}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_left, left_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_right, right_view);
+}
+
 TEST_F(JoinTest, HashJoinPartitionedSlicedMultiBlock)
 {
   auto constexpr left_full_rows = 4000;

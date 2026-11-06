@@ -49,7 +49,6 @@ from pylibcudf.libcudf.aggregation cimport (
     make_sum_aggregation,
     make_sum_of_squares_aggregation,
     make_tdigest_aggregation,
-    make_udf_aggregation,
     make_variance_aggregation,
     rank_method,
     rank_percentage,
@@ -78,8 +77,6 @@ from pylibcudf.libcudf.aggregation import \
     rank_method as RankMethod  # no-cython-lint
 from pylibcudf.libcudf.aggregation import \
     rank_percentage as RankPercentage  # no-cython-lint
-from pylibcudf.libcudf.types import \
-    udf_source_type as UdfSourceType  # no-cython-lint
 
 from .types cimport DataType
 
@@ -91,7 +88,6 @@ __all__ = [
     "Kind",
     "RankMethod",
     "RankPercentage",
-    "UdfSourceType",
     "all",
     "any",
     "argmax",
@@ -127,7 +123,6 @@ __all__ = [
     "sum",
     "sum_of_squares",
     "tdigest",
-    "udf",
     "variance",
 ]
 
@@ -570,33 +565,6 @@ cpdef Aggregation collect_set(
         )
     )
 
-cpdef Aggregation udf(str operation, DataType output_type):
-    """Create a udf aggregation.
-
-    For details, see :cpp:func:`make_udf_aggregation`.
-
-    Parameters
-    ----------
-    operation : str
-        The operation to perform as a string of PTX code.
-    output_type : DataType
-        The output type of the aggregation.
-
-    Returns
-    -------
-    Aggregation
-        The udf aggregation.
-    """
-    return Aggregation.from_libcudf(
-        move(
-            make_udf_aggregation[aggregation](
-                UdfSourceType.PTX,
-                operation.encode("utf-8"),
-                output_type.c_obj,
-            )
-        )
-    )
-
 
 cpdef Aggregation correlation(
     correlation_type type,
@@ -930,4 +898,3 @@ CorrelationType.__str__ = CorrelationType.__repr__
 EWMHistory.__str__ = EWMHistory.__repr__
 RankMethod.__str__ = RankMethod.__repr__
 RankPercentage.__str__ = RankPercentage.__repr__
-UdfSourceType.__str__ = UdfSourceType.__repr__

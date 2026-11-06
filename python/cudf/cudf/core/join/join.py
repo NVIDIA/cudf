@@ -486,8 +486,8 @@ class Merge:
         # (labels already duplicated in an input are allowed), or when a
         # suffixed label collides with a non-renamed label on the other side.
         def _within_frame_dups(labels, names):
-            seen_labels: set = set()
-            seen_names: set = set()
+            seen_labels = set()
+            seen_names = set()
             dups = []
             for label, name in zip(labels, names, strict=True):
                 if label in seen_labels and name not in seen_names:
@@ -519,9 +519,11 @@ class Merge:
     def _promote_column_with_nulls(col: ColumnBase) -> ColumnBase:
         # pandas upcasts a numpy integer column that has acquired missing
         # values (from unmatched rows) to float64. cudf represents nulls
-        # natively via a mask; upcast here to match pandas' output dtype.
+        # natively via a mask, so only upcast in pandas-compatible mode:
+        # float64 cannot represent every large int64/uint64 value.
         if (
-            isinstance(col.dtype, np.dtype)
+            get_option("mode.pandas_compatible")
+            and isinstance(col.dtype, np.dtype)
             and col.dtype.kind in "iu"
             and col.null_count
         ):

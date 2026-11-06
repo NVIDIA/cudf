@@ -182,7 +182,7 @@ cdef class Table:
         cdef unique_ptr[arrow_table] c_result
 
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
 
         if hasattr(obj, "__arrow_c_device_array__"):
@@ -379,12 +379,13 @@ cdef class Table:
         Table
             A new Table with deep copies of all columns.
         """
+        cdef unique_ptr[table] c_result
         cdef Stream _stream = _get_stream(stream)
+        cdef table_view c_self = self.view()
         mr = _get_memory_resource(mr)
-        return Table(
-            [col.copy(_stream, mr) for col in self._columns],
-            num_rows=self.num_rows(),
-        )
+        with nogil:
+            c_result = make_unique[table](c_self, _stream.view(), mr.get_mr())
+        return Table.from_libcudf(move(c_result), _stream, mr)
 
     def _to_schema(self, metadata=None):
         """Create an Arrow schema from this table."""
@@ -412,7 +413,7 @@ cdef class Table:
     def _to_host_array(self, object stream: CudaStreamLike):
         cdef ArrowArray* raw_host_array_ptr
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef table_view c_self = self.view()
 
         with nogil:

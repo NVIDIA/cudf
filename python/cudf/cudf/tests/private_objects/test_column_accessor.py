@@ -23,13 +23,14 @@ def check_ca_equal(lhs, rhs):
 
 
 @pytest.fixture(
+    scope="module",
     params=[
         {},
         {"a": []},
         {"a": [1]},
         {"a": ["a"]},
         {"a": [1, 2, 3], "b": ["a", "b", "c"]},
-    ]
+    ],
 )
 def simple_data(request):
     return {key: as_column(data) for key, data in request.param.items()}

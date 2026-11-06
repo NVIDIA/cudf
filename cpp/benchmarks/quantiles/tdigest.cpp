@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,8 +50,11 @@ void bm_tdigest_merge(nvbench::state& state)
       return i * tdigest_size;
     }));
   cudf::test::fixed_width_column_wrapper<int> offsets(offset_iter, offset_iter + num_tdigests + 1);
-  auto list_col =
-    cudf::make_lists_column(num_tdigests, offsets.release(), inner_struct.release(), 0, {});
+  auto list_col = cudf::make_lists_column(num_tdigests,
+                                          offsets.release(),
+                                          inner_struct.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // min and max columns
   auto min_iter = cuda::make_constant_iterator(base_value);
@@ -81,11 +84,11 @@ void bm_tdigest_merge(nvbench::state& state)
       ->release()
       .front());
 
-  stream.synchronize();
+  stream.sync();
 
   state.add_element_count(total_centroids);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::timer | nvbench::exec_tag::sync,
              [&](nvbench::launch& launch, auto& timer) {
@@ -133,9 +136,9 @@ void bm_tdigest_reduce(nvbench::state& state)
                 .front());
   auto group_valid_counts = cudf::sequence(num_groups, rpg_scalar, zero);
 
-  stream.synchronize();
+  stream.sync();
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::timer | nvbench::exec_tag::sync,
              [&](nvbench::launch& launch, auto& timer) {

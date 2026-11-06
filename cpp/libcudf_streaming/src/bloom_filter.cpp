@@ -9,6 +9,7 @@
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <rapidsmpf/cuda_stream.hpp>
@@ -48,9 +49,9 @@ rapidsmpf::streaming::Actor bloom_filter::build(
   co_await ctx_->executor()->schedule();
   co_await ch_in->shutdown_metadata();
   co_await ch_out->shutdown_metadata();
-  auto const& br                       = ctx_->br();
-  auto mr                              = br->device_mr();
-  cuda::stream_ref const filter_stream = br->stream_pool()->get_stream();
+  auto const& br     = ctx_->br();
+  auto mr            = br->device_mr();
+  auto filter_stream = br->stream_pool()->get_stream();
   rapidsmpf::CudaEvent event;
   auto storage =
     cudf_streaming::detail::device_bloom_filter::storage(filter_size_, filter_stream, mr);
@@ -102,7 +103,10 @@ rapidsmpf::streaming::Actor bloom_filter::build(
     auto [res, _] = br->reserve(rapidsmpf::MemoryType::DEVICE, 0, rapidsmpf::AllowOverbooking::YES);
     storage       = br->move_to_device_buffer(std::move(result.second), res);
   }
-  co_await ch_out->send(rapidsmpf::streaming::Message{0, std::move(storage), {}, {}});
+  co_await ch_out->send(rapidsmpf::streaming::Message{0,
+                                                      std::move(storage),
+                                                      rapidsmpf::ContentDescription{},
+                                                      rapidsmpf::streaming::Message::Callbacks{}});
   co_await ch_out->drain(ctx_->executor());
 }
 
@@ -117,7 +121,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
   auto storage = (co_await bloom_filter->receive()).release<rmm::device_buffer>();
   RAPIDSMPF_EXPECTS((co_await bloom_filter->receive()).empty(),
                     "Bloom filter channel contained more than one message");
-  cuda::stream_ref const stream = storage.stream();
+  auto stream = storage.stream();
   rapidsmpf::CudaEvent event;
   auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage.data());
   auto meta   = co_await ch_in->receive_metadata();

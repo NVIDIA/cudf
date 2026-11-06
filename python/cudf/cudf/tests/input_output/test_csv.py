@@ -20,7 +20,7 @@ from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def pd_mixed_dataframe():
     return pd.DataFrame(
         {
@@ -35,12 +35,12 @@ def pd_mixed_dataframe():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def cudf_mixed_dataframe(pd_mixed_dataframe):
     return cudf.from_pandas(pd_mixed_dataframe)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf_np_dtypes():
     gdf_dtypes = [
         "float",
@@ -80,7 +80,7 @@ def gdf_np_dtypes():
     return dict(zip(gdf_dtypes, np_dtypes, strict=True))
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def numeric_extremes_dataframe(gdf_np_dtypes):
     data = {}
     for typ, np_type in gdf_np_dtypes.items():

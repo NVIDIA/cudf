@@ -38,11 +38,12 @@ std::unique_ptr<scalar> collect_list(column_view const& col,
                                      rmm::device_async_resource_ref mr)
 {
   if (need_handle_nulls(col, null_handling)) {
-    auto d_view             = column_device_view::create(col, stream);
-    auto filter             = cudf::detail::validity_accessor(*d_view);
-    auto null_purged_table  = cudf::detail::copy_if(table_view{{col}}, filter, stream, mr);
-    column* null_purged_col = null_purged_table->release().front().release();
-    null_purged_col->set_null_mask(rmm::device_buffer{0, stream, mr}, 0);
+    auto d_view            = column_device_view::create(col, stream);
+    auto filter            = cudf::detail::validity_accessor(*d_view);
+    auto null_purged_table = cudf::detail::copy_if(table_view{{col}}, filter, stream, mr);
+    auto null_purged_col   = std::move(null_purged_table->release().front());
+    null_purged_col->set_null_mask(
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
     return std::make_unique<list_scalar>(std::move(*null_purged_col), true, stream, mr);
   } else {
     return make_list_scalar(col, stream, mr);

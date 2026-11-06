@@ -1,62 +1,55 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include "hash_csr.cuh"
+
 #include <cudf/detail/join/hash_join.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/mr/polymorphic_allocator.hpp>
+#include <cuda/buffer>
+#include <cuda/std/bit>
+#include <cuda/std/cstdint>
 
-#include <cuco/static_multiset.cuh>
-#include <cuda/std/functional>
+#include <cstddef>
+#include <cstdint>
+#include <utility>
 
 namespace cudf::detail {
 
 template <typename Hasher>
 struct hash_join<Hasher>::impl {
-  struct always_not_equal {
-    __device__ constexpr bool operator()(
-      cuco::pair<hash_value_type, size_type> const&,
-      cuco::pair<hash_value_type, size_type> const&) const noexcept
-    {
-      // multiset always insert
-      return false;
-    }
-  };
+  impl(cuda::std::uint32_t capacity,
+       size_type rows,
+       cuda::stream_ref stream,
+       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+    : _mr(std::move(mr)),
+      _slots(stream, _mr, capacity, cuda::no_init),
+      _offsets(stream, _mr, static_cast<std::size_t>(rows) + 1, cuda::no_init),
+      _values(stream, _mr, 0, cuda::no_init),
+      _capacity(capacity),
+      _row_mask(
+        (cuda::std::uint32_t{1} << cuda::std::bit_width(static_cast<cuda::std::uint32_t>(rows))) -
+        1)
+  {
+  }
 
-  struct hasher1 {
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, size_type> const& key) const noexcept
-    {
-      return key.first;
-    }
-  };
+  hash_table_ref hash_table() const
+  {
+    return {const_cast<hash_table_slot_type*>(_slots.data()), _capacity, _row_mask};
+  }
 
-  struct hasher2 {
-    hasher2(hash_value_type seed) : _hash{seed} {}
+  csr_ref csr() const { return {_offsets.data(), _values.data()}; }
 
-    __device__ constexpr hash_value_type operator()(
-      cuco::pair<hash_value_type, size_type> const& key) const noexcept
-    {
-      return _hash(key.first);
-    }
-
-   private:
-    Hasher _hash;
-  };
-
-  using hash_table_t =
-    cuco::static_multiset<cuco::pair<cudf::hash_value_type, cudf::size_type>,
-                          cuco::extent<std::size_t>,
-                          cuda::thread_scope_device,
-                          always_not_equal,
-                          cuco::double_hashing<DEFAULT_JOIN_CG_SIZE, hasher1, hasher2>,
-                          rmm::mr::polymorphic_allocator<char>,
-                          cuco::storage<2>>;
-
-  hash_table_t _hash_table;
+  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
+  cuda::device_buffer<hash_table_slot_type> _slots;
+  cuda::device_buffer<size_type> _offsets;
+  cuda::device_buffer<size_type> _values;
+  cuda::std::uint32_t _capacity;
+  cuda::std::uint32_t _row_mask;
 };
 
 }  // namespace cudf::detail

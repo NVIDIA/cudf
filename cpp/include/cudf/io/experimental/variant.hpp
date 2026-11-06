@@ -77,9 +77,17 @@ namespace io::parquet::experimental {
  * A null value is produced when the input row is null or the encoded type does not match
  * `desired_type`.
  *
+ * For a decimal `desired_type`, every encoded width is accepted and each value is rescaled from its
+ * own encoded scale to `desired_type.scale()`, truncating toward zero; a value that no longer fits
+ * produces a null row with `variant_operation_status::OVERFLOW`.
+ *
+ * `TIMESTAMP_MICROSECONDS`/`TIMESTAMP_NANOSECONDS` accept both the timezone-adjusted and the NTZ
+ * encoding of the same unit, unchanged; no unit conversion is performed.
+ *
  * @param values `list<uint8>` column of VARIANT-encoded value bytes
  * @param desired_type Target cuDF type (`STRING`, `INT8`/`INT16`/`INT32`/`INT64`,
- *        `FLOAT32`/`FLOAT64`, or `BOOL8`)
+ *        `FLOAT32`/`FLOAT64`, `TIMESTAMP_MICROSECONDS`/`TIMESTAMP_NANOSECONDS`, `BOOL8`, or
+ *        `DECIMAL32`/`DECIMAL64`/`DECIMAL128`)
  * @param status Optional in-out parameter, `variant_operation_status` values, one per row. Must be
  *        non-nullable, `UINT8`, and have the same row count as `values`. On input, its existing
  *        values are treated as status from a prior `get_variant_field` call: rows already marked
@@ -91,9 +99,8 @@ namespace io::parquet::experimental {
  * @return Typed column decoded from the VARIANT value blobs
  *
  * @throws std::invalid_argument if `values` is not a `list<uint8>` column; if `desired_type`
- *         is not one of the supported types (`STRING`, `INT8`/`INT16`/`INT32`/`INT64`,
- *         `FLOAT32`/`FLOAT64`, or `BOOL8`); or if `status` is provided but is nullable, not
- *         `UINT8`, or has a different row count than `values`
+ *         is not one of the supported types listed above; or if `status`
+ *         is provided but is nullable, not `UINT8`, or has a different row count than `values`
  */
 [[nodiscard]] std::unique_ptr<column> cast_variant(
   column_view const& values,
@@ -110,8 +117,7 @@ namespace io::parquet::experimental {
  *
  * @param variant_column Struct column (VARIANT materialization)
  * @param path JSONPath-like path string (see `get_variant_field` for syntax)
- * @param desired_type Target type: `STRING`, `INT8`/`INT16`/`INT32`/`INT64`,
- *        `FLOAT32`/`FLOAT64`, or `BOOL8`
+ * @param desired_type Target type (see `cast_variant` for the supported types)
  * @param status Optional. When provided, filled with `variant_operation_status` values, one per
  *               row. Must be non-nullable, `UINT8`, and have the same row count as
  *               `variant_column`

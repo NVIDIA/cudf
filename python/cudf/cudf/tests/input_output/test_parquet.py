@@ -22,6 +22,7 @@ from packaging import version
 from pyarrow import parquet as pq
 
 import cudf
+from cudf.core._compat import PYARROW_GE_26
 from cudf.io.parquet import (
     ParquetDatasetWriter,
     ParquetWriter,
@@ -55,7 +56,7 @@ def datadir(datadir):
     return datadir / "parquet"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def simple_pdf():
     nrows = 10
     rng = np.random.default_rng(seed=0)
@@ -90,7 +91,7 @@ def simple_pdf():
     return test_pdf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def simple_gdf(simple_pdf):
     return cudf.DataFrame(simple_pdf)
 
@@ -176,22 +177,22 @@ def build_pdf(num_columns, day_resolution_timestamps):
     return test_pdf
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf(request):
     return build_pdf(request.param, False)
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf_day_timestamps(request):
     return build_pdf(request.param, True)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf(pdf):
     return cudf.DataFrame(pdf)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf_day_timestamps(pdf_day_timestamps):
     return cudf.DataFrame(pdf_day_timestamps)
 
@@ -2182,6 +2183,54 @@ def test_parquet_writer_chunked_max_file_size(
         )
 
 
+def test_parquet_writer_chunked_max_file_size_list(tmp_path):
+    rows = 128
+    embedding_dim = 128
+    centroids = 8
+
+    # Build a list column with fixed-size embeddings for each row.
+    values = np.random.default_rng(0).standard_normal(
+        rows * embedding_dim, dtype=np.float32
+    )
+    offsets = pa.array(
+        np.arange(
+            0,
+            (rows + 1) * embedding_dim,
+            embedding_dim,
+            dtype=np.int32,
+        )
+    )
+    df = cudf.DataFrame(
+        {
+            "embedding": pa.ListArray.from_arrays(offsets, pa.array(values)),
+            "row": np.arange(rows),
+            "centroid": np.arange(rows) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    with ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="50 KB",
+        file_name_prefix="part",
+    ) as writer:
+        writer.write_table(df)
+        writer.write_table(df)
+
+    # Each partition should produce one file below the configured size limit.
+    files = list(path.rglob("*.parquet"))
+    assert_eq(len(files), centroids)
+    assert_eq(all(file.stat().st_size <= 50_000 for file in files), True)
+
+    # Verify that the partitioned list data round-trips without loss.
+    expect = cudf.concat([df, df]).sort_values("row").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("row").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)
+
+
 def test_parquet_writer_chunked_max_file_size_error():
     with pytest.raises(
         ValueError,
@@ -2933,6 +2982,7 @@ def test_parquet_writer_column_validation():
 
 
 def test_parquet_writer_nulls_pandas_read(tmp_path, pdf):
+    pdf = pdf.copy()
     if "col_bool" in pdf.columns:
         pdf.drop(columns="col_bool", inplace=True)
     if "col_category" in pdf.columns:
@@ -3020,13 +3070,38 @@ def test_parquet_reader_brotli(datadir):
     assert_eq(expect, got)
 
 
-def test_parquet_reader_one_level_list(datadir):
-    fname = datadir / "one_level_list.parquet"
+@pytest.mark.parametrize(
+    "fname", ["one_level_list.parquet", "one_level_list_in_struct.parquet"]
+)
+def test_parquet_reader_one_level_list(datadir, fname):
+    fname = datadir / fname
 
     expect = pd.read_parquet(fname)
     got = cudf.read_parquet(fname)
 
     assert_eq(expect, got)
+
+    with cudf.option_context("io.parquet.low_memory", True):
+        got = cudf.read_parquet([fname] * 3, _chunk_read_limit=160)
+    assert_eq(pd.concat([expect] * 3, ignore_index=True), got)
+
+
+@pytest.mark.skipif(
+    version.parse(pa.__version__) < version.parse("24"),
+    reason="pyarrow < 24 cannot read a one-level list under a stub",
+)
+def test_parquet_reader_one_level_list_in_stub(datadir):
+    fname = datadir / "one_level_list_in_stub.parquet"
+
+    # pyarrow reads the `repeated group list` stub as a struct; cudf as the
+    # list element
+    expect = [
+        None if row is None else [s["a"].tolist() for s in row]
+        for row in pd.read_parquet(fname)["l"]
+    ]
+    got = cudf.read_parquet(fname)["l"].to_arrow().to_pylist()
+
+    assert expect == got
 
 
 def test_parquet_reader_binary_decimal(datadir):
@@ -3376,6 +3451,49 @@ def test_parquet_columns_and_range_index(columns):
     got = cudf.read_parquet(buffer, columns=columns)
 
     assert_eq(expected, got, check_index_type=True)
+
+
+@pytest.mark.parametrize("low_memory", [True, False])
+@pytest.mark.parametrize("index", [True, False, None])
+@pytest.mark.parametrize(
+    "kwargs, num_rows",
+    [
+        ({}, 12),
+        ({"skip_rows": 3}, 9),
+        ({"nrows": 5}, 5),
+        ({"nrows": 15}, 12),
+        ({"skip_rows": 3, "nrows": 5}, 5),
+        ({"row_groups": [[0, 2], [1]]}, 6),
+    ],
+)
+def test_parquet_empty_columns_num_rows(
+    tmp_path, low_memory, index, kwargs, num_rows
+):
+    paths = []
+    for i in range(2):
+        path = str(tmp_path / f"{i}.parquet")
+        pd.DataFrame({"a": range(6)}).to_parquet(
+            path, index=index, row_group_size=2
+        )
+        paths.append(path)
+
+    with cudf.option_context("io.parquet.low_memory", low_memory):
+        got = cudf.read_parquet(paths, columns=[], **kwargs)
+
+    expected_rows = num_rows if index or PYARROW_GE_26 else 0
+    assert got.shape == (expected_rows, 0)
+    assert len(got.index) == expected_rows
+
+
+@pytest.mark.parametrize("low_memory", [True, False])
+def test_parquet_empty_columns_nrows_exceeds_num_rows(tmp_path, low_memory):
+    path = tmp_path / "file.parquet"
+    pd.DataFrame({"a": range(6)}).to_parquet(path)
+
+    with cudf.option_context("io.parquet.low_memory", low_memory):
+        got = cudf.read_parquet(path, columns=[], nrows=10)
+
+    assert got.shape == (6 if PYARROW_GE_26 else 0, 0)
 
 
 def test_parquet_nested_struct_list():
@@ -5229,3 +5347,60 @@ def test_read_parquet_snappy_malformed_copy_elem(
 )
 def test_parquet_reader_one_null_row(datadir, filename):
     cudf.read_parquet(datadir / filename)
+
+
+@pytest.mark.parametrize("root_exists", [False, True])
+def test_parquet_dataset_writer_explicit_filesystem(tmp_path, root_exists):
+    """Chunked output must land on the configured filesystem, not local disk."""
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    root = f"/{tmp_path.name}/pdw"
+    if root_exists:
+        fs.makedirs(root)
+    df1 = cudf.DataFrame({"a": [1, 1, 2], "b": [9, 8, 7]})
+    df2 = cudf.DataFrame({"a": [2, 3, 3], "b": [6, 5, 4]})
+
+    with ParquetDatasetWriter(
+        root, partition_cols=["a"], index=False, filesystem=fs
+    ) as cw:
+        cw.write_table(df1)
+        cw.write_table(df2)
+
+    written = sorted(fs.find(root))
+    assert written, "no files written to the configured filesystem"
+    # Nothing should have leaked onto the local filesystem
+    assert not os.path.exists(root)
+
+    got = {}
+    for f in written:
+        parent, partition, _ = f.rsplit("/", 2)
+        assert parent == root
+        got.setdefault(partition, []).extend(
+            cudf.read_parquet(f, filesystem=fs)["b"].to_arrow().to_pylist()
+        )
+    got = {k: sorted(v) for k, v in got.items()}
+    assert got == {"a=1": [8, 9], "a=2": [6, 7], "a=3": [4, 5]}
+
+
+def test_parquet_writer_pathlike_explicit_filesystem(tmp_path):
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    path = tmp_path / "out.parquet"
+    df = cudf.DataFrame({"a": [1, 2, 3]})
+    df.to_parquet(path, filesystem=fs)
+
+    assert not path.exists()
+    assert_eq(cudf.read_parquet(str(path), filesystem=fs), df)
+
+
+def test_parquet_pyarrow_engine_native_filesystem(tmp_path):
+    from pyarrow import fs as pa_fs
+
+    df = cudf.DataFrame({"a": [1, 2, 3]})
+    df.to_parquet(
+        str(tmp_path), engine="pyarrow", filesystem=pa_fs.LocalFileSystem()
+    )
+
+    assert_eq(cudf.read_parquet(tmp_path), df, check_index_type=False)

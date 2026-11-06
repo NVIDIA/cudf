@@ -1538,7 +1538,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             return ColumnBase.create(plc_column, np.dtype(np.bool_))
 
     @staticmethod
-    def _plc_memory_usage(col: plc.Column) -> int:
+    def _plc_memory_usage_buffers(col: plc.Column) -> int:
         n = 0
         if (data := col.data()) is not None:
             try:
@@ -1552,13 +1552,20 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 n += data.size
         if col.null_mask() is not None:
             n += plc.null_mask.bitmask_allocation_size_bytes(col.size())
+        return n
+
+    def _plc_memory_usage(self, col: plc.Column) -> int:
+        n = self._plc_memory_usage_buffers(col)
         for child in col.children():
-            n += ColumnBase._plc_memory_usage(child)
+            n += ColumnBase._plc_memory_usage(self, child)
         return n
 
     @cached_property
     def memory_usage(self) -> int:
-        return self._plc_memory_usage(self.plc_column)
+        # Sliced nested columns require reading their offsets from device memory, so the
+        # buffers must be spill locked.
+        with self.access(mode="read", scope="internal") as col:
+            return self._plc_memory_usage(col.plc_column)
 
     def _fill(
         self,

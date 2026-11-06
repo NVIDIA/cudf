@@ -103,7 +103,7 @@ int main(int argc, char const** argv)
   std::cout << "Chunks: " << divider << std::endl;
   std::cout << "Threads: " << thread_count << std::endl;
 
-  auto const mr_name = std::string("pool");
+  auto const mr_name = std::string("async");
   auto resource      = create_memory_resource(mr_name);
   auto stats_mr      = rmm::mr::statistics_resource_adaptor{resource};
   rmm::mr::set_current_device_resource(stats_mr);
@@ -148,7 +148,7 @@ int main(int argc, char const** argv)
   }
 
   // in case some kernels are still running on the default stream
-  stream.synchronize();
+  stream.sync();
 
   // combine each thread's agg data into a single vector
   std::vector<result_t> agg_data(divider);
@@ -160,7 +160,7 @@ int main(int argc, char const** argv)
 
   // now aggregate the aggregate results
   auto results = compute_final_aggregates(agg_data, stream);
-  stream.synchronize();
+  stream.sync();
 
   elapsed_t elapsed = std::chrono::steady_clock::now() - start;
   std::cout << "Number of keys: " << results->num_rows() << std::endl;

@@ -8,9 +8,11 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
 
@@ -29,6 +31,9 @@
  */
 
 namespace CUDF_EXPORT cudf {
+namespace detail {
+struct join_match_state;
+}  // namespace detail
 
 /**
  * @addtogroup column_join
@@ -77,42 +82,87 @@ enum class nullable_join : bool { YES = true, NO = false };
  * The value is set to the minimum possible value for `size_type` to ensure it's easily
  * distinguishable from valid row indices, which are always non-negative.
  */
-CUDF_HOST_DEVICE constexpr size_type JoinNoMatch = cuda::std::numeric_limits<size_type>::min();
+constexpr size_type JoinNoMatch = cuda::std::numeric_limits<size_type>::min();
 
 /**
  * @brief Holds context information about matches between tables during a join operation.
  *
- * This structure stores the left table view and a device vector containing the count of
- * matching rows in the right table for each row in the left table. Used primarily by
- * inner_join_match_context() to track join match information.
+ * Returned by the `*_join_match_context()` factories of join objects. Besides the per-row match
+ * counts, the context caches the state a join object needs to retrieve partitions without
+ * probing again. It is valid only with the join object and join kind that created it, and the
+ * join object and left table must outlive it.
  */
 struct join_match_context {
-  table_view _left_table;  ///< View of the left table involved in the join operation
-  std::unique_ptr<rmm::device_uvector<size_type>>
-    _match_counts;  ///< A device vector containing the count of matching rows in the right table
-                    ///< for each row in left table
+  /// @deprecated Since 26.12. Use left_table(); this field will be removed in 27.02.
+  [[deprecated("Use left_table(); _left_table will be removed in 27.02.")]]
+  table_view _left_table;
+
+  /// @deprecated Since 26.12. Use match_counts(); this field will be removed in 27.02.
+  [[deprecated("Use match_counts(); _match_counts will be removed in 27.02.")]]
+  std::unique_ptr<rmm::device_uvector<size_type>> _match_counts;
 
   /**
    * @brief Construct a join_match_context
+   *
+   * @deprecated Since 26.12. Use a join object's `*_join_match_context()` factory; this
+   * constructor will be removed in 27.02.
    *
    * @param left_table View of the left table involved in the join operation
    * @param match_counts Device vector containing the count of matching rows in the right table
    *                     for each row in the left table
    */
-  join_match_context(table_view const& left_table,  // NOLINT(modernize-pass-by-value)
-                     std::unique_ptr<rmm::device_uvector<size_type>> match_counts)
-    : _left_table{left_table}, _match_counts{std::move(match_counts)}
-  {
-  }
+  [[deprecated("Use a *_join_match_context() factory; this constructor will be removed in 27.02.")]]
+  join_match_context(table_view const& left_table,
+                     std::unique_ptr<rmm::device_uvector<size_type>> match_counts);
   join_match_context(join_match_context const&)            = delete;
   join_match_context& operator=(join_match_context const&) = delete;
-  join_match_context(join_match_context&&)                 = default;  ///< Move constructor
+  join_match_context(join_match_context&&) noexcept;  ///< Move constructor
   /**
    * @brief Move assignment operator
    * @return Reference to this object
    */
-  join_match_context& operator=(join_match_context&&) = default;
-  virtual ~join_match_context() = default;  ///< Virtual destructor for proper polymorphic deletion
+  join_match_context& operator=(join_match_context&&) noexcept;
+  ~join_match_context();  ///< Destructor
+
+  /**
+   * @brief Returns the left table involved in the join operation
+   *
+   * @return View of the left table
+   */
+  [[nodiscard]] table_view left_table() const;
+
+  /**
+   * @brief Returns the count of matching right rows for each left row
+   *
+   * Left and full join counts are at least one per left row.
+   *
+   * @throw std::invalid_argument If the context has no match counts
+   *
+   * @return Per-row match counts
+   */
+  [[nodiscard]] device_span<size_type const> match_counts() const;
+
+  /**
+   * @brief Returns the number of row index pairs a retrieval of the whole left table produces
+   *
+   * Sums the match counts and synchronizes `stream`. For full joins, it excludes the unmatched
+   * right rows added by finalize_partitioned_full_join().
+   *
+   * @throw std::invalid_argument If the context has no match counts
+   *
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @return Number of row index pairs
+   */
+  [[nodiscard]] std::size_t output_size(cuda::stream_ref stream = cudf::get_default_stream()) const;
+
+ private:
+  friend struct detail::join_match_state;
+
+  join_match_context(table_view left_table,
+                     std::unique_ptr<rmm::device_uvector<size_type>> match_counts,
+                     std::unique_ptr<detail::join_match_state> state);
+
+  std::unique_ptr<detail::join_match_state> _state;  ///< Join-specific cached state
 };
 
 /**
@@ -298,14 +348,16 @@ std::unique_ptr<cudf::table> cross_join(
  *
  * The behavior depends on the join type:
  * - INNER_JOIN: Only pairs that satisfy the predicate and have valid indices are kept.
- * - LEFT_JOIN: All left rows are preserved. Failed predicates nullify right indices.
- * - FULL_JOIN: All rows from both sides are preserved. Failed predicates create separate pairs.
+ * - LEFT_JOIN: Keeps passing pairs and adds exactly one unmatched pair for each left row
+ *   with no passing match.
+ * - FULL_JOIN: Keeps passing pairs and adds exactly one unmatched pair for each row on either
+ *   side with no passing match.
  *
- * Note on JoinNoMatch pairs: If an input pair already contains `JoinNoMatch` in either
- * position, the predicate cannot be evaluated and the pair passes through unchanged. The
- * "separate pairs" splitting only occurs when both indices are valid but the predicate fails.
- * For example, a FULL_JOIN pair `(5, 10)` that fails the predicate becomes two pairs:
- * `(5, JoinNoMatch)` and `(JoinNoMatch, 10)`, ensuring both rows appear in the output.
+ * The input maps must come from an equality join of the requested kind, with row indices
+ * corresponding to the supplied conditional tables. Null predicate results are nonmatches.
+ * Unmatched rows in valid outer-join maps are preserved without evaluating the predicate.
+ * A failed candidate does not create an unmatched row if another candidate for that row passes.
+ * Empty input maps produce empty output maps, without completing an outer join.
  *
  * ## Usage Pattern
  *
@@ -382,15 +434,17 @@ filter_join_indices(cudf::table_view const& left,
  * per-output contribution counts whose sum is that total. The counts are laid out per `join_kind`
  * so that each entry records how many output rows the corresponding input contributes:
  * - INNER_JOIN: indexed per input pair; entry `i` is `1` if the predicate passes and `0` otherwise.
- * - FULL_JOIN: indexed per input pair; entry `i` is `1` for a preserved pair (predicate passes or
- *   the pair already contains a `JoinNoMatch`) and `2` for a failed valid pair (which splits into
- *   `(left, JoinNoMatch)` and `(JoinNoMatch, right)`).
+ * - FULL_JOIN: one entry per left row followed by one per right row. Left entries count passing
+ *   valid pairs, floored to `1`; right entries are `1` for rows with no passing match and `0`
+ *   otherwise. Empty input maps return empty counts.
  * - LEFT_JOIN: indexed per left row; each entry holds the number of passing pairs for that left
  *   row, floored to `1` to account for the synthetic `(left, JoinNoMatch)` entry.
  *
  * The returned size and contribution counts may be passed as a precomputed hint to APIs that
  * compose `filter_join_indices` (for example, the mixed join APIs). The layout above is an
  * implementation detail that callers should treat as opaque rather than rely upon.
+ * The input-map contract is the same as `filter_join_indices`. Empty maps return zero size and
+ * empty counts.
  *
  * @throw std::invalid_argument if `join_kind` is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw std::invalid_argument if `left_indices` and `right_indices` have different sizes.
@@ -424,11 +478,14 @@ filter_join_indices_output_size(
  *
  * This function provides a JIT-compiled alternative to filter_join_indices(),
  * taking a string-based predicate that gets compiled to optimized GPU code.
+ * The input-map contract is the same as `filter_join_indices`.
  *
  * The behavior depends on the join type (same as filter_join_indices):
  * - INNER_JOIN: Only pairs that satisfy the predicate and have valid indices are kept.
- * - LEFT_JOIN: All left rows are preserved. Failed predicates nullify right indices.
- * - FULL_JOIN: All rows from both sides are preserved. Failed predicates create separate pairs.
+ * - LEFT_JOIN: Keeps passing pairs and adds exactly one unmatched pair for each left row
+ *   with no passing match.
+ * - FULL_JOIN: Keeps passing pairs and adds exactly one unmatched pair for each row on either
+ *   side with no passing match.
  *
  * ## Usage Pattern
  *
@@ -462,11 +519,17 @@ filter_join_indices_output_size(
  * right_col1, ...)
  * ```
  * The first parameter is a pointer to a bool that the function must set to `true` or `false`.
+ * For both null-aware and non-null-aware predicates, the output value is uninitialized and must
+ * be set on every execution path.
  * The remaining parameters correspond to columns in the left table followed by the right table.
+ * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors. PTX UDFs
+ * do not support returning errors.
+ *
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw std::invalid_argument if left_indices and right_indices have different sizes.
  * @throw cudf::jit_compilation_error if predicate_code fails to compile.
+ * @throw cudf::evaluation_error if the predicate reports an evaluation error.
  *
  * @param left The left table for predicate evaluation (conditional columns only).
  * @param right The right table for predicate evaluation (conditional columns only).
@@ -483,22 +546,25 @@ filter_join_indices_output_size(
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(
-  cudf::table_view const& left,
-  cudf::table_view const& right,
-  cudf::device_span<size_type const> left_indices,
-  cudf::device_span<size_type const> right_indices,
-  std::string const& predicate_code,
-  cudf::join_kind join_kind,
-  bool is_ptx                       = false,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+filter_join_indices_jit(cudf::table_view const& left,
+                        cudf::table_view const& right,
+                        cudf::device_span<size_type const> left_indices,
+                        cudf::device_span<size_type const> right_indices,
+                        std::string const& predicate_code,
+                        cudf::join_kind join_kind,
+                        bool is_ptx               = false,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters join indices using a JIT-compiled predicate from an AST expression.
  *
  * This overload converts an AST expression referencing columns from both left and right
  * tables into JIT-compiled CUDA code and uses it to filter the join index pairs.
+ * The input-map contract and join semantics are the same as `filter_join_indices`.
+ *
+ * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
+ * @throw cudf::evaluation_error if the predicate reports an evaluation error.
  *
  * @param left The left table for predicate evaluation
  * @param right The right table for predicate evaluation
@@ -506,21 +572,22 @@ filter_join_indices_jit(
  * @param right_indices Device span of row indices in right table from join
  * @param predicate An AST expression that returns a boolean for each pair of rows
  * @param join_kind The type of join operation (INNER_JOIN, LEFT_JOIN, or FULL_JOIN)
+ * @param fragments Device modules defining the called functions; linked together
  * @param stream CUDA stream for operations
  * @param mr Device memory resource
  * @return A pair of device vectors [filtered_left_indices, filtered_right_indices]
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(
-  cudf::table_view const& left,
-  cudf::table_view const& right,
-  cudf::device_span<size_type const> left_indices,
-  cudf::device_span<size_type const> right_indices,
-  cudf::ast::expression const& predicate,
-  cudf::join_kind join_kind,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+filter_join_indices_jit(cudf::table_view const& left,
+                        cudf::table_view const& right,
+                        cudf::device_span<size_type const> left_indices,
+                        cudf::device_span<size_type const> right_indices,
+                        cudf::ast::expression const& predicate,
+                        cudf::join_kind join_kind,
+                        cudf::lto_fragments fragments = {},
+                        cuda::stream_ref stream       = cudf::get_default_stream(),
+                        cudf::memory_resources mr     = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

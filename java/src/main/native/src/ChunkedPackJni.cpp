@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,8 +13,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ChunkedPack_chunkedPackDelete(JNIEnv*
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto cs = reinterpret_cast<cudf::chunked_pack*>(chunked_pack);
-    delete cs;
+    cudf::jni::safe_delete<cudf::chunked_pack>(chunked_pack);
   }
   JNI_CATCH(env, );
 }

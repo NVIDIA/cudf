@@ -58,9 +58,10 @@ __device__ void local_tile(MapType const* map,
   __syncthreads();
 }
 
-template <int Tiles, bool SaveRanks, typename MapType>
+template <int Tiles, bool SaveRanks, bool PackBin = false, typename MapType>
 CUDF_KERNEL void count_tiles(MapType const* map, int n, int p, uint16_t* saved, int32_t* counts)
 {
+  static_assert(!PackBin || tile_rows <= 32'768, "Binary packed ranks must fit in uint16_t");
   __shared__ int hist[warps][bins];
   int total = 0;
   for (int t = 0; t < Tiles; ++t) {
@@ -82,7 +83,12 @@ CUDF_KERNEL void count_tiles(MapType const* map, int n, int p, uint16_t* saved, 
 #pragma unroll
       for (int j = 0; j < 4; ++j) {
         int i = start + (threadIdx.x / 32) * 128 + j * 32 + threadIdx.x % 32;
-        if (i < n) saved[i] = hist[threadIdx.x / 32][keys[j]] + rank[j];
+        if (i < n) {
+          auto const local = hist[threadIdx.x / 32][keys[j]] + rank[j];
+          // PackBin is used by the binary STRING plan: its 10-bit tile rank and
+          // one-bit bin fit in uint16_t, avoiding a map read during byte copying.
+          saved[i] = local + (PackBin ? keys[j] * tile_rows : 0);
+        }
       }
     }
     __syncthreads();

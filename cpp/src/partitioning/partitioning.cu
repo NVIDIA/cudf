@@ -1302,7 +1302,10 @@ std::optional<partition_plan> select_partition_plan(table_view const& input, siz
     if (fixed && !nullable && large) {
       plan.direct = true;
       if (input.num_columns() > 2) {
-        plan.method = plans::algorithm::saved;
+        // Reordered output pays off for a few wide columns and removes saved ranks.
+        bool const reorder = input.num_columns() <= 4 && bytes_per_row >= 32;
+        plan.method        = reorder ? plans::algorithm::recompute : plans::algorithm::saved;
+        plan.reordered     = reorder;
       } else if (bytes_per_row > 4) {
         plan.method    = plans::algorithm::recompute;
         plan.reordered = input.num_columns() == 1 && bytes_per_row == 16;

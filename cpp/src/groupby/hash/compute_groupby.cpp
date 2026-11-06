@@ -128,7 +128,7 @@ std::unique_ptr<table> compute_groupby(table_view const& keys,
                      cuda::device_buffer<cuda::std::array<size_type, 2>>{stream, temp_mr},
                      cuda::device_buffer<size_type>{stream, temp_mr}};
   auto results =
-    compute_single_pass_aggs(values, agg_kinds, is_agg_intermediate, grouped, stream, mr);
+    compute_single_pass_aggs(values, agg_kinds, aggs, is_agg_intermediate, grouped, stream, mr);
   for (std::size_t i = 0; i < results.size(); ++i) {
     cache->add_result(values.column(i), *aggs[i], std::move(results[i]));
   }

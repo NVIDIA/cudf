@@ -159,11 +159,13 @@ void aggregate_result_functor::operator()<aggregation::SUM_OVERFLOW>(aggregation
 {
   if (cache.has_result(values, agg)) return;
 
+  auto const output = dynamic_cast<cudf::detail::sum_overflow_aggregation const&>(agg)._output;
   cache.add_result(values,
                    agg,
                    detail::group_sum_overflow(get_unordered_grouped_values(),
                                               helper.num_groups(stream),
                                               helper.group_labels(stream),
+                                              output,
                                               stream,
                                               mr.get_output_mr()));
 }

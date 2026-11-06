@@ -29,10 +29,10 @@ namespace cudf::reduction::detail {
 
 namespace {
 
-template <typename Source>
+template <typename Source, typename Overflow>
 std::unique_ptr<cudf::scalar> make_sum_overflow_struct_scalar(
   device_storage_type_t<Source> sum_value,
-  bool overflow_value,
+  sum_overflow_wraps_t<Overflow> wraps,
   bool sum_is_valid,
   cudf::data_type const& source_type,
   cuda::stream_ref stream,
@@ -49,7 +49,8 @@ std::unique_ptr<cudf::scalar> make_sum_overflow_struct_scalar(
       cudf::make_fixed_width_scalar<Source>(static_cast<Source>(sum_value), stream, temp_mr);
   }
   sum_scalar->set_valid_async(sum_is_valid, stream);
-  auto overflow_scalar = cudf::make_fixed_width_scalar<bool>(overflow_value, stream, temp_mr);
+  auto overflow_scalar =
+    cudf::make_fixed_width_scalar<Overflow>(wraps_to_overflow<Overflow>(wraps), stream, temp_mr);
 
   std::vector<std::unique_ptr<cudf::column>> children;
   children.push_back(cudf::make_column_from_scalar(*sum_scalar, 1, stream, temp_mr));
@@ -60,7 +61,7 @@ std::unique_ptr<cudf::scalar> make_sum_overflow_struct_scalar(
     cudf::host_span<cudf::column_view const>{child_views}, stream, mr);
 }
 
-template <typename Source>
+template <typename Source, typename Overflow>
 std::unique_ptr<cudf::scalar> sum_overflow_impl(
   column_view const& col,
   std::optional<std::reference_wrapper<scalar const>> init,
@@ -68,66 +69,71 @@ std::unique_ptr<cudf::scalar> sum_overflow_impl(
   rmm::device_async_resource_ref mr)
 {
   using DeviceType = device_storage_type_t<Source>;
+  using Wraps      = sum_overflow_wraps_t<Overflow>;
 
   if (init.has_value() && !init.value().get().is_valid(stream)) {
-    return make_sum_overflow_struct_scalar<Source>(
-      DeviceType{0}, false, false, col.type(), stream, mr);
+    return make_sum_overflow_struct_scalar<Source, Overflow>(
+      DeviceType{0}, 0, false, col.type(), stream, mr);
   }
 
   if (col.size() == 0 || col.size() == col.null_count()) {
-    return make_sum_overflow_struct_scalar<Source>(
-      DeviceType{0}, false, false, col.type(), stream, mr);
+    return make_sum_overflow_struct_scalar<Source, Overflow>(
+      DeviceType{0}, 0, false, col.type(), stream, mr);
   }
 
   auto dcol = cudf::column_device_view::create(col, stream);
 
-  sum_overflow_result<DeviceType> initial_value{DeviceType{0}, 0};
+  sum_overflow_result<DeviceType, Wraps> initial_value{DeviceType{0}, 0};
   if (init.has_value()) {
     auto const& init_scalar = static_cast<cudf::scalar_type_t<Source> const&>(init.value().get());
     initial_value.sum       = static_cast<DeviceType>(init_scalar.value(stream));
   }
 
   auto counting_iter = cuda::counting_iterator<cudf::size_type>{0};
-  sum_overflow_result<DeviceType> result;
+  sum_overflow_result<DeviceType, Wraps> result;
 
   if (col.has_nulls()) {
     result = thrust::transform_reduce(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       counting_iter,
       counting_iter + col.size(),
-      null_aware_to_sum_overflow<DeviceType>{*dcol},
+      null_aware_to_sum_overflow<DeviceType, Wraps>{*dcol},
       initial_value,
-      overflow_sum_op<DeviceType>{});
+      overflow_sum_op<DeviceType, Wraps>{});
   } else {
     auto input_iter = dcol->begin<DeviceType>();
     result          = thrust::transform_reduce(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       input_iter,
       input_iter + col.size(),
-      to_sum_overflow<DeviceType>{},
+      to_sum_overflow<DeviceType, Wraps>{},
       initial_value,
-      overflow_sum_op<DeviceType>{});
+      overflow_sum_op<DeviceType, Wraps>{});
   }
 
-  // On overflow the sum value is unspecified; the boolean flag is the source of truth.
-  return make_sum_overflow_struct_scalar<Source>(
-    result.sum, result.wraps != 0, true, col.type(), stream, mr);
+  // The sum is the true sum modulo 2^W; FLAG reports wraps != 0 and COUNT reports wraps.
+  return make_sum_overflow_struct_scalar<Source, Overflow>(
+    result.sum, result.wraps, true, col.type(), stream, mr);
 }
 
 struct sum_overflow_dispatcher {
   template <cudf::detail::sum_overflow_supported Source>
   std::unique_ptr<cudf::scalar> operator()(column_view const& col,
                                            std::optional<std::reference_wrapper<scalar const>> init,
+                                           sum_overflow_output output,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr) const
   {
-    return sum_overflow_impl<Source>(col, init, stream, mr);
+    return output == sum_overflow_output::COUNT
+             ? sum_overflow_impl<Source, int64_t>(col, init, stream, mr)
+             : sum_overflow_impl<Source, bool>(col, init, stream, mr);
   }
 
   template <typename Source>
     requires(!cudf::detail::sum_overflow_supported<Source>)
   std::unique_ptr<cudf::scalar> operator()(column_view const&,
                                            std::optional<std::reference_wrapper<scalar const>>,
+                                           sum_overflow_output,
                                            cuda::stream_ref,
                                            rmm::device_async_resource_ref) const
   {
@@ -141,6 +147,7 @@ struct sum_overflow_dispatcher {
 std::unique_ptr<cudf::scalar> sum_overflow(column_view const& col,
                                            cudf::data_type const output_dtype,
                                            std::optional<std::reference_wrapper<scalar const>> init,
+                                           sum_overflow_output output,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
@@ -148,7 +155,8 @@ std::unique_ptr<cudf::scalar> sum_overflow(column_view const& col,
   CUDF_EXPECTS(output_dtype.id() == type_id::STRUCT,
                "SUM_OVERFLOW output dtype must be STRUCT.",
                std::invalid_argument);
-  return cudf::type_dispatcher(col.type(), sum_overflow_dispatcher{}, col, init, stream, mr);
+  return cudf::type_dispatcher(
+    col.type(), sum_overflow_dispatcher{}, col, init, output, stream, mr);
 }
 
 }  // namespace cudf::reduction::detail

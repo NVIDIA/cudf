@@ -119,13 +119,13 @@ struct split_valid_value_fn {
 };
 
 /// Maps a grouped position to a SUM_OVERFLOW accumulator, treating nulls as a zero contribution.
-template <typename DeviceType, bool Nullable = false>
+template <typename DeviceType, typename Wraps, bool Nullable = false>
 struct grouped_sum_overflow_fn {
   size_type const* grouped_rows;
   value_accessor<DeviceType> value;
   bool has_nulls;
 
-  using accumulator = cudf::reduction::detail::sum_overflow_result<DeviceType>;
+  using accumulator = cudf::reduction::detail::sum_overflow_result<DeviceType, Wraps>;
   using result_type = cuda::std::conditional_t<Nullable, valid_value<accumulator>, accumulator>;
 
   __device__ result_type operator()(size_type position) const
@@ -141,13 +141,15 @@ struct grouped_sum_overflow_fn {
   }
 };
 
-/// Splits a reduced accumulator into the sum and overflow-flag children of the output struct.
-template <typename DeviceType>
+/// Splits a reduced accumulator into the sum and overflow children of the output struct.
+template <typename DeviceType, typename Overflow>
 struct split_sum_overflow_fn {
-  __device__ cuda::std::tuple<DeviceType, bool> operator()(
-    cudf::reduction::detail::sum_overflow_result<DeviceType> const& accumulator) const
+  using accumulator = cudf::reduction::detail::
+    sum_overflow_result<DeviceType, cudf::reduction::detail::sum_overflow_wraps_t<Overflow>>;
+
+  __device__ cuda::std::tuple<DeviceType, Overflow> operator()(accumulator const& acc) const
   {
-    return {accumulator.sum, accumulator.wraps != 0};
+    return {acc.sum, cudf::reduction::detail::wraps_to_overflow<Overflow>(acc.wraps)};
   }
 };
 
@@ -167,6 +169,82 @@ struct rep_type<T> {
 
 template <typename T>
 using rep_type_t = typename rep_type<T>::type;
+
+/// Computes SUM_OVERFLOW, writing the net wraps of each group as an `Overflow` (`bool` or
+/// `int64_t`) child.
+template <typename Source, typename Overflow>
+std::unique_ptr<column> compute_sum_overflow(reduction_context const& ctx,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
+{
+  using Wraps       = cudf::reduction::detail::sum_overflow_wraps_t<Overflow>;
+  using accumulator = cudf::reduction::detail::sum_overflow_result<Source, Wraps>;
+
+  auto sum_child = make_fixed_width_column(
+    ctx.values_type, ctx.num_groups, mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto overflow_child = make_fixed_width_column(data_type{type_to_id<Overflow>()},
+                                                ctx.num_groups,
+                                                mask_state::UNALLOCATED,
+                                                stream,
+                                                mr.get_output_mr());
+  auto null_mask = cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  size_type null_count{0};
+  if (ctx.num_groups > 0) {
+    if (ctx.nullable) {
+      null_mask =
+        cudf::create_null_mask(ctx.num_groups, mask_state::ALL_VALID, stream, mr.get_output_mr());
+      auto const mask   = null_mask.data();
+      auto const values = cudf::detail::make_counting_transform_iterator(
+        0,
+        grouped_sum_overflow_fn<Source, Wraps, true>{
+          ctx.grouped.rows.data(), ctx.accessor<Source>(), ctx.values.has_nulls()});
+      auto const output = cuda::tabulate_output_iterator{
+        [sums      = sum_child->mutable_view().begin<Source>(),
+         overflows = overflow_child->mutable_view().begin<Overflow>(),
+         mask] __device__(cuda::std::ptrdiff_t group, valid_value<accumulator> const& result) {
+          sums[group] = result.value.sum;
+          overflows[group] =
+            cudf::reduction::detail::wraps_to_overflow<Overflow>(result.value.wraps);
+          if (!result.valid) { cudf::clear_bit(mask, static_cast<size_type>(group)); }
+        }};
+      reduce_groups(
+        ctx.grouped,
+        values,
+        output,
+        valid_value_op<cudf::reduction::detail::overflow_sum_op<Source, Wraps>, accumulator>{},
+        valid_value<accumulator>{accumulator{}, false},
+        stream,
+        mr);
+      null_count = count_group_nulls(mask, ctx.num_groups, stream, mr);
+    } else {
+      auto const values = cudf::detail::make_counting_transform_iterator(
+        0,
+        grouped_sum_overflow_fn<Source, Wraps>{
+          ctx.grouped.rows.data(), ctx.accessor<Source>(), ctx.values.has_nulls()});
+      auto const children = cuda::transform_output_iterator{
+        cuda::make_zip_iterator(sum_child->mutable_view().begin<Source>(),
+                                overflow_child->mutable_view().begin<Overflow>()),
+        split_sum_overflow_fn<Source, Overflow>{}};
+      reduce_groups(ctx.grouped,
+                    values,
+                    children,
+                    cudf::reduction::detail::overflow_sum_op<Source, Wraps>{},
+                    accumulator{},
+                    stream,
+                    mr);
+    }
+  }
+
+  std::vector<std::unique_ptr<column>> children;
+  children.push_back(std::move(sum_child));
+  children.push_back(std::move(overflow_child));
+  return create_structs_hierarchy(ctx.num_groups,
+                                  std::move(children),
+                                  null_count,
+                                  std::move(null_mask),
+                                  stream,
+                                  mr.get_output_mr());
+}
 
 template <aggregation::Kind K>
 struct grouped_reduction_fn {
@@ -231,72 +309,9 @@ struct grouped_reduction_fn {
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
   {
-    using Source      = rep_type_t<T>;
-    using accumulator = cudf::reduction::detail::sum_overflow_result<Source>;
-
-    auto sum_child = make_fixed_width_column(
-      ctx.values_type, ctx.num_groups, mask_state::UNALLOCATED, stream, mr.get_output_mr());
-    auto overflow_child = make_fixed_width_column(data_type{type_id::BOOL8},
-                                                  ctx.num_groups,
-                                                  mask_state::UNALLOCATED,
-                                                  stream,
-                                                  mr.get_output_mr());
-    auto null_mask = cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, mr.get_output_mr());
-    size_type null_count{0};
-    if (ctx.num_groups > 0) {
-      if (ctx.nullable) {
-        null_mask =
-          cudf::create_null_mask(ctx.num_groups, mask_state::ALL_VALID, stream, mr.get_output_mr());
-        auto const mask   = null_mask.data();
-        auto const values = cudf::detail::make_counting_transform_iterator(
-          0,
-          grouped_sum_overflow_fn<Source, true>{
-            ctx.grouped.rows.data(), ctx.accessor<Source>(), ctx.values.has_nulls()});
-        auto const output = cuda::tabulate_output_iterator{
-          [sums      = sum_child->mutable_view().begin<Source>(),
-           overflows = overflow_child->mutable_view().begin<bool>(),
-           mask] __device__(cuda::std::ptrdiff_t group, valid_value<accumulator> const& result) {
-            sums[group]      = result.value.sum;
-            overflows[group] = result.value.wraps != 0;
-            if (!result.valid) { cudf::clear_bit(mask, static_cast<size_type>(group)); }
-          }};
-        reduce_groups(
-          ctx.grouped,
-          values,
-          output,
-          valid_value_op<cudf::reduction::detail::overflow_sum_op<Source>, accumulator>{},
-          valid_value<accumulator>{accumulator{}, false},
-          stream,
-          mr);
-        null_count = count_group_nulls(mask, ctx.num_groups, stream, mr);
-      } else {
-        auto const values = cudf::detail::make_counting_transform_iterator(
-          0,
-          grouped_sum_overflow_fn<Source>{
-            ctx.grouped.rows.data(), ctx.accessor<Source>(), ctx.values.has_nulls()});
-        auto const children = cuda::transform_output_iterator{
-          cuda::make_zip_iterator(sum_child->mutable_view().begin<Source>(),
-                                  overflow_child->mutable_view().begin<bool>()),
-          split_sum_overflow_fn<Source>{}};
-        reduce_groups(ctx.grouped,
-                      values,
-                      children,
-                      cudf::reduction::detail::overflow_sum_op<Source>{},
-                      accumulator{},
-                      stream,
-                      mr);
-      }
-    }
-
-    std::vector<std::unique_ptr<column>> children;
-    children.push_back(std::move(sum_child));
-    children.push_back(std::move(overflow_child));
-    return create_structs_hierarchy(ctx.num_groups,
-                                    std::move(children),
-                                    null_count,
-                                    std::move(null_mask),
-                                    stream,
-                                    mr.get_output_mr());
+    return ctx.overflow_output == sum_overflow_output::COUNT
+             ? compute_sum_overflow<rep_type_t<T>, int64_t>(ctx, stream, mr)
+             : compute_sum_overflow<rep_type_t<T>, bool>(ctx, stream, mr);
   }
 
   template <typename T>

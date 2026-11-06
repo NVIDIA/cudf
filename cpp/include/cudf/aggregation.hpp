@@ -206,16 +206,49 @@ class segmented_reduce_aggregation : public virtual aggregation {};
 enum class correlation_type : int32_t { PEARSON, KENDALL, SPEARMAN };
 /// Type of treatment of EWM input values' first value
 enum class ewm_history : int32_t { INFINITE, FINITE };
+/// Type of the `overflow` child produced by a SUM_OVERFLOW aggregation
+enum class sum_overflow_output : int32_t {
+  FLAG,   ///< `overflow` is BOOL8: whether the sum does not fit in the input type
+  COUNT,  ///< `overflow` is INT64: the net number of times the sum wrapped around 2^W
+};
 
 /// Factory to create a SUM aggregation
 /// @return A SUM aggregation object
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_sum_aggregation();
 
-/// Factory to create a SUM_OVERFLOW aggregation
-/// @return A SUM_OVERFLOW aggregation object
+/**
+ * @brief Factory to create a SUM_OVERFLOW aggregation
+ *
+ * Sums a signed integer or decimal column and reports whether the sum overflowed the range of the
+ * input's storage type. The result is a `STRUCT` with two children, `sum` (the input type, with the
+ * same scale for decimals) and `overflow`, whose type is selected by `output`:
+ *
+ * - `sum_overflow_output::FLAG`: `overflow` is `BOOL8` and is true if the sum does not fit in the
+ *   input type. In that case `sum` is unspecified.
+ * - `sum_overflow_output::COUNT`: `overflow` is `INT64` and holds the net number of times the sum
+ *   wrapped around 2^W, where W is the bit width of the input's storage type. `sum` is the sum
+ *   modulo 2^W, so the exact total is `overflow * 2^W + sum`. `overflow != 0` gives the same
+ *   result as `FLAG`.
+ *
+ * @code{.pseudo}
+ * INT8 values = [100, 100, 100, -50]   // exact total 250
+ * FLAG  result = {sum: <unspecified>, overflow: true}
+ * COUNT result = {sum: -6, overflow: 1}   // 1 * 2^8 + (-6) = 250
+ * @endcode
+ *
+ * Null rows are skipped. A groupby group with no valid rows produces a null row. A reduction with
+ * no valid rows produces a null `sum` with `overflow` false or 0.
+ *
+ * Supported by groupby (hash and sort based) and by reductions. Not supported by streaming groupby,
+ * scans, or segmented reductions.
+ *
+ * @param output Type of the `overflow` child
+ * @return A SUM_OVERFLOW aggregation object
+ */
 template <typename Base = aggregation>
-std::unique_ptr<Base> make_sum_overflow_aggregation();
+std::unique_ptr<Base> make_sum_overflow_aggregation(
+  sum_overflow_output output = sum_overflow_output::FLAG);
 
 /// Factory to create a PRODUCT aggregation
 /// @return A PRODUCT aggregation object

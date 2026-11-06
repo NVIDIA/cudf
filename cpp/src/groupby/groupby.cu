@@ -115,11 +115,14 @@ struct empty_column_constructor {
     if constexpr (k == aggregation::Kind::MERGE_HISTOGRAM) { return empty_like(values); }
 
     if constexpr (k == aggregation::Kind::SUM_OVERFLOW) {
-      // SUM_OVERFLOW returns a struct with sum (same type as input) and overflow (bool)
-      // children
+      // SUM_OVERFLOW returns a struct with sum (same type as input) and overflow (BOOL8 flag or
+      // INT64 wrap count) children
+      auto const output = dynamic_cast<cudf::detail::sum_overflow_aggregation const&>(agg)._output;
+      auto const overflow_type =
+        output == sum_overflow_output::COUNT ? cudf::type_id::INT64 : cudf::type_id::BOOL8;
       std::vector<std::unique_ptr<cudf::column>> children;
       children.push_back(make_empty_column(values.type()));
-      children.push_back(make_empty_column(cudf::data_type{cudf::type_id::BOOL8}));
+      children.push_back(make_empty_column(cudf::data_type{overflow_type}));
       return make_structs_column(0,
                                  std::move(children),
                                  0,

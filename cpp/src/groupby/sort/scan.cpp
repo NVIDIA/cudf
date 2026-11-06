@@ -50,6 +50,12 @@ struct scan_result_functor final : store_result_functor {
 };
 
 template <>
+void scan_result_functor::operator()<aggregation::SUM_OVERFLOW>(aggregation const&)
+{
+  CUDF_FAIL("SUM_OVERFLOW is not supported by groupby scan");
+}
+
+template <>
 void scan_result_functor::operator()<aggregation::SUM>(aggregation const& agg)
 {
   if (cache.has_result(values, agg)) return;

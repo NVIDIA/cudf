@@ -101,11 +101,19 @@ struct reduction_function<Source, cudf::aggregation::SUM_OVERFLOW>
   : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
-    return sum_overflow(params.col, params.output_dtype, params.init, params.stream, params.mr);
+    return sum_overflow(
+      params.col, params.output_dtype, params.init, output(params), params.stream, params.mr);
   }
   [[nodiscard]] std::unique_ptr<scalar> reduce_no_data(reduction_parameters const& params) const
   {
-    return sum_overflow(params.col, params.output_dtype, std::nullopt, params.stream, params.mr);
+    return sum_overflow(
+      params.col, params.output_dtype, std::nullopt, output(params), params.stream, params.mr);
+  }
+
+ private:
+  [[nodiscard]] static sum_overflow_output output(reduction_parameters const& params)
+  {
+    return dynamic_cast<cudf::detail::sum_overflow_aggregation const&>(params.agg)._output;
   }
 };
 

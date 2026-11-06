@@ -137,7 +137,23 @@ extract_single_pass_aggs(std::span<aggregation_request const> requests, cuda::st
       agg_kinds_map[agg->kind] = aggregation_group::INPUT_NOT_EXTRACTED;
     }
 
+    auto const request_begin = aggs.size();
     auto insert_agg = [&](column_view const& request_values, std::unique_ptr<aggregation>&& agg) {
+      // SUM_OVERFLOW variants share a kind but differ in their output option, so deduplicate them
+      // on the whole aggregation. SUM_OVERFLOW is never extracted as an intermediate.
+      if (agg->kind == aggregation::SUM_OVERFLOW) {
+        auto const is_duplicate =
+          std::any_of(aggs.begin() + request_begin, aggs.end(), [&](auto const& other) {
+            return other->is_equal(*agg);
+          });
+        if (is_duplicate) { return; }
+        is_agg_intermediate.push_back(0);
+        agg_kinds.push_back(agg->kind);
+        aggs.push_back(std::move(agg));
+        columns.push_back(request_values);
+        return;
+      }
+
       auto const it = agg_kinds_map.find(agg->kind);
       auto const need_update =
         it == agg_kinds_map.end() || it->second == aggregation_group::INPUT_NOT_EXTRACTED;

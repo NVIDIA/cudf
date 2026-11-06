@@ -47,13 +47,25 @@ std::unique_ptr<column> group_sum(column_view const& values,
 /**
  * @brief Internal API to calculate groupwise sum with overflow detection.
  *
- * Returns a STRUCT column with two children: the (wrapping) sum and a BOOL8 overflow flag that is
- * true when the true sum does not fit in the value type. On overflow the sum value is unspecified;
- * the flag is the meaningful output. A group is null only when all of its values are null.
+ * Returns a STRUCT column with two children: the (wrapping) sum and the overflow child. With
+ * `sum_overflow_output::FLAG` the overflow child is a BOOL8 flag that is true when the true sum
+ * does not fit in the value type, and the sum value is unspecified on overflow. With
+ * `sum_overflow_output::COUNT` it is the INT64 net number of 2^W wraps, and the sum is the true sum
+ * modulo 2^W. A group is null only when all of its values are null.
+ *
+ * @code{.pseudo}
+ * values       = [100, 100, 100, -50, 7, <NA>]   // INT8
+ * group_labels = [  0,   0,   0,   0, 1,    2]
+ * num_groups   = 3
+ *
+ * FLAG  result = [{<unspecified>, true}, {7, false}, <NA>]
+ * COUNT result = [{-6, 1},               {7, 0},     <NA>]   // 1 * 2^8 + (-6) = 250
+ * @endcode
  *
  * @param values Grouped values to sum
  * @param num_groups Number of groups
  * @param group_labels ID of group that the corresponding value belongs to
+ * @param output Type of the overflow child
  * @param stream CUDA stream used for device memory operations and kernel launches.
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
@@ -61,6 +73,7 @@ std::unique_ptr<column> group_sum(column_view const& values,
   column_view const& values,
   size_type num_groups,
   cudf::device_span<size_type const> group_labels,
+  sum_overflow_output output,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 

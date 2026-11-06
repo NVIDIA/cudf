@@ -89,6 +89,8 @@ struct segmented_reduce_dispatch_functor {
       }
       case segmented_reduce_aggregation::NUNIQUE:
         return segmented_nunique(col, offsets, null_handling, stream, mr);
+      case segmented_reduce_aggregation::SUM_OVERFLOW:
+        CUDF_FAIL("SUM_OVERFLOW is not supported by segmented reductions.");
       case aggregation::HOST_UDF: {
         auto const& udf_base_ptr =
           dynamic_cast<cudf::detail::host_udf_aggregation const&>(agg).udf_ptr;

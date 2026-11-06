@@ -42,8 +42,11 @@ std::unique_ptr<scalar> sum(column_view const& col,
 /**
  * @brief Computes sum with overflow detection of signed integer or decimal elements in input column
  *
- * Returns a struct scalar with {sum: same type as input, overflow: bool} fields.
- * Supported input types: signed integers (int8/16/32/64) and decimals (decimal32/64/128).
+ * Returns a struct scalar with {sum: same type as input, overflow} fields. With
+ * `sum_overflow_output::FLAG` the overflow field is a BOOL8 flag. With `sum_overflow_output::COUNT`
+ * it is the INT64 net number of 2^W wraps and the sum is the true sum modulo 2^W, where W is the
+ * bit width of the input's storage type. Supported input types: signed integers (int8/16/32/64) and
+ * decimals (decimal32/64/128).
  *
  * @throw std::invalid_argument if input column type is not a supported signed integer or decimal
  * @throw std::invalid_argument if `output_type` is not STRUCT
@@ -51,13 +54,15 @@ std::unique_ptr<scalar> sum(column_view const& col,
  * @param col input column to compute sum with overflow detection
  * @param output_type data type of return type (must be STRUCT)
  * @param init initial value of the sum
+ * @param output Type of the overflow field
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned scalar's device memory
- * @return Struct scalar with sum and overflow flag
+ * @return Struct scalar with the sum and overflow fields
  */
 std::unique_ptr<scalar> sum_overflow(column_view const& col,
                                      data_type const output_type,
                                      std::optional<std::reference_wrapper<scalar const>> init,
+                                     sum_overflow_output output,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr);
 

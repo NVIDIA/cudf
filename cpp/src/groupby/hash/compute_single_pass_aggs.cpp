@@ -97,6 +97,7 @@ bool is_single_pass_agg_supported(data_type values_type, aggregation::Kind kind)
 std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   table_view const& values,
   host_span<aggregation::Kind const> agg_kinds,
+  std::span<std::unique_ptr<aggregation> const> aggs,
   std::span<int8_t const> is_agg_intermediate,
   grouped_rows const& grouped,
   cuda::stream_ref stream,
@@ -104,6 +105,8 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
 {
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(agg_kinds.size()),
                "The number of values columns and aggregation kinds must be the same.");
+  CUDF_EXPECTS(agg_kinds.size() == aggs.size(),
+               "The number of aggregation kinds and aggregations must be the same.");
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(is_agg_intermediate.size()),
                "The number of values columns and intermediate flags must be the same.");
 
@@ -192,7 +195,12 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
     // Counts are never null, and intermediate results skip the null mask to avoid the extra work.
     auto const nullable = !is_agg_intermediate[i] && kind != aggregation::COUNT_VALID &&
                           kind != aggregation::COUNT_ALL && col.has_nulls();
-    auto const ctx = reduction_context{col, *d_col, values_type, grouped, num_groups, nullable};
+    auto const overflow_output =
+      kind == aggregation::SUM_OVERFLOW
+        ? dynamic_cast<cudf::detail::sum_overflow_aggregation const&>(*aggs[i])._output
+        : sum_overflow_output::FLAG;
+    auto const ctx =
+      reduction_context{col, *d_col, values_type, grouped, num_groups, nullable, overflow_output};
 
     auto const sums_end    = fused_end(i, values_type);
     auto const extrema_end = minmax_sum_end(i, values_type);

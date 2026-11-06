@@ -5,6 +5,7 @@
 
 #include <benchmarks/io/cuio_common.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>

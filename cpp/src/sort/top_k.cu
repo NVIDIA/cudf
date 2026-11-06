@@ -45,22 +45,16 @@
 namespace cudf {
 namespace detail {
 namespace {
-/**
- * @brief Returns true if the column's top-k can be resolved by radix selection
- *
- * Nullable and floating-point columns qualify; see select_top_k_rows() and key_at_row.
- */
 [[nodiscard]] bool is_fast_path(column_view const& column)
 {
   return cudf::is_fixed_width(column.type());
 }
 
 /**
- * @brief Reads `values[row]` and returns the key cub should compare
+ * @brief Returns the selection key for `values[row]`
  *
- * cub orders floating-point keys by their bits, which puts a negative NaN below -infinity.
- * Canonicalizing NaNs and zeros first gives cudf's ordering: every NaN equal and greater than all
- * other values, and -0.0 equal to +0.0.
+ * Floating-point values are canonicalized to follow cudf's ordering: every NaN compares equal to
+ * every other NaN and greater than all other values, and -0.0 compares equal to +0.0.
  */
 template <typename T>
 struct key_at_row {
@@ -78,7 +72,6 @@ struct key_at_row {
   }
 };
 
-/// Selects the non-null rows. Only used where the input is known to have nulls.
 struct row_is_valid {
   bitmask_type const* null_mask;
   size_type offset;
@@ -89,12 +82,7 @@ struct row_is_valid {
   }
 };
 
-/**
- * @brief Selects `output.size()` row indices with cub::DeviceTopK
- *
- * Without `valid_rows` the selection runs over every row of `input`. Otherwise it runs over the
- * row indices in `valid_rows`, which cub carries through as its values.
- */
+/// Selects the top rows among `valid_rows` if set, otherwise among every row of `input`
 struct dispatch_top_k_fn {
   column_view input;
   cuda::std::optional<device_span<size_type const>> valid_rows;
@@ -130,7 +118,6 @@ struct dispatch_top_k_fn {
       if constexpr (cudf::is_floating_point<T>()) {
         select(cuda::transform_iterator(rows, key_at_row<T>{values}), rows, input.size());
       } else {
-        // A raw pointer lets cub vectorize its loads.
         select(values, rows, input.size());
       }
     } else {
@@ -166,10 +153,9 @@ struct dispatch_top_k_fn {
 /**
  * @brief Returns the k selected row indices for a fixed-width column
  *
- * Nulls are ordered last in either direction, so the result contains a null only when `k` exceeds
- * the number of non-null rows, and `null_count()` tells which case applies without synchronizing.
- * Nulls are partitioned out rather than encoded as a sentinel key, since an integral key has no
- * spare bit pattern for one.
+ * Nulls are ordered last in either direction, so they are returned only when `k` exceeds the
+ * number of non-null rows, which `null_count()` gives without synchronizing. Nulls are partitioned
+ * out rather than encoded as a sentinel key, since integral keys have no spare bit pattern.
  */
 [[nodiscard]] rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
                                                                size_type k,
@@ -207,8 +193,8 @@ struct dispatch_top_k_fn {
     return output;
   }
 
-  // Select among the compacted non-null row indices; cub carries them through as its values, so
-  // the output needs no remapping.
+  // Select among the compacted non-null rows. Their indices are passed as the selection's values,
+  // so the output needs no remapping.
   auto valid_rows = cuda::device_buffer<size_type>(stream, temp_mr, num_valid, cuda::no_init);
   cudf::detail::copy_if_async(
     rows, rows + size, valid_rows.data(), is_valid, stream, mr.as_temporary());

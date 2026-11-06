@@ -110,6 +110,7 @@ struct dremel_data {
  * ```
  * rep_level.size() = size of leaf column + number of empty lists in level 0
  *                                        + number of empty lists in level 1 ...
+ * number of rep_level values = size of leaf column + number of empty lists in level 0
  * ```
  *
  * We start with finding the empty lists in the penultimate level and merging it with the indices

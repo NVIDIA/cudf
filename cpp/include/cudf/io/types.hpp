@@ -227,6 +227,7 @@ struct column_name_info {
   std::string name;                        ///< Column name
   std::optional<bool> is_nullable;         ///< Column nullability
   std::optional<bool> is_binary;           ///< Column is binary (i.e. not a list)
+  std::optional<bool> is_file;             ///< Column is a struct read from a Parquet FILE group
   std::optional<int32_t> type_length;      ///< Byte width of data (for fixed length data)
   std::vector<column_name_info> children;  ///< Child column names
 

@@ -32,6 +32,8 @@
 #include <cuda/std/tuple>
 
 #include <algorithm>
+#include <array>
+#include <bitset>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -291,6 +293,69 @@ struct schema_child_lookup {
   std::unordered_map<std::uint64_t, schema_idx_cache> schema_idx_caches;
 };
 
+/**
+ * @brief Checks if a BYTE_ARRAY schema element must be read as binary (`list<uint8>`) because it
+ * is the `metadata` / `value` child of a VARIANT group or the `inline` child of a FILE group
+ *
+ * @param schema_elem Schema element to check
+ * @param parent_schema Parent schema element of `schema_elem`
+ * @return Boolean indicating if `schema_elem` must be read as binary
+ */
+[[nodiscard]] bool is_binary_child_of_logical_group(SchemaElement const& schema_elem,
+                                                    SchemaElement const& parent_schema)
+{
+  if (schema_elem.type != Type::BYTE_ARRAY or not parent_schema.logical_type.has_value()) {
+    return false;
+  }
+  switch (parent_schema.logical_type->type) {
+    case LogicalType::VARIANT: return schema_elem.name == "metadata" or schema_elem.name == "value";
+    case LogicalType::FILE: return schema_elem.name == "inline";
+    default: return false;
+  }
+}
+
+/**
+ * @brief Checks if a schema element is a FILE group whose children follow the FILE spec: each is a
+ * unique, OPTIONAL `uri`, `offset`, `size`, `content_type`, `checksum` or `inline` leaf of the
+ * expected physical and logical type
+ *
+ * @param group Schema element to check
+ * @param children Child schema elements of `group`
+ * @return Boolean indicating if `group` is a valid FILE group
+ */
+[[nodiscard]] bool is_valid_file_group(SchemaElement const& group,
+                                       std::ranges::input_range auto&& children)
+{
+  if (not group.logical_type.has_value() or group.logical_type->type != LogicalType::FILE) {
+    return false;
+  }
+
+  struct file_field {
+    std::string_view name;
+    Type type;
+    LogicalType::Type logical_type;
+  };
+  static constexpr std::array file_fields{
+    file_field{"uri", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"offset", Type::INT64, LogicalType::UNDEFINED},
+    file_field{"size", Type::INT64, LogicalType::UNDEFINED},
+    file_field{"content_type", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"checksum", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"inline", Type::BYTE_ARRAY, LogicalType::UNDEFINED}};
+
+  std::bitset<file_fields.size()> seen;
+  return std::ranges::all_of(children, [&](SchemaElement const& child) {
+    auto const field =
+      std::ranges::find(file_fields, std::string_view{child.name}, &file_field::name);
+    if (field == file_fields.end()) { return false; }
+    auto const field_idx = std::distance(file_fields.begin(), field);
+    if (seen.test(field_idx)) { return false; }
+    seen.set(field_idx);
+    return child.repetition_type == FieldRepetitionType::OPTIONAL and child.type == field->type and
+           child.logical_type.value_or(LogicalType{}).type == field->logical_type;
+  });
+}
+
 }  // namespace
 
 type_id to_type_id(SchemaElement const& schema,
@@ -479,6 +544,14 @@ void metadata::sanitize_schema()
         struct_elem.children_idx         = std::move(schema_elem.children_idx);
         for (auto const child_idx : struct_elem.children_idx) {
           schema[child_idx].parent_idx = struct_node_idx;
+        }
+
+        // Move a non-nested annotation of the repeated group (e.g. FILE) to its struct element
+        if (schema_elem.logical_type.has_value() and
+            schema_elem.logical_type->type != LogicalType::LIST and
+            schema_elem.logical_type->type != LogicalType::MAP) {
+          struct_elem.logical_type         = schema_elem.logical_type;
+          struct_elem.logical_type_payload = schema_elem.logical_type_payload;
         }
 
         schema_elem.converted_type  = ConvertedType::LIST;
@@ -2065,6 +2138,13 @@ aggregate_reader_metadata::select_columns(
       // store the index of this element if inserted in out_col_array
       nesting.push_back(static_cast<int>(out_col_array.size()));
       output_col.name = schema_elem.name;
+      output_col.is_file =
+        col_type == type_id::STRUCT and
+        is_valid_file_group(
+          schema_elem,
+          schema_elem.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+            return get_schema(idx);
+          }));
 
       // build each child
       bool path_is_valid = false;
@@ -2120,13 +2200,9 @@ aggregate_reader_metadata::select_columns(
         // pop off the extra nesting element.
         if (one_level_list) { nesting.pop_back(); }
 
-        // Flag the `metadata` / `value` BYTE_ARRAY children of a VARIANT group so that
-        // `make_column` materializes them as `list<uint8>` instead of strings.
-        if (schema_elem.type == Type::BYTE_ARRAY && parent_schema.logical_type.has_value() &&
-            parent_schema.logical_type->type == LogicalType::VARIANT &&
-            (schema_elem.name == "metadata" || schema_elem.name == "value")) {
-          output_col.string_as_binary = true;
-        }
+        // Flag binary children of VARIANT / FILE groups so that `make_column` materializes them as
+        // `list<uint8>` instead of strings.
+        output_col.string_as_binary = is_binary_child_of_logical_group(schema_elem, parent_schema);
 
         path_is_valid = true;  // If we're able to reach leaf then path is valid
       }

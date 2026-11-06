@@ -222,6 +222,7 @@ def null_frame() -> pl.LazyFrame:
     "make_query",
     [
         pytest.param(lambda lf: lf, id="scan"),
+        pytest.param(lambda lf: lf.clear(), id="empty_scan"),
         pytest.param(lambda lf: lf.with_columns(pl.lit(None).alias("k")), id="hstack"),
         pytest.param(lambda lf: lf.select("n", pl.lit(None).alias("c")), id="select"),
         pytest.param(lambda lf: lf.select(pl.lit(None)).unique(), id="lit_unique"),
@@ -242,8 +243,11 @@ def test_null_pass_through(engine: pl.GPUEngine, null_frame, make_query):
     assert_gpu_result_equal(make_query(null_frame), engine=engine)
 
 
-def test_null_join_payload(engine: pl.GPUEngine, null_frame):
-    q = null_frame.join(null_frame.select("k", pl.col("n").alias("m")), on="k")
+@pytest.mark.parametrize("how", ["inner", "left"])
+def test_null_join_payload(engine: pl.GPUEngine, null_frame, how):
+    # k=3 has no match, so the left join fills the Null payload for that row.
+    right = null_frame.filter(pl.col("k") != 3).select("k", pl.col("n").alias("m"))
+    q = null_frame.join(right, on="k", how=how)
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 

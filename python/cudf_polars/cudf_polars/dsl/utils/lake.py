@@ -549,7 +549,6 @@ def read_lake_files(
         present = frozenset(keys)
         read_keys = [key for key in wanted if key in present]
         # Columns that the files lack take the partition value of each file.
-        # The values are per file, so every row of each file must be read.
         fallback_values = {
             key: lake_options.partition_values[key].slice(start, stop - start)
             for key in wanted
@@ -557,20 +556,19 @@ def read_lake_files(
         }
         filters = None
         if predicate is not None:
-            if fallback_values:
-                exact = False
-            else:
-                filters, group_exact = _group_filter(
-                    predicate,
-                    predicate_columns,
-                    paths[start],
-                    footers[start],
-                    read_keys,
-                    wanted,
-                    schema,
-                    stream=stream,
-                )
-                exact = exact and group_exact
+            # Columns that the files lack are not readable, so the parts of the
+            # predicate that use them are left to be applied after the read.
+            filters, group_exact = _group_filter(
+                predicate,
+                predicate_columns,
+                paths[start],
+                footers[start],
+                read_keys,
+                wanted,
+                schema,
+                stream=stream,
+            )
+            exact = exact and group_exact
         frame, source_index = _read_group(
             paths[start:stop],
             read_keys,
@@ -1056,8 +1054,9 @@ def _read_group(
         not hold.
     fallback_values
         Maps the key of each wanted column that the files do not hold to its
-        partition value for each file. ``filters`` must be ``None`` when this
-        is non-empty.
+        partition value for each file. When ``filters`` drops rows, the
+        value of each row that is kept is found through the index of the file
+        it was read from.
     filters
         Parquet filter to apply while reading, in terms of the names the
         files hold, or ``None`` to read every row.
@@ -1084,6 +1083,12 @@ def _read_group(
     read: dict[Any, tuple[plc.Column, Sequence[plc.io.types.ColumnNameSpec]]] = {}
     num_rows = sum(rows_per_path)
     source_index: plc.Column | None = None
+    # Index within the run of the file each row was read from. It is needed to
+    # pick the partition value of each row once a filter has dropped rows.
+    local_source: plc.Column | None = None
+    prepend_source = source_offset is not None or (
+        filters is not None and bool(fallback_values)
+    )
     if present:
         options = (
             plc.io.parquet.ParquetReaderOptions.builder(plc.io.SourceInfo(list(paths)))
@@ -1094,28 +1099,32 @@ def _read_group(
         options.set_column_names([name_by_key[key] for key in present])
         if filters is not None:
             options.set_filter(filters)
-        if source_offset is not None:
+        if prepend_source:
             options.enable_prepend_source_index_column(val=True)
         table = plc.io.parquet.read_parquet(options, stream=stream)
         num_rows = table.tbl.num_rows()
         names = table.column_names(include_children=True)
         columns = table.tbl.columns()
-        if source_offset is not None:
-            source_index = (
-                columns[0]
-                if source_offset == 0
-                else plc.binaryop.binary_operation(
-                    columns[0],
-                    plc.Scalar.from_py(
-                        source_offset, plc.DataType(plc.TypeId.INT32), stream=stream
-                    ),
-                    plc.binaryop.BinaryOperator.ADD,
-                    plc.DataType(plc.TypeId.INT32),
-                    stream=stream,
-                )
-            )
+        if prepend_source:
+            local_source = columns[0]
             names = names[1:]
             columns = columns[1:]
+            if source_offset is not None:
+                source_index = (
+                    local_source
+                    if source_offset == 0
+                    else plc.binaryop.binary_operation(
+                        local_source,
+                        plc.Scalar.from_py(
+                            source_offset,
+                            plc.DataType(plc.TypeId.INT32),
+                            stream=stream,
+                        ),
+                        plc.binaryop.BinaryOperator.ADD,
+                        plc.DataType(plc.TypeId.INT32),
+                        stream=stream,
+                    )
+                )
         key_by_name = dict(zip(footer.names, footer.keys, strict=True))
         read = {
             key_by_name[name]: (column, children)
@@ -1168,13 +1177,25 @@ def _read_group(
                 f"missing field: {lake_options.partition_errors[key]}"
             )
         elif key in fallback_values:
-            (obj,) = plc.filling.repeat(
-                plc.Table([plc.Column.from_arrow(fallback_values[key], stream=stream)]),
-                plc.Column.from_arrow(
-                    pl.Series(values=rows_per_path, dtype=pl.Int32()), stream=stream
-                ),
-                stream=stream,
-            ).columns()
+            values = plc.Table(
+                [plc.Column.from_arrow(fallback_values[key], stream=stream)]
+            )
+            if local_source is None:
+                (obj,) = plc.filling.repeat(
+                    values,
+                    plc.Column.from_arrow(
+                        pl.Series(values=rows_per_path, dtype=pl.Int32()),
+                        stream=stream,
+                    ),
+                    stream=stream,
+                ).columns()
+            else:
+                (obj,) = plc.copying.gather(
+                    values,
+                    local_source,
+                    plc.copying.OutOfBoundsPolicy.DONT_CHECK,
+                    stream=stream,
+                ).columns()
             frame_columns.append(
                 Column(obj, name=name, dtype=dtype).astype(dtype, stream)
             )

@@ -145,7 +145,7 @@ struct operator_functor {
    * `semantics` is `nan_semantics::ETL`
    */
   template <typename A, typename B>
-  __device__ inline auto invoke(A a, B b) const
+  [[nodiscard]] __device__ inline auto invoke(A a, B b) const
   {
     if constexpr (is_floating_operand<A> && requires { etl_invoker<op>::eval(a, b); }) {
       if (semantics == nan_semantics::ETL) { return etl_invoker<op>::eval(a, b); }

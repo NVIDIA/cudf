@@ -194,7 +194,7 @@ struct column_to_strings_fn {
                                 cudf::memory_resources mr)
     : options_(options),
       stream_(stream),
-      mr_(mr),
+      mr_(std::move(mr)),
       narep(options.get_na_rep(), true, stream, cudf::get_current_device_resource_ref()),
       struct_value_separator(",", true, stream, cudf::get_current_device_resource_ref()),
       struct_row_begin_wrap("{", true, stream, cudf::get_current_device_resource_ref()),

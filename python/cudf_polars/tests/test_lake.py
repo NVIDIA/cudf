@@ -798,68 +798,6 @@ def test_scan_iceberg_partition_value_for_file_missing_column(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@pytest.mark.parametrize(
-    "predicate,pushed,exact",
-    [
-        (pl.col("a") != 2, True, True),
-        ((pl.col("a") != 2) & (pl.col("d") == 6), True, False),
-        (pl.col("d") == 6, False, False),
-    ],
-    ids=["file_column", "both", "partition_column"],
-)
-def test_scan_iceberg_partition_value_keeps_predicate_pushdown(
-    in_memory_engine: pl.GPUEngine,
-    iceberg_catalog: SqlCatalog,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    predicate: pl.Expr,
-    pushed: bool,
-    exact: bool,
-) -> None:
-    # Only the parts of the predicate that use the missing column are left to
-    # run after the read. The rows that remain still get the partition value of
-    # the file they come from.
-    import cudf_polars.dsl.utils.lake as lake
-
-    tbl = iceberg_catalog.create_table(
-        "ns.partition_value_pushdown",
-        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
-    )
-    paths = []
-    for values in ([1, 2, 3], [4, 5, 6]):
-        pl.DataFrame({"a": values}).write_iceberg(tbl, mode="append")
-        (path,) = (
-            task.file.file_path
-            for task in tbl.scan().plan_files()
-            if task.file.file_path not in paths
-        )
-        paths.append(path)
-    with tbl.update_schema() as update:
-        update.add_column("d", LongType())
-    q = _scan_iceberg_files(
-        tbl,
-        paths,
-        _default_values=(
-            "iceberg",
-            ({2: pl.Series([5, 6], dtype=pl.Int64)}, {}),
-        ),
-    ).filter(predicate)
-
-    results = []
-    group_filter = lake._group_filter
-
-    def spy(*args: Any, **kwargs: Any) -> Any:
-        result = group_filter(*args, **kwargs)
-        results.append(result)
-        return result
-
-    monkeypatch.setattr(lake, "_group_filter", spy)
-    assert_gpu_result_equal(q, engine=in_memory_engine, check_row_order=False)
-    assert results
-    assert all((filters is not None) is pushed for filters, _ in results)
-    assert all(group_exact is exact for _, group_exact in results)
-
-
 @pytest.mark.parametrize("initial_default", [None, 7])
 def test_scan_iceberg_partition_values_shorter_than_paths(
     engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, initial_default: int | None

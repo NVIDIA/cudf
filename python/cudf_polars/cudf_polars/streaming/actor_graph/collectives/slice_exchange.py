@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from rapidsmpf.communicator.communicator import Communicator
+    from rapidsmpf.memory.reservation_events import ReservationContext
     from rapidsmpf.streaming.core.context import Context
 
 
@@ -52,10 +53,12 @@ class SparseExchange:
         *,
         sources: Sequence[int],
         destinations: Sequence[int],
+        reservation_context: ReservationContext | None = None,
     ) -> None:
         sources = tuple(sources)
         destinations = tuple(destinations)
         self.context = context
+        self.reservation_context = reservation_context
         self.destinations = frozenset(destinations)
         self._pending_sources = set(sources)
         self._exchange = (
@@ -152,10 +155,11 @@ class SparseExchange:
                 chunk,
                 reserve_extra=pack_cost,
                 net_memory_delta=0,
+                reservation_context=self.reservation_context,
             )
         else:
             reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-                0, net_memory_delta=0
+                0, net_memory_delta=0, reservation_context=self.reservation_context
             )
         self._exchange.insert(destination, chunk.into_packed_data(reservation))
 

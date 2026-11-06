@@ -9,6 +9,9 @@ from libcpp.vector cimport vector
 from pylibcudf.libcudf.types cimport size_type
 
 from rapidsmpf._detail.exception_handling cimport ex_handler
+from rapidsmpf.memory.reservation_events cimport (ReservationContext,
+                                                  cpp_ReservationContext,
+                                                  unwrap_reservation_context)
 from rapidsmpf.streaming.core.actor cimport CppActor, cpp_Actor
 from rapidsmpf.streaming.core.channel cimport Channel, cpp_Channel
 from rapidsmpf.streaming.core.context cimport Context, cpp_Context
@@ -26,12 +29,14 @@ cdef extern from "<cudf_streaming/partition.hpp>" nogil:
             int num_partitions,
             int hash_function,
             uint32_t seed,
+            cpp_ReservationContext reservation_context,
         ) except +ex_handler
     cdef cpp_Actor cpp_unpack_and_concat \
         "cudf_streaming::actor::unpack_and_concat"(
             shared_ptr[cpp_Context] ctx,
             shared_ptr[cpp_Channel] ch_in,
             shared_ptr[cpp_Channel] ch_out,
+            cpp_ReservationContext reservation_context,
         ) except +ex_handler
 
 
@@ -42,6 +47,8 @@ def partition_and_pack(
     object columns_to_hash not None,
     int num_partitions,
     uint32_t seed = cpp_DEFAULT_HASH_SEED,
+    *,
+    ReservationContext reservation_context=None,
 ):
     """
     Asynchronously partition and pack table chunks.
@@ -69,6 +76,8 @@ def partition_and_pack(
         Number of output partitions to create.
     seed
         Optional seed for the hash function.
+    reservation_context
+        Opaque telemetry context attached to memory reservation requests.
 
     Returns
     -------
@@ -88,6 +97,9 @@ def partition_and_pack(
     """
     cdef vector[size_type] _columns_to_hash = tuple(columns_to_hash)
     cdef cpp_Actor _ret
+    cdef cpp_ReservationContext cpp_reservation_context = (
+        unwrap_reservation_context(reservation_context)
+    )
     with nogil:
         _ret = cpp_partition_and_pack(
             ctx._handle,
@@ -97,6 +109,7 @@ def partition_and_pack(
             num_partitions,
             cpp_HASH_MURMUR3,
             seed,
+            move(cpp_reservation_context),
         )
     return CppActor.from_handle(
         make_unique[cpp_Actor](move(_ret)), owner = None
@@ -107,6 +120,8 @@ def unpack_and_concat(
     Context ctx not None,
     Channel ch_in not None,
     Channel ch_out not None,
+    *,
+    ReservationContext reservation_context=None,
 ):
     """
     Asynchronously unpack and concatenate packed partitions.
@@ -128,6 +143,8 @@ def unpack_and_concat(
         ``PartitionVectorChunk``).
     ch_out
         Output channel receiving the unpacked and concatenated ``TableChunk`` objects.
+    reservation_context
+        Opaque telemetry context attached to memory reservation requests.
 
     Returns
     -------
@@ -142,11 +159,15 @@ def unpack_and_concat(
         The inverse operation that partitions and packs tables into partitions.
     """
     cdef cpp_Actor _ret
+    cdef cpp_ReservationContext cpp_reservation_context = (
+        unwrap_reservation_context(reservation_context)
+    )
     with nogil:
         _ret = cpp_unpack_and_concat(
             ctx._handle,
             ch_in._handle,
             ch_out._handle,
+            move(cpp_reservation_context),
         )
     return CppActor.from_handle(
         make_unique[cpp_Actor](move(_ret)), owner = None

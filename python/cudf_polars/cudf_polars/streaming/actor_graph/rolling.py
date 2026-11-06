@@ -34,6 +34,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     evaluate_chunk,
     process_children,
     recv_metadata,
+    reservation_context,
     send_metadata,
     shutdown_on_error,
 )
@@ -156,6 +157,10 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
             reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
                 sum(piece.data_alloc_size() for piece in pieces),
                 net_memory_delta=0,
+                reservation_context=reservation_context(
+                    self.ir_context.actor_bound_quent_ir_execution_state,
+                    "rolling.evaluate.concatenate",
+                ),
             )
             with (
                 opaque_memory_usage(reservation),
@@ -188,7 +193,12 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
             stream=result.stream,
         )
         reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-            result.data_alloc_size(), net_memory_delta=0
+            result.data_alloc_size(),
+            net_memory_delta=0,
+            reservation_context=reservation_context(
+                self.ir_context.actor_bound_quent_ir_execution_state,
+                "rolling.evaluate.trim_copy",
+            ),
         )
         with opaque_memory_usage(reservation):
             table = table.copy(result.stream, self.context.br().device_mr)
@@ -305,6 +315,10 @@ async def rolling_actor(
             policy: OverlapPolicy[BufferedChunkT],
         ) -> None:
             """Prepare input and execute one concrete overlap policy."""
+            policy.reservation_context = reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                "rolling.overlap.reserve",
+            )
             with RollingManager(context, ir, ir_context, policy) as manager:
                 async with OverlapInput(
                     context,

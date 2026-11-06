@@ -27,20 +27,25 @@
 namespace cudf::groupby::detail::hash {
 
 /// Bytes of padding that make the fused sums a multiple of their alignment. The sums are at least
-/// as large as the count and precede it, so there is no padding between the members.
-template <typename Result, typename MeanResult>
+/// as large as the count and precede it, so there is no padding between the members. The MEAN
+/// accumulator can be wider than the SUM one (e.g. `double` and `float` for FLOAT32 input).
+template <typename Result, typename MeanResult, bool WithMean>
 constexpr std::size_t fused_sums_padding()
 {
-  constexpr auto size  = 2 * sizeof(Result) + sizeof(MeanResult) + sizeof(size_type);
-  constexpr auto align = cuda::std::max(alignof(Result), alignof(MeanResult));
+  constexpr auto size =
+    2 * sizeof(Result) + (WithMean ? sizeof(MeanResult) : 0) + sizeof(size_type);
+  constexpr auto align = WithMean ? cuda::std::max(alignof(Result), alignof(MeanResult))
+                                  : alignof(Result);
   return (align - size % align) % align;
 }
 
 /// Sums accumulated together when several additive aggregations are requested on one column.
-/// `MeanResult` accumulates MEAN's numerator (MEAN_SUM) in MEAN's target type.
+/// `MeanResult` accumulates MEAN's numerator (MEAN_SUM) in MEAN's target type. It is a member only
+/// when `WithMean`, so that fusions without MEAN_SUM keep their smaller partials.
 template <typename Result,
           typename MeanResult,
-          std::size_t Padding = fused_sums_padding<Result, MeanResult>()>
+          bool WithMean,
+          std::size_t Padding = fused_sums_padding<Result, MeanResult, WithMean>()>
 struct fused_sums {
   Result sum;
   Result sum_of_squares;
@@ -51,47 +56,86 @@ struct fused_sums {
 };
 
 template <typename Result, typename MeanResult>
-struct fused_sums<Result, MeanResult, 0> {
+struct fused_sums<Result, MeanResult, true, 0> {
   Result sum;
   Result sum_of_squares;
   MeanResult mean_sum;
   size_type count;
 };
 
+template <typename Result, typename MeanResult, std::size_t Padding>
+struct fused_sums<Result, MeanResult, false, Padding> {
+  Result sum;
+  Result sum_of_squares;
+  size_type count;
+  cuda::std::array<size_type, Padding / sizeof(size_type)> padding{};
+};
+
 template <typename Result, typename MeanResult>
+struct fused_sums<Result, MeanResult, false, 0> {
+  Result sum;
+  Result sum_of_squares;
+  size_type count;
+};
+
+// Fusions without MEAN_SUM keep the partial size they had before MEAN_SUM existed.
+static_assert(sizeof(fused_sums<int64_t, double, false>) == 24);
+static_assert(sizeof(fused_sums<int64_t, double, true>) == 32);
+
+template <typename Result, typename MeanResult, bool WithMean>
+CUDF_HOST_DEVICE fused_sums<Result, MeanResult, WithMean> make_fused_sums(Result sum,
+                                                                          Result sum_of_squares,
+                                                                          MeanResult mean_sum,
+                                                                          size_type count)
+{
+  if constexpr (WithMean) {
+    return {sum, sum_of_squares, mean_sum, count};
+  } else {
+    return {sum, sum_of_squares, count};
+  }
+}
+
+template <typename Result, typename MeanResult, bool WithMean>
 struct fused_sums_plus {
-  __device__ fused_sums<Result, MeanResult> operator()(
-    fused_sums<Result, MeanResult> const& lhs, fused_sums<Result, MeanResult> const& rhs) const
+  using sums = fused_sums<Result, MeanResult, WithMean>;
+
+  __device__ sums operator()(sums const& lhs, sums const& rhs) const
   {
-    return {lhs.sum + rhs.sum,
-            lhs.sum_of_squares + rhs.sum_of_squares,
-            lhs.mean_sum + rhs.mean_sum,
-            lhs.count + rhs.count};
+    if constexpr (WithMean) {
+      return {lhs.sum + rhs.sum,
+              lhs.sum_of_squares + rhs.sum_of_squares,
+              lhs.mean_sum + rhs.mean_sum,
+              lhs.count + rhs.count};
+    } else {
+      return {lhs.sum + rhs.sum, lhs.sum_of_squares + rhs.sum_of_squares, lhs.count + rhs.count};
+    }
   }
 };
 
 /// Maps a grouped position to the sums contributed by the input row at that position.
-template <typename Source, typename Result, typename MeanResult>
+template <typename Source, typename Result, typename MeanResult, bool WithMean>
 struct grouped_fused_sums_fn {
   size_type const* grouped_rows;
   value_accessor<Source> value;
   bool has_nulls;
 
-  __device__ fused_sums<Result, MeanResult> operator()(size_type position) const
+  __device__ fused_sums<Result, MeanResult, WithMean> operator()(size_type position) const
   {
     auto const row = grouped_rows[position];
     if (has_nulls && value.col.is_null_nocheck(row)) {
-      return {Result{0}, Result{0}, MeanResult{0}, 0};
+      return make_fused_sums<Result, MeanResult, WithMean>(
+        Result{0}, Result{0}, MeanResult{0}, 0);
     }
     auto const input  = value(row);
     auto const result = static_cast<Result>(input);
     // MEAN's numerator converts each value to its own accumulator before summing.
-    return {result, result * result, static_cast<MeanResult>(input), 1};
+    return make_fused_sums<Result, MeanResult, WithMean>(
+      result, result * result, static_cast<MeanResult>(input), 1);
   }
 };
 
 /// Stores only the requested sums and any counts needed to derive their validity.
-template <typename Result, typename MeanResult>
+template <typename Result, typename MeanResult, bool WithMean>
 struct split_fused_sums_fn {
   Result* sum;
   Result* sum_of_squares;
@@ -99,11 +143,11 @@ struct split_fused_sums_fn {
   size_type* count;
 
   __device__ void operator()(cuda::std::ptrdiff_t group,
-                             fused_sums<Result, MeanResult> const& sums) const
+                             fused_sums<Result, MeanResult, WithMean> const& sums) const
   {
     if (sum != nullptr) { sum[group] = sums.sum; }
     if (sum_of_squares != nullptr) { sum_of_squares[group] = sums.sum_of_squares; }
-    if (mean_sum != nullptr) { mean_sum[group] = sums.mean_sum; }
+    if constexpr (WithMean) { mean_sum[group] = sums.mean_sum; }
     if (count != nullptr) { count[group] = sums.count; }
   }
 };
@@ -165,22 +209,36 @@ struct fused_sums_fn {
     // Moving a requested count column into results preserves the allocation used by later masks.
     auto const counts = count ? count->mutable_view().template begin<size_type>() : nullptr;
     if (ctx.num_groups > 0) {
-      auto const values = cudf::detail::make_counting_transform_iterator(
-        0,
-        grouped_fused_sums_fn<Source, Result, MeanResult>{
-          ctx.grouped.rows.data(), ctx.accessor<Source>(), ctx.values.has_nulls()});
-      auto const outputs = cuda::tabulate_output_iterator{split_fused_sums_fn<Result, MeanResult>{
-        sum ? sum->mutable_view().template begin<Result>() : nullptr,
-        sum_of_squares ? sum_of_squares->mutable_view().template begin<Result>() : nullptr,
-        mean_sum ? mean_sum->mutable_view().template begin<MeanResult>() : nullptr,
-        counts}};
-      reduce_groups(ctx.grouped,
-                    values,
-                    outputs,
-                    fused_sums_plus<Result, MeanResult>{},
-                    fused_sums<Result, MeanResult>{Result{0}, Result{0}, MeanResult{0}, 0},
-                    stream,
-                    mr);
+      auto const reduce = [&]<bool WithMean>() {
+        auto const values = cudf::detail::make_counting_transform_iterator(
+          0,
+          grouped_fused_sums_fn<Source, Result, MeanResult, WithMean>{
+            ctx.grouped.rows.data(), ctx.accessor<Source>(), ctx.values.has_nulls()});
+        auto const outputs =
+          cuda::tabulate_output_iterator{split_fused_sums_fn<Result, MeanResult, WithMean>{
+            sum ? sum->mutable_view().template begin<Result>() : nullptr,
+            sum_of_squares ? sum_of_squares->mutable_view().template begin<Result>() : nullptr,
+            mean_sum ? mean_sum->mutable_view().template begin<MeanResult>() : nullptr,
+            counts}};
+        reduce_groups(ctx.grouped,
+                      values,
+                      outputs,
+                      fused_sums_plus<Result, MeanResult, WithMean>{},
+                      make_fused_sums<Result, MeanResult, WithMean>(
+                        Result{0}, Result{0}, MeanResult{0}, 0),
+                      stream,
+                      mr);
+      };
+      // Only fusions that request MEAN_SUM carry its accumulator in their partials.
+      if constexpr (cudf::detail::is_valid_aggregation<T, aggregation::MEAN_SUM>()) {
+        if (mean_sum != nullptr) {
+          reduce.template operator()<true>();
+        } else {
+          reduce.template operator()<false>();
+        }
+      } else {
+        reduce.template operator()<false>();
+      }
     }
 
     std::vector<std::unique_ptr<column>> results;

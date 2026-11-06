@@ -8,6 +8,11 @@
 # Use CPM to find or clone xxHash
 function(find_and_configure_xxhash)
 
+  # xxhash is header-only and has no CMake package, so there is nothing for a
+  # find_package redirect to point at. Without this, CPM redirects every
+  # find_package(Xxhash) in the build to an empty stub.
+  set(CPM_DONT_UPDATE_MODULE_PATH ON)
+
   include(${rapids-cmake-dir}/find/generate_module.cmake)
   rapids_find_generate_module(xxhash HEADER_NAMES xxhash.h xxh3.h)
 

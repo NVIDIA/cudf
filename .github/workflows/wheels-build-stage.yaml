@@ -130,7 +130,7 @@ jobs:
       - name: Restore Cython cache
         id: cython-cache-restore
         if: inputs.pure-wheel == false && inputs.build_type != 'release-candidate'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.cache/cython
           key: cython-v1-${{ runner.os }}-${{ runner.arch }}-cuda${{ matrix.CUDA_VER }}-py${{ matrix.PY_VER }}-${{ hashFiles('dependencies.yaml', 'python/**/*.pyx', 'python/**/*.pxd', 'python/**/CMakeLists.txt', 'python/**/pyproject.toml') }}
@@ -152,7 +152,7 @@ jobs:
       - name: Save Cython cache
         # PRs restore this cache but do not create merge-ref-scoped entries.
         if: inputs.pure-wheel == false && inputs.build_type != 'pull-request' && inputs.build_type != 'release-candidate' && steps.cython-cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/.cache/cython
           key: ${{ steps.cython-cache-restore.outputs.cache-primary-key }}

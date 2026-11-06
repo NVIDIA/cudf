@@ -14,7 +14,13 @@ jobs:
       pull-requests: write
     if: ${{ ! github.event.pull_request.merged && ! endsWith(github.actor, '[bot]') }}
     steps:
-      - uses: actions-ecosystem/action-add-assignees@ce5019e63cc4f35aba27308dc88d19c8f3686747 # v1
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          github_token: "${{ secrets.GITHUB_TOKEN }}"
-          assignees: ${{ github.actor }}
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+          script: |
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [context.actor]
+            });

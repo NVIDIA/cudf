@@ -149,10 +149,42 @@ struct delta_binary_decoder {
     if (current_value_idx < num_encoded_values(is_decode)) {
       auto d_start  = block_start;
       cur_min_delta = get_zz128(d_start, block_end);
+      // The bit-width array is read by index below, so it must fit in the stream.
+      if (mini_block_count > static_cast<uleb128_t>(block_end - d_start)) {
+        set_error_state();
+        return;
+      }
       cur_bitwidths = d_start;
 
       d_start += mini_block_count;
       cur_mb_start = d_start;
+      check_mini_block();
+    }
+  }
+
+  // Puts the decoder in the error state for a malformed stream: no values left to decode, and every
+  // data pointer at the end of the stream. The decode loops stop because `value_count` is 0.
+  inline __device__ void set_error_state()
+  {
+    error         = true;
+    value_count   = 0;
+    values_per_mb = 1;
+    block_start   = block_end;
+    cur_mb        = 0;
+    cur_mb_start  = block_end;
+    cur_bitwidths = block_end;
+  }
+
+  // Checks the mini-block the decoder is about to read: its bit width must be at most 64, the
+  // widest a delta can be, and its packed values must end within the stream. Called only for
+  // mini-blocks that hold values, because the spec lets unused trailing ones carry any bit width.
+  inline __device__ void check_mini_block()
+  {
+    constexpr uint32_t max_bit_width = 64;
+    uint32_t const bits              = cur_bitwidths[cur_mb];
+    if (bits > max_bit_width or
+        packed_bytes(bits, values_per_mb) > static_cast<uint64_t>(block_end - cur_mb_start)) {
+      set_error_state();
     }
   }
 
@@ -186,13 +218,7 @@ struct delta_binary_decoder {
     if (mini_block_count == 0 or block_size == 0 or block_size > max_count or
         value_count > max_count or (block_size % mini_block_count) != 0 or
         ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
-      error         = true;
-      value_count   = 0;
-      values_per_mb = 1;
-      block_start   = d_end;
-      cur_mb        = 0;
-      cur_mb_start  = d_end;
-      cur_bitwidths = d_end;
+      set_error_state();
       return;
     }
 
@@ -205,8 +231,8 @@ struct delta_binary_decoder {
     if (value_count > 1) { init_mini_block(false); }
   }
 
-  // Bytes taken by `num_values` values packed at `bits` each. Computed in 64 bits because `bits`
-  // comes from the page unchecked, so the product can overflow 32.
+  // Bytes taken by `num_values` values packed at `bits` each. Computed in 64 bits because a 64-bit
+  // width times up to INT32_MAX values overflows 32.
   [[nodiscard]] static inline __device__ uint64_t packed_bytes(uint32_t bits, uint32_t num_values)
   {
     return static_cast<uint64_t>(bits) * num_values / CHAR_BIT;
@@ -226,6 +252,7 @@ struct delta_binary_decoder {
     if (cur_mb < mini_block_count - 1) {
       cur_mb_start += packed_bytes(cur_bitwidths[cur_mb], values_per_mb);
       cur_mb++;
+      if (current_value_idx < num_encoded_values(is_decode)) { check_mini_block(); }
     }
     // out of mini-blocks, start a new block
     else {
@@ -249,6 +276,8 @@ struct delta_binary_decoder {
     while (current_value_idx < num_encoded_values(false)) {
       setup_next_mini_block(false);
     }
+    // Return without the re-init below, which would clear the error for the caller to check.
+    if (error) { return block_end; }
     // calculate the correct end of the block
     auto const* const new_end = cur_mb == 0 ? block_start : cur_mb_start;
     // re-init block with correct end

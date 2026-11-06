@@ -2144,6 +2144,68 @@ TEST_F(ParquetReaderTest, DeltaHeaderCountsTooLarge)
   }
 }
 
+TEST_F(ParquetReaderTest, DeltaMalformedMiniBlocks)
+{
+  // Reads must fail when a mini-block that holds values is wider than 64 bits, or when its packed
+  // values or the block's bit-width array run past the end of the stream. Unused trailing
+  // mini-blocks may carry any bit width, as the spec allows.
+  namespace pq = cudf::io::parquet;
+
+  // One block of four 32-value mini-blocks: the header, a min delta of 0, `widths`, then
+  // `data_bytes` zero bytes. The first value is 1 and every delta is 0, so every value is 1.
+  auto const body = [](int value_count, std::vector<uint8_t> const& widths, size_t data_bytes) {
+    auto out = encode_delta_binary_header(128, 4, value_count, 1);
+    out.push_back(0);
+    out.insert(out.end(), widths.begin(), widths.end());
+    out.insert(out.end(), data_bytes, 0);
+    return out;
+  };
+  // DELTA_LENGTH_BYTE_ARRAY appends one character per row, since every length is 1.
+  auto const strings = [](std::vector<uint8_t> out, int rows) {
+    out.insert(out.end(), rows, 'a');
+    return wrap_single_page_parquet(
+      out, rows, pq::Type::BYTE_ARRAY, pq::Encoding::DELTA_LENGTH_BYTE_ARRAY, true);
+  };
+  auto const ints = [](std::vector<uint8_t> const& out, int rows) {
+    return wrap_single_page_parquet(
+      out, rows, pq::Type::INT64, pq::Encoding::DELTA_BINARY_PACKED, false);
+  };
+  auto const read = [](std::vector<uint8_t> const& file) {
+    return cudf::io::read_parquet(delta_fixture_reader_options(file, 0, std::nullopt));
+  };
+
+  struct bad_page {
+    std::string name;
+    int rows;
+    std::vector<uint8_t> body;
+    bool test_strings;  // false where the characters would be read as the missing bytes
+  };
+  for (auto const& [name, rows, page, test_strings] :
+       {bad_page{"first mini-block 65 bits wide", 3, body(3, {65, 0, 0, 0}, 260), true},
+        bad_page{"second mini-block 65 bits wide", 40, body(40, {0, 65, 0, 0}, 260), true},
+        bad_page{"mini-block values cut short", 40, body(40, {0, 64, 0, 0}, 2), true},
+        bad_page{"bit-width array cut short", 3, body(3, {0, 0}, 0), false}}) {
+    for (auto const* const nz_map : {"0", "1"}) {
+      SCOPED_TRACE(name + ", nz map " + nz_map);
+      tmp_env_var const env{nz_map_env_var, nz_map};
+      EXPECT_THROW(read(ints(page, rows)), cudf::logic_error);
+      if (test_strings) { EXPECT_THROW(read(strings(page, rows)), cudf::logic_error); }
+    }
+  }
+
+  // Control: only the first mini-block holds values, so the out-of-range widths after it are
+  // ignored.
+  auto const unused = body(3, {0, 200, 200, 200}, 0);
+  for (auto const* const nz_map : {"0", "1"}) {
+    SCOPED_TRACE(std::string{"unused widths, nz map "} + nz_map);
+    tmp_env_var const env{nz_map_env_var, nz_map};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(read(ints(unused, 3)).tbl->view().column(0),
+                                   cudf::test::fixed_width_column_wrapper<int64_t>{1, 1, 1});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(read(strings(unused, 3)).tbl->view().column(0),
+                                   cudf::test::strings_column_wrapper{"a", "a", "a"});
+  }
+}
+
 TEST_F(ParquetReaderTest, DeltaBinaryListLargeMiniBlockLeafNulls)
 {
   // LIST<INT64> whose leaves are ~1/5 null (definition level 2). Only the non-null leaves are

@@ -468,7 +468,7 @@ dremel_data get_encoding(column_view h_col,
   // Results were built in temp_mr buffers. If output_mr is a different resource, copy them into
   // output_mr since the caller owns them; otherwise hand over the existing buffers.
   auto const to_output = [&]<typename T>(cuda::device_buffer<T>& vec) {
-    return output_mr == temp_mr ? std::move(vec) : cuda::device_buffer<T>(vec, stream, output_mr);
+    return output_mr == temp_mr ? std::move(vec) : cuda::device_buffer<T>(stream, output_mr, vec);
   };
   auto output_offsets   = to_output(new_offsets);
   auto output_rep_level = to_output(rep_level);

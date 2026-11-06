@@ -19,6 +19,8 @@ def partition_and_pack(
     columns_to_hash: Iterable[int],
     num_partitions: int,
     seed: int = ...,
+    *,
+    reservation_context: int = 0,
 ) -> CppActor: ...
 def unpack_and_concat(
     ctx: Context,
@@ -26,4 +28,6 @@ def unpack_and_concat(
     | Channel[PartitionVectorChunk]
     | Channel[PartitionMapChunk | PartitionVectorChunk],
     ch_out: Channel[TableChunk],
+    *,
+    reservation_context: int = 0,
 ) -> CppActor: ...

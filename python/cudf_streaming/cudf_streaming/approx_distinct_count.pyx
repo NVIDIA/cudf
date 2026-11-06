@@ -4,7 +4,7 @@
 from cpython.object cimport PyObject
 from cpython.ref cimport Py_INCREF
 from cython.operator cimport dereference as deref
-from libc.stdint cimport int32_t
+from libc.stdint cimport int32_t, uint64_t
 from libcpp.memory cimport make_unique, shared_ptr, unique_ptr
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
@@ -44,6 +44,7 @@ cdef extern from * nogil:
         std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
         std::shared_ptr<rapidsmpf::streaming::Channel> ch_sampled,
         std::vector<cudf::size_type> column_indices,
+        std::uint64_t reservation_context,
         void (*cpp_set_py_future)(void*, const char *),
         rapidsmpf::OwningWrapper py_future
     ) {
@@ -56,7 +57,8 @@ cdef extern from * nogil:
                         std::move(ch_in),
                         std::move(ch_out),
                         std::move(ch_sampled),
-                        std::move(column_indices)
+                        std::move(column_indices),
+                        std::move(reservation_context)
                     )
                 )
             ),
@@ -76,6 +78,7 @@ cdef extern from * nogil:
         shared_ptr[cpp_Channel] ch_out,
         shared_ptr[cpp_Channel] ch_sampled,
         vector[int32_t] column_indices,
+        uint64_t reservation_context,
         void (*cpp_set_py_future)(void*, const char *),
         cpp_OwningWrapper py_future,
     ) except +ex_handler
@@ -163,6 +166,8 @@ cdef class CardinalityEstimator:
         Channel ch_out not None,
         Channel ch_sampled=None,
         column_indices=(),
+        *,
+        reservation_context=0,
     ):
         """
         Estimate the global row count and distinct-row count.
@@ -181,9 +186,12 @@ cdef class CardinalityEstimator:
         column_indices
             Optional column indices of the input tables to use in the
             estimate. If not provided defaults to the entire table.
+        reservation_context
+            Opaque telemetry context attached to memory reservation requests.
         """
         cdef shared_ptr[cpp_Channel] cpp_ch_sampled
         cdef vector[int32_t] cpp_column_indices = column_indices
+        cdef uint64_t cpp_reservation_context = reservation_context
         if ch_sampled is not None:
             cpp_ch_sampled = (<Channel>ch_sampled)._handle
         ret = asyncio.get_running_loop().create_future()
@@ -196,6 +204,7 @@ cdef class CardinalityEstimator:
                 ch_out._handle,
                 cpp_ch_sampled,
                 move(cpp_column_indices),
+                move(cpp_reservation_context),
                 cpp_set_py_future,
                 move(cpp_OwningWrapper(<void*><PyObject*>ret, py_deleter)),
             )

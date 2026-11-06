@@ -71,6 +71,7 @@ class AllGatherManager:
                 chunk,
                 reserve_extra=chunk.into_packed_data_cost(),
                 net_memory_delta=0,
+                reservation_context=self._manager.reservation_context,
             )
             self._manager.allgather.insert(
                 sequence_number, chunk.into_packed_data(extra)
@@ -85,9 +86,19 @@ class AllGatherManager:
             """Exit the context manager, calling ``insert_finished()``."""
             self._manager.allgather.insert_finished()
 
-    def __init__(self, context: Context, comm: Communicator, op_id: int):
+    def __init__(
+        self,
+        context: Context,
+        comm: Communicator,
+        op_id: int,
+        *,
+        reservation_context: int = 0,
+    ):
         self.context = context
-        self.allgather = AllGather(self.context, comm, op_id)
+        self.reservation_context = reservation_context
+        self.allgather = AllGather(
+            self.context, comm, op_id, reservation_context=self.reservation_context
+        )
 
     def inserting(self) -> AllGatherManager.Inserter:
         """Return a context manager for the insert phase."""
@@ -121,6 +132,7 @@ class AllGatherManager:
             self.context,
             unpack_and_concat_cost(partitions),
             net_memory_delta=0,
+            reservation_context=self.reservation_context,
         )
         return await ir_context.to_thread(
             unpack_and_concat,

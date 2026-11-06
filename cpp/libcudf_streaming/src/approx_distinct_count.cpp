@@ -63,7 +63,8 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
   std::shared_ptr<rapidsmpf::streaming::Channel> ch_sampled,
-  std::vector<cudf::size_type> column_indices)
+  std::vector<cudf::size_type> column_indices,
+  std::uint64_t reservation_context)
 {
   RAPIDSMPF_EXPECTS(ch_in != nullptr, "Input channel must not be null");
   RAPIDSMPF_EXPECTS(ch_out != nullptr, "Estimate output channel must not be null");
@@ -83,8 +84,8 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
   auto const sketch_bytes     = cudf::approx_distinct_count::sketch_bytes(precision_);
   auto const row_count_offset = sketch_bytes;
   auto const storage_bytes    = sketch_bytes + sizeof(std::uint64_t);
-  auto reservation =
-    co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)->reserve_or_wait(storage_bytes, 0);
+  auto reservation            = co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)
+                       ->reserve_or_wait(storage_bytes, 0, reservation_context);
   auto buf = rmm::device_buffer(
     storage_bytes, cudf::approx_distinct_count::sketch_alignment(), sketch_stream, br->device_mr());
   RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(buf.data(), 0, storage_bytes, sketch_stream.get()));
@@ -102,14 +103,16 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
     rows_seen += rapidsmpf::safe_cast<std::uint64_t>(chunk.shape().first);
     chunk = co_await chunk.make_available(
       ctx_,
-      -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)));
+      -rapidsmpf::safe_cast<std::int64_t>(chunk.data_alloc_size(rapidsmpf::MemoryType::DEVICE)),
+      reservation_context);
     init_event.stream_wait(chunk.stream());
     // Reserve a conservative hash-sized scratch allowance for the libcudf operation.
     reservation =
       co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)
         ->reserve_or_wait(
           rapidsmpf::safe_cast<std::size_t>(chunk.table_view().num_rows()) * sizeof(std::uint64_t),
-          0);
+          0,
+          reservation_context);
     auto sketch =
       cudf::approx_distinct_count({reinterpret_cast<cuda::std::byte*>(buf.data()), sketch_bytes},
                                   precision_,
@@ -133,8 +136,8 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
 
   auto storage = br->move(std::make_unique<rmm::device_buffer>(std::move(buf)), sketch_stream);
   if (comm_->nranks() > 1) {
-    reservation =
-      co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)->reserve_or_wait(storage_bytes, 0);
+    reservation = co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)
+                    ->reserve_or_wait(storage_bytes, 0, reservation_context);
     auto reducer = rapidsmpf::streaming::AllReduce(
       ctx_,
       comm_,

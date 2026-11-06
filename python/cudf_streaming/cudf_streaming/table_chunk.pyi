@@ -40,10 +40,18 @@ class TableChunk:
     def make_available_cost(self) -> int: ...
     def make_available(self, reservation: MemoryReservation) -> TableChunk: ...
     async def make_available_or_wait(
-        self, ctx: Context, *, net_memory_delta: int
+        self,
+        ctx: Context,
+        *,
+        net_memory_delta: int,
+        reservation_context: int = 0,
     ) -> TableChunk: ...
     def make_available_and_spill(
-        self, br: BufferResource, *, allow_overbooking: bool
+        self,
+        br: BufferResource,
+        *,
+        allow_overbooking: bool,
+        reservation_context: int = 0,
     ) -> TableChunk: ...
     def table_view(self) -> Table: ...
     def is_spillable(self) -> bool: ...
@@ -63,6 +71,7 @@ async def make_table_chunks_available_or_wait(
     reserve_extra: int,
     net_memory_delta: int,
     allow_overbooking: bool | None = None,
+    reservation_context: int = 0,
 ) -> tuple[TableChunk, MemoryReservation]: ...
 @overload
 async def make_table_chunks_available_or_wait(
@@ -72,4 +81,5 @@ async def make_table_chunks_available_or_wait(
     reserve_extra: int,
     net_memory_delta: int,
     allow_overbooking: bool | None = None,
+    reservation_context: int = 0,
 ) -> tuple[list[TableChunk], MemoryReservation]: ...

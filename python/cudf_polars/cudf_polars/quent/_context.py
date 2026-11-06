@@ -21,6 +21,8 @@ from cudf_polars.utils.config import (
 if TYPE_CHECKING:
     from typing import Self
 
+    from rapidsmpf.memory.buffer_resource import BufferResource
+
     from cudf_polars.quent._runtime import QuentSession, QuentWorkerRuntime
 
 __all__ = [
@@ -28,9 +30,41 @@ __all__ = [
     "QuentConfig",
     "QuentQueryConfig",
     "QuentQueryWorkerState",
+    "ReservationContextRegistry",
     "UnboundQuentIRExecutionState",
     "WorkerResources",
 ]
+
+
+class ReservationContextRegistry:
+    """Allocate stable worker-session tokens for reservation attribution."""
+
+    def __init__(self) -> None:
+        self._next_token = 1
+        self._tokens: dict[tuple[uuid.UUID, str], int] = {}
+        self._attribution: dict[int, tuple[uuid.UUID, str]] = {}
+        self._lock = threading.Lock()
+
+    def token(self, actor_id: uuid.UUID, site: str) -> int:
+        """Return the stable token for an Actor and reservation site."""
+        key = (actor_id, site)
+        with self._lock:
+            if (token := self._tokens.get(key)) is not None:
+                return token
+            if self._next_token > 2**64 - 1:
+                raise OverflowError("reservation context token space exhausted")
+            token = self._next_token
+            self._next_token += 1
+            self._tokens[key] = token
+            self._attribution[token] = key
+            return token
+
+    def resolve(self, token: int) -> tuple[uuid.UUID | None, str | None] | None:
+        """Resolve a token; token zero is deliberately unattributed."""
+        if token == 0:
+            return None, None
+        with self._lock:
+            return self._attribution.get(token)
 
 
 class _ProcessorRegistry:
@@ -127,6 +161,8 @@ class WorkerResources:
     processor_registry: _ProcessorRegistry
     device_memory_id: uuid.UUID
     device_memory_bytes: int
+    reservable_memory_ids: dict[str, uuid.UUID]
+    reservable_memory_limits: dict[str, int]
     filesystem_id: uuid.UUID
     disk_to_device_channel_id: uuid.UUID
     link_channel_ids: dict[int, uuid.UUID]
@@ -139,8 +175,23 @@ class WorkerResources:
         worker_id: uuid.UUID,
         rank: int,
         nranks: int,
+        buffer_resource: BufferResource,
     ) -> Self:
+        from rapidsmpf.memory.buffer import MemoryType
+
         namespace = uuid.uuid5(engine_id, f"worker:{rank}")
+        memory_types = {
+            "device": MemoryType.DEVICE,
+            "host": MemoryType.HOST,
+            "pinned_host": MemoryType.PINNED_HOST,
+            "disk": MemoryType.DISK,
+        }
+        available_memory_types = {
+            name: memory_type
+            for name, memory_type in memory_types.items()
+            if buffer_resource.has_memory_resource(memory_type)
+            and (name != "disk" or buffer_resource.spill_directory is not None)
+        }
 
         return cls(
             engine_id=engine_id,
@@ -151,6 +202,14 @@ class WorkerResources:
             processor_registry=_ProcessorRegistry(),
             device_memory_id=uuid.uuid5(namespace, "device-memory"),
             device_memory_bytes=get_total_device_memory() or 0,
+            reservable_memory_ids={
+                name: uuid.uuid5(namespace, f"reservable-memory:{name}")
+                for name in available_memory_types
+            },
+            reservable_memory_limits={
+                name: buffer_resource.memory_limit(memory_type)
+                for name, memory_type in available_memory_types.items()
+            },
             filesystem_id=uuid.uuid5(namespace, "filesystem"),
             disk_to_device_channel_id=uuid.uuid5(namespace, "disk-to-device"),
             link_channel_ids={
@@ -167,6 +226,15 @@ class WorkerResources:
             worker=self.worker_id,
             limits={"bytes": self.device_memory_bytes},
         )
+        for memory_type, memory_id in self.reservable_memory_ids.items():
+            configured_limit = self.reservable_memory_limits[memory_type]
+            context.reservable_memory_observer().handle(memory_id).declared(
+                instance_name=f"{self.instance_suffix} {memory_type} reservable memory",
+                worker=self.worker_id,
+                memory_type=memory_type,
+                limits={"bytes": max(configured_limit, 0)},
+                configured_limit=configured_limit,
+            )
         context.storage_observer().handle(self.filesystem_id).declared(
             instance_name=f"{self.instance_suffix} filesystem",
             worker=self.worker_id,

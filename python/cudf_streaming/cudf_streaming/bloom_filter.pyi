@@ -38,6 +38,8 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[BloomFilterChunk],
         tag: int,
+        *,
+        reservation_context: int = 0,
     ) -> None: ...
     async def apply(
         self,
@@ -46,4 +48,6 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[TableChunk],
         keys: Iterable[int],
+        *,
+        reservation_context: int = 0,
     ) -> None: ...

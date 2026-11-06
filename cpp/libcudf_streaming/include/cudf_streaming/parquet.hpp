@@ -17,6 +17,7 @@
 #include <rapidsmpf/streaming/core/context.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace cudf_streaming {
@@ -50,6 +51,8 @@ namespace actor {
  * @param num_rows_per_chunk Target (maximum) number of rows any sent `table_chunk` should
  * have.
  * @param filter Optional filter expression to apply to the read.
+ * @param reservation_context Opaque telemetry context attached to file-cache memory reservation
+ * requests.
  *
  * @return Streaming actor representing the asynchronous read.
  */
@@ -60,6 +63,7 @@ rapidsmpf::streaming::Actor read_parquet(std::shared_ptr<rapidsmpf::streaming::C
                                          cudf::io::parquet_reader_options options,
                                          // TODO: use byte count, not row count?
                                          cudf::size_type num_rows_per_chunk,
-                                         std::unique_ptr<filter> filter = nullptr);
+                                         std::unique_ptr<filter> filter    = nullptr,
+                                         std::uint64_t reservation_context = 0);
 }  // namespace actor
 }  // namespace cudf_streaming

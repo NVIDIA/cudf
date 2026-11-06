@@ -87,13 +87,20 @@ async def bloom_pipeline(
 ) -> None:
     ch_filter: Channel[BloomFilterChunk] = ctx.create_channel()
     await asyncio.gather(
-        bloom.build(ctx, ch_in=ch_build, ch_out=ch_filter, tag=0),
+        bloom.build(
+            ctx,
+            ch_in=ch_build,
+            ch_out=ch_filter,
+            tag=0,
+            attributes={"site": "bloom.build"},
+        ),
         bloom.apply(
             ctx,
             bloom_filter=ch_filter,
             ch_in=ch_probe,
             ch_out=ch_out,
             keys=(0,),
+            attributes={"site": "bloom.apply"},
         ),
     )
 

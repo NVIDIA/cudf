@@ -206,6 +206,10 @@ jobs:
           - '!python/cudf_polars/quent/**'
           - 'ci/test_python_cudf_polars.sh'
           - 'ci/test_python_cudf_polars_integrations.sh'
+          - 'ci/analyze_cudf_polars_coverage.py'
+          - 'ci/cudf_polars_coverage_analysis.toml'
+          - 'ci/run_cudf_polars_coverage_comparison.sh'
+          - 'ci/tests/test_analyze_cudf_polars_coverage.py'
         test_cudf_polars_quent:
           - 'python/cudf_polars/cudf_polars/quent/**'
           - 'python/cudf_polars/quent/analyzer/**'

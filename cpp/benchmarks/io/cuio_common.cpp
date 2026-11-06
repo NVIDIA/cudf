@@ -118,9 +118,9 @@ cudf::io::source_info cuio_source_sink_pair::make_source_info()
       if (d_buffer.size() < h_buffer.size()) {
         d_buffer = cuda::device_buffer<std::byte>(
           stream, d_buffer.memory_resource(), h_buffer.size(), cuda::no_init);
-        CUDF_CUDA_TRY(cudaMemcpyAsync(
-          d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.get()));
       }
+      CUDF_CUDA_TRY(cudaMemcpyAsync(
+        d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.get()));
 
       return cudf::io::source_info(d_buffer.subspan(0, h_buffer.size()));
     }

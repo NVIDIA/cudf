@@ -118,7 +118,7 @@ struct reflect_output_value_fn {
   std::string operator()(transform_output_spec const& spec,
                          [[maybe_unused]] bool use_physical_type) const
   {
-    return spec.has_string_offsets ? "cuda::std::span<char>" : "cudf::string_view";
+    return spec.has_string_offsets ? "cudf::mutable_string_view" : "cudf::string_view";
   }
 
   template <typename T>

@@ -3986,6 +3986,49 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_hashPartition(JNIEnv* env
   JNI_CATCH(env, NULL);
 }
 
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_hashPartitionIndices(JNIEnv* env,
+                                                                       jclass,
+                                                                       jlong input_table,
+                                                                       jintArray columns_to_hash,
+                                                                       jint hash_function,
+                                                                       jint number_of_partitions,
+                                                                       jboolean stable,
+                                                                       jint seed,
+                                                                       jintArray output_offsets)
+{
+  JNI_NULL_CHECK(env, input_table, "input table is null", 0);
+  JNI_NULL_CHECK(env, columns_to_hash, "columns_to_hash is null", 0);
+  JNI_NULL_CHECK(env, output_offsets, "output_offsets is null", 0);
+  JNI_ARG_CHECK(env, number_of_partitions > 0, "number_of_partitions is zero", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const hash_func = static_cast<cudf::hash_id>(hash_function);
+    auto const hash_seed = static_cast<uint32_t>(seed);
+    auto const order     = stable ? cudf::partition_order::STABLE : cudf::partition_order::UNSTABLE;
+    auto const n_input_table = reinterpret_cast<cudf::table_view const*>(input_table);
+    cudf::jni::native_jintArray n_columns_to_hash(env, columns_to_hash);
+    JNI_ARG_CHECK(env, n_columns_to_hash.size() > 0, "columns_to_hash is zero", 0);
+
+    std::vector<cudf::size_type> columns_to_hash_vec(n_columns_to_hash.begin(),
+                                                     n_columns_to_hash.end());
+
+    auto [gather_map, partition_offsets] =
+      cudf::hash_partition_indices(n_input_table->select(columns_to_hash_vec),
+                                   number_of_partitions,
+                                   order,
+                                   hash_func,
+                                   hash_seed);
+
+    cudf::jni::native_jintArray n_output_offsets(env, output_offsets);
+    std::copy(partition_offsets.begin(), partition_offsets.end(), n_output_offsets.begin());
+
+    return release_as_jlong(gather_map);
+  }
+  JNI_CATCH(env, 0);
+}
+
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_roundRobinPartition(JNIEnv* env,
                                                                            jclass,
                                                                            jlong input_table,

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from enum import IntEnum
@@ -13,6 +13,10 @@ class HashId(IntEnum):
     HASH_IDENTITY = ...
     HASH_MURMUR3 = ...
 
+class PartitionOrder(IntEnum):
+    UNSTABLE = ...
+    STABLE = ...
+
 def hash_partition(
     input: Table,
     keys: Table | list[int],
@@ -22,6 +26,15 @@ def hash_partition(
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> tuple[Table, list[int]]: ...
+def hash_partition_indices(
+    keys: Table,
+    num_partitions: int,
+    order: PartitionOrder,
+    hash_function: HashId = ...,
+    seed: int = ...,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+) -> tuple[Column, list[int]]: ...
 def partition(
     t: Table,
     partition_map: Column,

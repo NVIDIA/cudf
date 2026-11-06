@@ -43,10 +43,19 @@ def test_max_horizontal_all_null_row(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_max_horizontal_string_unsupported(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"a": ["x", None], "b": ["y", "z"]})
-    q = df.select(pl.max_horizontal("a", "b"))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+def test_max_horizontal_string(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "a": ["x", None, None, "b"],
+            "b": ["y", "z", None, "a"],
+            "c": ["w", "q", None, None],
+        }
+    )
+    q = df.select(
+        pl.max_horizontal("a", "b", "c"),
+        pl.max_horizontal(pl.col("a"), pl.lit("UTC")).alias("lit"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("ignore_nulls", [True, False])
@@ -110,10 +119,19 @@ def test_min_horizontal_all_null_row(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_min_horizontal_string_unsupported(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"a": ["x", None], "b": ["y", "z"]})
-    q = df.select(pl.min_horizontal("a", "b"))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+def test_min_horizontal_string(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame(
+        {
+            "a": ["x", None, None, "b"],
+            "b": ["y", "z", None, "a"],
+            "c": ["w", "q", None, None],
+        }
+    )
+    q = df.select(
+        pl.min_horizontal("a", "b", "c"),
+        pl.min_horizontal(pl.col("a"), pl.lit("UTC")).alias("lit"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("ignore_nulls", [True, False])

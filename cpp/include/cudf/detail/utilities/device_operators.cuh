@@ -18,8 +18,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/functional>
+#include <cuda/std/type_traits>
 
 #include <type_traits>
 
@@ -44,6 +46,38 @@ CUDF_HOST_DEVICE inline auto max(LHS const& lhs, RHS const& rhs)
   requires(cuda::std::totally_ordered_with<LHS, RHS>)
 {
   return cuda::std::max(lhs, rhs);
+}
+
+/**
+ * @brief IEEE 754-2019 `minimum` of two floating-point values
+ *
+ * NaN propagates and -0 is less than +0, so the operation is associative and commutative and the
+ * result does not depend on the evaluation order.
+ */
+template <typename T>
+  requires(cuda::std::is_floating_point_v<T>)
+CUDF_HOST_DEVICE inline T ieee_minimum(T lhs, T rhs)
+{
+  if (cuda::std::isnan(lhs)) { return lhs; }
+  if (cuda::std::isnan(rhs)) { return rhs; }
+  if (lhs == rhs) { return cuda::std::signbit(lhs) ? lhs : rhs; }
+  return lhs < rhs ? lhs : rhs;
+}
+
+/**
+ * @brief IEEE 754-2019 `maximum` of two floating-point values
+ *
+ * NaN propagates and +0 is greater than -0, so the operation is associative and commutative and
+ * the result does not depend on the evaluation order.
+ */
+template <typename T>
+  requires(cuda::std::is_floating_point_v<T>)
+CUDF_HOST_DEVICE inline T ieee_maximum(T lhs, T rhs)
+{
+  if (cuda::std::isnan(lhs)) { return lhs; }
+  if (cuda::std::isnan(rhs)) { return rhs; }
+  if (lhs == rhs) { return cuda::std::signbit(lhs) ? rhs : lhs; }
+  return lhs > rhs ? lhs : rhs;
 }
 }  // namespace detail
 
@@ -107,13 +141,19 @@ struct DeviceCount {
 
 /**
  * @brief binary `min` operator
+ *
+ * Floating-point values follow the IEEE 754-2019 `minimum` operation (see `ieee_minimum`).
  */
 struct DeviceMin {
   template <cudf::concepts::fixed_width T>
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs)
     -> decltype(numeric::detail::min(lhs, rhs))
   {
-    return numeric::detail::min(lhs, rhs);
+    if constexpr (cuda::std::is_floating_point_v<T>) {
+      return cudf::detail::ieee_minimum(lhs, rhs);
+    } else {
+      return numeric::detail::min(lhs, rhs);
+    }
   }
 
   template <typename T>
@@ -163,13 +203,19 @@ struct DeviceMin {
 
 /**
  * @brief binary `max` operator
+ *
+ * Floating-point values follow the IEEE 754-2019 `maximum` operation (see `ieee_maximum`).
  */
 struct DeviceMax {
   template <cudf::concepts::fixed_width T>
   CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs)
     -> decltype(numeric::detail::max(lhs, rhs))
   {
-    return numeric::detail::max(lhs, rhs);
+    if constexpr (cuda::std::is_floating_point_v<T>) {
+      return cudf::detail::ieee_maximum(lhs, rhs);
+    } else {
+      return numeric::detail::max(lhs, rhs);
+    }
   }
 
   template <typename T>

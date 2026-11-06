@@ -18,6 +18,8 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/cmath>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/extrema.h>
 
@@ -39,6 +41,29 @@ struct noinline_adapter_fn {
     -> decltype(f(std::forward<Args>(args)...))
   {
     return f(std::forward<Args>(args)...);
+  }
+};
+
+/**
+ * @brief Ordering for arithmetic ARGMIN/ARGMAX that selects the first NaN
+ *
+ * NaN propagates as in the IEEE 754-2019 minimum/maximum operations: NaN is ordered before every
+ * other value for ARGMIN and after every other value for ARGMAX. This is a strict weak ordering,
+ * so `thrust::min_element`/`thrust::max_element` return the first NaN.
+ */
+template <aggregation::Kind K>
+struct arithmetic_extremum_less {
+  template <typename T>
+  __device__ bool operator()(T const& lhs, T const& rhs) const
+  {
+    if constexpr (cuda::std::is_floating_point_v<T>) {
+      auto const lhs_nan = cuda::std::isnan(lhs);
+      auto const rhs_nan = cuda::std::isnan(rhs);
+      if (lhs_nan || rhs_nan) {
+        return K == aggregation::ARGMIN ? (lhs_nan && !rhs_nan) : (!lhs_nan && rhs_nan);
+      }
+    }
+    return lhs < rhs;
   }
 };
 
@@ -125,9 +150,10 @@ class arg_minmax_dispatcher {
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr) const
   {
-    using Op = std::conditional_t<K == aggregation::ARGMIN,
-                                  reduction::detail::op::min,
-                                  reduction::detail::op::max>;
+    using Op        = std::conditional_t<K == aggregation::ARGMIN,
+                                         reduction::detail::op::min,
+                                         reduction::detail::op::max>;
+    auto const less = arithmetic_extremum_less<K>{};
     // Dictionary keys are not guaranteed to be sorted, so the index of the min/max index does
     // not identify the min/max key. Read `keys[indices[i]]` directly per row via a lazy
     // iterator instead of decoding (and copying) the whole column.
@@ -139,19 +165,19 @@ class arg_minmax_dispatcher {
         auto const p =
           cudf::dictionary::detail::make_dictionary_pair_iterator<ElementType>(*d_dict, true);
         auto const it = cuda::transform_iterator(p, transformer);
-        return find_extremum_idx(it, input.size(), stream, mr);
+        return find_extremum_idx(it, input.size(), stream, mr, less);
       }
       auto const it = cudf::dictionary::detail::make_dictionary_iterator<ElementType>(*d_dict);
-      return find_extremum_idx(it, input.size(), stream, mr);
+      return find_extremum_idx(it, input.size(), stream, mr, less);
     }
     if (input.has_nulls()) {
       auto const d_input     = column_device_view::create(input, stream, mr.get_temporary_mr());
       auto const transformer = Op{}.template get_null_replacing_element_transformer<ElementType>();
       auto const it =
         cuda::transform_iterator(d_input->pair_begin<ElementType, true>(), transformer);
-      return find_extremum_idx(it, input.size(), stream, mr);
+      return find_extremum_idx(it, input.size(), stream, mr, less);
     } else {
-      return find_extremum_idx(input.begin<ElementType>(), input.size(), stream, mr);
+      return find_extremum_idx(input.begin<ElementType>(), input.size(), stream, mr, less);
     }
   }
 

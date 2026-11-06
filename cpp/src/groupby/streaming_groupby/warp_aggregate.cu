@@ -17,7 +17,6 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/std/bit>
-#include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
@@ -112,17 +111,7 @@ __device__ void aggregate_value(hash::rep_type_t<T> input,
     using Op     = cudf::detail::corresponding_operator_t<K>;
     auto value   = static_cast<Result>(input);
     if constexpr (K == aggregation::SUM_OF_SQUARES) { value *= value; }
-    auto combine = thread_group.size() > 1;
-    if constexpr (cuda::std::is_floating_point_v<Result> &&
-                  (cuda::std::same_as<Op, cudf::DeviceMin> ||
-                   cuda::std::same_as<Op, cudf::DeviceMax>)) {
-      if (combine) {
-        // Existing MIN/MAX are order-sensitive for NaNs and signed-zero ties. Keep
-        // every original atomic in those thread groups.
-        auto const exceptional = cuda::std::isnan(value) || value == 0;
-        combine = cg::reduce(thread_group, static_cast<int>(exceptional), cg::plus<int>{}) == 0;
-      }
-    }
+    auto const combine  = thread_group.size() > 1;
     auto const combined = combine ? reduce_group_value(thread_group, value, Op{}) : value;
     if (!combine || thread_group.thread_rank() == 0) {
       if (column.validity != nullptr && !cudf::bit_is_set(column.validity, target)) {

@@ -566,9 +566,8 @@ TYPED_TEST(StreamingGroupbyFloatingPointTest, MinMaxNaNAndSignedZerosInOneWarp)
       cudf::gather(cudf::table_view{{results[i].results.front()->view()}}, *order);
     EXPECT_EQ(sorted->get_column(0).null_count(), 0);
     auto const values = cudf::test::to_host<T>(sorted->view().column(0)).first;
-    // NaN/finite ties and mixed zero signs depend on atomic update order. Check the allowed
-    // results, and use uniform zero groups to verify signs without imposing an update order.
-    EXPECT_TRUE(std::isnan(values[0]) || values[0] == T{0});
+    // NaN propagates and -0 is less than +0, independent of the atomic update order
+    EXPECT_TRUE(std::isnan(values[0]));
     EXPECT_EQ(values[1], T{0});
     EXPECT_FALSE(std::signbit(values[1]));
     EXPECT_EQ(values[2], T{0});

@@ -10,6 +10,12 @@ import org.slf4j.LoggerFactory;
 import java.util.Locale;
 import java.util.function.Consumer;
 
+/**
+ * A debugging utility that prints the contents of tables and columns.
+ * Obtain an instance with {@link #get()} or {@link #builder()}; by default the output goes to
+ * the destination named by the {@value #OUTPUT_STREAM} system property, or standard error if it
+ * is not set. This is slow and is meant for debugging only.
+ */
 public class TableDebug {
 
   /**

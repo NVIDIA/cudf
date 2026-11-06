@@ -222,6 +222,33 @@ public class HybridScanReader implements AutoCloseable {
   }
 
   /**
+   * Create a hybrid scan reader from an already parsed Parquet file footer.
+   *
+   * <p>The reader shares the parsed footer with {@code metadata} rather than parsing it again,
+   * and keeps it alive on its own, so {@code metadata} may be closed before this reader.
+   * Otherwise behaves as {@link #HybridScanReader(HostMemoryBuffer, ParquetOptions)}.
+   *
+   * @param metadata the parsed footer
+   * @param opts     Parquet reader options. {@link ParquetOptions#DEFAULT} by default.
+   */
+  public HybridScanReader(HybridScanMetadata metadata, ParquetOptions opts) {
+    if (metadata == null) {
+      throw new IllegalArgumentException("metadata must not be null");
+    }
+    if (opts == null) {
+      opts = ParquetOptions.DEFAULT;
+    }
+    long handle = createFromMetadata(
+        metadata.getNativeHandle(),
+        opts.getIncludeColumnNames(),
+        opts.getReadBinaryAsString(),
+        opts.timeUnit().getTypeId().getNativeId());
+    this.cleaner = new HybridScanReaderCleaner(handle);
+    MemoryCleaner.register(this, cleaner);
+    cleaner.addRef();
+  }
+
+  /**
    * Install or replace the filter expression used by all subsequent filter-related APIs on
    * this reader; pass {@code null} to clear. Cheap to call, so callers can sweep the same
    * file with several candidate predicates in a loop.
@@ -880,6 +907,11 @@ public class HybridScanReader implements AutoCloseable {
                                               String[] columnNames,
                                               boolean[] readBinaryAsString,
                                               int timeUnitTypeId);
+
+  private static native long createFromMetadata(long metadataHandle,
+                                                String[] columnNames,
+                                                boolean[] readBinaryAsString,
+                                                int timeUnitTypeId);
 
   private static native void setFilter(long handle, long filterHandle);
 

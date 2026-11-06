@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Sorting utilities."""
@@ -11,6 +11,8 @@ import pylibcudf as plc
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from cudf_polars.containers import Column
 
 
 def sort_order(
@@ -51,3 +53,21 @@ def sort_order(
         elif (asc == plc.types.Order.ASCENDING) ^ null_last:
             null_precedence.append(plc.types.NullOrder.BEFORE)
     return column_order, null_precedence
+
+
+def nulls_at_start(column: Column) -> bool:
+    """
+    Return whether the nulls of a sorted column are at its start.
+
+    Parameters
+    ----------
+    column
+        Column with ``is_sorted == plc.types.Sorted.YES``.
+
+    Returns
+    -------
+    True if the nulls are at the start, False if they are at the end.
+    """
+    return (column.order == plc.types.Order.ASCENDING) == (
+        column.null_order == plc.types.NullOrder.BEFORE
+    )

@@ -53,7 +53,57 @@ public class HybridScanReaderTest extends CudfTestBase {
   @Test
   void testNullFooterThrows() {
     assertThrows(IllegalArgumentException.class,
-        () -> new HybridScanReader(null, optsForColumns("id")));
+        () -> new HybridScanReader((HostMemoryBuffer) null, optsForColumns("id")));
+  }
+
+  /** Verifies that passing null metadata to the constructor throws IllegalArgumentException. */
+  @Test
+  void testNullMetadataThrows() {
+    assertThrows(IllegalArgumentException.class,
+        () -> new HybridScanReader((HybridScanMetadata) null, optsForColumns("id")));
+  }
+
+  /**
+   * Verifies a reader built from a parsed HybridScanMetadata sees the same footer as one built
+   * from the footer bytes, and keeps the footer alive after the metadata is closed.
+   */
+  @Test
+  void testReaderFromMetadataMatchesReaderFromFooter(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.standard(tmp)) {
+      HybridScanReader fromMetadata;
+      try (HybridScanMetadata metadata =
+               new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS))) {
+        fromMetadata = new HybridScanReader(metadata, optsForColumns(DEFAULT_COLS));
+      }
+      try (HybridScanReader reader = fromMetadata) {
+        assertArrayEquals(open.reader.allRowGroups(), reader.allRowGroups());
+        assertEquals(open.reader.totalRowsInRowGroups(ALL_ROW_GROUPS),
+            reader.totalRowsInRowGroups(ALL_ROW_GROUPS));
+      }
+    }
+  }
+
+  /** Verifies getParquetMetadataAddress() returns a non-null address. */
+  @Test
+  void testParquetMetadataAddress(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.standard(tmp);
+         HybridScanMetadata metadata =
+             new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS))) {
+      assertTrue(metadata.getParquetMetadataAddress() != 0);
+    }
+  }
+
+  /** Verifies a closed HybridScanMetadata rejects further use. */
+  @Test
+  void testClosedMetadataThrows(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.standard(tmp)) {
+      HybridScanMetadata metadata =
+          new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS));
+      metadata.close();
+      assertThrows(IllegalStateException.class, () -> metadata.getParquetMetadataAddress());
+      assertThrows(IllegalStateException.class,
+          () -> new HybridScanReader(metadata, optsForColumns(DEFAULT_COLS)));
+    }
   }
 
   /** Verifies that requesting DICTIONARY32 output columns is rejected by the hybrid scan reader. */

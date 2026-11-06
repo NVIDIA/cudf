@@ -8,6 +8,7 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/rolling.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -36,18 +37,17 @@ struct rolling_store_output_functor<_T, true> {
   // undefined behaviour. The caller must ensure that the relevant row is
   // marked as invalid with a null.
 
-  // SFINAE for non-bool, non-timestamp types
+  // Non-bool, non-timestamp types
   template <typename T = _T>
   CUDF_HOST_DEVICE inline void operator()(T& out, T& val, size_type count)
-    requires(!(cudf::is_boolean<T>() || cudf::is_timestamp<T>()))
+    requires(not(cudf::concepts::boolean<T> or cudf::concepts::timestamp<T>))
   {
     if (count > 0) { out = val / count; }
   }
 
-  // SFINAE for timestamp types
-  template <typename T = _T>
+  // Timestamp types
+  template <cudf::concepts::timestamp T = _T>
   CUDF_HOST_DEVICE inline void operator()(T& out, T& val, size_type count)
-    requires(cudf::is_timestamp<T>())
   {
     if (count > 0) { out = static_cast<T>(val.time_since_epoch() / count); }
   }

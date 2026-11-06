@@ -1719,6 +1719,18 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   });
   auto const d_statuses = cudf::detail::make_device_uvector_async(h_statuses, stream, temp_mr);
 
+  // Allocate each path's output offsets column; the copy below finds them through `d_offsets`
+  std::vector<std::unique_ptr<column>> offsets_columns;
+  offsets_columns.reserve(num_paths);
+  auto h_offsets = cudf::detail::make_pinned_vector_async<size_type*>(num_paths, stream);
+  for (size_type path_idx = 0; path_idx < num_paths; ++path_idx) {
+    auto offsets_column = make_numeric_column(
+      data_type{type_id::INT32}, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
+    h_offsets[path_idx] = offsets_column->mutable_view().data<size_type>();
+    offsets_columns.push_back(std::move(offsets_column));
+  }
+  auto const d_offsets = cudf::detail::make_device_uvector_async(h_offsets, stream, temp_mr);
+
   // Resolve the whole trie per row and compute the output sizes. The walk keeps one located value
   // per trie level, so only a pathologically deep trie needs scratch outside the thread.
   auto const trie_depth = 1 + *std::max_element(trie.slot_depth.begin(), trie.slot_depth.end());
@@ -1771,18 +1783,6 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
     launch(cuda::std::false_type{});
   }
   CUDF_CUDA_TRY(cudaGetLastError());
-
-  // Allocate each path's output offsets column; the copy below finds them through `d_offsets`
-  std::vector<std::unique_ptr<column>> offsets_columns;
-  offsets_columns.reserve(num_paths);
-  auto h_offsets = cudf::detail::make_pinned_vector_async<size_type*>(num_paths, stream);
-  for (size_type path_idx = 0; path_idx < num_paths; ++path_idx) {
-    auto offsets_column = make_numeric_column(
-      data_type{type_id::INT32}, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
-    h_offsets[path_idx] = offsets_column->mutable_view().data<size_type>();
-    offsets_columns.push_back(std::move(offsets_column));
-  }
-  auto const d_offsets = cudf::detail::make_device_uvector_async(h_offsets, stream, temp_mr);
 
   // Byte totals and valid counts share a buffer, since each extra readback costs a synchronization
   auto d_path_counts = cudf::detail::make_zeroed_device_uvector_async<int64_t>(

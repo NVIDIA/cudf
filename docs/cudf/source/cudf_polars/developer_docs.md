@@ -635,8 +635,8 @@ truncated; the coverage databases retain every test node and its
 `|setup`, `|run`, or `|teardown` phase. The engine databases remain separate so
 the same upstream node can be examined under each configuration.
 
-For example, this prints every local test context for the first local-only
-line in the report, including contexts omitted from the JSON sample:
+For example, this finds a local-only line with a test-body context and prints
+all its local contexts, including those omitted from the JSON sample:
 
 ```bash
 python - coverage-results/cudf-polars-comparison/coverage-comparison.json <<'PY'
@@ -650,17 +650,20 @@ report_path = Path(sys.argv[1]).resolve()
 report = json.loads(report_path.read_text())
 data = CoverageData(basename=str(report_path.parent / report["context_data"]["local"]))
 data.read()
-for filename, categories in report["files"].items():
-    if categories["local_only"]:
-        line = categories["local_only"][0]["line"]
-        print(f"{filename}:{line}")
-        print(*sorted(data.contexts_by_lineno(filename)[line]), sep="\n")
-        break
+filename, line = next(
+    (filename, entry["line"])
+    for filename, categories in report["files"].items()
+    for entry in categories["local_only"]
+    if any(context.endswith("|run") for context in entry["local_contexts"])
+)
+print(f"{filename}:{line}")
+print(*sorted(data.contexts_by_lineno(filename)[line]), sep="\n")
 PY
 ```
 
 Local-only lines are a starting point for finding missing upstream assertions.
-Check their test contexts: fixture setup and assertion helpers also contribute
+Check their test contexts: import-time code, fixture setup, and assertion
+helpers also contribute coverage. An empty context represents unattributed
 coverage. An upstream test may be skipped, select a CPU engine, or fall back,
 so absent GPU coverage does not necessarily mean the behavior is untested
 upstream. Use the GPU execution diagnostics and inspect both tests' assertions
@@ -670,7 +673,7 @@ The command exports available data even when a suite fails, then returns a
 nonzero status. Such reports are incomplete evidence. Missing data or missing
 test-body contexts prevent export rather than being interpreted as a coverage
 gap. To compare existing databases without rerunning tests, invoke
-`ci/analyze_cudf_polars_coverage.py --help`; `--upstream-data` accepts multiple
+`python ci/analyze_cudf_polars_coverage.py --help`; `--upstream-data` accepts multiple
 databases.
 
 # Debugging

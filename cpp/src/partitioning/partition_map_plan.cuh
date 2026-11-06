@@ -16,6 +16,7 @@
 #include <cub/device/device_scan.cuh>
 #include <cuda/atomic>
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <thrust/scan.h>
 
 namespace cudf::detail::partition_map_plan {
@@ -48,10 +49,10 @@ __device__ void local_tile(MapType const* map,
       int base       = hist[w][q];
       if constexpr (Rank) {
         keys[j] = q;
-        rank[j] = base + __popc(peers & ((1u << lane) - 1u));
+        rank[j] = base + cuda::std::popcount(peers & ((1u << lane) - 1u));
       }
       __syncwarp(active);
-      if (lane == __ffs(peers) - 1) hist[w][q] = base + __popc(peers);
+      if (lane == __ffs(peers) - 1) hist[w][q] = base + cuda::std::popcount(peers);
     }
     __syncwarp();
   }

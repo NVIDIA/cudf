@@ -79,8 +79,8 @@ CUDF_KERNEL void count_tiles(MapType const* map, int n, int p, uint16_t* saved, 
       }
       total += sum;
     }
-    __syncthreads();
     if constexpr (SaveRanks) {
+      __syncthreads();
 #pragma unroll
       for (int j = 0; j < 4; ++j) {
         int i = start + (threadIdx.x / 32) * 128 + j * 32 + threadIdx.x % 32;
@@ -155,7 +155,7 @@ __device__ void emit_reordered(int const (&keys)[4],
     int position = threadIdx.x + j * threads;
     if (position < min(tile_rows, n - start)) sink(source_rows[position], destinations[position]);
   }
-  __syncthreads();
+  // The caller synchronizes before reusing the shared storage.
 }
 
 template <int Tiles, bool Reorder = false, typename Sink, typename MapType, typename Offsets>

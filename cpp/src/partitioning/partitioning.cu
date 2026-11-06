@@ -841,34 +841,16 @@ CUDF_KERNEL void partition_map_local_ranks(MapType const* partition_map,
   __shared__ size_type histogram[num_warps][MAP_PARTITION_MAX_BINS];
   auto const lane = threadIdx.x % warp_size;
   auto const warp = threadIdx.x / warp_size;
-  for (auto p = lane; p < num_partitions; p += warp_size) {
-    histogram[warp][p] = 0;
-  }
-  __syncwarp();
-
   size_type ranks[MAP_PARTITION_ITEMS_PER_THREAD];
   size_type partitions[MAP_PARTITION_ITEMS_PER_THREAD];
-#pragma unroll
-  for (size_type item = 0; item < MAP_PARTITION_ITEMS_PER_THREAD; ++item) {
-    auto const row = static_cast<cuda::std::size_t>(blockIdx.x) * MAP_PARTITION_TILE_SIZE +
-                     warp * warp_size * MAP_PARTITION_ITEMS_PER_THREAD + item * warp_size + lane;
-    auto const valid  = row < num_rows;
-    auto const active = __ballot_sync(0xffffffffu, valid);
-    if (valid) {
-      auto const partition = static_cast<size_type>(partition_map[row]);
-      partitions[item]     = partition;
-      auto const peers     = __match_any_sync(active, partition);
-      auto const base      = histogram[warp][partition];
-      ranks[item]          = base + cuda::std::popcount(peers & ((1u << lane) - 1u));
-      // All readers of a bin finish before its elected writer updates it.
-      __syncwarp(active);
-      if (lane == __ffs(peers) - 1) {
-        histogram[warp][partition] = base + cuda::std::popcount(peers);
-      }
-    }
-    __syncwarp();
-  }
-  __syncthreads();
+  partition_map_warp_histogram<true>(
+    partition_map,
+    num_rows,
+    num_partitions,
+    static_cast<cuda::std::size_t>(blockIdx.x) * MAP_PARTITION_TILE_SIZE,
+    histogram,
+    ranks,
+    partitions);
 
   for (auto partition = threadIdx.x; partition < num_partitions;
        partition += MAP_PARTITION_BLOCK_SIZE) {
@@ -1198,7 +1180,8 @@ std::vector<size_type> make_map_partition_offsets(column_view const& partition_m
                          offsets.begin(),
                          offsets.end(),
                          offsets.begin());
-  return cudf::detail::make_std_vector(offsets, stream);
+  auto const pinned_offsets = cudf::detail::make_pinned_vector(offsets, stream);
+  return {pinned_offsets.begin(), pinned_offsets.end()};
 }
 
 /**

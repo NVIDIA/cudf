@@ -9,13 +9,16 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/strings/detail/gather.cuh>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/utilities.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_buffer.hpp>
+#include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <thrust/transform.h>
 
 namespace cudf::detail::partition_identity {

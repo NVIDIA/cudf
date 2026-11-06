@@ -1210,9 +1210,8 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
         });
     }
   }
-
-  encode_output_dict_columns(out_columns);
-  return {std::make_unique<table>(std::move(out_columns)), std::move(out_metadata)};
+  return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
+          std::move(out_metadata)};
 }
 
 table_with_metadata reader_impl::read()

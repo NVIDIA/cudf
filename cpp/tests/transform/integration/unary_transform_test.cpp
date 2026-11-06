@@ -1176,6 +1176,33 @@ TEST_F(StringOperationTest, Output)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_empty, result_empty->view());
 }
 
+TEST_F(StringOperationTest, OutputNullAware)
+{
+  auto input            = cudf::test::strings_column_wrapper{{"alpha", "", "ignored", "omega"},
+                                                             {true, true, false, true}};
+  std::string const udf = R"***(
+    __device__ void transform(cuda::std::optional<cudf::string_view>* output,
+                              cuda::std::optional<cudf::string_view> input)
+    {
+      *output = input;
+    }
+  )***";
+
+  cudf::transform_input inputs[]   = {input};
+  cudf::transform_output outputs[] = {
+    {cudf::data_type{cudf::type_id::STRING}, cudf::output_nullability::PRESERVE}};
+  auto result = cudf::transform(udf,
+                                cudf::udf_source_type::CUDA,
+                                cudf::null_aware::YES,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
+}
+
 TEST_F(StringOperationTest, OutputOffsetted)
 {
   auto a = cudf::test::strings_column_wrapper{"x", "xx", "xxx", "xxxx", "xxxxx", "xxxxxx"};

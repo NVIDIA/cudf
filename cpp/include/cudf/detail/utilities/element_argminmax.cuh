@@ -6,13 +6,13 @@
 #pragma once
 
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/cmath>
 #include <cuda/std/type_traits>
 
 #include <type_traits>
@@ -64,9 +64,10 @@ struct element_argminmax_fn {
     } else {
       if constexpr (cuda::std::is_floating_point_v<T>) {
         // NaN propagates as in the IEEE 754-2019 minimum/maximum operations: the first NaN
-        // row is selected for both argmin and argmax
-        auto const lhs_nan = cuda::std::isnan(lhs);
-        auto const rhs_nan = cuda::std::isnan(rhs);
+        // row is selected for both argmin and argmax. is_nan_bits avoids FP64 instructions
+        // (see device_operators.cuh).
+        auto const lhs_nan = cudf::detail::is_nan_bits(lhs);
+        auto const rhs_nan = cudf::detail::is_nan_bits(rhs);
         if (lhs_nan && rhs_nan) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
         if (lhs_nan || rhs_nan) { return lhs_nan ? lhs_idx : rhs_idx; }
       }

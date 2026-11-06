@@ -9,6 +9,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/span.hpp>
@@ -51,8 +52,13 @@ struct MinMaxNaNTest : public cudf::test::BaseFixture {
 
   static void check(cudf::column_view const& input, expected const& exp)
   {
-    auto const min = reduce_value(input, *cudf::make_min_aggregation<cudf::reduce_aggregation>());
-    auto const max = reduce_value(input, *cudf::make_max_aggregation<cudf::reduce_aggregation>());
+    auto const min_agg    = cudf::make_min_aggregation<cudf::reduce_aggregation>();
+    auto const max_agg    = cudf::make_max_aggregation<cudf::reduce_aggregation>();
+    auto const argmin_agg = cudf::make_argmin_aggregation<cudf::reduce_aggregation>();
+    auto const argmax_agg = cudf::make_argmax_aggregation<cudf::reduce_aggregation>();
+
+    auto const min              = reduce_value(input, *min_agg);
+    auto const max              = reduce_value(input, *max_agg);
     auto const [mm_min, mm_max] = cudf::minmax(input);
     auto const mm_min_value = static_cast<cudf::numeric_scalar<T> const*>(mm_min.get())->value();
     auto const mm_max_value = static_cast<cudf::numeric_scalar<T> const*>(mm_max.get())->value();
@@ -67,10 +73,8 @@ struct MinMaxNaNTest : public cudf::test::BaseFixture {
       EXPECT_EQ(mm_min_value, exp.min);
       EXPECT_EQ(mm_max_value, exp.max);
     }
-    EXPECT_EQ(reduce_index(input, *cudf::make_argmin_aggregation<cudf::reduce_aggregation>()),
-              exp.argmin);
-    EXPECT_EQ(reduce_index(input, *cudf::make_argmax_aggregation<cudf::reduce_aggregation>()),
-              exp.argmax);
+    EXPECT_EQ(reduce_index(input, *argmin_agg), exp.argmin);
+    EXPECT_EQ(reduce_index(input, *argmax_agg), exp.argmax);
   }
 };
 
@@ -114,16 +118,31 @@ TYPED_TEST(MinMaxNaNTest, ReduceLarge)
   }
 }
 
+TYPED_TEST(MinMaxNaNTest, Sliced)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = TestFixture::NaN;
+
+  // NaNs and a null just outside each slice must not affect the result, and argmin/argmax are
+  // relative to the slice
+  auto const input = cudf::test::fixed_width_column_wrapper<T>{
+    {NaN, T{0}, T{1}, T{3}, T{2}, NaN, T{4}}, {1, 0, 1, 1, 1, 1, 1}};
+  auto const slices = cudf::slice(input, {1, 5, 2, 6, 0, 2});
+  this->check(slices[0], {false, T{1}, T{3}, 1, 2});  // [null, 1, 3, 2]
+  this->check(slices[1], {true, {}, {}, 3, 3});       // [1, 3, 2, NaN]
+  this->check(slices[2], {true, {}, {}, 0, 0});       // [NaN, null]
+}
+
 TYPED_TEST(MinMaxNaNTest, SignedZeros)
 {
   using T       = TypeParam;
   using wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
+  auto const min_agg = cudf::make_min_aggregation<cudf::reduce_aggregation>();
+  auto const max_agg = cudf::make_max_aggregation<cudf::reduce_aggregation>();
   for (auto const& input : {wrapper{T{0}, -T{0}, T{0}}, wrapper{-T{0}, T{0}, -T{0}}}) {
-    auto const min =
-      this->reduce_value(input, *cudf::make_min_aggregation<cudf::reduce_aggregation>());
-    auto const max =
-      this->reduce_value(input, *cudf::make_max_aggregation<cudf::reduce_aggregation>());
+    auto const min = this->reduce_value(input, *min_agg);
+    auto const max = this->reduce_value(input, *max_agg);
     EXPECT_EQ(min, T{0});
     EXPECT_TRUE(std::signbit(min));
     EXPECT_EQ(max, T{0});
@@ -159,19 +178,13 @@ TYPED_TEST(MinMaxNaNTest, SegmentedReduce)
     cudf::column_view(offsets).data<cudf::size_type>(), cudf::column_view(offsets).size());
   auto const output_type = cudf::data_type{cudf::type_to_id<T>()};
 
-  auto const min =
-    cudf::segmented_reduce(input,
-                           d_offsets,
-                           *cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>(),
-                           output_type,
-                           cudf::null_policy::EXCLUDE);
+  auto constexpr nulls = cudf::null_policy::EXCLUDE;
+  auto const min_agg   = cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>();
+  auto const max_agg   = cudf::make_max_aggregation<cudf::segmented_reduce_aggregation>();
+
+  auto const min = cudf::segmented_reduce(input, d_offsets, *min_agg, output_type, nulls);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(wrapper({NaN, T{2}, NaN, T{0}}, {1, 1, 1, 0}), min->view());
 
-  auto const max =
-    cudf::segmented_reduce(input,
-                           d_offsets,
-                           *cudf::make_max_aggregation<cudf::segmented_reduce_aggregation>(),
-                           output_type,
-                           cudf::null_policy::EXCLUDE);
+  auto const max = cudf::segmented_reduce(input, d_offsets, *max_agg, output_type, nulls);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(wrapper({NaN, T{4}, NaN, T{0}}, {1, 1, 1, 0}), max->view());
 }

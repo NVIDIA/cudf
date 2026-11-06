@@ -18,10 +18,61 @@
 
 #include <cmath>
 #include <limits>
+#include <source_location>
+#include <string>
 #include <vector>
 
 // min/max follow the IEEE 754-2019 minimum/maximum operations for floating-point values:
 // NaN propagates and -0 is less than +0. argmin/argmax select the first NaN.
+
+/**
+ * @brief Checks the MIN, MAX, ARGMIN, and ARGMAX groupby results for the same input
+ */
+void test_minmax_aggs(cudf::column_view const& keys,
+                      cudf::column_view const& vals,
+                      cudf::column_view const& expect_keys,
+                      cudf::column_view const& expect_min,
+                      cudf::column_view const& expect_max,
+                      cudf::column_view const& expect_argmin,
+                      cudf::column_view const& expect_argmax,
+                      std::source_location const& location = std::source_location::current())
+{
+  SCOPED_TRACE("Original failure location: " + std::string{location.file_name()} + ":" +
+               std::to_string(location.line()));
+
+  auto min_agg    = cudf::make_min_aggregation<cudf::groupby_aggregation>();
+  auto max_agg    = cudf::make_max_aggregation<cudf::groupby_aggregation>();
+  auto argmin_agg = cudf::make_argmin_aggregation<cudf::groupby_aggregation>();
+  auto argmax_agg = cudf::make_argmax_aggregation<cudf::groupby_aggregation>();
+  test_single_agg(keys, vals, expect_keys, expect_min, std::move(min_agg));
+  test_single_agg(keys, vals, expect_keys, expect_max, std::move(max_agg));
+
+  // streaming groupby does not support ARGMIN/ARGMAX
+  auto constexpr null_keys = cudf::null_policy::EXCLUDE;
+  auto constexpr unsorted  = cudf::sorted::NO;
+  test_single_agg(keys,
+                  vals,
+                  expect_keys,
+                  expect_argmin,
+                  std::move(argmin_agg),
+                  null_keys,
+                  unsorted,
+                  {},
+                  {},
+                  unsorted,
+                  test_streaming::NO);
+  test_single_agg(keys,
+                  vals,
+                  expect_keys,
+                  expect_argmax,
+                  std::move(argmax_agg),
+                  null_keys,
+                  unsorted,
+                  {},
+                  {},
+                  unsorted,
+                  test_streaming::NO);
+}
 
 template <typename T>
 struct GroupbyMinMaxNaNTest : public cudf::test::BaseFixture {};
@@ -43,38 +94,13 @@ TYPED_TEST(GroupbyMinMaxNaNTest, MinMaxArgMinArgMax)
              {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1}};
   auto const expect_keys = keys_col{0, 1, 2, 3, 4};
 
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  vals_col{NaN, NaN, NaN, T{1}, T{5}},
-                  cudf::make_min_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  vals_col{NaN, NaN, NaN, T{3}, T{5}},
-                  cudf::make_max_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  idx_col{1, 3, 6, 8, 12},
-                  cudf::make_argmin_aggregation<cudf::groupby_aggregation>(),
-                  cudf::null_policy::EXCLUDE,
-                  cudf::sorted::NO,
-                  {},
-                  {},
-                  cudf::sorted::NO,
-                  test_streaming::NO);
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  idx_col{1, 3, 6, 9, 12},
-                  cudf::make_argmax_aggregation<cudf::groupby_aggregation>(),
-                  cudf::null_policy::EXCLUDE,
-                  cudf::sorted::NO,
-                  {},
-                  {},
-                  cudf::sorted::NO,
-                  test_streaming::NO);
+  test_minmax_aggs(keys,
+                   vals,
+                   expect_keys,
+                   vals_col{NaN, NaN, NaN, T{1}, T{5}},
+                   vals_col{NaN, NaN, NaN, T{3}, T{5}},
+                   idx_col{1, 3, 6, 8, 12},
+                   idx_col{1, 3, 6, 9, 12});
 }
 
 TYPED_TEST(GroupbyMinMaxNaNTest, Large)
@@ -100,38 +126,37 @@ TYPED_TEST(GroupbyMinMaxNaNTest, Large)
   using vals_wrapper     = cudf::test::fixed_width_column_wrapper<T>;
   using idx_wrapper      = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
 
-  test_single_agg(keys_col,
-                  vals_col,
-                  expect_keys,
-                  vals_wrapper{T{0}, NaN, NaN, T{3}},
-                  cudf::make_min_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys_col,
-                  vals_col,
-                  expect_keys,
-                  vals_wrapper{T{99'996}, NaN, NaN, T{99'999}},
-                  cudf::make_max_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys_col,
-                  vals_col,
-                  expect_keys,
-                  idx_wrapper{0, 50'001, 70'002, 3},
-                  cudf::make_argmin_aggregation<cudf::groupby_aggregation>(),
-                  cudf::null_policy::EXCLUDE,
-                  cudf::sorted::NO,
-                  {},
-                  {},
-                  cudf::sorted::NO,
-                  test_streaming::NO);
-  test_single_agg(keys_col,
-                  vals_col,
-                  expect_keys,
-                  idx_wrapper{99'996, 50'001, 70'002, 99'999},
-                  cudf::make_argmax_aggregation<cudf::groupby_aggregation>(),
-                  cudf::null_policy::EXCLUDE,
-                  cudf::sorted::NO,
-                  {},
-                  {},
-                  cudf::sorted::NO,
-                  test_streaming::NO);
+  test_minmax_aggs(keys_col,
+                   vals_col,
+                   expect_keys,
+                   vals_wrapper{T{0}, NaN, NaN, T{3}},
+                   vals_wrapper{T{99'996}, NaN, NaN, T{99'999}},
+                   idx_wrapper{0, 50'001, 70'002, 3},
+                   idx_wrapper{99'996, 50'001, 70'002, 99'999});
+}
+
+TYPED_TEST(GroupbyMinMaxNaNTest, Sliced)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  using keys_col     = cudf::test::fixed_width_column_wrapper<int32_t>;
+  using vals_col     = cudf::test::fixed_width_column_wrapper<T>;
+  using idx_col      = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+
+  // The NaNs outside the slice belong to group 0 and must not affect it
+  auto const keys_all    = keys_col{0, 0, 0, 1, 1, 0};
+  auto const vals_all    = vals_col{NaN, T{1}, T{2}, NaN, T{3}, NaN};
+  auto const keys        = cudf::slice(keys_all, {1, 5}).front();
+  auto const vals        = cudf::slice(vals_all, {1, 5}).front();  // [1, 2, NaN, 3]
+  auto const expect_keys = keys_col{0, 1};
+
+  test_minmax_aggs(keys,
+                   vals,
+                   expect_keys,
+                   vals_col{T{1}, NaN},
+                   vals_col{T{2}, NaN},
+                   idx_col{0, 2},
+                   idx_col{1, 2});
 }
 
 TYPED_TEST(GroupbyMinMaxNaNTest, SignedZeros)
@@ -173,14 +198,10 @@ TYPED_TEST(GroupbyMinMaxNaNTest, Scan)
   auto const vals        = vals_col{T{1}, NaN, T{3}, T{0}, T{2}, T{1}, T{3}};
   auto const expect_keys = keys_col{0, 0, 0, 0, 1, 1, 1};
 
-  test_single_scan(keys,
-                   vals,
-                   expect_keys,
-                   vals_col{T{1}, NaN, NaN, NaN, T{2}, T{1}, T{1}},
-                   cudf::make_min_aggregation<cudf::groupby_scan_aggregation>());
-  test_single_scan(keys,
-                   vals,
-                   expect_keys,
-                   vals_col{T{1}, NaN, NaN, NaN, T{2}, T{2}, T{3}},
-                   cudf::make_max_aggregation<cudf::groupby_scan_aggregation>());
+  auto min_agg = cudf::make_min_aggregation<cudf::groupby_scan_aggregation>();
+  auto max_agg = cudf::make_max_aggregation<cudf::groupby_scan_aggregation>();
+  test_single_scan(
+    keys, vals, expect_keys, vals_col{T{1}, NaN, NaN, NaN, T{2}, T{1}, T{1}}, std::move(min_agg));
+  test_single_scan(
+    keys, vals, expect_keys, vals_col{T{1}, NaN, NaN, NaN, T{2}, T{2}, T{3}}, std::move(max_agg));
 }

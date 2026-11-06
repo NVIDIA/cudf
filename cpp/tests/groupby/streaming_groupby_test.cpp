@@ -550,7 +550,7 @@ TYPED_TEST(StreamingGroupbyFloatingPointTest, MinMaxNaNAndSignedZerosInOneWarp)
   auto constexpr nan = std::numeric_limits<T>::quiet_NaN();
   cudf::test::fixed_width_column_wrapper<int32_t> input_keys{0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3};
   cudf::test::fixed_width_column_wrapper<T> input_values{
-    nan, -T{0}, T{0}, nan, T{0}, T{0}, -T{0}, -T{0}, T{-2}, -T{0}, T{0}, T{3}};
+    nan, -T{0}, T{0}, nan, T{0}, -T{0}, -T{0}, T{0}, T{-2}, -T{0}, T{0}, T{3}};
   std::vector<cudf::groupby::streaming_aggregation_request> requests;
   requests.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
   requests.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
@@ -566,12 +566,13 @@ TYPED_TEST(StreamingGroupbyFloatingPointTest, MinMaxNaNAndSignedZerosInOneWarp)
       cudf::gather(cudf::table_view{{results[i].results.front()->view()}}, *order);
     EXPECT_EQ(sorted->get_column(0).null_count(), 0);
     auto const values = cudf::test::to_host<T>(sorted->view().column(0)).first;
-    // NaN propagates and -0 is less than +0, independent of the atomic update order
+    // NaN propagates and -0 is less than +0, independent of the atomic update order:
+    // groups 1 and 2 mix zero signs, so MIN (i == 0) is -0 and MAX is +0
     EXPECT_TRUE(std::isnan(values[0]));
     EXPECT_EQ(values[1], T{0});
-    EXPECT_FALSE(std::signbit(values[1]));
+    EXPECT_EQ(std::signbit(values[1]), i == 0);
     EXPECT_EQ(values[2], T{0});
-    EXPECT_TRUE(std::signbit(values[2]));
+    EXPECT_EQ(std::signbit(values[2]), i == 0);
     EXPECT_EQ(values[3], i == 0 ? T{-2} : T{3});
   }
 }

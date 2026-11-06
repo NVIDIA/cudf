@@ -8,6 +8,7 @@
 #include "nested_types_extrema_utils.cuh"
 
 #include <cudf/aggregation.hpp>
+#include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -18,7 +19,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <cuda/std/cmath>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/extrema.h>
@@ -49,7 +49,8 @@ struct noinline_adapter_fn {
  *
  * NaN propagates as in the IEEE 754-2019 minimum/maximum operations: NaN is ordered before every
  * other value for ARGMIN and after every other value for ARGMAX. This is a strict weak ordering,
- * so `thrust::min_element`/`thrust::max_element` return the first NaN.
+ * so `thrust::min_element`/`thrust::max_element` return the first NaN. `is_nan_bits` avoids FP64
+ * instructions (see device_operators.cuh).
  */
 template <aggregation::Kind K>
 struct arithmetic_extremum_less {
@@ -57,8 +58,8 @@ struct arithmetic_extremum_less {
   __device__ bool operator()(T const& lhs, T const& rhs) const
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
-      auto const lhs_nan = cuda::std::isnan(lhs);
-      auto const rhs_nan = cuda::std::isnan(rhs);
+      auto const lhs_nan = cudf::detail::is_nan_bits(lhs);
+      auto const rhs_nan = cudf::detail::is_nan_bits(rhs);
       if (lhs_nan || rhs_nan) {
         return K == aggregation::ARGMIN ? (lhs_nan && !rhs_nan) : (!lhs_nan && rhs_nan);
       }

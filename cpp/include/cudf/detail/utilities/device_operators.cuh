@@ -18,9 +18,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/cmath>
+#include <cuda/std/bit>
 #include <cuda/std/concepts>
+#include <cuda/std/cstdint>
 #include <cuda/std/functional>
+#include <cuda/std/limits>
 #include <cuda/std/type_traits>
 
 #include <type_traits>
@@ -48,36 +50,79 @@ CUDF_HOST_DEVICE inline auto max(LHS const& lhs, RHS const& rhs)
   return cuda::std::max(lhs, rhs);
 }
 
+// The NaN tests and comparisons in the IEEE 754 helpers below operate on the integer bit pattern
+// rather than using floating-point instructions. On many GPUs (for example workstation and
+// consumer parts) double-precision throughput is 1/32 to 1/64 of single-precision, and the extra
+// FP64 instructions needed for the NaN and signed-zero checks made double min/max compute-bound:
+// reductions, scans, and groupby were up to 2x slower than the memory-bound single compare they
+// replace. Integer operations run at full rate on all GPUs.
+
+/**
+ * @brief Signed integer type with the same size as the floating-point type `T`
+ */
+template <typename T>
+  requires(cuda::std::is_floating_point_v<T>)
+using float_bits_t = cuda::std::conditional_t<sizeof(T) == 4, int32_t, int64_t>;
+
+/**
+ * @brief Returns true if `value` is NaN
+ *
+ * The test uses integer operations on the bit pattern. This avoids double-precision instructions,
+ * which have low throughput on many GPUs.
+ */
+template <typename T>
+  requires(cuda::std::is_floating_point_v<T>)
+CUDF_HOST_DEVICE inline bool is_nan_bits(T value)
+{
+  using I = float_bits_t<T>;
+  auto constexpr inf_bits =
+    static_cast<I>(sizeof(T) == 4 ? 0x7f80'0000LL : 0x7ff0'0000'0000'0000LL);
+  return (cuda::std::bit_cast<I>(value) & cuda::std::numeric_limits<I>::max()) > inf_bits;
+}
+
+/**
+ * @brief Maps a non-NaN floating-point value to a signed integer with the same ordering
+ *
+ * Negative values have their magnitude bits inverted, so integer comparison orders the keys as
+ * the values, with -0 less than +0.
+ */
+template <typename T>
+  requires(cuda::std::is_floating_point_v<T>)
+CUDF_HOST_DEVICE inline float_bits_t<T> ordered_bits(T value)
+{
+  using I         = float_bits_t<T>;
+  auto const bits = cuda::std::bit_cast<I>(value);
+  return bits ^ ((bits >> (sizeof(I) * 8 - 1)) & cuda::std::numeric_limits<I>::max());
+}
+
 /**
  * @brief IEEE 754-2019 `minimum` of two floating-point values
  *
  * NaN propagates and -0 is less than +0, so the operation is associative and commutative and the
- * result does not depend on the evaluation order.
+ * result does not depend on the evaluation order. Only integer operations are used.
  */
 template <typename T>
   requires(cuda::std::is_floating_point_v<T>)
 CUDF_HOST_DEVICE inline T ieee_minimum(T lhs, T rhs)
 {
-  if (cuda::std::isnan(lhs)) { return lhs; }
-  if (cuda::std::isnan(rhs)) { return rhs; }
-  if (lhs == rhs) { return cuda::std::signbit(lhs) ? lhs : rhs; }
-  return lhs < rhs ? lhs : rhs;
+  if (is_nan_bits(lhs)) { return lhs; }
+  if (is_nan_bits(rhs)) { return rhs; }
+  return ordered_bits(lhs) <= ordered_bits(rhs) ? lhs : rhs;
 }
 
 /**
  * @brief IEEE 754-2019 `maximum` of two floating-point values
  *
  * NaN propagates and +0 is greater than -0, so the operation is associative and commutative and
- * the result does not depend on the evaluation order.
+ * the result does not depend on the evaluation order. Only integer operations are used.
  */
 template <typename T>
   requires(cuda::std::is_floating_point_v<T>)
 CUDF_HOST_DEVICE inline T ieee_maximum(T lhs, T rhs)
 {
-  if (cuda::std::isnan(lhs)) { return lhs; }
-  if (cuda::std::isnan(rhs)) { return rhs; }
-  if (lhs == rhs) { return cuda::std::signbit(lhs) ? rhs : lhs; }
-  return lhs > rhs ? lhs : rhs;
+  if (is_nan_bits(lhs)) { return lhs; }
+  if (is_nan_bits(rhs)) { return rhs; }
+  return ordered_bits(lhs) >= ordered_bits(rhs) ? lhs : rhs;
 }
 }  // namespace detail
 

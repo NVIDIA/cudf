@@ -660,3 +660,21 @@ def test_join():
 def test_join(engine):
     assert_gpu_result_equal(q, engine=engine)
 ```
+
+### Use `in_memory_engine` for translation assertions
+
+Tests that only check IR translation, such as
+`assert_ir_translation_raises`, must use the `in_memory_engine` fixture.
+Translation does not depend on the engine, so running these tests with
+the parametrized `engine` or `streaming_engine` fixtures only repeats the
+same check.
+
+```python
+# Bad: runs the same translation check once per engine
+def test_unsupported_dtype(streaming_engine):
+    assert_ir_translation_raises(q, streaming_engine, NotImplementedError)
+
+# Good
+def test_unsupported_dtype(in_memory_engine):
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+```

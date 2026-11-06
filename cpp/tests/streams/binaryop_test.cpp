@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,8 @@
 
 #include <cudf/binaryop.hpp>
 #include <cudf/scalar/scalar.hpp>
+
+#include <limits>
 
 class BinaryopTest : public cudf::test::BaseFixture {};
 
@@ -46,6 +48,20 @@ TEST_F(BinaryopTest, ScalarColumn)
                          rhs,
                          cudf::binary_operator::ADD,
                          cudf::data_type(cudf::type_to_id<int32_t>()),
+                         cudf::test::get_default_stream());
+}
+
+TEST_F(BinaryopTest, ColumnColumnEtlComparison)
+{
+  auto constexpr nan = std::numeric_limits<double>::quiet_NaN();
+  cudf::test::fixed_width_column_wrapper<double> lhs{1.0, nan, 3.0};
+  cudf::test::fixed_width_column_wrapper<double> rhs{nan, nan, 2.0};
+
+  cudf::binary_operation(lhs,
+                         rhs,
+                         cudf::binary_operator::LESS,
+                         cudf::data_type(cudf::type_id::BOOL8),
+                         cudf::nan_semantics::ETL,
                          cudf::test::get_default_stream());
 }
 

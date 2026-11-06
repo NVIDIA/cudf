@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -80,3 +80,48 @@ def test_evaluation():
     got = plc.transform.compute_column(table, expr)
 
     assert_column_eq(expect, got)
+
+
+def test_expression_nan_semantics_default():
+    expr = plc.expressions.ColumnReference(0)
+    assert expr.nan_semantics == plc.types.NanSemantics.DEFAULT
+    expr.nan_semantics = plc.types.NanSemantics.ETL
+    assert expr.nan_semantics == plc.types.NanSemantics.ETL
+
+
+@pytest.mark.parametrize(
+    "op, ieee, etl",
+    [
+        (
+            plc.expressions.ASTOperator.EQUAL,
+            [False, False, True],
+            [True, False, True],
+        ),
+        (
+            plc.expressions.ASTOperator.LESS,
+            [False, False, False],
+            [False, True, False],
+        ),
+        (
+            plc.expressions.ASTOperator.GREATER_EQUAL,
+            [False, False, True],
+            [True, False, True],
+        ),
+    ],
+)
+def test_compute_column_nan_semantics(op, ieee, etl):
+    nan = float("nan")
+    table = plc.Table.from_arrow(
+        pa.table({"a": [nan, 1.0, 2.0], "b": [nan, nan, 2.0]})
+    )
+    expr = plc.expressions.Operation(
+        op,
+        plc.expressions.ColumnReference(0),
+        plc.expressions.ColumnReference(1),
+    )
+    got = plc.transform.compute_column(table, expr)
+    assert_column_eq(pa.array(ieee), got)
+
+    expr.nan_semantics = plc.types.NanSemantics.ETL
+    got = plc.transform.compute_column(table, expr)
+    assert_column_eq(pa.array(etl), got)

@@ -104,6 +104,10 @@ BINARYOP_BENCHMARK_DEFINE(duration_ms,  duration_ns,  NULL_EQUALS,          bool
 BINARYOP_BENCHMARK_DEFINE(duration_ms,  duration_ns,  NULL_NOT_EQUALS,      bool);
 BINARYOP_BENCHMARK_DEFINE(decimal32,    decimal32,    NULL_MAX,             decimal32);
 BINARYOP_BENCHMARK_DEFINE(timestamp_D,  timestamp_s,  NULL_MIN,             timestamp_s);
+BINARYOP_BENCHMARK_DEFINE(double,       double,       LESS,                 bool);
+BINARYOP_BENCHMARK_DEFINE(double,       double,       EQUAL,                bool);
+BINARYOP_BENCHMARK_DEFINE(float,        float,        GREATER_EQUAL,        bool);
+BINARYOP_BENCHMARK_DEFINE(double,       double,       NULL_MAX,             double);
 // clang-format on
 
 template <typename TypeLhs, typename TypeRhs, typename TypeOut>

@@ -6,6 +6,8 @@
 #pragma once
 
 #include <cudf/detail/integral_math.cuh>
+#include <cudf/detail/operators/comparison.cuh>
+#include <cudf/types.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -304,61 +306,101 @@ struct LogicalOr {
   }
 };
 
+/**
+ * @brief Operand types whose comparison depends on `nan_semantics`: at least one of them is
+ * floating-point
+ */
+template <typename TypeLhs, typename TypeRhs>
+concept has_floating_point_operand =
+  cuda::std::floating_point<TypeLhs> or cuda::std::floating_point<TypeRhs>;
+
+using cudf::detail::ops::etl_equal;
+using cudf::detail::ops::etl_less;
+
+// The comparison operators below hold how NaN values compare. Default construction selects
+// `nan_semantics::IEEE754`; the `nan_semantics::ETL` branch only exists for floating-point
+// operands and is selected at runtime.
+
 struct Equal {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x == y)
   {
+    if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
+      if (semantics == nan_semantics::ETL) { return etl_equal(x, y); }
+    }
     return (x == y);
   }
 };
 
 struct NotEqual {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x != y)
   {
+    if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
+      if (semantics == nan_semantics::ETL) { return not etl_equal(x, y); }
+    }
     return (x != y);
   }
 };
 
 struct Less {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x < y)
   {
+    if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
+      if (semantics == nan_semantics::ETL) { return etl_less(x, y); }
+    }
     return (x < y);
   }
 };
 
 struct Greater {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x > y)
   {
+    if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
+      if (semantics == nan_semantics::ETL) { return etl_less(y, x); }
+    }
     return (x > y);
   }
 };
 
 struct LessEqual {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x <= y)
   {
+    if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
+      if (semantics == nan_semantics::ETL) { return not etl_less(y, x); }
+    }
     return (x <= y);
   }
 };
 
 struct GreaterEqual {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x >= y)
   {
+    if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
+      if (semantics == nan_semantics::ETL) { return not etl_less(x, y); }
+    }
     return (x >= y);
   }
 };
 
 struct NullEquals {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(
     TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x == y)
   {
     output_valid = true;
-    if (lhs_valid && rhs_valid) return x == y;
+    if (lhs_valid && rhs_valid) return Equal{semantics}(x, y);
     return !lhs_valid && !rhs_valid;
   }
   // To allow std::is_invocable_v = true
@@ -367,11 +409,12 @@ struct NullEquals {
 };
 
 struct NullNotEquals {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(
     TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x != y)
   {
-    return !NullEquals{}(x, y, lhs_valid, rhs_valid, output_valid);
+    return !NullEquals{semantics}(x, y, lhs_valid, rhs_valid, output_valid);
   }
   // To allow std::is_invocable_v = true
   template <typename TypeLhs, typename TypeRhs>
@@ -379,6 +422,7 @@ struct NullNotEquals {
 };
 
 struct NullMax {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs,
             typename TypeRhs,
             typename common_t = std::common_type_t<TypeLhs, TypeRhs>>
@@ -393,7 +437,7 @@ struct NullMax {
       output_valid = false;
       return common_t{};
     } else if (lhs_valid && rhs_valid) {
-      return (x_conv > y_conv) ? x_conv : y_conv;
+      return Greater{semantics}(x_conv, y_conv) ? x_conv : y_conv;
     } else if (lhs_valid)
       return x_conv;
     else
@@ -408,6 +452,7 @@ struct NullMax {
 };
 
 struct NullMin {
+  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
   template <typename TypeLhs,
             typename TypeRhs,
             typename common_t = std::common_type_t<TypeLhs, TypeRhs>>
@@ -422,7 +467,7 @@ struct NullMin {
       output_valid = false;
       return common_t{};
     } else if (lhs_valid && rhs_valid) {
-      return (x_conv < y_conv) ? x_conv : y_conv;
+      return Less{semantics}(x_conv, y_conv) ? x_conv : y_conv;
     } else if (lhs_valid)
       return x_conv;
     else
@@ -467,6 +512,17 @@ struct NullLogicalOr {
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x || y);
 };
+
+/**
+ * @brief Operators that take the operands' validity and set the output validity
+ */
+template <typename BinaryOperator>
+constexpr bool is_null_aware_op_v =
+  cuda::std::is_same_v<BinaryOperator, NullEquals> or
+  cuda::std::is_same_v<BinaryOperator, NullNotEquals> or
+  cuda::std::is_same_v<BinaryOperator, NullLogicalAnd> or
+  cuda::std::is_same_v<BinaryOperator, NullLogicalOr> or
+  cuda::std::is_same_v<BinaryOperator, NullMax> or cuda::std::is_same_v<BinaryOperator, NullMin>;
 
 }  // namespace ops
 }  // namespace compiled

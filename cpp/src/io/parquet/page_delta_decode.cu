@@ -11,8 +11,6 @@
 
 #include <cudf/detail/utilities/cuda.cuh>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/std/algorithm>
 
 namespace cudf::io::parquet::detail {

@@ -64,7 +64,9 @@ struct chars_size_transform {
   }
 };
 
-auto create_strings_device_views(host_span<column_view const> views, cuda::stream_ref stream)
+auto create_strings_device_views(host_span<column_view const> views,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   // Assemble contiguous array of device views
@@ -80,24 +82,23 @@ auto create_strings_device_views(host_span<column_view const> views, cuda::strea
       return static_cast<size_t>(col.size());
     });
   thrust::inclusive_scan(thrust::host, offset_it, input_offsets.end(), offset_it);
-  auto d_input_offsets = cudf::detail::make_device_buffer_async(
-    input_offsets, stream, cudf::get_current_device_resource_ref());
+  auto d_input_offsets =
+    cudf::detail::make_device_buffer_async(input_offsets, stream, mr.get_output_mr());
   auto const output_size = input_offsets.back();
 
   // Compute the partition offsets and size of chars column
   // Note: Using 64-bit size_t so we can detect overflow of 32-bit size_type
-  auto d_partition_offsets = cuda::device_buffer<size_t>(
-    stream, cudf::get_current_device_resource_ref(), views.size() + 1, cuda::no_init);
+  auto d_partition_offsets =
+    cuda::device_buffer<size_t>(stream, mr.get_output_mr(), views.size() + 1, cuda::no_init);
   CUDF_CUDA_TRY(cudaMemsetAsync(
     d_partition_offsets.data(), 0, sizeof(size_t), stream.get()));  // zero first element
 
-  thrust::transform_inclusive_scan(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    device_views_ptr,
-    device_views_ptr + views.size(),
-    std::next(d_partition_offsets.begin()),
-    chars_size_transform{},
-    cuda::std::plus{});
+  thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                   device_views_ptr,
+                                   device_views_ptr + views.size(),
+                                   std::next(d_partition_offsets.begin()),
+                                   chars_size_transform{},
+                                   cuda::std::plus{});
   size_t output_chars_size;
   CUDF_CUDA_TRY(
     cudf::detail::memcpy_async(&output_chars_size,
@@ -210,7 +211,8 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
 {
   CUDF_FUNC_RANGE();
   // Compute output sizes
-  auto const device_views         = create_strings_device_views(columns, stream);
+  auto const device_views =
+    create_strings_device_views(columns, stream, cudf::get_current_device_resource_ref());
   auto const& d_views             = std::get<1>(device_views);
   auto const& d_input_offsets     = std::get<2>(device_views);
   auto const& d_partition_offsets = std::get<3>(device_views);

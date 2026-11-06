@@ -73,8 +73,8 @@ namespace CUDF_EXPORT cudf {
 std::vector<packed_table> contiguous_split(
   cudf::table_view const& input,
   std::vector<size_type> const& splits,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 namespace detail {
 
@@ -248,8 +248,8 @@ class chunked_pack {
  *         and device memory respectively
  */
 packed_columns pack(cudf::table_view const& input,
-                    cuda::stream_ref stream           = cudf::get_default_stream(),
-                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                    cuda::stream_ref stream   = cudf::get_default_stream(),
+                    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Compute the size in bytes of the contiguous memory buffer needed to pack the input table.

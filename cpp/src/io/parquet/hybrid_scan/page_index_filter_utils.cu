@@ -418,13 +418,13 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
   cudf::device_span<size_type const> input_slice_bounds,
   cudf::device_span<size_type const> segment_row_offsets,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_inputs   = input_slice_bounds.size() - 1;
   auto const num_segments = segment_row_offsets.size() - 1;
 
-  auto page_maps =
-    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
+  auto page_maps = cuda::device_buffer<size_type>(
+    stream, mr.get_output_mr(), num_inputs * num_segments, cuda::no_init);
 
   // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
   // built from the union of all page boundaries, so containment is guaranteed.

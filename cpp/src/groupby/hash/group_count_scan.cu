@@ -25,7 +25,7 @@ std::unique_ptr<column> count_scan(column_view const& values,
                                    null_policy nulls,
                                    cudf::device_span<size_type const> group_labels,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   std::unique_ptr<column> result = make_fixed_width_column(
     data_type{type_id::INT32}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);

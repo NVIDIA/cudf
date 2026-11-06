@@ -30,7 +30,7 @@ namespace {
 template <typename Op>
 std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   // Create a gather map containing indices of the prefix min/max elements.
   cuda::device_buffer<size_type> gather_map(
@@ -75,11 +75,11 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
 
 template std::unique_ptr<column> scan_inclusive<DeviceMin>(column_view const& input_view,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cudf::memory_resources mr);
 
 template std::unique_ptr<column> scan_inclusive<DeviceMax>(column_view const& input_view,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace structs

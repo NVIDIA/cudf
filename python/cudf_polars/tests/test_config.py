@@ -1117,6 +1117,41 @@ def test_memory_resource_config_hash(options) -> None:
     assert hash(config) == hash(config)
 
 
+def test_create_memory_resource_does_not_wrap_by_default() -> None:
+    config = MemoryResourceConfig(qualname="rmm.mr.CudaMemoryResource")
+    mr = config.create_memory_resource()
+    assert isinstance(mr, rmm.mr.CudaMemoryResource)
+
+
+def test_create_memory_resource_tracking_wraps_with_unlimited_limit() -> None:
+    config = MemoryResourceConfig(qualname="rmm.mr.CudaMemoryResource")
+    mr = config.create_memory_resource(enable_tracking=True)
+    assert isinstance(mr, rmm.mr.LimitingResourceAdaptor)
+    assert isinstance(mr.upstream_mr, rmm.mr.CudaMemoryResource)
+    assert mr.get_allocation_limit() == 2**63
+    assert mr.get_allocated_bytes() == 0
+
+
+@pytest.mark.parametrize("enable_tracking", [False, True])
+def test_create_memory_resource_reuses_configured_limiting_adaptor(
+    *,
+    enable_tracking: bool,
+) -> None:
+    config = MemoryResourceConfig(
+        qualname="rmm.mr.LimitingResourceAdaptor",
+        options={
+            "upstream_mr": {"qualname": "rmm.mr.CudaMemoryResource"},
+            "allocation_limit": 1 << 30,
+        },
+    )
+    mr = config.create_memory_resource(enable_tracking=enable_tracking)
+    # Not wrapped a second time: the user's limit is kept, and the upstream
+    # is their resource rather than another limiting adaptor.
+    assert isinstance(mr, rmm.mr.LimitingResourceAdaptor)
+    assert isinstance(mr.upstream_mr, rmm.mr.CudaMemoryResource)
+    assert mr.get_allocation_limit() == 1 << 30
+
+
 def test_num_py_executors_default() -> None:
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(

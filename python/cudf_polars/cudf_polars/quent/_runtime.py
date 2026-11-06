@@ -12,6 +12,7 @@ import socket
 import threading
 from typing import TYPE_CHECKING
 
+from cudf_polars.quent._memory_monitor import MemoryResourceSampler
 from cudf_polars.utils.cleanup import run_cleanup_steps
 
 if TYPE_CHECKING:
@@ -226,6 +227,26 @@ class QuentWorkerRuntime:
     session: QuentSession
     worker_resources: WorkerResources
     _worker_handle: quent_bindings.WorkerInitHandle | None
+    allocated_bytes: Callable[[], int] | None = None
+    _sampler: MemoryResourceSampler | None = dataclasses.field(
+        default=None, init=False, repr=False
+    )
+    # One MemoryResourceSampler FSM per query currently being sampled. Only
+    # touched from the sampler, which serializes its callbacks.
+    _sampler_fsms: dict[
+        uuid.UUID, quent_bindings.MemoryResourceSamplerSamplingHandle
+    ] = dataclasses.field(default_factory=dict, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        interval_s = self.config.device_memory_poll_interval_s
+        if self.allocated_bytes is not None and interval_s is not None:
+            self._sampler = MemoryResourceSampler(
+                read_bytes=self.allocated_bytes,
+                record=self._record_device_memory,
+                stop=self._stop_device_memory,
+                interval_s=interval_s,
+                name="cudf-polars-memory-sampler",
+            )
 
     @classmethod
     def create(
@@ -237,8 +258,30 @@ class QuentWorkerRuntime:
         rank: int,
         nranks: int,
         instance_name: str,
+        allocated_bytes: Callable[[], int] | None = None,
     ) -> QuentWorkerRuntime:
-        """Create a worker runtime and declare its resources."""
+        """
+        Create a worker runtime and declare its resources.
+
+        Parameters
+        ----------
+        config
+            Engine configuration shared by all ranks.
+        collector_address
+            Address of the Collector that receives this worker's events.
+        worker_id
+            Identifier of the Worker entity.
+        rank
+            This worker's rank.
+        nranks
+            Total number of ranks.
+        instance_name
+            Display name of the Worker entity.
+        allocated_bytes
+            Lock-free reader of live device bytes allocated by this worker,
+            e.g. ``rmm.mr.LimitingResourceAdaptor.get_allocated_bytes``.
+            When ``None``, the memory resource is not sampled.
+        """
         from cudf_polars.quent._context import WorkerResources
 
         session = QuentSession(collector_address)
@@ -269,6 +312,7 @@ class QuentWorkerRuntime:
             session=session,
             worker_resources=resources,
             _worker_handle=worker_handle,
+            allocated_bytes=allocated_bytes,
         )
 
     def query_worker_state(self, query_id: uuid.UUID) -> QuentQueryWorkerState:
@@ -276,6 +320,53 @@ class QuentWorkerRuntime:
         from cudf_polars.quent._context import QuentQueryWorkerState
 
         return QuentQueryWorkerState(runtime=self, query_id=query_id)
+
+    def _record_device_memory(self, query_id: uuid.UUID, nbytes: int) -> None:
+        """Record one reading as the next state of the query's sampler FSM."""
+        usage: quent_bindings.SampledMemoryResourceUsageRefDict = {
+            "target": self.worker_resources.sampled_memory_resource_id,
+            "data": {"bytes": nbytes},
+        }
+        fsm = self._sampler_fsms.get(query_id)
+        if fsm is None:
+            self._sampler_fsms[query_id] = (
+                self.session.binding_context.memory_resource_sampler_observer()
+                .handle()
+                .sampling(query=query_id, memory=usage)
+            )
+        else:
+            self._sampler_fsms[query_id] = fsm.sampling(query=query_id, memory=usage)
+
+    def _stop_device_memory(self, query_id: uuid.UUID) -> None:
+        """Close the query's sampler FSM, ending its last reading."""
+        fsm = self._sampler_fsms.pop(query_id, None)
+        if fsm is not None:
+            fsm.stopped()
+
+    @contextlib.contextmanager
+    def monitor_device_memory(self, query_id: uuid.UUID) -> Iterator[None]:
+        """
+        Context manager for sampling the memory resource while executing a query.
+
+        Parameters
+        ----------
+        query_id
+            The ID of the query being executed.
+
+        Notes
+        -----
+        Does nothing when no reader was supplied or sampling is disabled with
+        ``QuentConfig.device_memory_poll_interval_s=None``.
+        """
+        sampler = self._sampler
+        if sampler is None:
+            yield
+            return
+        sampler.attach(query_id)
+        try:
+            yield
+        finally:
+            sampler.detach(query_id)
 
     def emit_physical_plan(
         self,
@@ -382,7 +473,13 @@ class QuentWorkerRuntime:
         """Close the Worker and its process-local Collector client."""
         worker_handle = self._worker_handle
         self._worker_handle = None
+        # Stop sampling and don't keep the memory resource alive past engine
+        # shutdown.
+        sampler, self._sampler = self._sampler, None
+        self.allocated_bytes = None
         steps: list[Callable[[], object]] = []
+        if sampler is not None:
+            steps.append(sampler.close)
         if worker_handle is not None:
             steps.append(worker_handle.exit)
         steps.append(self.session.close)

@@ -19,6 +19,7 @@ from cudf_polars.testing.engine_utils import (
     create_streaming_options,
     merge_streaming_options,
 )
+from cudf_polars.utils.config import MemoryResourceConfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -109,6 +110,27 @@ def _engine_param(request: pytest.FixtureRequest) -> EngineFixtureParam:
     return EngineFixtureParam(full_name=request.param)
 
 
+def _tracked_memory_resource_config() -> MemoryResourceConfig:
+    """
+    Default memory resource, pre-wrapped in a ``LimitingResourceAdaptor``.
+
+    The LimitingResourceAdaptor is used so that the Quent tests have a
+    tracked memory resource.
+    """
+    default = MemoryResourceConfig.default()
+    return MemoryResourceConfig(
+        qualname="rmm.mr.LimitingResourceAdaptor",
+        options={
+            "upstream_mr": {
+                "qualname": default.qualname,
+                "options": default.options,
+            },
+            # Effectively unlimited: only used for its atomic byte counter.
+            "allocation_limit": 2**63,
+        },
+    )
+
+
 @pytest.fixture(scope="session")
 def _unconfigured_engine(
     _engine_param: EngineFixtureParam,
@@ -147,15 +169,23 @@ def _unconfigured_engine(
                 f"{_engine_param.engine_name} engine cannot be constructed "
                 "inside an rrun cluster"
             )
+        mr_config = _tracked_memory_resource_config()
         match _engine_param.engine_name:
             case "spmd":
                 from cudf_polars.engine.spmd import SPMDEngine
 
-                engine = SPMDEngine()
+                engine = SPMDEngine(
+                    engine_options={"memory_resource_config": mr_config}
+                )
             case "dask":  # pragma: no cover
                 from cudf_polars.engine.dask import DaskEngine
 
-                engine = DaskEngine(engine_options={"allow_gpu_sharing": True})
+                engine = DaskEngine(
+                    engine_options={
+                        "allow_gpu_sharing": True,
+                        "memory_resource_config": mr_config,
+                    }
+                )
             case "ray":  # pragma: no cover
                 from cudf_polars.engine.ray import RayEngine
 
@@ -165,7 +195,10 @@ def _unconfigured_engine(
                 # ``get_num_gpus_in_ray_cluster()``
                 engine = RayEngine(
                     num_ranks=ray_num_ranks,
-                    engine_options={"allow_gpu_sharing": True},
+                    engine_options={
+                        "allow_gpu_sharing": True,
+                        "memory_resource_config": mr_config,
+                    },
                     ray_init_options=ray_init_options,
                 )
             case _:  # pragma: no cover

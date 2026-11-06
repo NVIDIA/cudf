@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <limits>
 
 namespace nvtext {

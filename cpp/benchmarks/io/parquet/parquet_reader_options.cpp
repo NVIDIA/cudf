@@ -58,6 +58,9 @@ void BM_parquet_read_options(nvbench::state& state,
 
   auto const rg_size_bytes = state.get_int64("row_group_size_bytes");
   auto const rg_size_rows  = state.get_int64("row_group_size_rows");
+  // Distinct values per column; the string dictionaries grow with it up to the writer's limit.
+  auto const cardinality =
+    static_cast<cudf::size_type>(state.get_int64_or_default("cardinality", 2000));
 
   auto const data_types =
     dtypes_for_column_selection(get_type_or_group({static_cast<int32_t>(data_type::INTEGRAL),
@@ -70,7 +73,8 @@ void BM_parquet_read_options(nvbench::state& state,
                                                    static_cast<int32_t>(data_type::LIST),
                                                    static_cast<int32_t>(data_type::STRUCT)}),
                                 ColSelection);
-  auto const tbl  = create_random_table(data_types, table_size_bytes{data_size});
+  auto const tbl = create_random_table(
+    data_types, table_size_bytes{data_size}, data_profile_builder().cardinality(cardinality));
   auto const view = tbl->view();
 
   cuio_source_sink_pair source_sink(io_type::HOST_BUFFER);
@@ -219,6 +223,7 @@ NVBENCH_BENCH_TYPES(BM_parquet_read_options,
                         "output_dict_columns",
                         "timestamp_type"})
   .set_min_samples(4)
+  .add_int64_axis("cardinality", {2'000, 25'000})
   .add_int64_axis("row_group_size_bytes", {0})
   // Explicit row-group sizes (in rows) rather than the cuDF default. Larger values yield fewer,
   // bigger row groups (favoring the single-row-group fast path); smaller values yield many small

@@ -136,7 +136,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
       overlap_result->set_null_mask(std::move(null_mask), null_count);
     } else {
       // Just set the output nullmask as the new nullmask.
-      overlap_result->set_null_mask(std::move(*new_null_mask.release()), new_null_count);
+      overlap_result->set_null_mask(std::move(*new_null_mask), new_null_count);
     }
   }
 }
@@ -149,9 +149,14 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
   auto const child = input.get_sliced_child(stream);
 
   // Generate labels for the input list elements.
-  auto labels = rmm::device_uvector<cudf::size_type>(child.size(), stream);
-  cudf::detail::label_segments(
-    input.offsets_begin(), input.offsets_end(), labels.begin(), labels.end(), stream);
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto labels = rmm::device_uvector<cudf::size_type>(child.size(), stream, mr.get_temporary_mr());
+  cudf::detail::label_segments(input.offsets_begin(),
+                               input.offsets_end(),
+                               labels.begin(),
+                               labels.end(),
+                               stream,
+                               mr.as_temporary());
 
   // Use `cudf::duplicate_keep_option::KEEP_LAST` so this will produce the desired behavior when
   // being called in `create_map` in spark-rapids.
@@ -165,7 +170,7 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
                           cudf::null_equality::EQUAL,
                           cudf::nan_equality::ALL_EQUAL,
                           stream,
-                          cudf::get_current_device_resource_ref())
+                          mr.get_output_mr())
       ->release();
   auto const out_labels = out_columns.front()->view();
 
@@ -188,7 +193,8 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
                                   labels_begin + out_labels.size(),
                                   offsets_begin,
                                   offsets_begin + out_offsets->size(),
-                                  stream);
+                                  stream,
+                                  mr.as_temporary());
 
   return cudf::make_lists_column(
     input.size(),

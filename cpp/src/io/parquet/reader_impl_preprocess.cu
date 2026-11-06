@@ -105,7 +105,8 @@ void reader_impl::build_string_dict_indices()
                                                            str_dict_index_count.end(),
                                                            size_t{0},
                                                            cuda::std::plus<size_t>{},
-                                                           _stream);
+                                                           _stream,
+                                                           _mr.as_temporary());
 
   if (total_str_dict_indexes == 0) { return; }
 
@@ -569,7 +570,8 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                                                       d_page_offset_counts.end(),
                                                       size_t{0},
                                                       cuda::std::plus<size_t>{},
-                                                      _stream);
+                                                      _stream,
+                                                      _mr.as_temporary());
 
   // Allocate the string offset buffer
   subpass.string_offset_buffer = cuda::device_buffer<uint32_t>(
@@ -849,13 +851,16 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // Decode definition and repetition levels for all subpass pages
   // so they're available to compute_page_sizes and decode kernels.
   // We can't determine subpass skip_rows & num_rows yet, so we use the pass values.
-  detail::preprocess_levels(subpass.pages,
-                            pass.chunks,
-                            subpass_page_mask_span(),
-                            pass.skip_rows,
-                            pass.num_rows,
-                            pass.level_type_size,
-                            _stream);
+  // Only launch kernel if there are levels to decode.
+  if (subpass.level_decode_data.size() != 0) {
+    detail::preprocess_levels(subpass.pages,
+                              pass.chunks,
+                              subpass_page_mask_span(),
+                              pass.skip_rows,
+                              pass.num_rows,
+                              pass.level_type_size,
+                              _stream);
+  }
 
   // iterate over all input columns and determine if they contain lists.
   // TODO: we could do this once at the file level instead of every time we get in here. the set of
@@ -1201,7 +1206,8 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                                   cuda::make_discard_iterator(),
                                   sizes.d_begin() + (key_start / subpass.pages.size()),
                                   cuda::std::plus<>{},
-                                  _stream);
+                                  _stream,
+                                  _mr.as_temporary());
 
       // For nested hierarchies, compute per-page start offset
       thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
@@ -1335,7 +1341,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
                               reduce_keys.begin(),
                               d_col_sizes.begin(),
                               cuda::std::plus<>{},
-                              _stream);
+                              _stream,
+                              _mr.as_temporary());
 
   return cudf::detail::make_pinned_vector(d_col_sizes, _stream);
 }

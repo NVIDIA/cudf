@@ -47,6 +47,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     _is_already_partitioned,
     recv_metadata,
+    reservation_context,
     send_metadata,
 )
 from cudf_polars.streaming.shuffle import Shuffle
@@ -113,6 +114,7 @@ class ShuffleManager:
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                reservation_context=self._manager.reservation_context,
             )
             self._manager.shuffler.insert(
                 py_partition_and_pack(
@@ -122,6 +124,7 @@ class ShuffleManager:
                     stream=chunk.stream,
                     br=br,
                     reservation=reservation,
+                    reservation_context=self._manager.reservation_context,
                 )
             )
 
@@ -143,6 +146,7 @@ class ShuffleManager:
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                reservation_context=self._manager.reservation_context,
             )
             with opaque_memory_usage(reservation.split(chunk_nbytes)):
                 key_table = _evaluate_key_table(chunk, keys, schema)
@@ -161,6 +165,7 @@ class ShuffleManager:
                     stream=chunk.stream,
                     br=br,
                     reservation=reservation,
+                    reservation_context=self._manager.reservation_context,
                 )
             )
 
@@ -173,6 +178,7 @@ class ShuffleManager:
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                reservation_context=self._manager.reservation_context,
             )
             self._manager.shuffler.insert(
                 py_split_and_pack(
@@ -181,6 +187,7 @@ class ShuffleManager:
                     stream=chunk.stream,
                     br=br,
                     reservation=reservation,
+                    reservation_context=self._manager.reservation_context,
                 )
             )
 
@@ -208,6 +215,7 @@ class ShuffleManager:
                 # The chunk's data moves into shuffler-owned packed buffers,
                 # nothing lasting is added.
                 net_memory_delta=0,
+                reservation_context=self._manager.reservation_context,
             )
             reorder_nbytes = py_split_and_pack_cost(
                 chunk.table_view(), chunk.stream, br
@@ -232,6 +240,7 @@ class ShuffleManager:
                         stream=stream,
                         br=br,
                         reservation=reservation,
+                        reservation_context=self._manager.reservation_context,
                     )
                 )
 
@@ -251,17 +260,20 @@ class ShuffleManager:
         collective_id: int,
         *,
         partition_assignment: PartitionAssignment = PartitionAssignment.ROUND_ROBIN,
+        reservation_context: int = 0,
     ):
         self.context = context
         self.comm = comm
         self.num_partitions = num_partitions
         self.collective_id = collective_id
+        self.reservation_context = reservation_context
         self.shuffler = ShufflerAsync(
             context,
             comm,
             collective_id,
             num_partitions,
             partition_assignment=partition_assignment,
+            reservation_context=self.reservation_context,
         )
 
     def inserting(self) -> ShuffleManager.Inserter:
@@ -294,12 +306,14 @@ class ShuffleManager:
             # Representation change: the packed input is consumed as the
             # unpacked table is produced, at roughly the same size.
             net_memory_delta=0,
+            reservation_context=self.reservation_context,
         )
         return py_unpack_and_concat(
             partitions=partitions,
             stream=stream,
             br=self.context.br(),
             reservation=reservation,
+            reservation_context=self.reservation_context,
         )
 
     def extract_pieces(self, partition_id: int) -> list[PackedData]:
@@ -343,6 +357,7 @@ class LocalRepartitioner:
             local_comm,
             local_count,
             shuffle.collective_id,
+            reservation_context=shuffle.reservation_context,
         )
 
     async def _iter_chunks(self, stream: Stream) -> AsyncGenerator[plc.Table, None]:
@@ -356,9 +371,14 @@ class LocalRepartitioner:
                     # Representation change: the packed input is consumed as the
                     # unpacked table is produced, at roughly the same size.
                     net_memory_delta=0,
+                    reservation_context=self._global_shuffle.reservation_context,
                 )
                 table = py_unpack_and_concat(
-                    pieces, stream=stream, br=self._br, reservation=reservation
+                    pieces,
+                    stream=stream,
+                    br=self._br,
+                    reservation=reservation,
+                    reservation_context=self._global_shuffle.reservation_context,
                 )
                 if table.num_rows() > 0:
                     yield table
@@ -542,7 +562,15 @@ async def _global_shuffle(
     # Other ranks still participate in the shuffle protocol.
     skip_insert = metadata_in.duplicated and comm.rank != 0
 
-    shuffle = ShuffleManager(context, comm, num_partitions, collective_id)
+    shuffle = ShuffleManager(
+        context,
+        comm,
+        num_partitions,
+        collective_id,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state, "shuffle.global"
+        ),
+    )
     async with shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
             if not skip_insert:
@@ -551,6 +579,10 @@ async def _global_shuffle(
                     TableChunk.from_message(msg, br=context.br()),
                     reserve_extra=0,
                     net_memory_delta=0,
+                    reservation_context=reservation_context(
+                        ir_context.actor_bound_quent_ir_execution_state,
+                        "shuffle.global.input",
+                    ),
                 )
                 if columns_to_hash is None:
                     await inserter.insert_hash_keys(chunk, keys_to_hash, input_schema)

@@ -80,12 +80,14 @@ struct bloom_filter {
    * @param ch_out Output channel receiving a single message containing the bloom
    * filter.
    * @param tag Disambiguating tag to combine filters across ranks.
+   * @param reservation_context Opaque telemetry context attached to memory reservation requests.
    * @return Coroutine representing the construction of the bloom filter.
    */
   [[nodiscard]] rapidsmpf::streaming::Actor build(
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
-    rapidsmpf::OpID tag);
+    rapidsmpf::OpID tag,
+    std::uint64_t reservation_context = 0);
 
   /**
    * @brief Apply a bloom filter to an input channel.
@@ -94,6 +96,7 @@ struct bloom_filter {
    * @param ch_in Input channel of `table_chunk`s to apply bloom filter to.
    * @param ch_out Output channel receiving filtered `table_chunk`s.
    * @param keys Indices selecting the key columns for the hash fingerprint
+   * @param reservation_context Opaque telemetry context attached to memory reservation requests.
    *
    * @note The application of the bloom filter expects _exactly one_ message to come
    * through the `bloom_filter` channel, which must be drained after that message is
@@ -105,7 +108,8 @@ struct bloom_filter {
     std::shared_ptr<rapidsmpf::streaming::Channel> bloom_filter,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
-    std::vector<cudf::size_type> keys);
+    std::vector<cudf::size_type> keys,
+    std::uint64_t reservation_context = 0);
 
  private:
   std::shared_ptr<rapidsmpf::streaming::Context> ctx_{};

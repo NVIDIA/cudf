@@ -21,6 +21,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     chunk_to_frame,
     concat_batch,
     empty_table_chunk,
+    reservation_context,
 )
 
 if TYPE_CHECKING:
@@ -356,7 +357,15 @@ async def compute_sort_boundaries(
             exclusive_view=True,
             br=context.br(),
         )
-        allgather = AllGatherManager(context, comm, allgather_id)
+        allgather = AllGatherManager(
+            context,
+            comm,
+            allgather_id,
+            reservation_context=reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                "sort.boundaries.allgather",
+            ),
+        )
         with allgather.inserting() as inserter:
             await inserter.insert(comm.rank, chunk)
         concat_table = await allgather.extract_concatenated(

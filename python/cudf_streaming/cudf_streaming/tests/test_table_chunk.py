@@ -264,7 +264,9 @@ def test_spillable_messages(context: Context, stream: Stream) -> None:
 
     df2_got = TableChunk.from_message(sm.extract(mid=1), br=context.br())
     df2_got = df2_got.make_available_and_spill(
-        context.br(), allow_overbooking=True
+        context.br(),
+        allow_overbooking=True,
+        attributes={"site": "table_chunk.spill"},
     )
     assert_eq(df2, df2_got.table_view())
     assert sm.get_content_descriptions() == {}
@@ -312,7 +314,11 @@ def test_make_available_or_wait_already_available(
 
     @define_actor()
     async def test_actor(ctx: Context) -> None:
-        result = await chunk.make_available_or_wait(ctx, net_memory_delta=0)
+        result = await chunk.make_available_or_wait(
+            ctx,
+            net_memory_delta=0,
+            attributes={"site": "table_chunk.available"},
+        )
         result_holder.append(result)
 
     run_actor_network(context, actors=[test_actor(context)])
@@ -510,7 +516,11 @@ def test_make_table_chunks_available_or_wait_single_chunk(
     @define_actor()
     async def test_actor(ctx: Context) -> None:
         result_chunk, res = await make_table_chunks_available_or_wait(
-            ctx, chunk, reserve_extra=0, net_memory_delta=0
+            ctx,
+            chunk,
+            reserve_extra=0,
+            net_memory_delta=0,
+            attributes={"site": "table_chunks.available"},
         )
         result_holder.append((result_chunk, res))
 

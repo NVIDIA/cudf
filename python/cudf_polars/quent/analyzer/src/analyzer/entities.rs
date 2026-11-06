@@ -12,7 +12,7 @@ use quent_time::{span::SpanUnixNanoSec, to_nanosecs};
 use quent_ui::entities::request::{EntityListRequest, EntityScope, SortDir};
 
 use super::CudfPolarsUiAnalyzer;
-use crate::resource::EVALUATE_ENTITY_TYPE;
+use crate::{reservation::OCCUPANCY_ENTITY_TYPE, resource::EVALUATE_ENTITY_TYPE};
 
 impl CudfPolarsUiAnalyzer {
     pub(super) fn build_entity_list(
@@ -30,7 +30,7 @@ impl CudfPolarsUiAnalyzer {
             .filter
             .entity_type_name
             .as_deref()
-            .is_some_and(|name| name != EVALUATE_ENTITY_TYPE)
+            .is_some_and(|name| !matches!(name, EVALUATE_ENTITY_TYPE | OCCUPANCY_ENTITY_TYPE))
         {
             return Ok(EntityListResponse {
                 items: vec![],
@@ -75,6 +75,77 @@ impl CudfPolarsUiAnalyzer {
                 .as_ref()
                 .is_none_or(|resource_ids| resource_ids.contains(&resource_id))
         };
+        if entry.filter.entity_type_name.as_deref() == Some(OCCUPANCY_ENTITY_TYPE) {
+            let mut ranked: Vec<_> = self
+                .occupancies
+                .iter()
+                .filter_map(|occupancy| {
+                    let operator_id = occupancy
+                        .actor_id
+                        .and_then(|actor_id| self.actors.get(&actor_id))
+                        .map(|actor| actor.operator_id)?;
+                    if !query_operator_ids.contains(&operator_id)
+                        || (!requested_operator_ids.is_empty()
+                            && !requested_operator_ids.contains(&operator_id))
+                        || !occupancy.lifecycle().ok()?.intersects(&window)
+                    {
+                        return None;
+                    }
+                    let matching_segments = occupancy.segments.iter().filter(|segment| {
+                        uses_scope(segment.resource_id) && segment.bytes.value.unwrap_or(0) > 0
+                    });
+                    let metric: u64 = matching_segments
+                        .filter_map(|segment| segment.span.intersection(&window))
+                        .map(|span| span.duration())
+                        .sum();
+                    if scope.is_some() && metric == 0 {
+                        return None;
+                    }
+                    if min_usage.is_some_and(|minimum| metric < minimum) {
+                        return None;
+                    }
+                    Some((
+                        occupancy.to_ui_fsm(epoch),
+                        operator_id,
+                        metric,
+                        occupancy.id,
+                    ))
+                })
+                .collect();
+            ranked.sort_by(
+                |(_, _, left_metric, left_id), (_, _, right_metric, right_id)| {
+                    let order = left_metric.cmp(right_metric);
+                    let order = match entry.sort.dir {
+                        SortDir::Asc => order,
+                        SortDir::Desc => order.reverse(),
+                    };
+                    order.then_with(|| left_id.cmp(right_id))
+                },
+            );
+            let total = ranked.len() as u32;
+            let items: Vec<_> = if let Some(page) = entry.page {
+                ranked
+                    .into_iter()
+                    .skip(page.page.saturating_mul(page.max) as usize)
+                    .take(page.max as usize)
+                    .collect()
+            } else {
+                ranked
+            };
+            return Ok(EntityListResponse {
+                items: items
+                    .into_iter()
+                    .map(|(fsm, operator_id, usage_duration, _)| EntityListItem {
+                        entity: QueryEngineFsm {
+                            fsm,
+                            operator_id: Some(operator_id),
+                        },
+                        usage_duration_s: quent_time::to_secs(usage_duration),
+                    })
+                    .collect(),
+                total,
+            });
+        }
         let mut ranked: Vec<_> = self
             .evaluates
             .iter()

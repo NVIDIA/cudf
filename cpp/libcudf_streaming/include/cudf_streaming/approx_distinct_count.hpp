@@ -99,13 +99,15 @@ class cardinality_estimator {
    * @param ch_sampled Optional output channel receiving the input chunks.
    * @param column_indices Columns whose row tuples are counted. An empty vector selects all
    * columns.
+   * @param reservation_context Opaque telemetry context attached to memory reservation requests.
    * @return Coroutine representing the estimation.
    */
   [[nodiscard]] rapidsmpf::streaming::Actor estimate(
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
     std::shared_ptr<rapidsmpf::streaming::Channel> ch_sampled = nullptr,
-    std::vector<cudf::size_type> column_indices               = {});
+    std::vector<cudf::size_type> column_indices               = {},
+    std::uint64_t reservation_context                         = 0);
 
  private:
   std::shared_ptr<rapidsmpf::streaming::Context> ctx_{};

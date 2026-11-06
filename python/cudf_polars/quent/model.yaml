@@ -275,6 +275,24 @@ entities:
         attributes:
           limits: { sets-resource-bounds: true }
 
+  ReservableMemory:
+    doc: Reservable bytes of one memory type on a worker's rapidsmpf BufferResource.
+    resource:
+      bytes: { kind: occupancy, known-bounds: true }
+    events:
+      declared:
+        attributes:
+          instance_name: string
+          worker: { scope-ref: Worker }
+          memory_type: string
+          limits: { sets-resource-bounds: true }
+          configured_limit: i64
+      resized:
+        multi: true
+        attributes:
+          limits: { sets-resource-bounds: true }
+          configured_limit: i64
+
   Storage:
     doc: A worker-local storage resource whose capacity may be unknown.
     resource:
@@ -384,3 +402,19 @@ fsms:
         attributes:
           error: string
           values: OperatorStatistics
+
+  ReservationOccupancy:
+    doc: Aggregate reserved-but-not-yet-consumed bytes for one context and memory type.
+    states:
+      created:
+        initial: true
+        attributes:
+          worker: { scope-ref: Worker }
+          actor: { option: { ref: Actor } }
+          site: { option: string }
+        to: [held]
+      held:
+        attributes:
+          memory: { uses: ReservableMemory }
+        to: [held, released]
+      released: {}

@@ -835,6 +835,7 @@ class SPMDEngine(StreamingEngine):
                 rank=comm.rank,
                 nranks=comm.nranks,
                 instance_name=f"rank-{comm.rank}",
+                buffer_resource=self._ctx.br(),
             )
         except BaseException:  # pragma: no cover - defensive startup cleanup
             steps: list[Callable[[], object]] = [
@@ -847,7 +848,11 @@ class SPMDEngine(StreamingEngine):
 
     def _shutdown_spmd(self) -> None:
         """Run collective cleanup before local resources unwind."""
-        steps: list[Callable[[], object]] = [self._drop_persisted]
+        steps: list[Callable[[], object]] = []
+        if self._py_executor is not None:
+            py_executor = self._py_executor
+            steps.append(lambda: py_executor.shutdown(wait=True, cancel_futures=True))
+        steps.append(self._drop_persisted)
         if self._quent_worker_runtime is not None or self._quent_runtime is not None:
             steps.append(  # pragma: no cover - same cleanup as reset
                 functools.partial(self._set_quent, None)
@@ -1088,12 +1093,12 @@ class SPMDEngine(StreamingEngine):
         rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         self.rapidsmpf_options = rapidsmpf_options
 
-        if quent_changing:
-            new_quent_context = self._set_quent(new_quent_context)
         executor_options["quent_context"] = new_quent_context
 
         # Free persisted partitions before the Context is torn down.
         self._drop_persisted()
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.detach_buffer_resource()
         # Same-thread shutdown, _reset runs on the thread that built the
         # Context (the test driver's main thread). The per-engine RMM
         # resource is kept alive across resets, see :meth:`_cleanup_ctx`.
@@ -1116,6 +1121,12 @@ class SPMDEngine(StreamingEngine):
         # callback still restores the pre-engine MR at engine shutdown.
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
+
+        if quent_changing:
+            new_quent_context = self._set_quent(new_quent_context)
+            executor_options["quent_context"] = new_quent_context
+        elif self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.retarget_buffer_resource(self._ctx.br())
 
         effective_quent_context = executor_options["quent_context"]
         engine_id = (

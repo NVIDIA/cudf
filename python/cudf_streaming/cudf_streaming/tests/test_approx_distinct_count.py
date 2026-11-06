@@ -47,7 +47,9 @@ def estimate(
         context,
         actors=[
             push_to_channel(context, ch_in, inputs),
-            estimator.estimate(context, ch_in, ch_out),
+            estimator.estimate(
+                context, ch_in, ch_out, attributes={"site": "cardinality"}
+            ),
             pull_actor,
         ],
     )

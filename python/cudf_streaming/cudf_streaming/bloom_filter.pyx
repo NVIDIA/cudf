@@ -32,6 +32,7 @@ cdef extern from * nogil:
         std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
         std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
         int32_t tag,
+        std::uint64_t reservation_context,
         void (*cpp_set_py_future)(void*, const char *),
         rapidsmpf::OwningWrapper py_future
     ) {
@@ -43,7 +44,8 @@ cdef extern from * nogil:
                     bloom_filter.build(
                         std::move(ch_in),
                         std::move(ch_out),
-                        tag
+                        tag,
+                        std::move(reservation_context)
                     )
                 )
             ),
@@ -58,6 +60,7 @@ cdef extern from * nogil:
         shared_ptr[cpp_Channel] ch_in,
         shared_ptr[cpp_Channel] ch_out,
         int32_t tag,
+        uint64_t reservation_context,
         void (*cpp_set_py_future)(void*, const char *),
         cpp_OwningWrapper py_future
     ) except +ex_handler
@@ -73,6 +76,7 @@ cdef extern from * nogil:
         std::shared_ptr<rapidsmpf::streaming::Channel> ch_in,
         std::shared_ptr<rapidsmpf::streaming::Channel> ch_out,
         std::vector<cudf::size_type> keys,
+        std::uint64_t reservation_context,
         void (*cpp_set_py_future)(void*, const char *),
         rapidsmpf::OwningWrapper py_future
     ) {
@@ -85,7 +89,8 @@ cdef extern from * nogil:
                         std::move(bloom_filter_ch),
                         std::move(ch_in),
                         std::move(ch_out),
-                        std::move(keys)
+                        std::move(keys),
+                        std::move(reservation_context)
                     )
                 )
             ),
@@ -101,6 +106,7 @@ cdef extern from * nogil:
         shared_ptr[cpp_Channel] ch_in,
         shared_ptr[cpp_Channel] ch_out,
         vector[size_type] keys,
+        uint64_t reservation_context,
         void (*cpp_set_py_future)(void*, const char *),
         cpp_OwningWrapper py_future
     ) except +ex_handler
@@ -179,6 +185,8 @@ cdef class BloomFilter:
         Channel ch_in not None,
         Channel ch_out not None,
         int32_t tag,
+        *,
+        reservation_context=0,
     ):
         """
         Build a bloom filter from input table chunks.
@@ -193,11 +201,14 @@ cdef class BloomFilter:
             Output channel receiving a single bloom filter message.
         tag
             Disambiguating tag to combine filters across ranks.
+        reservation_context
+            Opaque telemetry context attached to memory reservation requests.
         """
         # Coroutine bridging pattern: create a Python future, transfer
         # ownership to C++ via OwningWrapper (Py_INCREF here, py_deleter
         # calls Py_DECREF when the C++ task completes), then spawn the
         # C++ coroutine which resolves the future via cpp_set_py_future.
+        cdef uint64_t cpp_reservation_context = reservation_context
         ret = asyncio.get_running_loop().create_future()
         Py_INCREF(ret)
         with nogil:
@@ -207,6 +218,7 @@ cdef class BloomFilter:
                 ch_in._handle,
                 ch_out._handle,
                 tag,
+                move(cpp_reservation_context),
                 cpp_set_py_future,
                 move(cpp_OwningWrapper(<void*><PyObject*>ret, py_deleter)),
             )
@@ -223,6 +235,8 @@ cdef class BloomFilter:
         Channel ch_in not None,
         Channel ch_out not None,
         keys,
+        *,
+        reservation_context=0,
     ):
         """
         Apply a bloom filter to incoming table chunks.
@@ -239,8 +253,11 @@ cdef class BloomFilter:
             Output channel receiving filtered ``TableChunk`` objects.
         keys
             Indices selecting the key columns for hash fingerprints.
+        reservation_context
+            Opaque telemetry context attached to memory reservation requests.
         """
         cdef vector[size_type] c_keys = tuple(keys)
+        cdef uint64_t cpp_reservation_context = reservation_context
         ret = asyncio.get_running_loop().create_future()
         Py_INCREF(ret)
         with nogil:
@@ -251,6 +268,7 @@ cdef class BloomFilter:
                 ch_in._handle,
                 ch_out._handle,
                 move(c_keys),
+                move(cpp_reservation_context),
                 cpp_set_py_future,
                 move(cpp_OwningWrapper(<void*><PyObject*>ret, py_deleter)),
             )

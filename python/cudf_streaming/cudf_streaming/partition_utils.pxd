@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
-from libc.stdint cimport uint32_t
+from libc.stdint cimport uint32_t, uint64_t
 from pylibcudf.contiguous_split cimport PackedColumns
 from pylibcudf.table cimport Table
 from rmm.pylibrmm.stream cimport Stream
@@ -24,6 +24,7 @@ cpdef object partition_and_pack(
     BufferResource br,
     uint32_t seed=*,
     MemoryReservation reservation=*,
+    uint64_t reservation_context=*,
 )
 cpdef size_t split_and_pack_cost(
     Table table,
@@ -36,6 +37,7 @@ cpdef object split_and_pack(
     Stream stream,
     BufferResource br,
     MemoryReservation reservation=*,
+    uint64_t reservation_context=*,
 )
 cpdef size_t unpack_and_concat_cost(object partitions)
 cpdef object unpack_and_concat(
@@ -43,6 +45,7 @@ cpdef object unpack_and_concat(
     Stream stream,
     BufferResource br,
     MemoryReservation reservation=*,
+    uint64_t reservation_context=*,
 )
 cpdef object packed_data_from_cudf_packed_columns(
     PackedColumns packed_columns,

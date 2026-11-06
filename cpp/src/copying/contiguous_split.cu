@@ -2206,8 +2206,8 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
 {
-  // `temp_mr` is the same as `mr` for contiguous_split as it allocates all
-  // of its memory from the default memory resource in cuDF
+  // contiguous_split allocates its temporaries from the output resource, as it did before
+  // `cudf::memory_resources`; using `mr.get_temporary_mr()` is left to a follow-up.
   auto temp_mr = mr.get_output_mr();
   auto state   = contiguous_split_state(input, splits, stream, mr.get_output_mr(), temp_mr);
   return state.contiguous_split();

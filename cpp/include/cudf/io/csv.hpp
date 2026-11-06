@@ -102,6 +102,8 @@ class csv_reader_options {
   // Whether to detect quotes surrounded by spaces e.g. `   "data"   `. This flag has no effect when
   // _doublequote is true
   bool _detect_whitespace_around_quotes = false;
+  // Detect closing quotes followed by spaces or tabs, without accepting leading whitespace
+  bool _detect_whitespace_after_quotes = false;
   // Names of columns to read as datetime
   std::vector<std::string> _parse_dates_names;
   // Indexes of columns to read as datetime
@@ -387,6 +389,20 @@ class csv_reader_options {
   [[nodiscard]] bool is_enabled_detect_whitespace_around_quotes() const
   {
     return _detect_whitespace_around_quotes;
+  }
+
+  /**
+   * @brief Whether to detect closing quotes followed by spaces or tabs.
+   *
+   * Only string fields beginning with a quote are affected. Whitespace inside quotes and
+   * leading whitespace are preserved. Detection around quotes takes precedence.
+   * NA matching also considers the quoted field without trailing whitespace.
+   *
+   * @return `true` if trailing whitespace detection is enabled
+   */
+  [[nodiscard]] bool is_enabled_detect_whitespace_after_quotes() const
+  {
+    return _detect_whitespace_after_quotes;
   }
 
   /**
@@ -733,6 +749,17 @@ class csv_reader_options {
    * @param val Boolean value to enable/disable
    */
   void enable_detect_whitespace_around_quotes(bool val) { _detect_whitespace_around_quotes = val; }
+
+  /**
+   * @brief Sets whether to detect closing quotes followed by spaces or tabs.
+   *
+   * Only string fields beginning with a quote are affected. Disabled by default.
+   * Detection around quotes takes precedence when both options are enabled.
+   * NA matching also considers the quoted field without trailing whitespace.
+   *
+   * @param val Boolean value to enable/disable
+   */
+  void enable_detect_whitespace_after_quotes(bool val) { _detect_whitespace_after_quotes = val; }
 
   /**
    * @brief Sets names of columns to read as datetime.
@@ -1174,6 +1201,23 @@ class csv_reader_options_builder {
   csv_reader_options_builder& detect_whitespace_around_quotes(bool val)
   {
     options.enable_detect_whitespace_around_quotes(val);
+    return *this;
+  }
+
+  /**
+   * @brief Sets whether to detect closing quotes followed by spaces or tabs.
+   *
+   * Only string fields beginning with a quote are affected. Disabled by default.
+   * Whitespace inside quotes and leading whitespace are preserved. Detection
+   * around quotes takes precedence when both options are enabled.
+   * NA matching also considers the quoted field without trailing whitespace.
+   *
+   * @param val Boolean value to enable/disable
+   * @return this for chaining
+   */
+  csv_reader_options_builder& detect_whitespace_after_quotes(bool val)
+  {
+    options.enable_detect_whitespace_after_quotes(val);
     return *this;
   }
 

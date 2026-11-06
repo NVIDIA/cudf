@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2023, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -25,6 +25,7 @@ public class CSVOptions extends ColumnFilterOptions {
   private final String[] trueValues;
   private final String[] falseValues;
   private final QuoteStyle quoteStyle;
+  private final boolean detectWhitespaceAfterQuotes;
 
   private CSVOptions(Builder builder) {
     super(builder);
@@ -39,6 +40,7 @@ public class CSVOptions extends ColumnFilterOptions {
     falseValues = builder.falseValues.toArray(
         new String[builder.falseValues.size()]);
     quoteStyle = builder.quoteStyle;
+    detectWhitespaceAfterQuotes = builder.detectWhitespaceAfterQuotes;
   }
 
   String[] getNullValues() {
@@ -73,6 +75,10 @@ public class CSVOptions extends ColumnFilterOptions {
     return quoteStyle;
   }
 
+  boolean getDetectWhitespaceAfterQuotes() {
+    return detectWhitespaceAfterQuotes;
+  }
+
   public static Builder builder() {
     return new Builder();
   }
@@ -87,6 +93,7 @@ public class CSVOptions extends ColumnFilterOptions {
     private byte delim = ',';
     private byte quote = '"';
     private QuoteStyle quoteStyle = QuoteStyle.MINIMAL;
+    private boolean detectWhitespaceAfterQuotes = false;
 
     /**
      * Row of the header data (0 based counting).  Negative is no header.
@@ -163,6 +170,17 @@ public class CSVOptions extends ColumnFilterOptions {
 
     public Builder withoutComments() {
       this.comment = 0;
+      return this;
+    }
+
+    /**
+     * Detect a closing quote followed by spaces or tabs. Only string fields beginning with
+     * a quote are affected; leading whitespace and whitespace inside quotes are
+     * preserved. Null matching also considers the quoted field without trailing whitespace.
+     * Disabled by default and ignored when quoting is disabled.
+     */
+    public Builder withDetectWhitespaceAfterQuotes(boolean enabled) {
+      detectWhitespaceAfterQuotes = enabled;
       return this;
     }
 

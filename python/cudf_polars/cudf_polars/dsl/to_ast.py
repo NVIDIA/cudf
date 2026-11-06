@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from decimal import localcontext
 from functools import partial, reduce, singledispatch
 from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
@@ -505,6 +506,83 @@ def _sides(node: expr.Expr, state: JoinPredicateState) -> set[plc_expr.TableRefe
     }
 
 
+def _is_float_to_decimal_cast(node: expr.Expr) -> bool:
+    return (
+        isinstance(node, expr.Cast)
+        and node.dtype.id() in _DECIMAL_IDS
+        and node.children[0].dtype.id() == plc.TypeId.FLOAT64
+    )
+
+
+# 10**22 is the largest power of ten that a Float64 holds exactly.
+_MAX_EXACT_POWER_OF_TEN = 22
+_MAX_DECIMAL_DIGITS = 38
+
+
+def _emulate_decimal_comparison(node: expr.BinOp) -> expr.Expr | None:
+    """
+    Rewrite a comparison with an operand cast from a float to a decimal.
+
+    libcudf's AST cannot cast to a decimal, and comparing the floats before the
+    cast gives a different answer when two floats round to the same decimal.
+    Polars rounds a float to a decimal by rounding ``x * 10**scale`` to the
+    nearest integer, ties to even, in Float64, which is the AST's ``RINT``.
+    So compare the two operands as ``RINT(x * 10**scale)``, which holds the
+    unscaled decimal, instead.
+
+    The operand that is not a cast is converted to Float64 first. That is exact
+    below 2**53 times ``10**-scale``, the same limit Polars accepts for a
+    comparison between a decimal and a float.
+
+    Parameters
+    ----------
+    node
+        Comparison to rewrite.
+
+    Returns
+    -------
+    The rewritten comparison, or None when it is not a comparison of two
+    decimals with the same scale where one is cast from a float.
+    """
+    left, right = node.children
+    if not (_is_float_to_decimal_cast(left) or _is_float_to_decimal_cast(right)):
+        return None
+    # libcudf stores the scale as a negative exponent.
+    scales = {
+        -child.dtype.plc_type.scale() if child.dtype.id() in _DECIMAL_IDS else None
+        for child in node.children
+    }
+    if (
+        len(scales) > 1
+        or (scale := scales.pop()) is None
+        or scale > _MAX_EXACT_POWER_OF_TEN
+    ):
+        return None
+    float64 = DataType(pl.Float64())
+
+    def unscaled(operand: expr.Expr) -> expr.Expr:
+        if isinstance(operand, expr.Literal):
+            if operand.value is None:
+                return expr.Literal(float64, None)
+            # The default context rounds to 28 digits, fewer than a decimal has.
+            with localcontext(prec=2 * _MAX_DECIMAL_DIGITS):
+                return expr.Literal(float64, float(operand.value.scaleb(scale)))
+        value = (
+            operand.children[0]
+            if _is_float_to_decimal_cast(operand)
+            else expr.Cast(float64, True, operand)  # noqa: FBT003
+        )
+        scaled = expr.BinOp(
+            float64,
+            plc.binaryop.BinaryOperator.MUL,
+            value,
+            expr.Literal(float64, 10.0**scale),
+        )
+        return expr.UnaryFunction(float64, "rint", (), scaled)
+
+    return expr.BinOp(node.dtype, node.op, unscaled(left), unscaled(right))
+
+
 def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> expr.Expr:
     state = rec.state
     if isinstance(node, expr.Col):
@@ -542,6 +620,8 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
                 and len(_sides(child.children[0], state)) <= 1
             ):
                 return rec(_distribute_comparison(node, position))
+        if (emulated := _emulate_decimal_comparison(node)) is not None:
+            return rec(emulated)
     return reuse_if_unchanged(node, rec)
 
 

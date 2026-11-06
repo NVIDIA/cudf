@@ -550,6 +550,8 @@ def read_lake_files(
         read_keys = [key for key in wanted if key in present]
         # Columns that the files lack take the partition value of each file.
         # The values are per file, so every row of each file must be read.
+        # TODO: https://github.com/NVIDIA/cudf/issues/25120. Ensure that predicate
+        # pushdown is still applied when the predicate is on a removed column.
         fallback_values = {
             key: lake_options.partition_values[key].slice(start, stop - start)
             for key in wanted

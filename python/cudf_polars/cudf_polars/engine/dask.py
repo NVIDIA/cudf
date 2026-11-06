@@ -300,7 +300,6 @@ def _setup_root(
     options = Options.deserialize(rapidsmpf_options_as_bytes)
     bind_to_gpu(hardware_binding)
     memory_resource_config = memory_resource_config or MemoryResourceConfig.default()
-    # When quent is enabled, we create a tracked memory resource
     base_mr = memory_resource_config.create_memory_resource(
         enable_tracking=enable_mr_tracking
     )

@@ -289,7 +289,6 @@ class RankActor:
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
-        # When quent is enabled, we create a tracked memory resource
         self._base_mr: rmm.mr.DeviceMemoryResource | None = (
             memory_resource_config.create_memory_resource(
                 enable_tracking=enable_mr_tracking

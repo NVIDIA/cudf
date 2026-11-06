@@ -208,6 +208,72 @@ def test_array_explode_falls_back(in_memory_engine: pl.GPUEngine):
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+@pytest.fixture
+def null_frame() -> pl.LazyFrame:
+    return pl.LazyFrame(
+        {
+            "k": [1, 2, 1, 3],
+            "n": pl.Series([None, None, None, None], dtype=pl.Null),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "make_query",
+    [
+        pytest.param(lambda lf: lf, id="scan"),
+        pytest.param(lambda lf: lf.clear(), id="empty_scan"),
+        pytest.param(lambda lf: lf.with_columns(pl.lit(None).alias("k")), id="hstack"),
+        pytest.param(lambda lf: lf.select("n", pl.lit(None).alias("c")), id="select"),
+        pytest.param(lambda lf: lf.select(pl.lit(None)).unique(), id="lit_unique"),
+        pytest.param(
+            lambda lf: lf.unique(subset=["n"], maintain_order=True), id="unique"
+        ),
+        pytest.param(lambda lf: lf.filter(pl.col("k") > 1).sort("k"), id="filter_sort"),
+        pytest.param(lambda lf: lf.filter(pl.col("k") > 10), id="filter_empty"),
+        pytest.param(lambda lf: lf.slice(1, 2), id="slice"),
+        pytest.param(lambda lf: pl.concat([lf, lf]), id="concat"),
+        pytest.param(
+            lambda lf: lf.group_by("k", maintain_order=True).agg(pl.lit(None)),
+            id="group_by_literal",
+        ),
+    ],
+)
+def test_null_pass_through(engine: pl.GPUEngine, null_frame, make_query):
+    assert_gpu_result_equal(make_query(null_frame), engine=engine)
+
+
+@pytest.mark.parametrize("how", ["inner", "left"])
+def test_null_join_payload(engine: pl.GPUEngine, null_frame, how):
+    # k=3 has no match, so the left join fills the Null payload for that row.
+    right = null_frame.filter(pl.col("k") != 3).select("k", pl.col("n").alias("m"))
+    q = null_frame.join(right, on="k", how=how)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "make_query",
+    [
+        pytest.param(lambda lf: lf.select(pl.col("n").is_null()), id="is_null"),
+        pytest.param(lambda lf: lf.select(pl.col("n").fill_null(1)), id="fill_null"),
+        pytest.param(lambda lf: lf.select(pl.col("n").cast(pl.Int64)), id="cast"),
+        pytest.param(lambda lf: lf.sort("n"), id="sort_key"),
+        pytest.param(lambda lf: lf.group_by("n").agg(pl.len()), id="group_by_key"),
+        pytest.param(lambda lf: lf.join(lf, on="n"), id="join_key"),
+        pytest.param(
+            lambda _: pl.LazyFrame({"a": pl.Series([[None]], dtype=pl.List(pl.Null))}),
+            id="nested",
+        ),
+    ],
+)
+def test_null_consumer_falls_back(
+    in_memory_engine: pl.GPUEngine, null_frame, make_query
+):
+    assert_ir_translation_raises(
+        make_query(null_frame), in_memory_engine, NotImplementedError
+    )
+
+
 def test_dataframescan_with_decimals(engine: pl.GPUEngine):
     q = pl.LazyFrame(
         {

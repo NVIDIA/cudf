@@ -238,6 +238,7 @@ TEST_F(UniqueCount, EmptyColumn)
 
   constexpr auto expected = 0;
   EXPECT_EQ(expected, cudf::unique_count(input_col, null_policy::EXCLUDE, nan_policy::NAN_IS_NULL));
+  EXPECT_EQ(expected, cudf::unique_count(input_col, null_policy::INCLUDE, nan_policy::NAN_IS_NULL));
 }
 
 TEST_F(UniqueCount, NullableLists)

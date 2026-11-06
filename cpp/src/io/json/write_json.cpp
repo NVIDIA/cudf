@@ -194,7 +194,7 @@ struct column_to_strings_fn {
                                 cudf::memory_resources mr)
     : options_(options),
       stream_(stream),
-      mr_(mr.get_output_mr()),
+      mr_(mr),
       narep(options.get_na_rep(), true, stream, cudf::get_current_device_resource_ref()),
       struct_value_separator(",", true, stream, cudf::get_current_device_resource_ref()),
       struct_row_begin_wrap("{", true, stream, cudf::get_current_device_resource_ref()),
@@ -319,7 +319,7 @@ struct column_to_strings_fn {
  private:
   json_writer_options const& options_;
   cuda::stream_ref stream_;
-  rmm::device_async_resource_ref mr_;
+  cudf::memory_resources mr_;
   string_scalar const narep;
   string_scalar const struct_value_separator;
   string_scalar const struct_row_begin_wrap;

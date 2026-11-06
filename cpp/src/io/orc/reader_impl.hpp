@@ -159,7 +159,7 @@ class reader_impl {
   table_metadata get_meta_with_user_data();
 
   cuda::stream_ref const _stream;
-  rmm::device_async_resource_ref const _mr;
+  cudf::memory_resources const _mr;
 
   // Reader configs.
   struct {

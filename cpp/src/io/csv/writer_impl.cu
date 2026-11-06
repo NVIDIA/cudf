@@ -258,7 +258,7 @@ struct column_to_strings_fn {
   explicit column_to_strings_fn(csv_writer_options const& options,
                                 cuda::stream_ref stream,
                                 cudf::memory_resources mr)
-    : options_(options), stream_(stream), mr_(mr.get_output_mr())
+    : options_(options), stream_(stream), mr_(mr)
   {
   }
 
@@ -390,7 +390,7 @@ struct column_to_strings_fn {
  private:
   csv_writer_options const& options_;
   cuda::stream_ref stream_;
-  rmm::device_async_resource_ref mr_;
+  cudf::memory_resources mr_;
 };
 }  // unnamed namespace
 

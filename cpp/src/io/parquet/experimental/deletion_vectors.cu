@@ -207,7 +207,7 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
     _is_unspecified_row_group_data{deletion_vector_info.row_group_offsets.empty()},
     _are_retentions{deletion_vector_info.are_retention_vectors},
     _stream{stream},
-    _mr{mr.get_output_mr()},
+    _mr{mr},
     // Use default mr for the internal chunked reader and row index column if we will
     // be applying the deletion vector to produce the output table
     _table_mr{deletion_vector_info.serialized_roaring_bitmaps.empty()

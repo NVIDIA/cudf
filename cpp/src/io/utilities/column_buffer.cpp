@@ -63,7 +63,7 @@ void cudf::io::detail::inline_column_buffer::create_string_data(size_t num_bytes
                                                                 cuda::stream_ref stream)
 {
   _is_large_strings_col = is_large_strings_col;
-  _string_data          = rmm::device_buffer(num_bytes, stream, _mr);
+  _string_data          = rmm::device_buffer(num_bytes, stream, _mr.get_output_mr());
 }
 
 namespace {
@@ -100,7 +100,7 @@ void column_buffer_base<string_policy>::create_with_mask(size_type _size,
                "Unexpected column buffer allocation size requested",
                std::overflow_error);
   size = _size;
-  _mr  = mr.get_output_mr();
+  _mr  = mr;
 
   switch (type.id()) {
     case type_id::STRING:

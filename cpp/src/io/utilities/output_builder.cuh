@@ -222,7 +222,7 @@ class output_builder {
                  size_type max_growth,
                  cuda::stream_ref stream,
                  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-    : _max_write_size{max_write_size}, _max_growth{max_growth}, _mr{mr.get_output_mr()}
+    : _max_write_size{max_write_size}, _max_growth{max_growth}, _mr{mr}
   {
     CUDF_EXPECTS(max_write_size > 0, "Internal error");
     _chunks.emplace_back(max_write_size * 2, stream, mr);
@@ -396,7 +396,7 @@ class output_builder {
   size_type _size{0};
   size_type _max_write_size;
   size_type _max_growth;
-  rmm::device_async_resource_ref _mr;
+  cudf::memory_resources _mr;
   std::vector<output_chunk> _chunks;
 };
 

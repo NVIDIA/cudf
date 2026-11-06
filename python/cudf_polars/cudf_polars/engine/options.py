@@ -270,6 +270,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING``.
         Default: ``256``.
         Category: executor.
+    cucascade_cache_bytes
+        Size, in bytes, of the host-memory cache for remote parquet reads
+        through cuCascade. 0 disables the cache. Only the SPMD engine supports it.
+        Env: ``CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES``.
+        Default: ``0``.
+        Category: executor.
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS``.
@@ -430,6 +436,9 @@ class StreamingOptions:
     )
     kvikio_request_ceiling: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING", int
+    )
+    cucascade_cache_bytes: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES", int
     )
     max_concurrent_io_tasks: int | dict[str, int] | Unspecified | None = _opt(
         "executor",

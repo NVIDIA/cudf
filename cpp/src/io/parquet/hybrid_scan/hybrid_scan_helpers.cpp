@@ -186,6 +186,12 @@ std::vector<FileMetaData> aggregate_reader_metadata::parquet_metadatas() const
   return {per_file_metadata.begin(), per_file_metadata.end()};
 }
 
+FileMetaData const& aggregate_reader_metadata::parquet_metadata(std::size_t source_index) const
+{
+  CUDF_EXPECTS(source_index < per_file_metadata.size(), "Invalid source index", std::out_of_range);
+  return per_file_metadata[source_index];
+}
+
 void aggregate_reader_metadata::setup_page_indexes(
   std::span<std::span<uint8_t const> const> page_index_bytes)
 {

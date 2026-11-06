@@ -132,7 +132,7 @@ def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_fac
             broadcast_limit=1_024,
             target_partition_size=1 << 20,
             max_rows_per_partition=2 * right_row_count,
-            dynamic_planning={"sample_chunk_count": 1},
+            dynamic_planning={"sample_byte_count": 1},
         )
     )
     left = pl.scan_parquet(left_path / "*.parquet")

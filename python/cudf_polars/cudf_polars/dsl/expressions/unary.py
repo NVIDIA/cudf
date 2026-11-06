@@ -20,6 +20,8 @@ from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils import dtypes, sorting
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from cudf_polars.containers import DataFrame
 
 __all__ = ["Cast", "Len", "UnaryFunction"]
@@ -43,6 +45,23 @@ def _integer_range(dtype: plc.DataType) -> tuple[int, int]:
     if signed:
         return -(1 << (bits - 1)), (1 << (bits - 1)) - 1
     return 0, (1 << bits) - 1
+
+
+def _make_groupby(
+    table: plc.Table,
+    keys: Sequence[Column],
+    null_handling: plc.types.NullPolicy,
+) -> plc.groupby.GroupBy:
+    """Build a groupby on table that uses the sortedness of the key columns."""
+    if all(k.is_sorted == plc.types.Sorted.YES for k in keys):
+        return plc.groupby.GroupBy(
+            table,
+            null_handling=null_handling,
+            keys_are_sorted=plc.types.Sorted.YES,
+            column_order=[k.order for k in keys],
+            null_precedence=[k.null_order for k in keys],
+        )
+    return plc.groupby.GroupBy(table, null_handling=null_handling)
 
 
 class Cast(Expr):
@@ -899,8 +918,8 @@ class UnaryFunction(Expr):
             )
         if self.name == "mode":
             (values,) = (child.evaluate(df, context=context) for child in self.children)
-            (keys_table, (counts_table,)) = plc.groupby.GroupBy(
-                plc.Table([values.obj]), null_handling=plc.types.NullPolicy.INCLUDE
+            (keys_table, (counts_table,)) = _make_groupby(
+                plc.Table([values.obj]), (values,), plc.types.NullPolicy.INCLUDE
             ).aggregate(
                 [
                     plc.groupby.GroupByRequest(
@@ -1220,8 +1239,8 @@ class UnaryFunction(Expr):
                 plc.Scalar.from_py(1, plc.DataType(plc.TypeId.INT32), stream=df.stream),
                 stream=df.stream,
             )
-            (_, (counts_table, first_index_table)) = plc.groupby.GroupBy(
-                plc.Table([values.obj]), null_handling=plc.types.NullPolicy.INCLUDE
+            (_, (counts_table, first_index_table)) = _make_groupby(
+                plc.Table([values.obj]), (values,), plc.types.NullPolicy.INCLUDE
             ).aggregate(
                 [
                     plc.groupby.GroupByRequest(
@@ -1294,14 +1313,14 @@ class UnaryFunction(Expr):
         elif self.name == "value_counts":
             (sort, _, _, normalize) = self.options
             count_agg = [plc.aggregation.count(plc.types.NullPolicy.INCLUDE)]
+            keys = tuple(child.evaluate(df, context=context) for child in self.children)
             gb_requests = [
-                plc.groupby.GroupByRequest(
-                    child.evaluate(df, context=context).obj, count_agg
-                )
-                for child in self.children
+                plc.groupby.GroupByRequest(key.obj, count_agg) for key in keys
             ]
-            (keys_table, (counts_table,)) = plc.groupby.GroupBy(
-                df.table, null_handling=plc.types.NullPolicy.INCLUDE
+            (keys_table, (counts_table,)) = _make_groupby(
+                plc.Table([key.obj for key in keys]),
+                keys,
+                plc.types.NullPolicy.INCLUDE,
             ).aggregate(gb_requests, stream=df.stream)
             if sort:
                 sort_indices = plc.sorting.stable_sorted_order(

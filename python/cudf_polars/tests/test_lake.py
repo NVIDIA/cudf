@@ -780,6 +780,7 @@ def test_scan_iceberg_nested_unsupported(
     [pl.col("f") > 50, (pl.col("f") == 1.0) | (pl.col("i") == 3)],
     ids=["gt", "eq_or"],
 )
+@pytest.mark.skipif(POLARS_VERSION_LT_21, reason="Bug in polars 2.0.0")
 def test_scan_iceberg_identity_partition_added_then_removed(
     engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, predicate: pl.Expr
 ) -> None:

@@ -757,6 +757,7 @@ add_library(
   src/groupby/hash/single_pass_argminmax.cu
   src/groupby/hash/single_pass_argminmax_nested.cu
   src/groupby/hash/single_pass_fused_minmax_sum.cu
+  src/groupby/hash/single_pass_m2.cu
   src/groupby/hash/single_pass_minmax.cu
   src/groupby/hash/single_pass_product.cu
   src/groupby/hash/single_pass_sum_overflow.cu

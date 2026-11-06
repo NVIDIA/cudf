@@ -5,6 +5,8 @@
 
 #include "join_common.hpp"
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -80,6 +82,7 @@ void nvbench_streaming_hash_join(nvbench::state& state)
   state.add_element_count(input_bytes, "input_bytes");
   state.add_global_memory_reads<nvbench::int8_t>(input_bytes);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (repeated_probe) {
     cudf::streaming_hash_join joiner{right_batches.front(),
                                      right_key_index,
@@ -93,6 +96,8 @@ void nvbench_streaming_hash_join(nvbench::state& state)
     static_cast<void>(joiner.inner_join(probe_keys));
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch&) { auto result = joiner.inner_join(probe_keys); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
     return;
   }
 
@@ -118,6 +123,8 @@ void nvbench_streaming_hash_join(nvbench::state& state)
       auto result = joiner.inner_join(probe_keys);
     }
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(nvbench_streaming_hash_join)

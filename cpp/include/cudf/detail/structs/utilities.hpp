@@ -252,14 +252,14 @@ class flattened_table {
  *
  * @param input The input (possibly STRUCT) column whose nulls need to be pushed to its children
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate new device memory
+ * @param mr Device memory resources used for new null masks, sanitized columns, and scratch
  * @return A pair of:
  *         1. column_view with nulls pushed down to child columns, as appropriate.
  *         2. An instance of `temporary_nullable_data` holding the temporary data that needs
  *         to be kept alive.
  */
 [[nodiscard]] std::pair<column_view, temporary_nullable_data> push_down_nulls(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Push down nulls from columns of the input table into their children columns, using
@@ -279,14 +279,14 @@ class flattened_table {
  * @param input The table_view of (possibly STRUCT) columns whose nulls need to be pushed to their
  *        children
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate new device memory
+ * @param mr Device memory resources used for new null masks, sanitized columns, and scratch
  * @return A pair of:
  *         1. table_view of columns with nulls pushed down to child columns, as appropriate.
  *         2. An instance of `temporary_nullable_data` holding the temporary data that needs
  *         to be kept alive.
  */
 [[nodiscard]] std::pair<table_view, temporary_nullable_data> push_down_nulls(
-  table_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  table_view const& input, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Checks if a column or any of its children is a struct column with structs that are null.

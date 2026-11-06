@@ -397,7 +397,7 @@ std::vector<std::unique_ptr<column>> superimpose_nulls(
  * @copydoc cudf::structs::detail::push_down_nulls
  */
 std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto ret_nullable_data = temporary_nullable_data{};
   if (input.type().id() != type_id::STRUCT) {
@@ -610,12 +610,12 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
 
 std::pair<column_view, temporary_nullable_data> push_down_nulls(column_view const& input,
                                                                 cuda::stream_ref stream,
-                                                                rmm::device_async_resource_ref mr)
+                                                                cudf::memory_resources mr)
 {
   auto output = push_down_nulls_no_sanitize(input, stream, mr);
 
   if (auto const output_view = output.first;
-      cudf::detail::has_nonempty_nulls(output_view, stream)) {
+      cudf::detail::has_nonempty_nulls(output_view, stream, mr)) {
     output.second.new_columns.emplace_back(
       cudf::detail::purge_nonempty_nulls(output_view, stream, mr));
     output.first = output.second.new_columns.back()->view();
@@ -631,7 +631,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls(column_view cons
 
 std::pair<table_view, temporary_nullable_data> push_down_nulls(table_view const& table,
                                                                cuda::stream_ref stream,
-                                                               rmm::device_async_resource_ref mr)
+                                                               cudf::memory_resources mr)
 {
   auto processed_columns = std::vector<column_view>{};
   auto nullable_data     = temporary_nullable_data{};

@@ -850,17 +850,19 @@ two_table_comparator::two_table_comparator(table_view const& left,
 
 namespace equality {
 
-std::shared_ptr<preprocessed_table> preprocessed_table::create(
-  table_view const& t, cuda::stream_ref stream, rmm::device_async_resource_ref temp_mr)
+std::shared_ptr<preprocessed_table> preprocessed_table::create(table_view const& t,
+                                                               cuda::stream_ref stream,
+                                                               cudf::memory_resources mr)
 {
   check_eq_compatibility(t);
 
-  auto [null_pushed_table, nullable_data] = structs::detail::push_down_nulls(t, stream, temp_mr);
+  auto [null_pushed_table, nullable_data] = structs::detail::push_down_nulls(t, stream, mr);
   auto struct_offset_removed_table        = remove_struct_child_offsets(null_pushed_table);
   auto verticalized_t =
     std::get<0>(decompose_structs(struct_offset_removed_table, decompose_lists_column::YES));
 
-  auto d_t = table_device_view_owner(table_device_view::create(verticalized_t, stream, temp_mr));
+  auto d_t =
+    table_device_view_owner(table_device_view::create(verticalized_t, stream, mr.get_output_mr()));
   return std::shared_ptr<preprocessed_table>(new preprocessed_table(
     std::move(d_t), std::move(nullable_data.new_null_masks), std::move(nullable_data.new_columns)));
 }

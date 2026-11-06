@@ -8,6 +8,8 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -392,6 +394,47 @@ TYPED_TEST(NaNTableViewTest, TestEqualityComparatorTwoTableNaNCase)
 }
 
 struct RowOperatorTest : public cudf::test::BaseFixtureWithHarness {};
+
+TEST_F(RowOperatorTest, EqualityPreprocessingMemoryResources)
+{
+  auto const stream = this->stream();
+  for (bool dirty : {false, true}) {
+    SCOPED_TRACE(::testing::Message() << "dirty=" << dirty);
+    auto strings =
+      cudf::test::strings_column_wrapper{{"", "a", "b"}, cudf::test::iterators::null_at(0)}
+        .release();
+    if (dirty) {
+      cudf::set_null_mask(strings->mutable_view().null_mask(), 1, 2, false, stream);
+      strings->set_null_count(2);
+    }
+    auto expected =
+      cudf::test::strings_column_wrapper{{"", "", "b"}, cudf::test::iterators::nulls_at({0, 1})}
+        .release();
+    // The device table owns its column views; only dirty input needs an owning sanitized column.
+    auto constexpr alignment = alignof(cudf::column_device_view);
+    auto const padded_view_bytes =
+      cudf::column_device_view::extent(strings->view()) + alignment - 1;
+    // device_buffer rounds the padded allocation up to its requested alignment.
+    auto const retained_bytes = ((padded_view_bytes + alignment - 1) / alignment) * alignment +
+                                (dirty ? expected->alloc_size() : 0);
+    auto resources = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      resources,
+      [&](cudf::memory_resources mr) {
+        return cudf::detail::row::equality::preprocessed_table::create(
+          cudf::table_view{{strings->view()}}, stream, mr);
+      },
+      [&](auto const&) { return retained_bytes; },
+      [](auto const& result) {
+        auto const view = static_cast<cudf::table_device_view>(*result);
+        EXPECT_EQ(view.num_rows(), 3);
+        EXPECT_EQ(view.num_columns(), 1);
+      },
+      {cudf::test::output_allocation_expectation::EXACT,
+       cudf::test::temporary_allocation_expectation::SOME},
+      stream);
+  }
+}
 
 TEST_F(RowOperatorTest, TestTwoTableComparatorColumnCountCheck)
 {

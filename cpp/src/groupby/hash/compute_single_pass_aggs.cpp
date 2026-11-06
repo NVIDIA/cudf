@@ -43,9 +43,9 @@ struct compute_reduction_fn {
   std::unique_ptr<column> operator()(cuda::stream_ref stream, cudf::memory_resources mr) const
   {
     if constexpr (K == aggregation::SUM || K == aggregation::PRODUCT ||
-                  K == aggregation::SUM_OF_SQUARES || K == aggregation::MIN ||
-                  K == aggregation::MAX || K == aggregation::ARGMIN || K == aggregation::ARGMAX ||
-                  K == aggregation::SUM_OVERFLOW) {
+                  K == aggregation::SUM_OF_SQUARES || K == aggregation::MEAN_SUM ||
+                  K == aggregation::MIN || K == aggregation::MAX || K == aggregation::ARGMIN ||
+                  K == aggregation::ARGMAX || K == aggregation::SUM_OVERFLOW) {
       return compute_reduction<K>(ctx, stream, mr);
     } else {
       CUDF_FAIL("Unsupported hash groupby aggregation");

@@ -100,12 +100,12 @@ void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
   }
 }
 
-// Dictionary key of the i-th leaf field: "f00", "f01", ... Zero padding makes the numeric order the
-// lexicographic order, which the callers rely on to predict each key's field id.
+// Dictionary key of the i-th leaf field: "f000", "f001", ... Zero padding makes the numeric order
+// the lexicographic order, which the callers rely on to predict each key's field id.
 std::string field_key(int i)
 {
-  CUDF_EXPECTS(i >= 0 && i < 100, "field key index does not fit the zero-padded key width");
-  return std::format("f{:02}", i);
+  CUDF_EXPECTS(i >= 0 && i < 1000, "field key index does not fit the zero-padded key width");
+  return std::format("f{:03}", i);
 }
 
 // A field of an object under construction: its dictionary id and its already-encoded value bytes,
@@ -769,8 +769,8 @@ static void bench_variant_extract_multi_field(nvbench::state& state)
 
 NVBENCH_BENCH(bench_variant_extract_multi_field)
   .set_name("bench_variant_extract_multi_field")
-  .add_int64_axis("num_rows", {262144, 2097152})
-  .add_int64_axis("num_fields", {1, 4, 16, 64})
+  .add_int64_axis("num_rows", {32768, 262144, 1048576})
+  .add_int64_axis("num_fields", {1, 4, 16, 64, 128})
   .add_string_axis("prefix", {"shared", "disjoint"})
   .add_string_axis("api", {"batched", "looped"})
   .add_int64_axis("hit_rate", {80});

@@ -228,7 +228,9 @@ def decimal_ratios() -> tuple[pl.LazyFrame, pl.LazyFrame]:
             "a": _decimals(["1003", "1020", "1000", "1010", None, "1000", "1004"]),
             "b": _decimals(["1000"] * 7),
             "v": _decimals(["1000", "1000", "1000", "1000", "1000", None, "1000"]),
-            "d": _decimals(["1.00", "1.02", "1.00", "1.01", "1.00", "1.00", "1.00"]),
+            "d": _decimals(
+                ["1.00", "1.02", "1.00", "1.01", "1.00", "1.00", "1.00"], 2, 15
+            ),
         }
     )
     right = pl.LazyFrame(
@@ -325,5 +327,29 @@ def test_ratio_of_decimals_against_a_different_scale(
     )
     q = left.join(right, on="k", how="inner").filter(
         (pl.col("w") / pl.col("v")) > pl.col("d")
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_ratio_of_decimals_against_a_wide_decimal_column(
+    engine: pl.GPUEngine, decimal_ratios
+):
+    # A Decimal(38, 2) can hold more than Float64 does exactly, so the column is
+    # not converted and the AST cannot compare the cast with it.
+    left, right = decimal_ratios
+    left = left.with_columns(d=pl.col("d").cast(pl.Decimal(38, 2)))
+    q = left.join(right, on="k", how="inner").filter(
+        (pl.col("w") / pl.col("v")) > pl.col("d")
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_ratio_of_decimals_against_a_literal_that_float64_rounds(
+    engine: pl.GPUEngine, decimal_ratios
+):
+    # 9007199254740993 is 2**53 + 1, which Float64 cannot hold.
+    left, right = decimal_ratios
+    q = left.join(right, on="k", how="inner").filter(
+        (pl.col("w") / pl.col("v")) == pl.lit(Decimal("90071992547409.93"))
     )
     assert_ir_translation_raises(q, engine, NotImplementedError)

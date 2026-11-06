@@ -517,6 +517,22 @@ def _is_float_to_decimal_cast(node: expr.Expr) -> bool:
 # 10**22 is the largest power of ten that a Float64 holds exactly.
 _MAX_EXACT_POWER_OF_TEN = 22
 _MAX_DECIMAL_DIGITS = 38
+# 10**15 is below 2**53, so a decimal with at most 15 digits is exact in Float64.
+_MAX_EXACT_DECIMAL_DIGITS = 15
+
+
+def _converts_exactly_to_float64(operand: expr.Expr, scale: int) -> bool:
+    if _is_float_to_decimal_cast(operand):
+        return True
+    if isinstance(operand, expr.Literal):
+        if operand.value is None:
+            return True
+        with localcontext(prec=2 * _MAX_DECIMAL_DIGITS):
+            unscaled = operand.value.scaleb(scale)
+            return unscaled == int(float(unscaled))
+    polars_type = operand.dtype.polars_type
+    precision = polars_type.precision if isinstance(polars_type, pl.Decimal) else None
+    return (precision or _MAX_DECIMAL_DIGITS) <= _MAX_EXACT_DECIMAL_DIGITS
 
 
 def _emulate_decimal_comparison(node: expr.BinOp) -> expr.Expr | None:
@@ -530,9 +546,10 @@ def _emulate_decimal_comparison(node: expr.BinOp) -> expr.Expr | None:
     So compare the two operands as ``RINT(x * 10**scale)``, which holds the
     unscaled decimal, instead.
 
-    The operand that is not a cast is converted to Float64 first. That is exact
-    below 2**53 times ``10**-scale``, the same limit Polars accepts for a
-    comparison between a decimal and a float.
+    The operand that is not a cast is converted to Float64 first. Float64 only
+    holds integers exactly below 2**53, so two different decimals above that
+    could compare equal. The rewrite is skipped unless that operand is a
+    literal that converts exactly or a column with at most 15 digits.
 
     Parameters
     ----------
@@ -542,7 +559,8 @@ def _emulate_decimal_comparison(node: expr.BinOp) -> expr.Expr | None:
     Returns
     -------
     The rewritten comparison, or None when it is not a comparison of two
-    decimals with the same scale where one is cast from a float.
+    decimals with the same scale where one is cast from a float, or when the
+    other operand does not convert exactly to Float64.
     """
     left, right = node.children
     if not (_is_float_to_decimal_cast(left) or _is_float_to_decimal_cast(right)):
@@ -557,6 +575,8 @@ def _emulate_decimal_comparison(node: expr.BinOp) -> expr.Expr | None:
         or (scale := scales.pop()) is None
         or scale > _MAX_EXACT_POWER_OF_TEN
     ):
+        return None
+    if not all(_converts_exactly_to_float64(child, scale) for child in node.children):
         return None
     float64 = DataType(pl.Float64())
 

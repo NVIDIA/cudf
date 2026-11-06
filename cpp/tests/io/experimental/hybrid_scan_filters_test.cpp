@@ -7,9 +7,11 @@
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
@@ -38,6 +40,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -2584,4 +2587,55 @@ TEST_F(HybridScanFiltersTest, DictionaryPagesByteRangesIncludeUnboundedMatchesEx
         (std::vector<cudf::size_type>{1}));
     }
   }
+}
+
+TEST_F(HybridScanFiltersTest, FilterRowGroupsWithBloomFiltersValidatesBitsets)
+{
+  srand(0xb10f);
+  using T = uint32_t;
+
+  // 4 row groups. cuDF's Parquet writer does not emit bloom filters, but the bitsets passed to
+  // `filter_row_groups_with_bloom_filters` are validated regardless
+  auto [written_table, file_buffer] = create_parquet_with_stats<T, 1>();
+
+  auto const stream  = cudf::get_default_stream();
+  auto literal_value = cudf::numeric_scalar<T>(T{42}, true, stream);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_name_reference("col0");
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+  auto options       = cudf::io::parquet_reader_options::builder().filter(filter).build();
+
+  auto const datasource    = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(file_buffer.data()), file_buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const reader        = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    cudf::host_span<uint8_t const>{static_cast<uint8_t const*>(footer_buffer->data()),
+                                          footer_buffer->size()},
+    options);
+  auto const row_groups = reader->all_row_groups(options);
+  ASSERT_EQ(row_groups.size(), 4);
+
+  // One bitset span per row group for the single equality predicate column
+  auto const buffer = cudf::detail::make_zeroed_device_buffer<uint8_t>(
+    256, stream, cudf::get_current_device_resource_ref());
+  auto const* base = buffer.data();
+  auto const spans = [&](std::size_t offset, std::size_t size) {
+    return std::vector<cudf::device_span<uint8_t const>>(
+      row_groups.size(), cudf::device_span<uint8_t const>{base + offset, size});
+  };
+
+  // Empty spans mean "no bloom filter" and keep every row group
+  EXPECT_EQ(reader->filter_row_groups_with_bloom_filters(spans(0, 0), row_groups, options, stream),
+            row_groups);
+  // Aligned bitsets whose sizes are multiples of 32 bytes are accepted
+  EXPECT_NO_THROW(std::ignore = reader->filter_row_groups_with_bloom_filters(
+                    spans(0, 64), row_groups, options, stream));
+  // A raw bloom filter byte range still holds the header, so its size is not a multiple of 32
+  EXPECT_THROW(std::ignore = reader->filter_row_groups_with_bloom_filters(
+                 spans(0, 47), row_groups, options, stream),
+               std::invalid_argument);
+  // Bitsets must be 32-byte aligned
+  EXPECT_THROW(std::ignore = reader->filter_row_groups_with_bloom_filters(
+                 spans(15, 32), row_groups, options, stream),
+               std::invalid_argument);
 }

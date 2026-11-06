@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/detail/integral_math.cuh>
+#include <cudf/detail/operators/comparison.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -313,41 +314,8 @@ template <typename TypeLhs, typename TypeRhs>
 concept has_floating_point_operand =
   cuda::std::floating_point<TypeLhs> or cuda::std::floating_point<TypeRhs>;
 
-/**
- * @brief Returns true if `value` is a floating-point NaN
- */
-template <typename T>
-__device__ inline bool is_nan_value(T value)
-{
-  if constexpr (cuda::std::floating_point<T>) {
-    return isnan(value);
-  } else {
-    return false;
-  }
-}
-
-/**
- * @brief Returns `x == y` with `nan_semantics::ETL`: NaNs are equal to each other
- */
-template <typename TypeLhs, typename TypeRhs>
-__device__ inline bool etl_equal(TypeLhs x, TypeRhs y)
-{
-  auto const x_nan = is_nan_value(x);
-  auto const y_nan = is_nan_value(y);
-  return (x_nan or y_nan) ? (x_nan and y_nan) : (x == y);
-}
-
-/**
- * @brief Returns `x < y` with `nan_semantics::ETL`: NaN is greater than every other value
- */
-template <typename TypeLhs, typename TypeRhs>
-__device__ inline bool etl_less(TypeLhs x, TypeRhs y)
-{
-  auto const x_nan = is_nan_value(x);
-  auto const y_nan = is_nan_value(y);
-  // With a NaN operand, x < y only when y is the NaN and x is not
-  return (x_nan or y_nan) ? not x_nan : (x < y);
-}
+using cudf::detail::ops::etl_equal;
+using cudf::detail::ops::etl_less;
 
 // The comparison operators below hold how NaN values compare. Default construction selects
 // `nan_semantics::IEEE754`; the `nan_semantics::ETL` branch only exists for floating-point

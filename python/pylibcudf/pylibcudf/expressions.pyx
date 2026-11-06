@@ -25,6 +25,7 @@ from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.string cimport string
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport expressions as libcudf_exp
+from pylibcudf.libcudf.types cimport nan_semantics
 from pylibcudf.libcudf.scalar.scalar cimport (
     duration_scalar,
     numeric_scalar,
@@ -78,6 +79,29 @@ cdef class Expression:
     For details, see :cpp:class:`cudf::ast::expression`.
     """
     __hash__ = None
+
+    @property
+    def nan_semantics(self):
+        """
+        How NaN values compare in the floating-point comparisons of the expression tree.
+
+        Only the setting of the root expression passed to an API (for example
+        ``compute_column``, a mixed or conditional join, or a Parquet reader filter)
+        is used. It applies to the comparison operators on floating-point operands
+        throughout the tree. The settings of sub-expressions are ignored.
+
+        For details, see :cpp:func:`cudf::ast::expression::set_nan_semantics`.
+
+        Returns
+        -------
+        NanSemantics
+            The value that was set, or ``NanSemantics.DEFAULT``
+        """
+        return self.c_obj.get().get_nan_semantics()
+
+    @nan_semantics.setter
+    def nan_semantics(self, nan_semantics semantics):
+        self.c_obj.get().set_nan_semantics(semantics)
 
 cdef class Literal(Expression):
     """

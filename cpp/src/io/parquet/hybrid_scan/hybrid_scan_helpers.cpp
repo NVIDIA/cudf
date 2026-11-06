@@ -714,6 +714,11 @@ parquet_filter_normalizer::parquet_filter_normalizer(
   }
 
   expr.value().get().accept(*this);
+  // The setting of the root expression applies to the whole tree. Copy it to every operation so the
+  // converted root has it, whichever operation that is.
+  for (auto& op : _operators) {
+    op.set_nan_semantics(expr.value().get().get_nan_semantics());
+  }
 }
 
 std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(

@@ -49,12 +49,12 @@ def test_ordered_window_preserves_replicated_rows(ray_engine, empty, mixed):
 def test_window_preserves_replicated_rows_on_every_rank(spmd_engine, empty, ordered):
     """Each rank retains the full window result and its replicated metadata."""
     frame = pl.LazyFrame(
-        {"g": ["a", "b", "a", "b"], "t": [3, 1, 4, 2], "x": [10, 20, 30, 40]}
+        {"g": ["a", "b", "a", "b"], "t": [3, 1, 4, 2], "x": [10, 40, 30, 20]}
     )
     if empty:
         frame = frame.clear()
     window = (
-        pl.col("x").cum_sum().over("g", order_by="t")
+        pl.col("x").cum_sum().over("g", order_by="x")
         if ordered
         else pl.col("x").cum_sum().over("g")
     ).alias("running")

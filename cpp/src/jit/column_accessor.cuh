@@ -34,7 +34,7 @@ struct column_accessor {
 
   static __device__ auto& column(auto const* __restrict__ columns) { return columns[index]; }
 
-  static __device__ decltype(auto) element(auto const* __restrict__ columns, size_type row)
+  static __device__ auto element(auto const* __restrict__ columns, size_type row)
   {
     return columns[index].template element<element_type>(map_index(row));
   }
@@ -49,7 +49,7 @@ struct column_accessor {
     return columns[index].is_valid(map_index(row));
   }
 
-  static __device__ decltype(auto) nullable_element(auto const* __restrict__ columns, size_type row)
+  static __device__ auto nullable_element(auto const* __restrict__ columns, size_type row)
   {
     return columns[index].template nullable_element<element_type>(map_index(row));
   }
@@ -72,7 +72,7 @@ struct column_accessor {
     columns[index].template assign<element_type>(row, value);
   }
 
-  static __device__ decltype(auto) output_arg(auto const* __restrict__ columns, size_type row)
+  static __device__ auto output_arg(auto const* __restrict__ columns, size_type row)
     requires(!as_scalar)
   {
     if constexpr (is_inplace_output) {
@@ -84,8 +84,7 @@ struct column_accessor {
     }
   }
 
-  static __device__ decltype(auto) nullable_output_arg(auto const* __restrict__ columns,
-                                                       size_type row)
+  static __device__ auto nullable_output_arg(auto const* __restrict__ columns, size_type row)
     requires(!as_scalar)
   {
     if constexpr (is_inplace_output) {

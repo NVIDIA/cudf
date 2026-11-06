@@ -13,7 +13,6 @@
 #include <memory>
 #include <span>
 #include <string>
-#include <tuple>
 #include <variant>
 #include <vector>
 
@@ -28,9 +27,6 @@ std::string reflect_input_element(transform_input_spec const& spec, bool use_phy
 /// @brief Reflects decoded values, using dictionary keys rather than their indices.
 std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type);
 
-/// @brief Reflects the mutable device-view type for an output specification.
-std::string reflect_output_column(transform_output_spec const& spec);
-
 /// @brief Converts the public fragment type to the runtime compiler's binary type.
 rtcx::binary_type as_rtcx_binary_type(lto_binary_type type);
 
@@ -40,7 +36,7 @@ struct transform_reflection {
   std::vector<std::string> ptx_input_value_types;
   std::vector<std::string> ptx_output_value_types;
 
-  bool operator==(transform_reflection const& other) const = default;
+  [[nodiscard]] bool operator==(transform_reflection const& other) const = default;
 };
 
 /**

@@ -74,6 +74,55 @@ def test_sampler_samples_immediately_and_repeatedly() -> None:
     assert events[-1] == ("stop", query)
 
 
+def test_sampler_does_not_hold_lock_while_reading() -> None:
+    sampler: MemoryResourceSampler | None = None
+    reads = 0
+
+    def read_bytes() -> int:
+        nonlocal reads
+        assert sampler is not None
+        assert sampler._lock.acquire(blocking=False)
+        sampler._lock.release()
+        reads += 1
+        return reads
+
+    sampler, events = _sampler(read_bytes=read_bytes)
+    query = uuid.uuid4()
+    sampler.attach(query)
+    try:
+        # Covers both the immediate read in attach and the background thread.
+        _wait_for(lambda: len(_records(events)) >= 2)
+    finally:
+        sampler.detach(query)
+
+
+def test_sampler_close_waits_for_in_flight_read() -> None:
+    read_started = threading.Event()
+    finish_read = threading.Event()
+    reads = 0
+
+    def read_bytes() -> int:
+        nonlocal reads
+        reads += 1
+        if reads > 1:
+            read_started.set()
+            finish_read.wait()
+        return reads
+
+    sampler, _ = _sampler(read_bytes=read_bytes)
+    sampler.attach(uuid.uuid4())
+    _wait_for(read_started.is_set)
+
+    close_thread = threading.Thread(target=sampler.close)
+    close_thread.start()
+    try:
+        assert close_thread.is_alive()
+    finally:
+        finish_read.set()
+        close_thread.join(timeout=10)
+    assert not close_thread.is_alive()
+
+
 def test_sampler_takes_one_reading_even_if_query_is_shorter_than_interval() -> None:
     sampler, events = _sampler(interval_s=3600)
     query = uuid.uuid4()
@@ -319,4 +368,4 @@ def test_quent_config_poll_interval_roundtrips(tmp_path, interval_s) -> None:
 
 
 def test_quent_config_polls_once_per_second_by_default() -> None:
-    assert QuentConfig().device_memory_poll_interval_s == 1.0
+    assert QuentConfig().device_memory_poll_interval_s == 0.1

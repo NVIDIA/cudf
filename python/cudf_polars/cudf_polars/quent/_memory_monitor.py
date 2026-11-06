@@ -36,7 +36,9 @@ class MemoryResourceSampler:
     Parameters
     ----------
     read_bytes
-        Callable that returns the current number of allocated device bytes.
+        Callable that returns the current number of allocated device bytes. It's
+        expected that this is cheap to read and doesn't acquire any kind of lock
+        to compute the allocation.
     record
         Called as ``record(query_id, nbytes)`` once per attached query for each
         reading. Calls are serialized, and ``record`` is not called for a query
@@ -72,6 +74,8 @@ class MemoryResourceSampler:
         self._interval_s = interval_s
         self._name = name
         self._lock = threading.Lock()
+        self._read_finished = threading.Condition(self._lock)
+        self._reads_in_flight = 0
         # Queries currently attached, with the number of attachments of each.
         self._attached: dict[uuid.UUID, int] = {}
         self._thread: threading.Thread | None = None
@@ -93,10 +97,26 @@ class MemoryResourceSampler:
             if self._closed:
                 return
             self._attached[query_id] = self._attached.get(query_id, 0) + 1
-            if self._attached[query_id] == 1:
-                self._guarded(self._sample_one, query_id)
+            sample_now = self._attached[query_id] == 1
+            if sample_now:
+                self._reads_in_flight += 1
+        if sample_now:
+            reading, error = self._read()
+            with self._lock:
+                try:
+                    if error is not None:
+                        self._remember_error(error)
+                    elif not self._closed and query_id in self._attached:
+                        self._guarded(self._record, query_id, reading)
+                finally:
+                    self._finish_read()
+        with self._lock:
             thread = self._thread
-            if thread is None or not thread.is_alive():
+            if (
+                not self._closed
+                and self._attached
+                and (thread is None or not thread.is_alive())
+            ):
                 self._start_thread()
 
     def detach(self, query_id: uuid.UUID) -> None:
@@ -127,30 +147,44 @@ class MemoryResourceSampler:
         """Detach every query and stop the sampling thread for good."""
         with self._lock:
             self._closed = True
+            retired = self._retire_thread()
+            while self._reads_in_flight:
+                self._read_finished.wait()
             for query_id in self._attached:
                 self._guarded(self._stop_query, query_id)
             self._attached.clear()
-            retired = self._retire_thread()
             error, self._error = self._error, None
         if retired is not None:
             retired.join()
         self._warn(error)
 
-    def _sample_one(self, query_id: uuid.UUID) -> None:
-        self._record(query_id, self._read_bytes())
-
-    def _sample_all(self) -> None:
-        nbytes = self._read_bytes()
+    def _sample_all(self, nbytes: int) -> None:
         for query_id in self._attached:
             self._record(query_id, nbytes)
+
+    def _read(self) -> tuple[int, Exception | None]:
+        """Read allocated bytes without holding the sampler lock."""
+        try:
+            return self._read_bytes(), None
+        except Exception as error:
+            return 0, error
+
+    def _finish_read(self) -> None:
+        """Mark an in-flight read complete; the caller holds the lock."""
+        self._reads_in_flight -= 1
+        self._read_finished.notify_all()
+
+    def _remember_error(self, error: Exception) -> None:
+        """Remember the first sampling error; the caller holds the lock."""
+        if self._error is None:
+            self._error = error
 
     def _guarded(self, fn: Callable[..., object], *args: object) -> bool:
         """Call ``fn`` while holding the lock; remember rather than raise errors."""
         try:
             fn(*args)
         except Exception as error:
-            if self._error is None:
-                self._error = error
+            self._remember_error(error)
             return False
         return True
 
@@ -178,8 +212,21 @@ class MemoryResourceSampler:
             with self._lock:
                 if stop.is_set():
                     return
-                if not self._guarded(self._sample_all):
-                    return
+                self._reads_in_flight += 1
+            # We explicitly release the lock for `_read()`, which calls
+            # the callback.
+            reading, error = self._read()
+            with self._lock:
+                try:
+                    if stop.is_set() or self._closed:
+                        return
+                    if error is not None:
+                        self._remember_error(error)
+                        return
+                    if not self._guarded(self._sample_all, reading):
+                        return
+                finally:
+                    self._finish_read()
 
     def _warn(self, error: Exception | None) -> None:
         if error is not None:

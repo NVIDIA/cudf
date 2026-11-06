@@ -524,8 +524,8 @@ metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
 
 metadata::metadata(datasource* source, bool read_page_indexes)
 {
-  auto const buffer = cudf::io::parquet::fetch_footer_to_host(*source);
-  decode_footer_and_init_schema({buffer->data(), buffer->size()}, this);
+  auto const speculative = fetch_speculative_footer(*source, metadata_size_hint());
+  decode_footer_and_init_schema(speculative.footer(), this);
 
   // Reading the page indexes is somewhat expensive, so skip if there are no byte array columns.
   // Currently the indexes are only used for the string size calculations.
@@ -558,8 +558,16 @@ metadata::metadata(datasource* source, bool read_page_indexes)
 
   // Setup page indexes if available
   if (not page_index_range.is_empty()) {
-    auto const page_idx_buf = source->host_read(page_index_range.offset(), page_index_range.size());
-    setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
+    auto const offset = static_cast<size_t>(page_index_range.offset());
+    auto const size   = static_cast<size_t>(page_index_range.size());
+    // The page index is usually stored right before the footer, so the speculative read often
+    // holds it already. Read it from the source only when it does not.
+    if (auto const bytes = speculative.tail_bytes(offset, size); bytes.has_value()) {
+      setup_page_index(*bytes, page_index_range.offset());
+    } else {
+      auto const page_idx_buf = source->host_read(offset, size);
+      setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
+    }
   }
 
   sanitize_schema();

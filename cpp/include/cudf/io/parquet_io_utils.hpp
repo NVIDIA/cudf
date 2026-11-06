@@ -60,7 +60,9 @@ enum class io_submission_policy : int8_t {
  * When the footer is smaller than the speculative read size, the footer metadata
  * is loaded in a single read, which is especially useful for high-latency, remote
  * storage systems. When the footer is larger than the speculative read size, the
- * footer metadata will be loaded in two reads.
+ * footer metadata will be loaded in two reads. `read_parquet` and `read_parquet_footers`
+ * also take the page index from the speculative read when it lies inside it; callers of
+ * `fetch_footer_to_host` still fetch the page index with `fetch_page_index_to_host`.
  *
  * Set `LIBCUDF_PARQUET_METADATA_SIZE_HINT=0` to disable speculative reads.
  *

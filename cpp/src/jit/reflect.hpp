@@ -21,7 +21,7 @@ struct transform_reflection {
   std::string input_accessors;
   std::string output_accessors;
 
-  bool operator==(transform_reflection const& other) const = default;
+  [[nodiscard]] bool operator==(transform_reflection const& other) const = default;
 };
 
 /**

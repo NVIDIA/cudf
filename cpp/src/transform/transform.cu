@@ -27,11 +27,15 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_uvector.hpp>
+#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/span>
 #include <cuda/stream>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/logical.h>
 
 #include <cudf_fragments.hpp>
 #include <jit/cache.hpp>
@@ -70,9 +74,10 @@ using jit::output_column;
 using jit::string_views_column;
 
 using input_column_view = transform_input;
-using handle            = std::variant<
-             std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>,
-             std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>>;
+
+using handle = std::variant<
+  std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>,
+  std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>>;
 
 namespace jit_transform {
 

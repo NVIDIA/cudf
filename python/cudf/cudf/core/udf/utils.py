@@ -86,12 +86,6 @@ MASK_BITSIZE = SIZE_TYPE_DTYPE.itemsize * 8
 
 precompiled: cachetools.LRUCache = cachetools.LRUCache(maxsize=32)
 
-# This cache is keyed on the (signature, code, closure variables) of UDFs, so
-# it can hit for distinct functions that are similar. The lru_cache wrapping
-# compile_udf misses for these similar functions, but doesn't need to serialize
-# closure variables to check for a hit.
-_udf_code_cache: cachetools.LRUCache = cachetools.LRUCache(maxsize=32)
-
 
 DEPRECATED_SM_REGEX = "Architectures prior to '<compute/sm>_75' are deprecated"
 
@@ -197,60 +191,6 @@ def make_cache_key(udf, sig):
         cvarbytes = b""
 
     return names, constants, codebytes, cvarbytes, sig
-
-
-def compile_udf(udf, type_signature):
-    """Compile ``udf`` with `numba`
-
-    Compile a python callable function ``udf`` with
-    `numba.cuda.compile_ptx_for_current_device(device=True)` using
-    ``type_signature`` into CUDA PTX together with the generated output type.
-
-    The output is expected to be passed to the PTX parser in `libcudf`
-    to generate a CUDA device function to be inlined into CUDA kernels,
-    compiled at runtime and launched.
-
-    Parameters
-    ----------
-    udf:
-      a python callable function
-
-    type_signature:
-      a tuple that specifies types of each of the input parameters of ``udf``.
-      The types should be one in `numba.types` and could be converted from
-      numpy types with `numba.numpy_support.from_dtype(...)`.
-
-    Returns
-    -------
-    ptx_code:
-      The compiled CUDA PTX
-
-    output_type:
-      An numpy type
-
-    """
-    key = make_cache_key(udf, type_signature)
-    res = _udf_code_cache.get(key)
-    if res:
-        return res
-
-    # We haven't compiled a function like this before, so need to fall back to
-    # compilation with Numba
-    ptx_code, return_type = cuda.compile_ptx_for_current_device(
-        udf, type_signature, device=True
-    )
-    from cudf.core.udf.mlir_backend.masked_typing import MaskedType
-
-    if not isinstance(return_type, MaskedType):
-        output_type = numpy_support.as_dtype(return_type).type
-    else:
-        output_type = return_type
-
-    # Populate the cache for this function
-    res = (ptx_code, output_type)
-    _udf_code_cache[key] = res
-
-    return res
 
 
 def _generate_cache_key(frame, func: Callable, args, suffix="__APPLY_UDF"):

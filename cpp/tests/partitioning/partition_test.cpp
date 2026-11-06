@@ -1163,25 +1163,29 @@ TEST_F(PartitionTestNotTyped, LargeSparseStringCopy)
   auto const assignments =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
   fixed_width_column_wrapper<int32_t> map(assignments, assignments + rows, stream);
-  auto const input       = cudf::table_view{{first, second}};
-  auto [output, offsets] = cudf::partition(input, map, 2, stream, mr());
+  auto const all_columns = cudf::table_view{{first, second}};
   constexpr auto half    = (rows + 1) / 2;
-  ASSERT_EQ(offsets, (std::vector<cudf::size_type>{0, half, rows}));
-  auto const ordered = cudf::detail::make_counting_transform_iterator(
+  auto const ordered     = cudf::detail::make_counting_transform_iterator(
     0, [](auto i) { return i < half ? i * 2 : (i - half) * 2 + 1; });
   fixed_width_column_wrapper<int32_t> order(ordered, ordered + rows, stream);
-  auto expected = cudf::gather(input,
-                               order,
-                               cudf::out_of_bounds_policy::DONT_CHECK,
-                               cudf::negative_index_policy::NOT_ALLOWED,
-                               stream,
-                               mr());
-  for (auto p = 0; p < 2; ++p) {
-    auto expected_part   = cudf::slice(expected->view(), {offsets[p], offsets[p + 1]}, stream)[0];
-    auto actual_part     = cudf::slice(output->view(), {offsets[p], offsets[p + 1]}, stream)[0];
-    auto expected_sorted = cudf::sort(expected_part, {}, {}, stream, mr());
-    auto actual_sorted   = cudf::sort(actual_part, {}, {}, stream, mr());
-    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view(), stream);
+  for (auto const count : {1, 2}) {
+    SCOPED_TRACE(count);
+    auto const input       = count == 1 ? all_columns.select({0}) : all_columns;
+    auto [output, offsets] = cudf::partition(input, map, 2, stream, mr());
+    ASSERT_EQ(offsets, (std::vector<cudf::size_type>{0, half, rows}));
+    auto expected = cudf::gather(input,
+                                 order,
+                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                 cudf::negative_index_policy::NOT_ALLOWED,
+                                 stream,
+                                 mr());
+    for (auto p = 0; p < 2; ++p) {
+      auto expected_part   = cudf::slice(expected->view(), {offsets[p], offsets[p + 1]}, stream)[0];
+      auto actual_part     = cudf::slice(output->view(), {offsets[p], offsets[p + 1]}, stream)[0];
+      auto expected_sorted = cudf::sort(expected_part, {}, {}, stream, mr());
+      auto actual_sorted   = cudf::sort(actual_part, {}, {}, stream, mr());
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view(), stream);
+    }
   }
 }
 

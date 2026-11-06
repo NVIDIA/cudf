@@ -20,7 +20,7 @@ use uuid::Uuid;
 use super::CudfPolarsUiAnalyzer;
 use crate::resource::{
     DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
-    PROCESSOR_RESOURCE_TYPE, SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE,
+    PROCESSOR_RESOURCE_TYPE, SAMPLED_MEMORY_RESOURCE_TYPE,
 };
 
 impl CudfPolarsUiAnalyzer {
@@ -84,9 +84,9 @@ impl CudfPolarsUiAnalyzer {
                 },
             ),
             (
-                SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
+                SAMPLED_MEMORY_RESOURCE_TYPE.to_owned(),
                 UiResourceTypeDecl {
-                    name: SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
+                    name: SAMPLED_MEMORY_RESOURCE_TYPE.to_owned(),
                     capacities: vec![UiCapacityDecl {
                         name: "bytes".to_owned(),
                         kind: CapacityKind::Occupancy,
@@ -129,7 +129,7 @@ impl CudfPolarsUiAnalyzer {
                     vec![
                         PROCESSOR_RESOURCE_TYPE.to_owned(),
                         DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
-                        SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
+                        SAMPLED_MEMORY_RESOURCE_TYPE.to_owned(),
                         DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
                     ],
                 ),
@@ -141,7 +141,7 @@ impl CudfPolarsUiAnalyzer {
                     vec![
                         PROCESSOR_RESOURCE_TYPE.to_owned(),
                         DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
-                        SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
+                        SAMPLED_MEMORY_RESOURCE_TYPE.to_owned(),
                         DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
                     ],
                 ),

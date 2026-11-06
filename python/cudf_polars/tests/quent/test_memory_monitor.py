@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the Quent device memory sampler."""
+"""Unit tests for the Quent memory resource sampler."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from cudf_polars.quent._context import QuentConfig
-from cudf_polars.quent._memory_monitor import DeviceMemorySampler
+from cudf_polars.quent._memory_monitor import MemoryResourceSampler
 from cudf_polars.quent._runtime import QuentWorkerRuntime
 
 
@@ -30,11 +30,11 @@ def _sampler(
     interval_s: float = 0.001,
     read_bytes=None,
     events: list[tuple] | None = None,
-) -> tuple[DeviceMemorySampler, list[tuple]]:
+) -> tuple[MemoryResourceSampler, list[tuple]]:
     """Build a sampler that records ``("record", query, bytes)``/``("stop", query)``."""
     events = [] if events is None else events
     counter = itertools.count(1)
-    sampler = DeviceMemorySampler(
+    sampler = MemoryResourceSampler(
         read_bytes=read_bytes or (lambda: next(counter) * 1000),
         record=lambda query, nbytes: events.append(("record", query, nbytes)),
         stop=lambda query: events.append(("stop", query)),
@@ -200,7 +200,7 @@ def test_sampler_error_warns_and_does_not_fail_the_body() -> None:
 
 
 def test_sampler_error_in_record_does_not_leak_to_caller() -> None:
-    sampler = DeviceMemorySampler(
+    sampler = MemoryResourceSampler(
         read_bytes=lambda: 1,
         record=MagicMock(side_effect=RuntimeError("emit failed")),
         stop=MagicMock(),
@@ -229,7 +229,7 @@ def test_sampler_close_stops_attached_queries_and_the_thread() -> None:
 @pytest.mark.parametrize("interval_s", [0, -1.0])
 def test_sampler_rejects_non_positive_interval(interval_s: float) -> None:
     with pytest.raises(ValueError, match="must be positive"):
-        DeviceMemorySampler(
+        MemoryResourceSampler(
             read_bytes=lambda: 0,
             record=lambda *_: None,
             stop=lambda *_: None,
@@ -255,12 +255,12 @@ def _runtime(
         return handle
 
     session = MagicMock()
-    observer = session.binding_context.device_memory_sampler_observer.return_value
+    observer = session.binding_context.memory_resource_sampler_observer.return_value
     observer.handle.return_value.sampling.side_effect = lambda *, query, memory: (
         transition(None, query, memory)
     )
     resources = MagicMock()
-    resources.sampled_device_memory_id = uuid.uuid4()
+    resources.sampled_memory_resource_id = uuid.uuid4()
     runtime = QuentWorkerRuntime(
         config=QuentConfig(device_memory_poll_interval_s=interval_s),
         session=session,
@@ -268,7 +268,7 @@ def _runtime(
         _worker_handle=MagicMock(),
         allocated_bytes=allocated_bytes,
     )
-    return runtime, resources.sampled_device_memory_id
+    return runtime, resources.sampled_memory_resource_id
 
 
 def test_monitor_device_memory_stops_fsm_when_query_fails() -> None:

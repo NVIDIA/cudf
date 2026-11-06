@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A shared, refcounted background sampler of device memory occupancy."""
+"""A shared, refcounted background sampler of memory resource occupancy."""
 
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
 
-__all__ = ["DeviceMemorySampler"]
+__all__ = ["MemoryResourceSampler"]
 
 
-class DeviceMemorySampler:
+class MemoryResourceSampler:
     """
-    Sample device memory on one thread, on behalf of every active query.
+    Sample the memory resource on one thread, on behalf of every active query.
 
     The device is shared by all queries running on a worker, so the reading is
     taken once per tick and delivered to each attached query. A background

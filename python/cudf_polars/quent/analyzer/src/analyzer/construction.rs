@@ -13,16 +13,16 @@ use crate::{
     actor::{ActorBuilder, ActorSpan},
     evaluate::{EvaluateBuilder, EvaluateSpan},
     generated::{
-        ActorEvent, CudfPolarsEvent, DataChannelEvent, DeviceMemoryEvent, DeviceMemorySamplerEvent,
-        EngineEvent, EvaluateEvent, OperatorEvent, PlanEvent, PortEvent, ProcessorEvent,
-        QueryEvent, QueryGroupEvent, SampledDeviceMemoryEvent, StorageEvent, ThreadPoolEvent,
-        WorkerEvent,
+        ActorEvent, CudfPolarsEvent, DataChannelEvent, DeviceMemoryEvent, EngineEvent,
+        EvaluateEvent, MemoryResourceSamplerEvent, OperatorEvent, PlanEvent, PortEvent,
+        ProcessorEvent, QueryEvent, QueryGroupEvent, SampledMemoryResourceEvent, StorageEvent,
+        ThreadPoolEvent, WorkerEvent,
     },
     memory_sample::{MemorySampleBuilder, MemorySampleSpan},
     model::CudfPolarsModelBuilder,
     resource::{
         DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, DeclaredResource,
-        DeclaredResourceGroup, PROCESSOR_RESOURCE_TYPE, SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE,
+        DeclaredResourceGroup, PROCESSOR_RESOURCE_TYPE, SAMPLED_MEMORY_RESOURCE_TYPE,
     },
 };
 
@@ -52,7 +52,7 @@ impl CudfPolarsUiAnalyzer {
                         .or_default()
                         .push(event.timestamp, evaluate_event);
                 }
-                CudfPolarsEvent::DeviceMemorySampler(sample_event) => {
+                CudfPolarsEvent::MemoryResourceSampler(sample_event) => {
                     memory_sample_builders
                         .entry(event.id)
                         .or_default()
@@ -116,7 +116,7 @@ impl CudfPolarsUiAnalyzer {
                         },
                     );
                 }
-                CudfPolarsEvent::SampledDeviceMemory(SampledDeviceMemoryEvent::Declared {
+                CudfPolarsEvent::SampledMemoryResource(SampledMemoryResourceEvent::Declared {
                     instance_name,
                     worker,
                 }) => {
@@ -125,7 +125,7 @@ impl CudfPolarsUiAnalyzer {
                         DeclaredResource {
                             id: event.id,
                             instance_name: instance_name.clone(),
-                            type_name: SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE,
+                            type_name: SAMPLED_MEMORY_RESOURCE_TYPE,
                             parent_group_id: worker.target,
                         },
                     );
@@ -240,7 +240,7 @@ fn events_for_engine(
                 }
                 CudfPolarsEvent::ThreadPool(ThreadPoolEvent::Declared { worker, .. })
                 | CudfPolarsEvent::DeviceMemory(DeviceMemoryEvent::Declared { worker, .. })
-                | CudfPolarsEvent::SampledDeviceMemory(SampledDeviceMemoryEvent::Declared {
+                | CudfPolarsEvent::SampledMemoryResource(SampledMemoryResourceEvent::Declared {
                     worker,
                     ..
                 })
@@ -254,7 +254,7 @@ fn events_for_engine(
                 CudfPolarsEvent::Evaluate(EvaluateEvent::Queued { actor, .. }) => {
                     Some(actor.target)
                 }
-                CudfPolarsEvent::DeviceMemorySampler(DeviceMemorySamplerEvent::Sampling {
+                CudfPolarsEvent::MemoryResourceSampler(MemoryResourceSamplerEvent::Sampling {
                     query,
                     ..
                 }) => Some(query.target),

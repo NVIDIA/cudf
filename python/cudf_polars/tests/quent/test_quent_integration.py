@@ -164,7 +164,7 @@ def test_quent_controller_cleanup_continues_after_handle_failure() -> None:
     collector.close.assert_called_once_with(timeout=10.0)
 
 
-def test_sampled_device_memory(
+def test_sampled_memory_resource(
     engine_with_quent_context: tuple[StreamingEngine, StreamingOptions],
 ) -> None:
     engine, base_options = engine_with_quent_context
@@ -186,10 +186,10 @@ def test_sampled_device_memory(
     events = _stored_events(quent_output_root)
     sampled_memory_ids = {
         event["id"]
-        for event in _of_type(events, "SampledDeviceMemory")
-        if "Declared" in event["data"]["SampledDeviceMemory"]
+        for event in _of_type(events, "SampledMemoryResource")
+        if "Declared" in event["data"]["SampledMemoryResource"]
     }
-    # Attributable and sampled device memory are separate resources.
+    # Attributable and sampled memory resource are separate resources.
     memory_ids = {
         event["id"]
         for event in _of_type(events, "DeviceMemory")
@@ -203,7 +203,7 @@ def test_sampled_device_memory(
     assert sampled_memory_ids
     # The test engines are built with a tracked memory resource, so the
     # sampler actually ran (it isn't started for untracked memory resources).
-    assert _of_type(events, "DeviceMemorySampler")
+    assert _of_type(events, "MemoryResourceSampler")
     assert memory_ids
     assert not sampled_memory_ids & memory_ids
     assert query_ids
@@ -211,12 +211,12 @@ def test_sampled_device_memory(
     # One sampler FSM per query on each rank. Even a query shorter than the
     # sampling interval is sampled once, and the FSM is stopped when the query
     # finishes.
-    sampler_events = _of_type(events, "DeviceMemorySampler")
+    sampler_events = _of_type(events, "MemoryResourceSampler")
     assert sampler_events
     sampler_states: dict[str, list[str]] = {}
     for event in sampler_events:
         sampler_states.setdefault(event["id"], []).append(
-            next(iter(event["data"]["DeviceMemorySampler"]))
+            next(iter(event["data"]["MemoryResourceSampler"]))
         )
     for states in sampler_states.values():
         assert states[:-1] == ["Sampling"] * (len(states) - 1)
@@ -224,7 +224,7 @@ def test_sampled_device_memory(
         assert len(states) >= 2
     queries_by_sampler: dict[str, set[str]] = {}
     for event in sampler_events:
-        sampling = event["data"]["DeviceMemorySampler"].get("Sampling")
+        sampling = event["data"]["MemoryResourceSampler"].get("Sampling")
         if sampling is not None:
             queries_by_sampler.setdefault(event["id"], set()).add(
                 sampling["query"]["target"]

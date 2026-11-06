@@ -26,7 +26,7 @@ verification checklist.
    traits implements).
 - `actor.rs`, `evaluate.rs`, `memory_sample.rs`, and `resource.rs` reconstruct
    execution spans and resource usage. `memory_sample.rs` turns the `sampling`
-   transitions of each `DeviceMemorySampler` FSM into `SampledDeviceMemory`
+   transitions of each `MemoryResourceSampler` FSM into `SampledMemoryResource`
    occupancy usages.
 - `analyzer/` converts imported events into Quent UI query bundles, entity
   lists, and resource timelines:

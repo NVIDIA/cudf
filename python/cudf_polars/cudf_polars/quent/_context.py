@@ -76,8 +76,8 @@ class QuentConfig:
     Parameters
     ----------
     device_memory_poll_interval_s
-        Seconds between polls of live device memory usage while a query
-        executes. ``None`` disables polling.
+        Seconds between samples of the memory resource's allocated bytes while
+        a query executes. ``None`` disables polling.
     """
 
     engine_id: uuid.UUID = dataclasses.field(default_factory=uuid.uuid4)
@@ -145,7 +145,7 @@ class WorkerResources:
     processor_registry: _ProcessorRegistry
     device_memory_id: uuid.UUID
     device_memory_bytes: int
-    sampled_device_memory_id: uuid.UUID
+    sampled_memory_resource_id: uuid.UUID
     filesystem_id: uuid.UUID
     disk_to_device_channel_id: uuid.UUID
     link_channel_ids: dict[int, uuid.UUID]
@@ -170,7 +170,7 @@ class WorkerResources:
             processor_registry=_ProcessorRegistry(),
             device_memory_id=uuid.uuid5(namespace, "device-memory"),
             device_memory_bytes=get_total_device_memory() or 0,
-            sampled_device_memory_id=uuid.uuid5(namespace, "sampled-device-memory"),
+            sampled_memory_resource_id=uuid.uuid5(namespace, "sampled-memory-resource"),
             filesystem_id=uuid.uuid5(namespace, "filesystem"),
             disk_to_device_channel_id=uuid.uuid5(namespace, "disk-to-device"),
             link_channel_ids={
@@ -187,10 +187,10 @@ class WorkerResources:
             worker=self.worker_id,
             limits={"bytes": self.device_memory_bytes},
         )
-        context.sampled_device_memory_observer().handle(
-            self.sampled_device_memory_id
+        context.sampled_memory_resource_observer().handle(
+            self.sampled_memory_resource_id
         ).declared(
-            instance_name=f"{self.instance_suffix} sampled device memory",
+            instance_name=f"{self.instance_suffix} sampled memory resource",
             worker=self.worker_id,
         )
         context.storage_observer().handle(self.filesystem_id).declared(

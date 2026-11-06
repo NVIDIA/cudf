@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Sampled device-memory occupancy readings.
+//! Sampled memory resource occupancy readings.
 //!
-//! One `DeviceMemorySampler` FSM covers one query on one worker. Each of its
-//! `sampling` transitions is a reading of device-memory occupancy that holds a
-//! `SampledDeviceMemory` usage until the next transition (the next reading, or
+//! One `MemoryResourceSampler` FSM covers one query on one worker. Each of its
+//! `sampling` transitions is a reading of memory resource occupancy that holds a
+//! `SampledMemoryResource` usage until the next transition (the next reading, or
 //! `stopped`). Summed over the resource, consecutive readings form a step
 //! function.
 //!
@@ -19,7 +19,7 @@ use quent_analyzer::{
 use quent_time::{TimeUnixNanoSec, span::SpanUnixNanoSec};
 use uuid::Uuid;
 
-use crate::generated::DeviceMemorySamplerEvent;
+use crate::generated::MemoryResourceSamplerEvent;
 
 struct Reading {
     timestamp: TimeUnixNanoSec,
@@ -35,9 +35,9 @@ pub(crate) struct MemorySampleBuilder {
 }
 
 impl MemorySampleBuilder {
-    pub(crate) fn push(&mut self, timestamp: TimeUnixNanoSec, event: &DeviceMemorySamplerEvent) {
+    pub(crate) fn push(&mut self, timestamp: TimeUnixNanoSec, event: &MemoryResourceSamplerEvent) {
         match event {
-            DeviceMemorySamplerEvent::Sampling { query, memory, .. } => {
+            MemoryResourceSamplerEvent::Sampling { query, memory, .. } => {
                 self.query_id = Some(query.target);
                 self.memory_id = Some(memory.target);
                 self.readings.push(Reading {
@@ -45,7 +45,7 @@ impl MemorySampleBuilder {
                     bytes: memory.data.bytes,
                 });
             }
-            DeviceMemorySamplerEvent::Stopped { .. } => self.stopped_at = Some(timestamp),
+            MemoryResourceSamplerEvent::Stopped { .. } => self.stopped_at = Some(timestamp),
         }
     }
 
@@ -117,13 +117,13 @@ mod tests {
     use quent_events::EntityRef;
 
     use super::*;
-    use crate::generated::SampledDeviceMemoryUsage;
+    use crate::generated::SampledMemoryResourceUsage;
 
-    fn sampling(bytes: u64, query: Uuid, memory: Uuid) -> DeviceMemorySamplerEvent {
-        DeviceMemorySamplerEvent::Sampling {
+    fn sampling(bytes: u64, query: Uuid, memory: Uuid) -> MemoryResourceSamplerEvent {
+        MemoryResourceSamplerEvent::Sampling {
             seq: 0,
             query: EntityRef::new(query, ()),
-            memory: EntityRef::new(memory, SampledDeviceMemoryUsage { bytes }),
+            memory: EntityRef::new(memory, SampledMemoryResourceUsage { bytes }),
         }
     }
 
@@ -131,7 +131,7 @@ mod tests {
     fn rejects_sampler_without_readings() {
         let id = Uuid::now_v7();
         let mut builder = MemorySampleBuilder::default();
-        builder.push(1, &DeviceMemorySamplerEvent::Stopped { seq: 1 });
+        builder.push(1, &MemoryResourceSamplerEvent::Stopped { seq: 1 });
 
         let error = builder
             .try_build(id)
@@ -149,7 +149,7 @@ mod tests {
         builder.push(10, &sampling(1, query, memory));
         builder.push(20, &sampling(2, query, memory));
         builder.push(35, &sampling(3, query, memory));
-        builder.push(40, &DeviceMemorySamplerEvent::Stopped { seq: 3 });
+        builder.push(40, &MemoryResourceSamplerEvent::Stopped { seq: 3 });
 
         let spans = builder.try_build(Uuid::now_v7()).unwrap();
         let bounds: Vec<_> = spans

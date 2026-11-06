@@ -19,10 +19,10 @@ use crate::{
     CudfPolarsUiAnalyzer, Viewer,
     generated::{
         ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, DeviceMemoryBounds,
-        DeviceMemoryEvent, DeviceMemorySamplerEvent, EngineEvent, EvaluateEvent, Implementation,
-        JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas, OperatorStatistics, PlanEvent,
+        DeviceMemoryEvent, EngineEvent, EvaluateEvent, Implementation, JoinFilterPushdownDetails,
+        MemoryResourceSamplerEvent, OperatorEvent, OperatorSchemas, OperatorStatistics, PlanEvent,
         ProcessorEvent, QueryEvent, QueryGroupEvent, RuntimePrefilterStatistics,
-        SampledDeviceMemoryEvent, SampledDeviceMemoryUsage, ThreadPoolEvent, WorkerEvent,
+        SampledMemoryResourceEvent, SampledMemoryResourceUsage, ThreadPoolEvent, WorkerEvent,
     },
     resource::{EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE},
 };
@@ -574,7 +574,7 @@ fn builds_query_bundle_from_generated_events() {
 }
 
 #[test]
-fn sampled_device_memory_forms_an_occupancy_step_function() {
+fn sampled_memory_resource_forms_an_occupancy_step_function() {
     let engine_id = Uuid::now_v7();
     let worker_id = Uuid::now_v7();
     let query_group_id = Uuid::now_v7();
@@ -582,7 +582,7 @@ fn sampled_device_memory_forms_an_occupancy_step_function() {
     let other_query_id = Uuid::now_v7();
     let memory_id = Uuid::now_v7();
     let sampled_memory_id = Uuid::now_v7();
-    // One `DeviceMemorySampler` FSM: a `sampling` transition per reading, then
+    // One `MemoryResourceSampler` FSM: a `sampling` transition per reading, then
     // an optional `stopped`.
     let sampler = |query: Uuid, readings: &[(u64, u64)], stopped_at: Option<u64>| {
         let id = Uuid::now_v7();
@@ -593,12 +593,12 @@ fn sampled_device_memory_forms_an_occupancy_step_function() {
                 Event::new(
                     id,
                     timestamp,
-                    CudfPolarsEvent::DeviceMemorySampler(DeviceMemorySamplerEvent::Sampling {
+                    CudfPolarsEvent::MemoryResourceSampler(MemoryResourceSamplerEvent::Sampling {
                         seq: seq as u16,
                         query: EntityRef::new(query, ()),
                         memory: EntityRef::new(
                             sampled_memory_id,
-                            SampledDeviceMemoryUsage { bytes },
+                            SampledMemoryResourceUsage { bytes },
                         ),
                     }),
                 )
@@ -608,7 +608,7 @@ fn sampled_device_memory_forms_an_occupancy_step_function() {
             events.push(Event::new(
                 id,
                 timestamp,
-                CudfPolarsEvent::DeviceMemorySampler(DeviceMemorySamplerEvent::Stopped {
+                CudfPolarsEvent::MemoryResourceSampler(MemoryResourceSamplerEvent::Stopped {
                     seq: readings.len() as u16,
                 }),
             ));
@@ -687,8 +687,8 @@ fn sampled_device_memory_forms_an_occupancy_step_function() {
         Event::new(
             sampled_memory_id,
             3,
-            CudfPolarsEvent::SampledDeviceMemory(SampledDeviceMemoryEvent::Declared {
-                instance_name: "rank-0 sampled device memory".to_owned(),
+            CudfPolarsEvent::SampledMemoryResource(SampledMemoryResourceEvent::Declared {
+                instance_name: "rank-0 sampled memory resource".to_owned(),
                 worker: EntityRef::new(worker_id, ()),
             }),
         ),

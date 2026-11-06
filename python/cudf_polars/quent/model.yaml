@@ -275,11 +275,22 @@ entities:
         attributes:
           limits: { sets-resource-bounds: true }
 
-  SampledDeviceMemory:
+  SampledMemoryResource:
     doc: >-
-      Device-memory occupancy as periodically sampled from the worker's memory
-      resource. Independent of `DeviceMemory`, which is reserved for usage
-      attributed to individual operators.
+      Occupancy of the worker's memory resource, as periodically sampled
+      from the memory resource itself.
+
+      This can differ from actual device memory usage when allocations are
+      made outside of the memory resource. In general, all allocations made
+      by cudf-polars, libcudf, and rapidsmpf will be on the memory resource.
+      But other libraries, like UCX (used for transferring data between ranks)
+      will use their own segments of device memory.
+
+      Because this is *sampled* and *global* (to the device) this metric cannot
+      be associated with specific operators. In general, the sampled memory
+      usage ought to equal the sum of the memory usage reported by
+      `DeviceMemory`, but differences will occur due to timing issues and
+      certain areas not (yet) being explicitly instrumented.
     resource:
       bytes: { kind: occupancy }
     events:
@@ -379,18 +390,18 @@ fsms:
         attributes:
           error: string
 
-  DeviceMemorySampler:
+  MemoryResourceSampler:
     doc: >-
-      Sampling of device-memory occupancy on one worker for the duration of
-      one query. Each `sampling` transition is one reading, held until the
+      Sampling of the memory resource's occupancy on one worker for the
+      duration of one query. Each `sampling` transition is one reading, held until the
       next transition replaces it, so consecutive readings form a step
-      function over the SampledDeviceMemory resource.
+      function over the SampledMemoryResource resource.
     states:
       sampling:
         initial: true
         attributes:
           query: { scope-ref: Query }
-          memory: { uses: SampledDeviceMemory }
+          memory: { uses: SampledMemoryResource }
         to: [sampling, stopped]
       stopped: {}
 

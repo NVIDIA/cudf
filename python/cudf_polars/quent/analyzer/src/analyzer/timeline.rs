@@ -25,7 +25,7 @@ use crate::{
     memory_sample::MemorySampleUsage,
     resource::{
         DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
-        PROCESSOR_RESOURCE_TYPE, SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE, resource_type,
+        PROCESSOR_RESOURCE_TYPE, SAMPLED_MEMORY_RESOURCE_TYPE, resource_type,
     },
 };
 
@@ -107,7 +107,7 @@ impl CudfPolarsUiAnalyzer {
             resource_type_name.as_str(),
             PROCESSOR_RESOURCE_TYPE
                 | DEVICE_MEMORY_RESOURCE_TYPE
-                | SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE
+                | SAMPLED_MEMORY_RESOURCE_TYPE
                 | DATA_CHANNEL_RESOURCE_TYPE
         ) {
             return Err(AnalyzerError::InvalidArgument(format!(
@@ -211,7 +211,7 @@ impl CudfPolarsUiAnalyzer {
                     })?;
                 }
             }
-            if resource_type_name == SAMPLED_DEVICE_MEMORY_RESOURCE_TYPE {
+            if resource_type_name == SAMPLED_MEMORY_RESOURCE_TYPE {
                 for sample in self.memory_samples.iter().filter(|sample| {
                     sample.query_id == query_id && selected_resource_ids.contains(&sample.memory_id)
                 }) {

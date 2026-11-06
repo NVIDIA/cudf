@@ -721,22 +721,24 @@ its `QuentQueryConfig` carries display metadata that may change per query.
 `QuentQueryWorkerState` binds a query ID to the worker runtime that owns the
 rank-local generated handles and resource UUIDs.
 
-#### Sampled device memory
+#### Sampled memory resource
 
-While queries execute, each worker periodically samples the bytes its device
-memory resource has allocated and reports them on the worker's
-`SampledDeviceMemory` resource, so the Quent UI can chart device memory
-occupancy over the query. The sampling interval defaults to one second and is
-set with `QuentConfig.device_memory_poll_interval_s` (`None` disables sampling).
+While queries execute, each worker periodically samples the bytes its memory
+resource has allocated and reports them on the worker's
+`SampledMemoryResource` resource, so the Quent UI can chart the memory
+resource's occupancy over the query. The name is deliberate: the reading is of
+the memory resource (the allocator), not of device memory in general. The
+sampling interval defaults to one second and is set with
+`QuentConfig.device_memory_poll_interval_s` (`None` disables sampling).
 
-`SampledDeviceMemory` is independent of the `DeviceMemory` resource. It is a
+`SampledMemoryResource` is independent of the `DeviceMemory` resource. It is a
 measurement of the memory resource itself and cannot attribute memory to any
 operator; `DeviceMemory` is reserved for usage that cudf-polars attributes to
 individual operators. Keeping them separate lets the two be compared, and
 keeps sampled readings from being summed into attributed usage.
 
-Each query on each worker has one `DeviceMemorySampler` FSM. Every reading is a
-`sampling` transition that holds a `SampledDeviceMemory` usage until the next
+Each query on each worker has one `MemoryResourceSampler` FSM. Every reading is a
+`sampling` transition that holds a `SampledMemoryResource` usage until the next
 transition (the next reading, or `stopped` when the query finishes), so
 consecutive readings form a step function. A single thread per worker takes
 each reading and delivers it to every query running on that worker; the thread
@@ -783,7 +785,7 @@ Quent's names.
 | `IR.do_evaluate` | `Evaluate` | Synchronous host-side evaluation of an IR node. |
 | rapidsmpf streaming actor | `Actor` | Actor lifetime and aggregate chunk/byte statistics. |
 | worker I/O or rank link | `DataChannel` | A concrete resource used for data transfer. |
-| sampled device memory reading | `DeviceMemorySampler` | One FSM per query and worker; each `sampling` transition is a reading of live allocated device bytes, held as a `SampledDeviceMemory` usage until the next transition. See [Sampled device memory](#sampled-device-memory). |
+| sampled memory resource reading | `MemoryResourceSampler` | One FSM per query and worker; each `sampling` transition is a reading of live allocated device bytes, held as a `SampledMemoryResource` usage until the next transition. See [Sampled memory resource](#sampled-memory-resource). |
 
 
 [Quent]: https://github.com/rapidsai/quent

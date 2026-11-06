@@ -12,7 +12,7 @@ import socket
 import threading
 from typing import TYPE_CHECKING
 
-from cudf_polars.quent._memory_monitor import DeviceMemorySampler
+from cudf_polars.quent._memory_monitor import MemoryResourceSampler
 from cudf_polars.utils.cleanup import run_cleanup_steps
 
 if TYPE_CHECKING:
@@ -228,19 +228,19 @@ class QuentWorkerRuntime:
     worker_resources: WorkerResources
     _worker_handle: quent_bindings.WorkerInitHandle | None
     allocated_bytes: Callable[[], int] | None = None
-    _sampler: DeviceMemorySampler | None = dataclasses.field(
+    _sampler: MemoryResourceSampler | None = dataclasses.field(
         default=None, init=False, repr=False
     )
-    # One DeviceMemorySampler FSM per query currently being sampled. Only
+    # One MemoryResourceSampler FSM per query currently being sampled. Only
     # touched from the sampler, which serializes its callbacks.
-    _sampler_fsms: dict[uuid.UUID, quent_bindings.DeviceMemorySamplerSamplingHandle] = (
-        dataclasses.field(default_factory=dict, init=False, repr=False)
-    )
+    _sampler_fsms: dict[
+        uuid.UUID, quent_bindings.MemoryResourceSamplerSamplingHandle
+    ] = dataclasses.field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         interval_s = self.config.device_memory_poll_interval_s
         if self.allocated_bytes is not None and interval_s is not None:
-            self._sampler = DeviceMemorySampler(
+            self._sampler = MemoryResourceSampler(
                 read_bytes=self.allocated_bytes,
                 record=self._record_device_memory,
                 stop=self._stop_device_memory,
@@ -280,7 +280,7 @@ class QuentWorkerRuntime:
         allocated_bytes
             Lock-free reader of live device bytes allocated by this worker,
             e.g. ``rmm.mr.LimitingResourceAdaptor.get_allocated_bytes``.
-            When ``None``, device memory is not sampled.
+            When ``None``, the memory resource is not sampled.
         """
         from cudf_polars.quent._context import WorkerResources
 
@@ -323,14 +323,14 @@ class QuentWorkerRuntime:
 
     def _record_device_memory(self, query_id: uuid.UUID, nbytes: int) -> None:
         """Record one reading as the next state of the query's sampler FSM."""
-        usage: quent_bindings.SampledDeviceMemoryUsageRefDict = {
-            "target": self.worker_resources.sampled_device_memory_id,
+        usage: quent_bindings.SampledMemoryResourceUsageRefDict = {
+            "target": self.worker_resources.sampled_memory_resource_id,
             "data": {"bytes": nbytes},
         }
         fsm = self._sampler_fsms.get(query_id)
         if fsm is None:
             self._sampler_fsms[query_id] = (
-                self.session.binding_context.device_memory_sampler_observer()
+                self.session.binding_context.memory_resource_sampler_observer()
                 .handle()
                 .sampling(query=query_id, memory=usage)
             )
@@ -346,22 +346,17 @@ class QuentWorkerRuntime:
     @contextlib.contextmanager
     def monitor_device_memory(self, query_id: uuid.UUID) -> Iterator[None]:
         """
-        Sample device memory occupancy while a query executes on this worker.
-
-        Each reading is a ``sampling`` transition of the query's
-        ``DeviceMemorySampler`` FSM. It holds a ``SampledDeviceMemory`` usage
-        until the next reading replaces it, so consecutive readings form a step
-        function. The reader is a lock-free atomic load, so sampling does not
-        contend with allocations. One worker-wide thread takes each reading and
-        delivers it to every query being monitored.
-
-        Does nothing when no reader was supplied or sampling is disabled with
-        ``QuentConfig.device_memory_poll_interval_s=None``.
+        Context manager for sampling the memory resource while executing a query.
 
         Parameters
         ----------
         query_id
-            The query being executed.
+            The ID of the query being executed.
+
+        Notes
+        -----
+        Does nothing when no reader was supplied or sampling is disabled with
+        ``QuentConfig.device_memory_poll_interval_s=None``.
         """
         sampler = self._sampler
         if sampler is None:

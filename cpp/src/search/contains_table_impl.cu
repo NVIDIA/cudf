@@ -17,10 +17,11 @@ namespace cudf::detail {
  *
  * @param input The input table
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned bitmask's device memory
  * @return A pair of pointer to the output bitmask and the buffer containing the bitmask
  */
 std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
-  table_view const& input, cuda::stream_ref stream)
+  table_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const nullable_columns = get_nullable_columns(input);
   CUDF_EXPECTS(nullable_columns.size() > 0,
@@ -30,9 +31,7 @@ std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_ro
   // Otherwise, we have only one nullable column and can use its null mask directly.
   if (nullable_columns.size() > 1) {
     auto row_bitmask =
-      cudf::detail::bitmask_and(
-        table_view{nullable_columns}, stream, cudf::get_current_device_resource_ref())
-        .first;
+      cudf::detail::bitmask_and(table_view{nullable_columns}, stream, mr.get_output_mr()).first;
     auto const row_bitmask_ptr = row_bitmask.data();
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }

@@ -46,7 +46,6 @@ jobs:
       - pandas-tests-shards
       - pandas-tests
       - pandas-tests-summary
-      - narwhals-tests
       - third-party-integration-tests-cudf-pandas
     uses: rapidsai/shared-workflows/.github/workflows/pr-builder.yaml@main
     permissions:
@@ -88,6 +87,8 @@ jobs:
           - 'cpp/include/**'
           - 'cpp/libcudf_kafka/include/**'
           - 'ci/build_docs.sh'
+          - 'java/doxygen/**'
+          - 'java/src/main/java/**'
           - 'python/**'
         test_cpp_common:
           - 'conda/recipes/libcudf/**'
@@ -240,8 +241,6 @@ jobs:
           - 'ci/run_pylibcudf_pytests.sh'
         test_python_cuml:
           - 'ci/test_cuml_compat.sh'
-        test_python_narwhals:
-          - 'ci/test_narwhals.sh'
         test_python_wheels:
           - 'ci/build_wheel_noarch.sh'
           - 'ci/build_wheel.sh'
@@ -1191,31 +1190,6 @@ jobs:
       continue-on-error: true
       container_image: "rapidsai/citestwheel:26.12-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/summary.sh ${{ needs.pandas-tests-shards.outputs.num_shards }}"
-  narwhals-tests:
-    needs: [conda-python-build, conda-python-build-noarch, changed-files]
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      packages: read
-      pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
-    if: >
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf_polars ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_builds ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_conda_common ||
-      fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_narwhals
-    with:
-      build_type: pull-request
-      branch: ${{ inputs.branch }}
-      date: ${{ inputs.date }}
-      sha: ${{ inputs.sha }}
-      node_type: "gpu-rtxpro6000-latest-1"
-      container_image: "rapidsai/ci-conda:26.12-latest"
-      script: ci/test_narwhals.sh
   cudf-spark-jni:
     needs: changed-files
     permissions:

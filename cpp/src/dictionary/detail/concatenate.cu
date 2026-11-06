@@ -289,7 +289,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // finally, frankenstein that dictionary column together
   return make_dictionary_column(std::move(keys_column),
                                 std::move(indices_column),
-                                std::move(*(contents.null_mask.release())),
+                                std::move(*(contents.null_mask)),
                                 null_count);
 }
 

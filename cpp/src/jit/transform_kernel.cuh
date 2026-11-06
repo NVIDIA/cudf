@@ -100,12 +100,14 @@ __device__ void transform_kernel(size_type row_size,
             auto const error =
               operation(row_index, &outs..., In::nullable_element(input_cols, row_index)...);
             // Null outputs are disengaged; the value written for those rows is undefined.
-            (Out::assign(output_cols, row_index, outs.value_or(typename Out::element_type{})), ...);
+            (Out::assign(
+               output_cols, row_index, outs.value_or(typename decltype(outs)::value_type{})),
+             ...);
             (jit::warp_compact_validity<Out>(active_mask, output_cols, row_index, outs.has_value()),
              ...);
             thread_error = cuda::std::max(thread_error, error);
           });
-        }(Out::null_output_arg(output_cols, row_index)...);
+        }(Out::nullable_output_arg(output_cols, row_index)...);
       });
     }
   }

@@ -25,6 +25,9 @@ rapids-logger "Check GPU usage"
 nvidia-smi
 rapids-print-env
 
+rapids-logger "pytest coverage exporter"
+python -m pytest -q --no-cov ci/tests/test_analyze_cudf_polars_coverage.py
+
 rapids-logger "pytest cudf-polars"
 # Fail fast (-x) rather than trying to continue because failed tests pollute the state.
 ./ci/run_cudf_polars_pytests.sh \

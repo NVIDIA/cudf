@@ -606,73 +606,72 @@ and matching list entries before selected PR runs can use them.
 
 ### Comparing local and upstream test coverage
 
-With the supported Polars version installed and its matching `py-<version>`
-checkout in `polars/`, run `ci/run_cudf_polars_coverage_comparison.sh` inside
-the cudf devcontainer. The command runs both suites with per-test coverage
-contexts and writes separate coverage data, a line-level comparison, local-test
-classifications, and a ranked local-to-upstream review queue under
-`coverage-results/cudf-polars-comparison/`. The comparison JSON records the
-cuDF and Polars revisions and installed Polars version. The queue also marks
-whether each upstream node appears in the maintained default-SPMD
-GPU-execution list for that version. JSON samples up to 20 test contexts per
-source line and records the total count; the separate `.coverage.local` and
-`.coverage.upstream` files retain every context. The review queue puts
-GPU-observed upstream nodes first; its HTML shows the first 500 pairs, while
-the JSON retains the full ranking. The command still writes the report when a
-suite fails, records each suite's exit status, and then exits unsuccessfully;
-such comparisons are provisional.
+To find behavior that may need additional upstream tests, use a devcontainer
+with cudf-polars built and its test dependencies (including pytest-cov and
+pytest-xdist) installed. Install a supported Polars version and place its
+matching `py-<version>` checkout in `polars/`.
+Then run this command in the cuDF devcontainer:
 
-Review a queue entry's assertions and GPU-execution diagnostics before
-proposing any deletion. Shared source lines and similar test names only identify
-tests worth investigating; they do not establish equivalent behavior.
+```bash
+ci/run_cudf_polars_coverage_comparison.sh
+```
 
-### Initial behavioral review candidates
+The command collects local coverage and runs the upstream suite with the
+in-memory and default-blocksize SPMD engines, without GPU run-list selection.
+The existing runners' skips, deselections, and slow-test filters still apply.
+Set `POLARS_DIR` to use another upstream checkout, or pass an output directory
+as the command's first argument.
 
-The Polars 2.0 coverage run identified four close in-memory behavioral matches.
-Each local case has only 17 local-only lines, all in the local assertion helper.
-All four upstream nodes appear in the maintained GPU-execution lists for both
-Polars 2.0 and 2.1, and their public assertions cover the same operations.
-These are candidates for a later pruning PR, not approved deletions. All four
-upstream nodes passed a strict injected-GPU run on Polars 2.0 for both in-memory
-and default-blocksize SPMD; Polars 2.1 still needs the same check.
+The output directory (default: `coverage-results/cudf-polars-comparison/`)
+contains `.coverage.local`, `.coverage.upstream-in-memory`,
+`.coverage.upstream-spmd`, and `coverage-comparison.json`. Keep these files
+together. The JSON identifies local-only, upstream-only, and shared lines and
+records the Polars version, checkout revisions, and suite exit statuses.
+Collection metadata identifies the engine configurations, slow-test filter,
+disabled GPU run-list selection, and available runner deselection tables.
+Architecture- and glibc-specific deselections follow the existing runner.
+It samples up to 20 contexts per source line and reports when a sample is
+truncated; the coverage databases retain every test node and its
+`|setup`, `|run`, or `|teardown` phase. The engine databases remain separate so
+the same upstream node can be examined under each configuration.
 
-| Local test | Upstream lazy counterpart | Review finding |
-| --- | --- | --- |
-| `tests/test_groupby.py::test_groupby_has_nulls_literal[in-memory]` | `tests/unit/operations/test_has_nulls.py::test_has_nulls_group_by_literal` | Candidate: both group the same input and assert null/non-null literal results. |
-| `tests/expressions/test_replace.py::test_replace_strict_many_to_null[in-memory]` | `tests/unit/operations/test_replace_strict.py::test_replace_strict_fast_path_many_to_one_null` | Candidate: both map the same values to null with the same default. |
-| `tests/expressions/test_replace.py::test_replace_only_null_to_one[in-memory]` | `tests/unit/operations/test_replace.py::test_replace_fast_path_one_null_to_one` | Candidate: both replace null with 100 while leaving ordinary values unchanged. |
-| `tests/expressions/test_replace.py::test_replace_many_with_null_to_one[in-memory]` | `tests/unit/operations/test_replace.py::test_replace_fast_path_many_with_null_to_one` | Candidate: both replace one value and null with 100. |
+For example, this prints every local test context for the first local-only
+line in the report, including contexts omitted from the JSON sample:
 
-Each local function also runs under SPMD-small, Dask, and Ray, which the
-upstream suite does not cover in this comparison. Even if the upstream
-in-memory and default-SPMD nodes pass strictly, deleting the whole local
-function would lose those backend checks; any later pruning must preserve them.
+```bash
+python - coverage-results/cudf-polars-comparison/coverage-comparison.json <<'PY'
+import json
+import sys
+from pathlib import Path
 
-Other apparent overlaps did not pass assertion review. In Polars 2.0,
-`tests/test_groupby.py::test_groupby_count_distinct_sql[in-memory]` pairs with
-`tests/unit/sql/test_distinct.py::test_distinct_with_group_by`, but the local
-case includes a null counted column and the upstream fixture does not.
-`tests/test_mapfunction.py::test_explode_reconstruct` pairs with an upstream
-explode/filter test through shared source lines, but checks IR reconstruction
-rather than public query results; it is excluded from the pruning queue.
+from coverage import CoverageData
 
-These Polars 2.1 nodes also appear in the maintained GPU-execution list, but
-their assertions do not cover everything their local counterparts test. None
-is an approved removal.
+report_path = Path(sys.argv[1]).resolve()
+report = json.loads(report_path.read_text())
+data = CoverageData(basename=str(report_path.parent / report["context_data"]["local"]))
+data.read()
+for filename, categories in report["files"].items():
+    if categories["local_only"]:
+        line = categories["local_only"][0]["line"]
+        print(f"{filename}:{line}")
+        print(*sorted(data.contexts_by_lineno(filename)[line]), sep="\n")
+        break
+PY
+```
 
-| Local test | Upstream lazy counterpart | Review finding |
-| --- | --- | --- |
-| `tests/test_hconcat.py::test_hconcat` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal` | Retain: the local case concatenates a computed column derived from the other input; upstream uses independent inputs. |
-| `tests/test_hconcat.py::test_hconcat_different_heights` | `tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal_extend` | Retain: both check null padding, but the local case also uses list and string columns. |
-| `tests/test_join.py::test_join_where` | `tests/unit/lazyframe/test_lazyframe.py::test_join_where` | Retain: upstream checks one fixed predicate pair; local cases vary predicates and also check slicing. |
+Local-only lines are a starting point for finding missing upstream assertions.
+Check their test contexts: fixture setup and assertion helpers also contribute
+coverage. An upstream test may be skipped, select a CPU engine, or fall back,
+so absent GPU coverage does not necessarily mean the behavior is untested
+upstream. Use the GPU execution diagnostics and inspect both tests' assertions
+before deciding what to contribute.
 
-Keep strict-height error cases and tests that construct cudf-polars IR directly
-unless equivalent GPU error-path or internal-contract coverage is demonstrated.
-Eager-only upstream counterparts cannot establish cudf-polars GPU coverage.
-The initial Polars 2.0 full upstream run had four failing join tests, so its
-comparison is provisional even though coverage data was produced for both
-upstream engine configurations. A historical GPU-execution-list entry alone
-does not establish a currently passing counterpart.
+The command exports available data even when a suite fails, then returns a
+nonzero status. Such reports are incomplete evidence. Missing data or missing
+test-body contexts prevent export rather than being interpreted as a coverage
+gap. To compare existing databases without rerunning tests, invoke
+`ci/analyze_cudf_polars_coverage.py --help`; `--upstream-data` accepts multiple
+databases.
 
 # Debugging
 

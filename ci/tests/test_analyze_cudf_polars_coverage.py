@@ -1,297 +1,137 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for the cudf-polars coverage comparison analysis."""
-
-from __future__ import annotations
+"""Check coverage exports against real coverage.py context databases."""
 
 import importlib.util
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 from coverage import CoverageData
 
-if TYPE_CHECKING:
-    from types import ModuleType
+_spec = importlib.util.spec_from_file_location(
+    "coverage_analysis",
+    Path(__file__).parents[1] / "analyze_cudf_polars_coverage.py",
+)
+analyzer = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(analyzer)
 
 
-def _load_analyzer() -> ModuleType:
-    path = Path(__file__).parents[1] / "analyze_cudf_polars_coverage.py"
-    spec = importlib.util.spec_from_file_location("coverage_analysis", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _data(path, contexts):
+    data = CoverageData(basename=str(path))
+    for context, files in contexts.items():
+        data.set_context(context)
+        data.add_lines(files)
+    data.write()
+    return data
 
 
-class _CoverageData:
-    def __init__(self, data: dict[str, dict[int, set[str]]]) -> None:
-        self.data = data
-
-    def measured_files(self) -> set[str]:
-        return set(self.data)
-
-    def lines(self, filename: str) -> list[int]:
-        return list(self.data.get(filename, {}))
-
-    def contexts_by_lineno(self, filename: str) -> dict[int, set[str]]:
-        return self.data.get(filename, {})
-
-
-def test_missing_or_empty_coverage_data_fails(tmp_path) -> None:
-    analyzer = _load_analyzer()
-    path = tmp_path / ".coverage.local"
-    with pytest.raises(ValueError, match="Missing or empty coverage data"):
-        analyzer._read_data(path)
-    path.touch()
-    with pytest.raises(ValueError, match="Missing or empty coverage data"):
-        analyzer._read_data(path)
-
-
-def test_build_report_emits_focused_upstream_unit_candidates() -> None:
-    analyzer = _load_analyzer()
+def test_line_categories_retain_test_phases(tmp_path):
     source = "/work/cudf_polars/dsl/translate.py"
-    ignored_source = "/work/cudf_polars/streaming/io.py"
-    local = _CoverageData(
+    engine = "/work/cudf_polars/engine/core.py"
+    local = _data(
+        tmp_path / ".coverage.local",
         {
-            source: {
-                10: {"tests/dsl/test_to_ast.py::test_translate|run"},
-                11: set(),
-            },
-            ignored_source: {20: {"tests/test_io.py::test_scan|run"}},
-        }
+            "tests/test_filter.py::test_filter|run": {source: {10, 11}},
+            "tests/test_filter.py::test_filter|setup": {engine: {20}},
+        },
     )
-    upstream = _CoverageData(
+    upstream = _data(
+        tmp_path / ".coverage.upstream",
         {
-            source: {
-                10: {"tests/unit/lazyframe/test_lazy.py::test_translate|run"},
-                12: {
-                    "tests/unit/lazyframe/test_lazy.py::test_upstream_only|run"
-                },
-            },
-            ignored_source: {
-                20: {"tests/unit/test_streaming.py::test_io|run"}
-            },
-        }
+            "tests/unit/test_join.py::test_join|run": {source: {10, 12}},
+            "tests/unit/test_join.py::test_join|teardown": {engine: {21}},
+        },
     )
 
-    report = analyzer.build_report(local, upstream)
+    report = analyzer.build_report(local, [upstream])
 
     assert report["summary"] == {
-        "both": 2,
+        "both": 1,
+        "local_only": 2,
+        "upstream_only": 2,
         "files": 2,
-        "local_only": 1,
-        "upstream_only": 1,
     }
-    assert report["review_pairs"] == []
-    assert report["files"][source]["both"][0]["local_contexts"] == [
-        "tests/dsl/test_to_ast.py::test_translate|run"
+    assert [
+        line["line"] for line in report["files"][source]["local_only"]
+    ] == [11]
+    assert [
+        line["line"] for line in report["files"][source]["upstream_only"]
+    ] == [12]
+    shared = report["files"][source]["both"][0]
+    assert shared["local_contexts"] == [
+        "tests/test_filter.py::test_filter|run"
     ]
-    assert report["files"][source]["both"][0]["upstream_contexts"] == [
-        "tests/unit/lazyframe/test_lazy.py::test_translate|run"
+    assert shared["upstream_contexts"] == [
+        "tests/unit/test_join.py::test_join|run"
     ]
+    assert report["files"][engine]["local_only"][0]["local_contexts"] == [
+        "tests/test_filter.py::test_filter|setup"
+    ]
+    assert report["files"][engine]["upstream_only"][0][
+        "upstream_contexts"
+    ] == ["tests/unit/test_join.py::test_join|teardown"]
+    assert set(report) == {"files", "summary"}
 
 
-def test_review_pairs_need_shared_behavior_and_remain_candidates() -> None:
-    analyzer = _load_analyzer()
+def test_truncated_samples_keep_complete_raw_contexts(tmp_path):
     source = "/work/cudf_polars/dsl/translate.py"
-    local = _CoverageData(
-        {
-            source: {
-                line: {"tests/test_join.py::test_join|run"}
-                for line in range(10, 15)
-            }
-        }
-    )
-    upstream = _CoverageData(
-        {
-            source: {
-                line: {
-                    "tests/unit/operations/test_join.py::test_join|run",
-                    "tests/unit/operations/test_filter.py::test_filter|run",
-                }
-                for line in range(10, 14)
-            }
-        }
-    )
-
-    pairs = analyzer.build_report(local, upstream)["review_pairs"]
-
-    assert len(pairs) == 1
-    assert pairs[0]["local_nodeid"] == "tests/test_join.py::test_join"
-    assert pairs[0]["upstream_nodeid"] == (
-        "tests/unit/operations/test_join.py::test_join"
-    )
-    assert pairs[0]["shared_line_count"] == 4
-    assert pairs[0]["local_only_line_count"] == 1
-    assert pairs[0]["shared_lines"][0] == {
-        "source_file": source,
-        "line": 10,
-        "local_context": "tests/test_join.py::test_join|run",
-        "upstream_context": "tests/unit/operations/test_join.py::test_join|run",
+    contexts = {
+        f"tests/test_expr.py::test_case_{i}|run": {source: {10}}
+        for i in range(25)
     }
-    assert pairs[0]["local_only_lines"] == [
-        {
-            "source_file": source,
-            "line": 14,
-            "local_context": "tests/test_join.py::test_join|run",
-        }
-    ]
-    assert pairs[0]["status"] == "review_candidate"
-
-
-def test_line_report_marks_truncated_context_samples() -> None:
-    analyzer = _load_analyzer()
-    source = "/work/cudf_polars/dsl/translate.py"
-    contexts = {f"tests/test_expr.py::test_case_{i}|run" for i in range(25)}
-    local = _CoverageData({source: {10: contexts}})
-    upstream = _CoverageData({})
-
-    report = analyzer.build_report(local, upstream)
+    path = tmp_path / ".coverage.local"
+    local = _data(path, contexts)
+    report = analyzer.build_report(local, [])
 
     line = report["files"][source]["local_only"][0]
     assert line["local_contexts"] == sorted(contexts)[:20]
     assert line["local_context_count"] == 25
     assert line["local_contexts_truncated"]
+    assert set(
+        analyzer._read_data(path).contexts_by_lineno(source)[10]
+    ) == set(contexts)
 
 
-def test_review_pairs_rank_by_overlap_fraction() -> None:
-    analyzer = _load_analyzer()
+@pytest.mark.parametrize("kind", ["missing", "empty", "no_contexts"])
+def test_unusable_context_data_is_rejected(tmp_path, kind):
+    path = tmp_path / ".coverage.local"
+    if kind == "empty":
+        path.touch()
+    elif kind == "no_contexts":
+        _data(path, {"": {"/work/cudf_polars/callback.py": {10}}})
+    with pytest.raises(
+        ValueError, match=r"coverage data|No test-body coverage contexts"
+    ):
+        analyzer._read_data(path)
+
+
+def test_export_combines_engines_and_records_partial_runs(
+    tmp_path, monkeypatch
+):
     source = "/work/cudf_polars/dsl/translate.py"
-    upstream_lines = {line for line in range(10, 18)}
-    local_tests = {
-        "tests/test_join.py::test_join": {
-            (source, line) for line in range(10, 15)
-        },
-        "tests/test_filter.py::test_filter": {
-            (source, line) for line in range(14, 20)
-        },
-    }
-    upstream_tests = {
-        "tests/unit/test_join.py::test_join": {
-            (source, line) for line in range(10, 14)
-        },
-        "tests/unit/test_filter.py::test_filter": {
-            (source, line) for line in range(14, 18)
-        },
-    }
-
-    pairs = analyzer._review_pairs(
-        local_tests, upstream_tests, {source: upstream_lines}
+    local = tmp_path / ".coverage.local"
+    memory = tmp_path / ".coverage.upstream-in-memory"
+    spmd = tmp_path / ".coverage.upstream-spmd"
+    _data(
+        local, {"tests/test_expr.py::test_local|run": {source: {10, 11, 12}}}
     )
-
-    assert [pair["local_nodeid"] for pair in pairs] == [
-        "tests/test_join.py::test_join",
-        "tests/test_filter.py::test_filter",
-    ]
-    assert [pair["local_only_line_count"] for pair in pairs] == [0, 2]
-    assert [pair["shared_fraction"] for pair in pairs] == [0.8, 0.667]
-
-
-def test_gpu_observed_pairs_lead_the_review_queue() -> None:
-    analyzer = _load_analyzer()
-    pairs = [
-        {"upstream_nodeid": "tests/unit/test_join.py::test_join"},
-        {"upstream_nodeid": "tests/unit/test_filter.py::test_filter"},
-    ]
-
-    analyzer._prioritize_gpu_pairs(
-        pairs, {"tests/unit/test_filter.py::test_filter"}
-    )
-
-    assert [pair["upstream_gpu_observed"] for pair in pairs] == [True, False]
-    assert (
-        pairs[0]["upstream_nodeid"] == "tests/unit/test_filter.py::test_filter"
-    )
-
-
-def test_candidate_context_filter_excludes_non_ordinary_behavior() -> None:
-    analyzer = _load_analyzer()
-
-    assert analyzer._is_review_context(
-        "tests/unit/operations/test_filter.py::test_filter|run"
-    )
-    assert not analyzer._is_review_context(
-        "tests/unit/datatypes/test_decimal.py::test_decimal_aggregations|run"
-    )
-    assert not analyzer._is_review_context(
-        "tests/unit/lazyframe/test_cse.py::test_cse_10452|run"
-    )
-    assert not analyzer._is_review_context(
-        "tests/unit/lazyframe/test_engine_selection.py::test_engine_import_error_raises|run"
-    )
-    assert not analyzer._is_review_context(
-        "tests/unit/operations/test_group_by.py::test_group_by_skew_kurtosis|run"
-    )
-
-
-def test_review_pool_excludes_local_dtype_and_engine_contracts() -> None:
-    analyzer = _load_analyzer()
-    source = "/work/cudf_polars/dsl/translate.py"
-    lines = {(source, line) for line in range(10, 15)}
-
-    pairs = analyzer._review_pairs(
-        {
-            "tests/test_categorical.py::test_dataframe_roundtrip": lines,
-            "tests/test_engine.py::test_engine_select": lines,
-            "tests/test_mapfunction.py::test_streaming_partitioning": lines,
-            "tests/test_rolling.py::test_unsorted_raises": lines,
-            "tests/test_mapfunction.py::test_explode_reconstruct": lines,
-            "tests/test_parquet_filters.py::test_parquet_filter_boolean_column": lines,
-            "tests/test_sink.py::test_sink_parquet_time_falls_back": lines,
-            "tests/test_mapfunction.py::test_hint_sorted_marks_column_metadata": lines,
-            "tests/test_cache.py::test_union_cache_nodes": lines,
-        },
-        {"tests/unit/test_roundtrip.py::test_dataframe_roundtrip": lines},
-        {source: set(range(10, 15))},
-    )
-
-    assert pairs == []
-
-
-@pytest.mark.parametrize("gpu_observed", [False, True])
-def test_main_writes_provenance_and_contexts(
-    tmp_path, monkeypatch, gpu_observed
-) -> None:
-    analyzer = _load_analyzer()
-    source = str(tmp_path / "cudf_polars" / "dsl" / "translate.py")
-    local_path = tmp_path / ".coverage.local"
-    upstream_path = tmp_path / ".coverage.upstream"
-    local = CoverageData(basename=str(local_path))
-    local.set_context("tests/test_join.py::test_join|run")
-    local.add_lines({source: {10, 11, 13, 14, 15}})
-    local.write()
-    upstream = CoverageData(basename=str(upstream_path))
-    upstream.set_context("tests/unit/test_join.py::test_join|run")
-    upstream.add_lines({source: {10, 12, 13, 14, 15}})
-    upstream.write()
+    _data(memory, {"tests/unit/test_expr.py::test_memory|run": {source: {10}}})
+    _data(spmd, {"tests/unit/test_expr.py::test_spmd|run": {source: {10, 11}}})
     output = tmp_path / "reports"
-    run_list = tmp_path / "run-list.json"
-    run_list.write_text(
-        json.dumps(
-            {
-                "selections": {
-                    "2.1.0|spmd|default": {
-                        "nodes": ["tests/unit/test_join.py::test_join"]
-                        if gpu_observed
-                        else []
-                    }
-                }
-            }
-        )
-    )
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "analyze_cudf_polars_coverage.py",
             "--local-data",
-            str(local_path),
+            str(local),
             "--upstream-data",
-            str(upstream_path),
+            str(memory),
+            "--upstream-data",
+            str(spmd),
             "--output-dir",
             str(output),
             "--cudf-sha",
@@ -300,14 +140,16 @@ def test_main_writes_provenance_and_contexts(
             "polars-sha",
             "--polars-version",
             "2.1.0",
+            "--collection-metadata",
+            json.dumps(
+                {"upstream": {"marker": "not slow", "gpu_run_list": None}}
+            ),
             "--local-exit-status",
             "0",
             "--upstream-in-memory-exit-status",
             "1",
             "--upstream-spmd-exit-status",
-            "2",
-            "--gpu-run-list",
-            str(run_list),
+            "0",
         ],
     )
 
@@ -319,23 +161,29 @@ def test_main_writes_provenance_and_contexts(
         "polars_sha": "polars-sha",
         "polars_version": "2.1.0",
     }
+    assert report["collection"] == {
+        "upstream": {"marker": "not slow", "gpu_run_list": None}
+    }
     assert report["suite_exit_statuses"] == {
         "local": 0,
         "upstream_in_memory": 1,
-        "upstream_spmd": 2,
+        "upstream_spmd": 0,
     }
     assert report["context_data"] == {
-        "local": ".coverage.local",
-        "upstream": ".coverage.upstream",
+        "local": "../.coverage.local",
+        "upstream": [
+            "../.coverage.upstream-in-memory",
+            "../.coverage.upstream-spmd",
+        ],
     }
-    assert report["files"][source]["both"][0]["local_contexts"] == [
-        "tests/test_join.py::test_join|run"
+    assert [line["line"] for line in report["files"][source]["both"]] == [
+        10,
+        11,
     ]
-    assert report["review_pairs"][0]["upstream_gpu_observed"] is gpu_observed
-    assert report["review_pairs"][0]["local_only_lines"][0] == {
-        "source_file": source,
-        "line": 11,
-        "local_context": "tests/test_join.py::test_join|run",
-    }
-    assert (output / "index.html").is_file()
-    assert (output / "upstream-review-candidates.html").is_file()
+    assert report["files"][source]["both"][0]["upstream_contexts"] == [
+        "tests/unit/test_expr.py::test_memory|run",
+        "tests/unit/test_expr.py::test_spmd|run",
+    ]
+    assert [
+        line["line"] for line in report["files"][source]["local_only"]
+    ] == [12]

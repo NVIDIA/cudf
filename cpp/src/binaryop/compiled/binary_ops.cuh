@@ -56,6 +56,23 @@ struct type_casted_accessor {
   }
 };
 
+// get_common_type never selects a floating common type for fixed-point inputs.
+// Excluding those conversions here avoids instantiating unreachable device code
+// without changing the generic accessor's behavior or identity.
+template <typename CastType>
+struct common_type_casted_accessor {
+  template <typename Element>
+  __forceinline__ __device__ CastType operator()(cudf::size_type i,
+                                                 column_device_view const& col,
+                                                 bool is_scalar) const
+  {
+    if constexpr (!(is_fixed_point<Element>() && cuda::std::is_floating_point_v<CastType>)) {
+      return type_casted_accessor<CastType>{}.template operator()<Element>(i, col, is_scalar);
+    }
+    return {};
+  }
+};
+
 /**
  * @brief Type casts value to column type and stores in `i`th row of the column
  *
@@ -106,10 +123,9 @@ struct ops_wrapper {
   __forceinline__ __device__ void operator()(size_type i)
   {
     if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
-      TypeCommon x =
-        type_dispatcher(lhs.type(), type_casted_accessor<TypeCommon>{}, i, lhs, is_lhs_scalar);
-      TypeCommon y =
-        type_dispatcher(rhs.type(), type_casted_accessor<TypeCommon>{}, i, rhs, is_rhs_scalar);
+      using accessor = common_type_casted_accessor<TypeCommon>;
+      TypeCommon x   = type_dispatcher(lhs.type(), accessor{}, i, lhs, is_lhs_scalar);
+      TypeCommon y   = type_dispatcher(rhs.type(), accessor{}, i, rhs, is_rhs_scalar);
       if constexpr (cuda::std::is_same_v<BinaryOperator, ops::TrueDiv> and
                     cuda::std::is_same_v<TypeCommon, float>) {
         // TrueDiv divides in double. When the result is stored as float anyway, a float division

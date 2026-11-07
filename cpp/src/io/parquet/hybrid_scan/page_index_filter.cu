@@ -278,8 +278,8 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
                std::runtime_error);
 
   // Convert the filter to an expression over page statistics
-  parquet::detail::stats_expression_converter const stats_expr_converter{filter.get(),
-                                                                         output_dtypes};
+  parquet::detail::stats_expression_converter const stats_expr_converter{
+    filter.get(), output_dtypes, stream};
 
   // Return early if statistics cannot prune any pages using the filter
   auto const stats_expr = stats_expr_converter.get_stats_expr();

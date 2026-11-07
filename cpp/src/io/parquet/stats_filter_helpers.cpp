@@ -22,8 +22,15 @@ namespace {
  * @brief Returns whether a comparison operator can prune row groups via statistics
  *
  * Some Parquet writers exclude `NaN`s from stats, so a floating-point chunk holding a NaN is
- * indistinguishable from one that does not. `col != val` is the only comparison leaf a NaN
- * satisfies, so it is the only one we cannot prune.
+ * indistinguishable from one that does not. Pruning must therefore hold whether or not a NaN row
+ * satisfies the comparison, and independently of the NaN ordering the AST applies:
+ *
+ * - `col != val` is satisfied by a NaN under both IEEE-754 and a total ordering where NaN is
+ *   greater than every other value, so it cannot be pruned.
+ * - `col > val` and `col >= val` are satisfied by a NaN under the total ordering, so they cannot
+ *   be pruned either.
+ * - `col == val`, `col < val` and `col <= val` are not satisfied by a NaN for a non-NaN `val`
+ *   under either ordering. A NaN `val` is excluded separately via `is_nan_literal`.
  *
  * @param op The comparison operator
  * @param dtype The data type of the column being compared
@@ -35,9 +42,9 @@ namespace {
   switch (op) {
     case ast_operator::EQUAL: [[fallthrough]];
     case ast_operator::LESS: [[fallthrough]];
-    case ast_operator::LESS_EQUAL: [[fallthrough]];
+    case ast_operator::LESS_EQUAL: return true;
     case ast_operator::GREATER: [[fallthrough]];
-    case ast_operator::GREATER_EQUAL: return true;
+    case ast_operator::GREATER_EQUAL: [[fallthrough]];
     case ast_operator::NOT_EQUAL: return not cudf::is_floating_point(dtype);
     default: return false;
   }
@@ -124,8 +131,10 @@ thrust::host_vector<bool> stats_columns_collector::get_stats_columns_mask() &&
 }
 
 stats_expression_converter::stats_expression_converter(
-  ast::expression const& expr, std::span<cudf::data_type const> output_dtypes)
-  : parquet_expression_simplifier{output_dtypes}
+  ast::expression const& expr,
+  std::span<cudf::data_type const> output_dtypes,
+  cuda::stream_ref stream)
+  : parquet_expression_simplifier{output_dtypes}, _stream{stream}
 {
   _stats_expr = simplify_expr(expr);
 }
@@ -159,6 +168,9 @@ simplified_expression_opt stats_expression_converter::simplify_comparison(
   // Some Parquet writers exclude `NaN`s from stats, so we can't reliably prune row groups for
   // columns that may contain them.
   if (not is_prunable_comparison(op, _output_dtypes[col_index])) { return std::nullopt; }
+  // Whether a NaN literal matches NaN rows depends on the AST's NaN ordering, and NaN rows are
+  // invisible to the statistics
+  if (is_nan_literal(literal_ref, _stream)) { return std::nullopt; }
 
   auto const& literal = _tree.push(literal_ref);
 

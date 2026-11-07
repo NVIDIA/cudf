@@ -127,7 +127,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   auto stats_table = cudf::table(std::move(columns));
 
   // Converts AST to StatsAST with reference to min, max columns in above `stats_table`.
-  stats_expression_converter const stats_expr{filter.get(), output_dtypes};
+  stats_expression_converter const stats_expr{filter.get(), output_dtypes, stream};
 
   // Return early if statistics cannot prune any row groups using the filter
   auto const converted_expr = stats_expr.get_stats_expr();

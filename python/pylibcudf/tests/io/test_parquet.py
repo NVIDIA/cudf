@@ -463,6 +463,36 @@ def test_read_parquet_bloom_filter_signed_zero(
     assert result.num_row_groups_after_bloom_filter == 1
 
 
+@requires_pyarrow_bloom_filters
+@pytest.mark.parametrize("arrow_type", [pa.float32(), pa.float64()])
+def test_read_parquet_bloom_filter_nan_literal(tmp_path, arrow_type):
+    # Whether `c == NaN` matches the NaN rows depends on the AST's NaN
+    # ordering, so a NaN literal must not prune row groups via bloom filters
+    path = tmp_path / "bloom.parquet"
+    write_table(
+        pa.table(
+            {
+                "c": pa.array(
+                    [1.0, float("nan"), 2.5, 10.0, 20.0, 30.0], arrow_type
+                )
+            }
+        ),
+        path,
+        row_group_size=3,
+        write_statistics=False,
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
+    )
+
+    result = _read_parquet_equal_to(path, "c", pa.scalar(20.0, arrow_type))
+    assert result.tbl.num_rows() == 1
+    assert result.num_row_groups_after_bloom_filter == 1
+
+    result = _read_parquet_equal_to(
+        path, "c", pa.scalar(float("nan"), arrow_type)
+    )
+    assert result.num_row_groups_after_bloom_filter == 2
+
+
 class FooSpan:
     def __init__(self, owner):
         # Keep the owning object alive

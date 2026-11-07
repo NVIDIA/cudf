@@ -12,12 +12,14 @@
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/partitioning.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -211,8 +213,7 @@ struct column_copy_descriptor {
  * shared memory slot of each row is computed once and reused for all columns.
  *
  * @param[in] columns The fixed-width columns to copy
- * @param[in] num_columns The number of columns to copy
- * @param[out] gather_map The input row of each output row, or nullptr if it is not needed
+ * @param[out] gather_map The input row of each output row, or empty if it is not needed
  * @param[in] num_rows The number of rows in the table
  * @param[in] num_partitions The number of partitions
  * @param[in] rows_per_thread The number of rows processed by each thread
@@ -222,9 +223,8 @@ struct column_copy_descriptor {
  * like the `block_partition_sizes` of `compute_row_partition_numbers`
  */
 CUDF_KERNEL void __launch_bounds__(BLOCK_SIZE)
-  copy_block_partitions(column_copy_descriptor const* __restrict__ columns,
-                        size_type const num_columns,
-                        size_type* __restrict__ gather_map,
+  copy_block_partitions(device_span<column_copy_descriptor const> columns,
+                        device_span<size_type> gather_map,
                         size_type const num_rows,
                         size_type const num_partitions,
                         size_type const rows_per_thread,
@@ -308,18 +308,20 @@ CUDF_KERNEL void __launch_bounds__(BLOCK_SIZE)
   auto const copy_column = [&]<typename T>(column_copy_descriptor const& column) {
     copy_partitions(static_cast<T const*>(column.input), static_cast<T*>(column.output));
   };
-  for (size_type i = 0; i < num_columns; ++i) {
-    switch (columns[i].element_size) {
-      case 1: copy_column.template operator()<cuda::std::uint8_t>(columns[i]); break;
-      case 2: copy_column.template operator()<cuda::std::uint16_t>(columns[i]); break;
-      case 4: copy_column.template operator()<cuda::std::uint32_t>(columns[i]); break;
-      case 8: copy_column.template operator()<cuda::std::uint64_t>(columns[i]); break;
-      case 16: copy_column.template operator()<uint4>(columns[i]); break;
+  for (auto const& column : columns) {
+    switch (column.element_size) {
+      case 1: copy_column.template operator()<cuda::std::uint8_t>(column); break;
+      case 2: copy_column.template operator()<cuda::std::uint16_t>(column); break;
+      case 4: copy_column.template operator()<cuda::std::uint32_t>(column); break;
+      case 8: copy_column.template operator()<cuda::std::uint64_t>(column); break;
+      case 16: copy_column.template operator()<uint4>(column); break;
       default: CUDF_UNREACHABLE("Unsupported element size");
     }
   }
 
-  if (gather_map != nullptr) { copy_partitions(cuda::counting_iterator<size_type>{0}, gather_map); }
+  if (not gather_map.empty()) {
+    copy_partitions(cuda::counting_iterator<size_type>{0}, gather_map.data());
+  }
 }
 
 /**
@@ -436,7 +438,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
 
     // Compute exclusive scan of all blocks' partition sizes in-place to determine
     // the starting point for each blocks portion of each partition in the output
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            block_partition_offsets.begin(),
                            block_partition_offsets.end(),
                            block_partition_offsets.begin());
@@ -453,23 +455,22 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
 
     auto const shared_memory_size =
       staged_values_offset(num_partitions, rows_per_block) + rows_per_block * element_size;
-    auto const copy_partitions =
-      [&](column_copy_descriptor const* columns, std::size_t num_columns, size_type* map) {
-        copy_block_partitions<<<grid_size, BLOCK_SIZE, shared_memory_size, stream.get()>>>(
-          columns,
-          static_cast<size_type>(num_columns),
-          map,
-          num_rows,
-          num_partitions,
-          rows_per_thread,
-          row_locations.data(),
-          block_partition_offsets.data());
-        CUDF_CUDA_TRY(cudaGetLastError());
-      };
+    auto const launch_copy = [&](device_span<column_copy_descriptor const> columns,
+                                 device_span<size_type> map) {
+      copy_block_partitions<<<grid_size, BLOCK_SIZE, shared_memory_size, stream.get()>>>(
+        columns,
+        map,
+        num_rows,
+        num_partitions,
+        rows_per_thread,
+        row_locations.data(),
+        block_partition_offsets.data());
+      CUDF_CUDA_TRY(cudaGetLastError());
+    };
 
     // Gather the other columns before allocating the fixed-width output columns, so that the
     // temporary memory of the gather does not add to them
-    if (needs_gather_map) { copy_partitions(nullptr, 0, gather_map.data()); }
+    if (needs_gather_map) { launch_copy({}, gather_map); }
     if (not gathered_indices.empty()) {
       auto gathered = cudf::detail::gather(input.select(gathered_indices),
                                            gather_map,
@@ -509,7 +510,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
     auto const batch_row_size =
       static_cast<std::size_t>(cuda::device_attributes::l2_cache_size(device)) / rows_in_flight;
     auto const d_fixed_width_copies =
-      cudf::detail::make_device_buffer_async(fixed_width_copies, stream, temp_mr);
+      cudf::detail::make_device_buffer_async(fixed_width_copies, stream, mr.as_temporary());
     for (std::size_t begin = 0, end = 0; begin < fixed_width_copies.size(); begin = end) {
       for (std::size_t row_size = 0;
            end < fixed_width_copies.size() and
@@ -517,7 +518,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
            ++end) {
         row_size += fixed_width_copies[end].element_size;
       }
-      copy_partitions(d_fixed_width_copies.data() + begin, end - begin, nullptr);
+      launch_copy(
+        device_span<column_copy_descriptor const>{d_fixed_width_copies}.subspan(begin, end - begin),
+        {});
     }
   }
 
@@ -540,7 +543,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
 }
 
 /**
- * @brief Hash-partition using global memory when partition count exceeds shared memory capacity.
+ * @brief Hash-partition using global memory when the shared memory hash partition does not apply.
  */
 template <typename Hasher>
 std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_global_memory(
@@ -549,18 +552,18 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   size_type num_partitions,
   Hasher hasher,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(num_partitions < std::numeric_limits<size_type>::max(),
                "num_partitions exceeds cudf's supported limit");
+  auto const temp_mr = mr.get_temporary_mr();
 
-  cuda::device_buffer<size_type> row_partition_numbers(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  cuda::device_buffer<size_type> row_partition_numbers(stream, temp_mr, num_rows, cuda::no_init);
 
   // Compute partition number for each row
   if (is_power_two(num_partitions)) {
     auto const partitioner = bitwise_partitioner<hash_value_type>(num_partitions);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(num_rows),
                       row_partition_numbers.begin(),
@@ -569,7 +572,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
                       });
   } else {
     auto const partitioner = modulo_partitioner<hash_value_type>(num_partitions);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(num_rows),
                       row_partition_numbers.begin(),
@@ -582,38 +585,18 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   // HistogramEven writes num_partitions bins; the extra element is used by the exclusive scan
   // below to produce the total row count as the last offset. Zero-initialize to avoid UB.
   auto histogram = cudf::detail::make_zeroed_device_buffer_async<size_type>(
-    num_partitions + 1, stream, cudf::get_current_device_resource_ref());
-  {
-    auto const num_levels  = num_partitions + 1;
-    auto const lower_level = size_type{0};
-    auto const upper_level = num_partitions;
-
-    std::size_t temp_storage_bytes{};
-    cub::DeviceHistogram::HistogramEven(nullptr,
-                                        temp_storage_bytes,
-                                        row_partition_numbers.data(),
-                                        histogram.data(),
-                                        num_levels,
-                                        lower_level,
-                                        upper_level,
-                                        num_rows,
-                                        stream.get());
-    cuda::device_buffer<std::byte> temp_storage(
-      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
-    cub::DeviceHistogram::HistogramEven(temp_storage.data(),
-                                        temp_storage_bytes,
-                                        row_partition_numbers.data(),
-                                        histogram.data(),
-                                        num_levels,
-                                        lower_level,
-                                        upper_level,
-                                        num_rows,
-                                        stream.get());
-  }
+    num_partitions + 1, stream, mr.as_temporary());
+  CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(row_partition_numbers.data(),
+                                                    histogram.data(),
+                                                    num_partitions + 1,
+                                                    size_type{0},
+                                                    num_partitions,
+                                                    num_rows,
+                                                    cudf::detail::make_env(stream, mr)));
 
   // Exclusive scan on histogram to get partition offsets.
   // histogram has num_partitions+1 elements; after scan, histogram[num_partitions] = num_rows.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          histogram.begin(),
                          histogram.end(),
                          histogram.begin());
@@ -622,20 +605,19 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   auto const pinned_offsets = cudf::detail::make_pinned_vector_async(histogram, stream);
 
   // Build scatter map: atomically increment partition offsets
-  cuda::device_buffer<size_type> scatter_map(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  cuda::device_buffer<size_type> scatter_map(stream, temp_mr, num_rows, cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     row_partition_numbers.begin(),
     row_partition_numbers.end(),
     scatter_map.begin(),
-    [offsets = histogram.data()] __device__(auto partition_number) {
+    [offsets = histogram.data()] __device__(size_type partition_number) -> size_type {
       cuda::atomic_ref<size_type, cuda::thread_scope_device> ref(offsets[partition_number]);
       return ref.fetch_add(1, cuda::memory_order_relaxed);
     });
 
   // Scatter input rows into partitioned output
-  auto output = detail::scatter(input, scatter_map, input, stream, mr);
+  auto output = detail::scatter(input, scatter_map, input, stream, mr.get_output_mr());
 
   stream.sync();  // Pinned async D2H copy must finish before returning host vec
 
@@ -653,10 +635,10 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   size_type num_partitions,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_rows = table_to_hash.num_rows();
-  auto const temp_mr  = cudf::get_current_device_resource_ref();
+  auto const temp_mr  = mr.get_temporary_mr();
 
   auto const row_hasher = detail::row::hash::row_hasher(table_to_hash, stream, temp_mr);
   auto const hasher =
@@ -833,7 +815,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   int num_partitions,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   // Return empty result if there are no partitions or nothing to hash
   if (num_partitions <= 0 || input.num_rows() == 0 || table_to_hash.num_columns() == 0) {
@@ -875,14 +857,13 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
     partition_map.type(), dispatch_map_type{}, t, partition_map, num_partitions, stream, mr);
 }
 
-std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
-  table_view const& input,
-  table_view const& keys,
-  int num_partitions,
-  hash_id hash_function,
-  uint32_t seed,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(table_view const& input,
+                                                                         table_view const& keys,
+                                                                         int num_partitions,
+                                                                         hash_id hash_function,
+                                                                         uint32_t seed,
+                                                                         cuda::stream_ref stream,
+                                                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     keys.num_columns() == 0 || input.num_rows() == keys.num_rows(),

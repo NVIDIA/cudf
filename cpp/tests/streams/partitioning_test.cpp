@@ -62,28 +62,10 @@ TEST_F(PartitionTest, ZeroPartitions)
                                                 cudf::test::get_default_stream());
 }
 
-TEST_F(PartitionTest, HashPartitionFixedWidth)
+TEST_F(PartitionTest, HashPartitionMixedTypes)
 {
-  // All columns are fixed width, so this takes the fixed-width copy path rather than building a
-  // gather map.
   fixed_width_column_wrapper<int32_t> keys({1, 2, 3, 4, 5, 6, 7, 8});
-  fixed_width_column_wrapper<int64_t> payload({1, 2, 3, 4, 5, 6, 7, 8});
-  fixed_width_column_wrapper<double> more_payload({1., 2., 3., 4., 5., 6., 7., 8.});
-  auto input = cudf::table_view({keys, payload, more_payload});
-
-  auto [output, offsets] = cudf::hash_partition(input,
-                                                std::vector<cudf::size_type>({0}),
-                                                4,
-                                                cudf::hash_id::HASH_MURMUR3,
-                                                cudf::DEFAULT_HASH_SEED,
-                                                cudf::test::get_default_stream());
-}
-
-TEST_F(PartitionTest, HashPartitionMixedWidth)
-{
-  // A variable-width column forces the gather-map path for the non-fixed-width columns.
-  fixed_width_column_wrapper<int32_t> keys({1, 2, 3, 4, 5, 6, 7, 8});
-  fixed_width_column_wrapper<int64_t> payload({1, 2, 3, 4, 5, 6, 7, 8});
+  fixed_width_column_wrapper<int64_t> payload({1, 2, 3, 4, 5, 6, 7, 8}, {1, 1, 0, 1, 1, 0, 1, 1});
   strings_column_wrapper strings({"a", "bb", "ccc", "d", "ee", "fff", "gg", "h"});
   auto input = cudf::table_view({keys, payload, strings});
 

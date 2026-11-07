@@ -1011,6 +1011,63 @@ TEST_F(ParquetReaderTest, SelectColumnByMissingFieldIds)
   }
 }
 
+TEST_F(ParquetReaderTest, TimestampTypeMustHaveSecondBasedUnit)
+{
+  // The reader rescales timestamps by a clock rate in ticks per second, which TIMESTAMP_DAYS
+  // cannot express: a request for it used to decode seconds as 8-byte values into a column
+  // allocated at 4 bytes per row.
+  auto options = cudf::io::parquet_reader_options{};
+  for (auto const id : {cudf::type_id::EMPTY,
+                        cudf::type_id::TIMESTAMP_SECONDS,
+                        cudf::type_id::TIMESTAMP_MILLISECONDS,
+                        cudf::type_id::TIMESTAMP_MICROSECONDS,
+                        cudf::type_id::TIMESTAMP_NANOSECONDS}) {
+    EXPECT_NO_THROW(options.set_timestamp_type(cudf::data_type{id}));
+    EXPECT_EQ(options.get_timestamp_type().id(), id);
+  }
+  for (auto const id :
+       {cudf::type_id::TIMESTAMP_DAYS, cudf::type_id::DURATION_SECONDS, cudf::type_id::INT64}) {
+    EXPECT_THROW(options.set_timestamp_type(cudf::data_type{id}), std::invalid_argument);
+  }
+  // A rejected type leaves the previous one in place.
+  EXPECT_EQ(options.get_timestamp_type().id(), cudf::type_id::TIMESTAMP_NANOSECONDS);
+  EXPECT_THROW(cudf::io::parquet_reader_options_builder{}.timestamp_type(
+                 cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}),
+               std::invalid_argument);
+}
+
+TEST_F(ParquetReaderTest, ReadTimestampsAsSeconds)
+{
+  // SupportedTimestampTypes (parquet_common.hpp) has no seconds member, so this is the read
+  // coverage for the TIMESTAMP_SECONDS target: each finer unit is floored to whole seconds,
+  // negative values included.
+  auto const check = [&]<typename Timestamp>() {
+    constexpr int64_t per_second = Timestamp::period::den;
+    std::vector<int64_t> const ticks{0,
+                                     per_second - 1,
+                                     per_second,
+                                     1'767'314'700 * per_second + per_second / 2,
+                                     -1,
+                                     -per_second,
+                                     -per_second - 1};
+    auto const input = column_wrapper<Timestamp, int64_t>(ticks.begin(), ticks.end());
+    auto const expected =
+      column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{0, 0, 1, 1'767'314'700, -1, -1, -2};
+    auto const filepath =
+      write_parquet_temp_file(cudf::table_view{{input}},
+                              "ReadTimestampsAsSeconds_" + std::to_string(per_second) + ".parquet");
+
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .timestamp_type(cudf::data_type{cudf::type_id::TIMESTAMP_SECONDS})
+        .build());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected);
+  };
+  check.template operator()<cudf::timestamp_ms>();
+  check.template operator()<cudf::timestamp_us>();
+  check.template operator()<cudf::timestamp_ns>();
+}
+
 TEST_F(ParquetReaderTest, ColumnSelectionModesAreExclusive)
 {
   auto selected_by_name = cudf::io::parquet_reader_options{};

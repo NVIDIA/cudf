@@ -1628,6 +1628,31 @@ TEST_F(OrcReaderTest, ZeroColumnsPreservesRowCount)
   EXPECT_EQ(result.tbl->view().num_rows(), num_rows);
 }
 
+TEST_F(OrcReaderTest, TimestampTypeMustHaveSecondBasedUnit)
+{
+  // The decode kernel converts timestamps to seconds, milliseconds, microseconds or nanoseconds
+  // and stores 64-bit values, so a request for TIMESTAMP_DAYS would write 8-byte nanosecond
+  // counts into a column allocated at 4 bytes per row.
+  auto options = cudf::io::orc_reader_options{};
+  for (auto const id : {cudf::type_id::EMPTY,
+                        cudf::type_id::TIMESTAMP_SECONDS,
+                        cudf::type_id::TIMESTAMP_MILLISECONDS,
+                        cudf::type_id::TIMESTAMP_MICROSECONDS,
+                        cudf::type_id::TIMESTAMP_NANOSECONDS}) {
+    EXPECT_NO_THROW(options.set_timestamp_type(cudf::data_type{id}));
+    EXPECT_EQ(options.get_timestamp_type().id(), id);
+  }
+  for (auto const id :
+       {cudf::type_id::TIMESTAMP_DAYS, cudf::type_id::DURATION_SECONDS, cudf::type_id::INT64}) {
+    EXPECT_THROW(options.set_timestamp_type(cudf::data_type{id}), std::invalid_argument);
+  }
+  // A rejected type leaves the previous one in place.
+  EXPECT_EQ(options.get_timestamp_type().id(), cudf::type_id::TIMESTAMP_NANOSECONDS);
+  EXPECT_THROW(cudf::io::orc_reader_options_builder{}.timestamp_type(
+                 cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}),
+               std::invalid_argument);
+}
+
 TEST_F(OrcReaderTest, SingleInputs)
 {
   srand(31533);

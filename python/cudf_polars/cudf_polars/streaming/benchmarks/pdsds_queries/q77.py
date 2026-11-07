@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 77."""
@@ -227,6 +227,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     web_sales = get_data(run_config.dataset_path, "web_sales", run_config.suffix)
     web_returns = get_data(run_config.dataset_path, "web_returns", run_config.suffix)
     date_dim = get_data(run_config.dataset_path, "date_dim", run_config.suffix)
+    sk_dtype = date_dim.collect_schema()["d_date_sk"]
     store = get_data(run_config.dataset_path, "store", run_config.suffix)
     web_page = get_data(run_config.dataset_path, "web_page", run_config.suffix)
 
@@ -326,7 +327,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
 
     combined_channels = pl.concat(
         [store_channel, catalog_channel, web_channel]
-    ).with_columns(pl.col("id").cast(pl.Int64))
+    ).with_columns(pl.col("id").cast(sk_dtype))
 
     level1 = (
         combined_channels.group_by(["channel", "id"])
@@ -349,7 +350,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 pl.col("profit").sum().alias("profit"),
             ]
         )
-        .with_columns(pl.lit(None, dtype=pl.Int64).alias("id"))
+        .with_columns(pl.lit(None, dtype=sk_dtype).alias("id"))
         .select(["channel", "id", "sales", "returns1", "profit"])
     )
 
@@ -364,7 +365,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .with_columns(
             [
                 pl.lit(None, dtype=pl.Utf8).alias("channel"),
-                pl.lit(None, dtype=pl.Int64).alias("id"),
+                pl.lit(None, dtype=sk_dtype).alias("id"),
             ]
         )
         .select(["channel", "id", "sales", "returns1", "profit"])

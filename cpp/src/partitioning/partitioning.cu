@@ -408,21 +408,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
   auto const fixed_width_has_nulls = has_nulls(fixed_width_input);
   auto const needs_gather_map      = not gathered_indices.empty() or fixed_width_has_nulls;
 
-  // Columns without nulls do not need their null masks gathered
+  std::vector<std::unique_ptr<column>> output_cols(input.num_columns());
   std::vector<std::unique_ptr<column>> fixed_width_output;
-  std::vector<column_copy_descriptor> fixed_width_copies;
-  for (auto const& col : fixed_width_input) {
-    auto const mask_state =
-      col.nullable() and not col.has_nulls() ? mask_state::ALL_VALID : mask_state::UNALLOCATED;
-    auto output             = make_fixed_width_column(col.type(), num_rows, mask_state, stream, mr);
-    auto const element_size = static_cast<size_type>(size_of(col.type()));
-    fixed_width_copies.push_back(
-      {static_cast<cuda::std::byte const*>(col.head()) + col.offset() * element_size,
-       output->mutable_view().head(),
-       element_size});
-    fixed_width_output.push_back(std::move(output));
-  }
-
   cuda::device_buffer<size_type> gather_map(
     stream, temp_mr, needs_gather_map ? num_rows : 0, cuda::no_init);
   auto partition_offsets =
@@ -464,6 +451,52 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
                                     cudaMemcpyDefault,
                                     stream.get()));
 
+    auto const shared_memory_size =
+      staged_values_offset(num_partitions, rows_per_block) + rows_per_block * element_size;
+    auto const copy_partitions =
+      [&](column_copy_descriptor const* columns, std::size_t num_columns, size_type* map) {
+        copy_block_partitions<<<grid_size, BLOCK_SIZE, shared_memory_size, stream.get()>>>(
+          columns,
+          static_cast<size_type>(num_columns),
+          map,
+          num_rows,
+          num_partitions,
+          rows_per_thread,
+          row_locations.data(),
+          block_partition_offsets.data());
+        CUDF_CUDA_TRY(cudaGetLastError());
+      };
+
+    // Gather the other columns before allocating the fixed-width output columns, so that the
+    // temporary memory of the gather does not add to them
+    if (needs_gather_map) { copy_partitions(nullptr, 0, gather_map.data()); }
+    if (not gathered_indices.empty()) {
+      auto gathered = cudf::detail::gather(input.select(gathered_indices),
+                                           gather_map,
+                                           out_of_bounds_policy::DONT_CHECK,
+                                           negative_index_policy::NOT_ALLOWED,
+                                           stream,
+                                           mr)
+                        ->release();
+      for (std::size_t i = 0; i < gathered_indices.size(); ++i) {
+        output_cols[gathered_indices[i]] = std::move(gathered[i]);
+      }
+    }
+
+    // Columns without nulls do not need their null masks gathered
+    std::vector<column_copy_descriptor> fixed_width_copies;
+    for (auto const& col : fixed_width_input) {
+      auto const mask_state =
+        col.nullable() and not col.has_nulls() ? mask_state::ALL_VALID : mask_state::UNALLOCATED;
+      auto output     = make_fixed_width_column(col.type(), num_rows, mask_state, stream, mr);
+      auto const size = static_cast<size_type>(size_of(col.type()));
+      fixed_width_copies.push_back(
+        {static_cast<cuda::std::byte const*>(col.head()) + col.offset() * size,
+         output->mutable_view().head(),
+         size});
+      fixed_width_output.push_back(std::move(output));
+    }
+
     // Copy the columns in batches whose output for all concurrently running thread blocks fits
     // in the L2 cache, so that the output sectors shared by consecutive blocks are combined in
     // the L2 cache instead of in DRAM
@@ -473,33 +506,17 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
       rows_per_block;
     auto const batch_row_size =
       static_cast<std::size_t>(cuda::device_attributes::l2_cache_size(device)) / rows_in_flight;
-
     auto const d_fixed_width_copies =
       cudf::detail::make_device_buffer_async(fixed_width_copies, stream, temp_mr);
-    auto const shared_memory_size =
-      staged_values_offset(num_partitions, rows_per_block) + rows_per_block * element_size;
-    std::size_t begin = 0;
-    do {
-      auto end = begin;
+    for (std::size_t begin = 0, end = 0; begin < fixed_width_copies.size(); begin = end) {
       for (std::size_t row_size = 0;
            end < fixed_width_copies.size() and
            (end == begin or row_size + fixed_width_copies[end].element_size <= batch_row_size);
            ++end) {
         row_size += fixed_width_copies[end].element_size;
       }
-      auto const is_last = end == fixed_width_copies.size();
-      copy_block_partitions<<<grid_size, BLOCK_SIZE, shared_memory_size, stream.get()>>>(
-        d_fixed_width_copies.data() + begin,
-        static_cast<size_type>(end - begin),
-        is_last and needs_gather_map ? gather_map.data() : nullptr,
-        num_rows,
-        num_partitions,
-        rows_per_thread,
-        row_locations.data(),
-        block_partition_offsets.data());
-      CUDF_CUDA_TRY(cudaGetLastError());
-      begin = end;
-    } while (begin < fixed_width_copies.size());
+      copy_partitions(d_fixed_width_copies.data() + begin, end - begin, nullptr);
+    }
   }
 
   if (fixed_width_has_nulls) {
@@ -511,22 +528,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
                            stream,
                            mr);
   }
-
-  std::vector<std::unique_ptr<column>> output_cols(input.num_columns());
   for (std::size_t i = 0; i < fixed_width_indices.size(); ++i) {
     output_cols[fixed_width_indices[i]] = std::move(fixed_width_output[i]);
-  }
-  if (not gathered_indices.empty()) {
-    auto gathered = cudf::detail::gather(input.select(gathered_indices),
-                                         gather_map,
-                                         out_of_bounds_policy::DONT_CHECK,
-                                         negative_index_policy::NOT_ALLOWED,
-                                         stream,
-                                         mr)
-                      ->release();
-    for (std::size_t i = 0; i < gathered_indices.size(); ++i) {
-      output_cols[gathered_indices[i]] = std::move(gathered[i]);
-    }
   }
 
   stream.sync();  // Async D2H copy must finish before returning host vec

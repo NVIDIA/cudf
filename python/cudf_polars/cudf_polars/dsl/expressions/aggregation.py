@@ -362,13 +362,14 @@ class Agg(Expr):
         return self._reduce(column, request=plc.aggregation.product(), stream=stream)
 
     def _n_unique(self, column: Column, stream: Stream) -> Column:
+        drop_nulls = bool(self.options)
         if column.null_count == column.size:
-            value = int(column.size > 0 and not self.options)
+            value = int(column.size > 0 and not drop_nulls)
         elif column.is_sorted == plc.types.Sorted.YES:
             value = plc.reduce.unique_count(
                 column.obj,
                 plc.types.NullPolicy.EXCLUDE
-                if self.options
+                if drop_nulls
                 else plc.types.NullPolicy.INCLUDE,
                 plc.types.NanPolicy.NAN_IS_VALID,
                 stream=stream,

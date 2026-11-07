@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -700,6 +700,31 @@ TYPED_TEST(FixedPointCompiledTest, FixedPointBinaryOpThrows)
   auto const non_bool_type = cudf::data_type{cudf::type_to_id<decimalXX>(), -2};
   EXPECT_THROW(cudf::binary_operation(col, col, cudf::binary_operator::LESS, non_bool_type),
                cudf::data_type_error);
+}
+
+TYPED_TEST(FixedPointCompiledTest, LogicalOperationsAreRejectedBeforeLaunch)
+{
+  using decimalXX   = TypeParam;
+  using RepType     = cudf::device_storage_type_t<decimalXX>;
+  auto const output = cudf::data_type{cudf::type_id::BOOL8};
+  auto const scalar = cudf::make_fixed_point_scalar<decimalXX>(1, numeric::scale_type{-1});
+  for (bool nullable : {false, true}) {
+    std::vector<int> const validity{true, false};
+    auto const input = nullable
+                         ? fp_wrapper<RepType>{{1, 0}, validity.begin(), numeric::scale_type{-1}}
+                         : fp_wrapper<RepType>{{1, 0}, numeric::scale_type{-1}};
+    auto const type  = static_cast<cudf::column_view>(input).type();
+    for (auto op : {cudf::binary_operator::LOGICAL_AND,
+                    cudf::binary_operator::LOGICAL_OR,
+                    cudf::binary_operator::NULL_LOGICAL_AND,
+                    cudf::binary_operator::NULL_LOGICAL_OR}) {
+      // Invocability alone is not permission to bypass the host decimal restriction.
+      EXPECT_TRUE(cudf::binops::is_supported_operation(output, type, type, op));
+      EXPECT_THROW(cudf::binary_operation(input, input, op, output), cudf::logic_error);
+      EXPECT_THROW(cudf::binary_operation(input, *scalar, op, output), cudf::logic_error);
+      EXPECT_THROW(cudf::binary_operation(*scalar, input, op, output), cudf::logic_error);
+    }
+  }
 }
 
 TYPED_TEST(FixedPointCompiledTest, FixedPointBinaryOpModSimple)

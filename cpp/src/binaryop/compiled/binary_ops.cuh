@@ -105,6 +105,16 @@ struct typed_casted_writer {
 
 // Functors to launch only defined operations.
 
+// Host fixed-point validation rejects logical operations before kernel launch,
+// even when their contextual bool conversion makes the functor invocable.
+template <typename BinaryOperator, typename TypeLhs, typename TypeRhs>
+inline constexpr bool is_fixed_point_logical_op =
+  (is_fixed_point<TypeLhs>() || is_fixed_point<TypeRhs>()) &&
+  (cuda::std::is_same_v<BinaryOperator, ops::LogicalAnd> ||
+   cuda::std::is_same_v<BinaryOperator, ops::LogicalOr> ||
+   cuda::std::is_same_v<BinaryOperator, ops::NullLogicalAnd> ||
+   cuda::std::is_same_v<BinaryOperator, ops::NullLogicalOr>);
+
 /**
  * @brief Functor to launch only defined operations with common type.
  *
@@ -122,7 +132,8 @@ struct ops_wrapper {
   template <typename TypeCommon>
   __forceinline__ __device__ void operator()(size_type i)
   {
-    if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
+    if constexpr (!is_fixed_point_logical_op<BinaryOperator, TypeCommon, TypeCommon> &&
+                  cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
       using accessor = common_type_casted_accessor<TypeCommon>;
       TypeCommon x   = type_dispatcher(lhs.type(), accessor{}, i, lhs, is_lhs_scalar);
       TypeCommon y   = type_dispatcher(rhs.type(), accessor{}, i, rhs, is_rhs_scalar);
@@ -182,7 +193,8 @@ struct ops2_wrapper {
   template <typename TypeLhs, typename TypeRhs>
   __device__ void operator()(size_type i)
   {
-    if constexpr (!has_common_type_v<TypeLhs, TypeRhs> and
+    if constexpr (!is_fixed_point_logical_op<BinaryOperator, TypeLhs, TypeRhs> &&
+                  !has_common_type_v<TypeLhs, TypeRhs> and
                   cuda::std::is_invocable_v<BinaryOperator, TypeLhs, TypeRhs>) {
       TypeLhs x   = lhs.element<TypeLhs>(is_lhs_scalar ? 0 : i);
       TypeRhs y   = rhs.element<TypeRhs>(is_rhs_scalar ? 0 : i);

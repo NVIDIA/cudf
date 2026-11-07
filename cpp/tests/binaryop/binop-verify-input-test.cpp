@@ -92,6 +92,29 @@ TEST_F(BinopVerifyInputTest, FixedPointInputsNeverSelectFloatingCommonType)
   EXPECT_GT(fallback_fixed_point_inputs, 0);
 }
 
+TEST_F(BinopVerifyInputTest, BooleanOutputSelectsDecimalCommonTypeOnlyForDecimalInputs)
+{
+  // Logical operators require BOOL8 output. This links their decimal common-type
+  // specializations to the input types checked by host fixed-point validation.
+  constexpr auto n         = static_cast<int>(cudf::type_id::NUM_TYPE_IDS);
+  constexpr auto matrix    = common_type_matrix(std::make_index_sequence<n * n>{});
+  int decimal_common_cases = 0;
+  for (int lhs = 1; lhs < n; ++lhs) {
+    for (int rhs = 1; rhs < n; ++rhs) {
+      auto common = matrix[static_cast<int>(cudf::type_id::BOOL8) * n + lhs];
+      if (common != cudf::type_id::EMPTY) { common = matrix[static_cast<int>(common) * n + rhs]; }
+      if (common == cudf::type_id::EMPTY) { common = matrix[lhs * n + rhs]; }
+      if (common != cudf::type_id::EMPTY && cudf::is_fixed_point(cudf::data_type{common})) {
+        ++decimal_common_cases;
+        EXPECT_TRUE(cudf::is_fixed_point(cudf::data_type{static_cast<cudf::type_id>(lhs)}) ||
+                    cudf::is_fixed_point(cudf::data_type{static_cast<cudf::type_id>(rhs)}))
+          << "lhs=" << lhs << ", rhs=" << rhs;
+      }
+    }
+  }
+  EXPECT_GT(decimal_common_cases, 0);
+}
+
 TEST_F(BinopVerifyInputTest, Vector_Scalar_ErrorOutputVectorType)
 {
   auto lhs = cudf::scalar_type_t<int64_t>(1);

@@ -20,6 +20,8 @@ from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils import dtypes, sorting
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.containers import DataFrame
@@ -45,6 +47,23 @@ def _integer_range(dtype: plc.DataType) -> tuple[int, int]:
     if signed:
         return -(1 << (bits - 1)), (1 << (bits - 1)) - 1
     return 0, (1 << bits) - 1
+
+
+def _make_groupby(
+    table: plc.Table,
+    keys: Sequence[Column],
+    null_handling: plc.types.NullPolicy,
+) -> plc.groupby.GroupBy:
+    """Build a groupby on table that uses the sortedness of the key columns."""
+    if all(k.is_sorted == plc.types.Sorted.YES for k in keys):
+        return plc.groupby.GroupBy(
+            table,
+            null_handling=null_handling,
+            keys_are_sorted=plc.types.Sorted.YES,
+            column_order=[k.order for k in keys],
+            null_precedence=[k.null_order for k in keys],
+        )
+    return plc.groupby.GroupBy(table, null_handling=null_handling)
 
 
 class Cast(Expr):
@@ -937,8 +956,8 @@ class UnaryFunction(Expr):
             )
         if self.name == "mode":
             (values,) = (child.evaluate(df, context=context) for child in self.children)
-            (keys_table, (counts_table,)) = plc.groupby.GroupBy(
-                plc.Table([values.obj]), null_handling=plc.types.NullPolicy.INCLUDE
+            (keys_table, (counts_table,)) = _make_groupby(
+                plc.Table([values.obj]), (values,), plc.types.NullPolicy.INCLUDE
             ).aggregate(
                 [
                     plc.groupby.GroupByRequest(
@@ -1258,8 +1277,8 @@ class UnaryFunction(Expr):
                 plc.Scalar.from_py(1, plc.DataType(plc.TypeId.INT32), stream=df.stream),
                 stream=df.stream,
             )
-            (_, (counts_table, first_index_table)) = plc.groupby.GroupBy(
-                plc.Table([values.obj]), null_handling=plc.types.NullPolicy.INCLUDE
+            (_, (counts_table, first_index_table)) = _make_groupby(
+                plc.Table([values.obj]), (values,), plc.types.NullPolicy.INCLUDE
             ).aggregate(
                 [
                     plc.groupby.GroupByRequest(
@@ -1332,14 +1351,14 @@ class UnaryFunction(Expr):
         elif self.name == "value_counts":
             (sort, _, _, normalize) = self.options
             count_agg = [plc.aggregation.count(plc.types.NullPolicy.INCLUDE)]
+            keys = tuple(child.evaluate(df, context=context) for child in self.children)
             gb_requests = [
-                plc.groupby.GroupByRequest(
-                    child.evaluate(df, context=context).obj, count_agg
-                )
-                for child in self.children
+                plc.groupby.GroupByRequest(key.obj, count_agg) for key in keys
             ]
-            (keys_table, (counts_table,)) = plc.groupby.GroupBy(
-                df.table, null_handling=plc.types.NullPolicy.INCLUDE
+            (keys_table, (counts_table,)) = _make_groupby(
+                plc.Table([key.obj for key in keys]),
+                keys,
+                plc.types.NullPolicy.INCLUDE,
             ).aggregate(gb_requests, stream=df.stream)
             if sort:
                 sort_indices = plc.sorting.stable_sorted_order(
@@ -2189,6 +2208,20 @@ class UnaryFunction(Expr):
                 if reverse:
                     result = plc.copying.reverse(result, stream=df.stream)
                 return Column(result, dtype=self.dtype)
+            if (
+                self.name in {"cum_min", "cum_max"}
+                and column.is_sorted == plc.types.Sorted.YES
+            ):
+                unchanged_order = (
+                    plc.types.Order.ASCENDING
+                    if (self.name == "cum_max") != reverse
+                    else plc.types.Order.DESCENDING
+                )
+                if column.order == unchanged_order and not (
+                    self.name == "cum_max"
+                    and plc.traits.is_floating_point(column.dtype.plc_type)
+                ):
+                    return column
             plc_col = column.obj
             if reverse:
                 # A reverse cumulative aggregation is a forward one over the
@@ -2234,9 +2267,34 @@ class UnaryFunction(Expr):
             elif self.name == "cum_max":
                 agg = plc.aggregation.max()
 
-            result = plc.reduce.scan(
-                plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
-            )
+            if self.name in {"cum_min", "cum_max"} and plc.traits.is_floating_point(
+                col_type
+            ):
+                # Polars skips NaN: a NaN takes the result of the preceding
+                # values, or stays NaN if no value precedes it.
+                scanned = plc.reduce.scan(
+                    plc.transform.column_nans_to_nulls(plc_col, stream=df.stream),
+                    agg,
+                    plc.reduce.ScanType.INCLUSIVE,
+                    stream=df.stream,
+                )
+                nan_filled = plc.replace.replace_nulls(
+                    scanned, plc.replace.ReplacePolicy.PRECEDING, stream=df.stream
+                )
+                use_filled = plc.binaryop.binary_operation(
+                    plc.unary.is_valid(nan_filled, stream=df.stream),
+                    plc.unary.is_valid(plc_col, stream=df.stream),
+                    plc.binaryop.BinaryOperator.LOGICAL_AND,
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                )
+                result = plc.copying.copy_if_else(
+                    nan_filled, plc_col, use_filled, stream=df.stream
+                )
+            else:
+                result = plc.reduce.scan(
+                    plc_col, agg, plc.reduce.ScanType.INCLUSIVE, stream=df.stream
+                )
             if reverse:
                 result = plc.copying.reverse(result, stream=df.stream)
             return Column(result, dtype=self.dtype)

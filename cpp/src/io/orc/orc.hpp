@@ -120,6 +120,7 @@ struct Footer {
   std::vector<col_stats_blob> statistics;  // Column statistics blobs
   uint32_t rowIndexStride = 0;             // the maximum number of rows in each index entry
   std::optional<uint32_t> writer;          // Writer code
+  std::optional<CalendarKind> calendar;    // Calendar used to encode dates and timestamps
 };
 
 struct Stream {

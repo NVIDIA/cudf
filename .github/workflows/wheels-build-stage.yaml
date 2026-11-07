@@ -48,7 +48,7 @@ permissions:
 
 jobs:
   compute-matrix:
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type }}
       matrix_name: wheels-build
@@ -84,7 +84,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Standardize repository information
-        uses: rapidsai/shared-actions/rapids-github-info@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
+        uses: rapidsai/shared-actions/rapids-github-info@f1b91d61c122ac51f260d440a25295db902109b9
         with:
           branch: ${{ inputs.branch }}
           date: ${{ inputs.date }}
@@ -99,12 +99,12 @@ jobs:
       - name: Resolve controller-bound candidate metadata
         id: candidate-context
         if: ${{ inputs.build_type == 'release-candidate' && inputs.candidate-train-sha256 == '' }}
-        uses: rapidsai/shared-actions/release-candidate-context@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
+        uses: rapidsai/shared-actions/release-candidate-context@f1b91d61c122ac51f260d440a25295db902109b9
         with:
           source-sha: ${{ env.RAPIDS_SHA }}
       - name: Prepare frozen wheel dependencies
         if: ${{ inputs.build_type == 'release-candidate' }}
-        uses: rapidsai/shared-actions/release-candidate-dependencies@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
+        uses: rapidsai/shared-actions/release-candidate-dependencies@f1b91d61c122ac51f260d440a25295db902109b9
         with:
           implementation-mode: direct
           candidate-train-sha256: ${{ inputs.candidate-train-sha256 || steps.candidate-context.outputs.train-sha256 }}
@@ -120,7 +120,7 @@ jobs:
           enable-pip: true
           enable-pypi-anaconda: true
       - name: Setup sccache-dist
-        uses: rapidsai/shared-actions/setup-sccache-dist@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
+        uses: rapidsai/shared-actions/setup-sccache-dist@f1b91d61c122ac51f260d440a25295db902109b9
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
           AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
@@ -231,7 +231,7 @@ jobs:
           role-duration-seconds: 3600
       - name: Create wheel release catalog companion
         if: ${{ inputs.build_type == 'release-candidate' }}
-        uses: rapidsai/shared-actions/release-catalog-dispatch@1dd81e7f3c7dd183f30ae2dbf1e0c3b1122674b8
+        uses: rapidsai/shared-actions/release-catalog-dispatch@f1b91d61c122ac51f260d440a25295db902109b9
         with:
           config: >-
             {

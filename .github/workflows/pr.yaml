@@ -48,14 +48,14 @@ jobs:
       - pandas-tests-summary
       - narwhals-tests
       - third-party-integration-tests-cudf-pandas
-    uses: rapidsai/shared-workflows/.github/workflows/pr-builder.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/pr-builder.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     permissions:
       contents: read
     if: always()
     with:
       needs: ${{ toJSON(needs) }}
   build-details:
-    uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
   check-nightly-ci:
     runs-on: ubuntu-latest
     permissions:
@@ -79,7 +79,7 @@ jobs:
       contents: read
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/changed-files.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/changed-files.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       files_yaml: |
         build_docs:
@@ -277,7 +277,7 @@ jobs:
   checks:
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       enable_check_generated_files: false
       ignored_pr_jobs: "cudf-spark-jni cuml-compat-tests conda-python-cudf-polars-tests-integration-optional"
@@ -293,7 +293,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-build.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-build.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -320,7 +320,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -342,7 +342,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_cudf_polars_quent
     with:
       build_type: pull-request
@@ -359,7 +359,7 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     needs: [checks, changed-files]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -378,7 +378,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-post-build-checks.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-post-build-checks.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: pull-request
       package_name: libcudf
@@ -391,7 +391,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -471,7 +471,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -488,7 +488,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: pull-request
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -504,7 +504,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -540,7 +540,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -590,7 +590,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -618,7 +618,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -645,7 +645,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-tests.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -712,7 +712,7 @@ jobs:
     needs: [checks]
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: pull-request
       matrix_name: conda-cpp-build
@@ -726,7 +726,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -756,7 +756,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
@@ -775,7 +775,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).test_notebooks
     with:
       build_type: pull-request
@@ -786,7 +786,7 @@ jobs:
   docs-build-matrix:
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: pull-request
       matrix_name: docs-build
@@ -800,7 +800,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.docs-build-matrix.outputs.matrix) }}
@@ -816,7 +816,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: true
@@ -864,7 +864,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -916,7 +916,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -943,7 +943,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
@@ -977,7 +977,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: pull-request
       branch: ${{ inputs.branch }}
@@ -999,7 +999,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_wheel_dask_cudf ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_wheels ||
@@ -1045,7 +1045,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: fromJSON(needs.changed-files.outputs.changed_file_groups).unit_tests_cudf_pandas
     with:
       # This selects the latest supported Python + CUDA minor versions for each ARCH/CUDA major version combo
@@ -1066,7 +1066,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
@@ -1091,7 +1091,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
@@ -1138,7 +1138,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||
@@ -1164,7 +1164,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     # Run whenever the shards ran (pass or fail) so we always get a diff, but
     # not when pandas-tests was skipped. continue-on-error keeps this purely
     # informational job from ever blocking the PR.
@@ -1187,7 +1187,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_all ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_python_cudf ||

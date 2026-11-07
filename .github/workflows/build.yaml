@@ -41,13 +41,13 @@ permissions: {}
 
 jobs:
   build-details:
-    uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
   checks:
     if: ${{ github.ref == 'refs/heads/main' }}
     permissions:
       actions: read
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       # Seed the default-branch pre-commit cache without running checks that only apply to PRs.
       base-branch: main
@@ -64,7 +64,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-build.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-build.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -83,7 +83,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -103,7 +103,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -137,7 +137,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/conda-upload-packages.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/conda-upload-packages.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -147,7 +147,7 @@ jobs:
     if: ${{ inputs.build_type != 'release-candidate' }}
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       matrix_name: docs-build
@@ -162,7 +162,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.docs-build-matrix.outputs.matrix) }}
@@ -196,7 +196,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
@@ -244,7 +244,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -277,7 +277,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -309,7 +309,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -341,7 +341,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -373,7 +373,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -428,7 +428,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -460,7 +460,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -521,7 +521,7 @@ jobs:
   java-build-matrix:
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       matrix_name: conda-cpp-build
@@ -535,7 +535,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
@@ -623,7 +623,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/maven-publish.yaml@d68e1cc1dbe40fbff66c0ea25c3083cb9c44c691
+    uses: rapidsai/shared-workflows/.github/workflows/maven-publish.yaml@1efe7df184d1e72c1038607252fb40a9fedc8ced
     with:
       artifact-name: cudf_java_maven_repo
       source-git-sha: ${{ inputs.sha || github.sha }}

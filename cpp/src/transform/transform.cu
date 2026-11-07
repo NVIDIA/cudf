@@ -275,17 +275,7 @@ void run(kernel const& kernel,
     kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
 }
 
-rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
-{
-  switch (type) {
-    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
-    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
-    default:
-      CUDF_FAIL(
-        std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
-        std::invalid_argument);
-  }
-}
+using jit::as_rtcx_binary_type;
 
 void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type, char const*>>
                precompiled_kernel_fragment,

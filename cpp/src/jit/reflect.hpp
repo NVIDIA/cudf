@@ -12,7 +12,6 @@
 #include <memory>
 #include <span>
 #include <string>
-#include <tuple>
 #include <variant>
 #include <vector>
 
@@ -24,7 +23,7 @@ struct transform_reflection {
   std::vector<std::string> ptx_input_value_types;
   std::vector<std::string> ptx_output_value_types;
 
-  bool operator==(transform_reflection const& other) const = default;
+  [[nodiscard]] bool operator==(transform_reflection const& other) const = default;
 };
 
 /**

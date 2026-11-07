@@ -6,7 +6,12 @@
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf/column/column_factories.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
+#include <cudf/dictionary/encode.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/hashing.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -23,7 +28,18 @@
 
 namespace {
 
-enum class column_type { UNKNOWN, MIXED, INT64, DOUBLE, DECIMAL128, STRING, LIST, STRUCT };
+enum class column_type {
+  UNKNOWN,
+  MIXED,
+  INT64,
+  DOUBLE,
+  DECIMAL128,
+  STRING,
+  LIST,
+  STRUCT,
+  DICTIONARY,
+  DICTIONARY_LIST
+};
 
 constexpr auto column_types = std::to_array<std::pair<column_type, std::string_view>>({
   {column_type::MIXED, "mixed"},
@@ -33,6 +49,8 @@ constexpr auto column_types = std::to_array<std::pair<column_type, std::string_v
   {column_type::STRING, "string"},
   {column_type::LIST, "list"},
   {column_type::STRUCT, "struct"},
+  {column_type::DICTIONARY, "dictionary"},
+  {column_type::DICTIONARY_LIST, "dictionary_list"},
 });
 
 [[nodiscard]] constexpr column_type parse_column_type(std::string_view name)
@@ -64,6 +82,10 @@ constexpr auto column_types = std::to_array<std::pair<column_type, std::string_v
   std::vector<std::string> result;
   result.reserve(column_types.size());
   for (auto const& type : column_types) {
+    // Preserve the existing Spark sweep; dictionary cases belong to MurmurHash benchmarks.
+    if (type.first == column_type::DICTIONARY || type.first == column_type::DICTIONARY_LIST) {
+      continue;
+    }
     result.emplace_back(type.second);
   }
   return result;
@@ -80,6 +102,14 @@ static void bench_hash(nvbench::state& state)
   bool const no_nulls  = nulls == 0.0;
   auto const hash_name = state.get_string("hash_name");
   auto const data_type = parse_column_type(state.get_string("data_type"));
+  if (hash_name == "murmurhash3_x86_32_jit" && data_type == column_type::STRUCT) {
+    state.skip("JIT MurmurHash does not support STRUCT columns");
+    return;
+  }
+  if (data_type == column_type::DICTIONARY_LIST && hash_name != "murmurhash3_x86_32_jit") {
+    state.skip("AOT hashing does not support dictionary columns with list keys");
+    return;
+  }
 
   auto builder =
     data_profile_builder().null_probability(no_nulls ? std::nullopt : std::optional<double>{nulls});
@@ -96,7 +126,12 @@ static void bench_hash(nvbench::state& state)
       case column_type::STRING: return cycle_dtypes({cudf::type_id::STRING}, num_cols);
       case column_type::LIST:
         builder.list_depth(1).list_type(cudf::type_id::INT64);
+        if (state.get_benchmark().get_name() == "murmurhash_nested") {
+          builder.distribution(cudf::type_id::LIST, distribution_id::UNIFORM, 0, 8);
+        }
         return cycle_dtypes({cudf::type_id::LIST}, num_cols);
+      case column_type::DICTIONARY:
+      case column_type::DICTIONARY_LIST: return cycle_dtypes({cudf::type_id::INT64}, num_cols);
       case column_type::STRUCT: {
         auto const struct_types =
           std::vector<cudf::type_id>{cudf::type_id::INT64, cudf::type_id::FLOAT64};
@@ -112,7 +147,42 @@ static void bench_hash(nvbench::state& state)
   }
 
   data_profile const profile = builder;
-  auto const data            = create_random_table(types, row_count{num_rows}, profile);
+  auto const data            = [&]() {
+    if (data_type != column_type::DICTIONARY && data_type != column_type::DICTIONARY_LIST) {
+      return create_random_table(types, row_count{num_rows}, profile);
+    }
+    std::vector<std::unique_ptr<cudf::column>> columns;
+    columns.reserve(num_cols);
+    for (cudf::size_type i = 0; i < num_cols; ++i) {
+      if (data_type == column_type::DICTIONARY) {
+        auto values =
+          create_random_column(cudf::type_id::INT64, row_count{num_rows}, profile, i + 1);
+        columns.push_back(
+          cudf::dictionary::encode(values->view(), cudf::data_type{cudf::type_id::INT32}));
+      } else {
+        // Sorted, unique list keys: [0,1,2,3], [4,5,6,7], ... . Indices carry parent nulls.
+        constexpr cudf::size_type num_keys = 2048;
+        constexpr cudf::size_type length   = 4;
+        auto offsets                       = cudf::sequence(
+          num_keys + 1, cudf::numeric_scalar<int32_t>{0}, cudf::numeric_scalar<int32_t>{length});
+        auto elements = cudf::sequence(num_keys * length, cudf::numeric_scalar<int64_t>{0});
+        auto keys =
+          cudf::make_lists_column(num_keys,
+                                  std::move(offsets),
+                                  std::move(elements),
+                                  0,
+                                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+        auto index_profile =
+          data_profile_builder()
+            .null_probability(no_nulls ? std::nullopt : std::optional<double>{nulls})
+            .distribution(cudf::type_id::INT32, distribution_id::UNIFORM, 0, num_keys - 1);
+        auto indices =
+          create_random_column(cudf::type_id::INT32, row_count{num_rows}, index_profile, i + 1);
+        columns.push_back(cudf::make_dictionary_column(std::move(keys), std::move(indices)));
+      }
+    }
+    return std::make_unique<cudf::table>(std::move(columns));
+  }();
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
@@ -127,6 +197,17 @@ static void bench_hash(nvbench::state& state)
 
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       auto result = cudf::hashing::murmurhash3_x86_32(data->view());
+    });
+  } else if (hash_name == "murmurhash3_x86_32_jit") {
+    state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
+
+    // Compile and link this schema before NVBench measures or profiles cached JIT execution.
+    {
+      auto result = cudf::hashing::murmurhash3_x86_32_jit(data->view());
+      stream.sync();
+    }
+    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+      auto result = cudf::hashing::murmurhash3_x86_32_jit(data->view());
     });
   } else if (hash_name == "spark_murmurhash3_x86_32") {
     state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
@@ -186,7 +267,14 @@ NVBENCH_BENCH(bench_hash)
   .add_int64_axis("num_cols", {2, 64})
   .add_float64_axis("nulls", {0.0, 0.1})
   .add_string_axis("hash_name",
-                   {"murmurhash3_x86_32", "md5", "sha1", "sha224", "sha256", "sha384", "sha512"});
+                   {"murmurhash3_x86_32",
+                    "murmurhash3_x86_32_jit",
+                    "md5",
+                    "sha1",
+                    "sha224",
+                    "sha256",
+                    "sha384",
+                    "sha512"});
 
 // Register the Spark type sweep separately so the other hashers keep their historical
 // mixed INT64/STRING workload.
@@ -197,3 +285,15 @@ NVBENCH_BENCH(bench_hash)
   .add_int64_axis("num_cols", {2, 64})
   .add_float64_axis("nulls", {0.0, 0.1})
   .add_string_axis("hash_name", {"spark_murmurhash3_x86_32"});
+
+// INT64 lists (uniform lengths 0..8), dictionary<INT64> with INT32 indices, and
+// dictionary<list<INT64>> with 2,048 four-element keys and INT32 indices.
+NVBENCH_BENCH(bench_hash)
+  .set_name("murmurhash_nested")
+  .add_int64_axis("num_rows", {65536, 16777216})
+  .add_string_axis(
+    "data_type",
+    column_type_names({column_type::LIST, column_type::DICTIONARY, column_type::DICTIONARY_LIST}))
+  .add_int64_axis("num_cols", {2, 16})
+  .add_float64_axis("nulls", {0.0, 0.1})
+  .add_string_axis("hash_name", {"murmurhash3_x86_32", "murmurhash3_x86_32_jit"});

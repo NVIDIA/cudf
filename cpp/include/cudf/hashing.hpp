@@ -62,6 +62,28 @@ std::unique_ptr<column> murmurhash3_x86_32(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Computes per-row MurmurHash3 hashes using a schema-specialized JIT kernel.
+ *
+ * Hash and seed semantics match `murmurhash3_x86_32`. The first call for a schema
+ * compiles and links a kernel; subsequent calls reuse the specialization cache.
+ * Supports non-nested columns, LIST<non-nested>, DICTIONARY<non-nested>, and
+ * DICTIONARY<LIST<non-nested>>. STRUCT columns,
+ * LIST<DICTIONARY<T>>, and deeper nesting are unsupported.
+ *
+ * @throws std::invalid_argument If the input schema is unsupported by the JIT path.
+ * @param input The table of columns to hash
+ * @param seed Optional seed value to use for the hash function
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return A UINT32 column containing one hash per input row
+ */
+std::unique_ptr<column> murmurhash3_x86_32_jit(
+  table_view const& input,
+  uint32_t seed                     = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
  * @brief Computes the Apache Spark-compatible MurmurHash3 32-bit hash of each row
  *
  * This function follows Apache Spark value hashing and row traversal semantics. Each non-null value

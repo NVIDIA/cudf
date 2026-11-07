@@ -106,11 +106,6 @@ enum class builtin_character_class : std::uint8_t {
 /**
  * @brief Result of compiling a regular expression
  *
- * If `workspace_bytes` is nonzero, the generated executor takes an additional
- * leading `char*` argument pointing to that many bytes of eight-byte-aligned
- * writable device storage. Concurrent workers must use disjoint storage;
- * sequential calls may reuse it without initialization. Zero leaves the
- * operation-specific signature unchanged.
  */
 struct compile_result {
   /// Operation-specialized CUDA C++ source; requires libregex_ir/executor.cuh.

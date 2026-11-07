@@ -41,21 +41,21 @@ void strip_captures(instruction_ir& ir)
 {
   std::vector<bool> observed(ir.capture_count + 1U, false);
   if (ir.selected_operation.kind == operation_kind::EXTRACT) {
-    std::fill(observed.begin(), observed.end(), true);
+    observed.assign(observed.size(), true);
   } else if (ir.selected_operation.kind == operation_kind::REPLACE) {
     for (auto& token : ir.replacement) {
       if (token.type == replacement_token::kind::CAPTURE) { observed[token.capture_index] = true; }
     }
   }
   for (auto& block : ir.blocks) {
-    block.instructions.erase(std::remove_if(block.instructions.begin(),
-                                            block.instructions.end(),
-                                            [&](instruction const& item) {
-                                              auto* capture = std::get_if<write_capture>(&item);
-                                              return capture != nullptr &&
-                                                     !observed[capture->capture_index];
-                                            }),
-                             block.instructions.end());
+    block.instructions.erase(
+      std::ranges::remove_if(block.instructions,
+                             [&](instruction const& item) {
+                               auto* capture = std::get_if<write_capture>(&item);
+                               return capture != nullptr && !observed[capture->capture_index];
+                             })
+        .begin(),
+      block.instructions.end());
   }
 }
 

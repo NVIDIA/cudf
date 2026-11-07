@@ -144,7 +144,7 @@ instruction_ir lower(automata_ir const& automata, operation const& selected)
   for (std::size_t index = 0; index < automata.lookarounds.size(); ++index) {
     // Captures inside a negative assertion cannot escape it. Its complete
     // subtree therefore needs only a Boolean result, even for EXTRACT/REPLACE.
-    auto negative = std::any_of(automata.states.begin(), automata.states.end(), [&](auto& state) {
+    auto negative = std::ranges::any_of(automata.states, [&](auto& state) {
       return state.kind == automata_state_kind::ASSERTION &&
              state.assertion == assertion_kind::LOOKAROUND && state.operand_index == index &&
              state.negative;

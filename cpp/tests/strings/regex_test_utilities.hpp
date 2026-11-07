@@ -29,7 +29,11 @@ namespace regex_backend_detail {
   template <typename Program, typename... Args>                                     \
   auto name(strings_column_view const& input, Program const& regex, Args&&... args) \
   {                                                                                 \
-    return name(input, regex, std::forward<Args>(args)...);                         \
+    if constexpr (std::is_same_v<Program, strings::regex_program>) {                \
+      return strings::name(input, regex, std::forward<Args>(args)...);              \
+    } else {                                                                        \
+      return experimental::name(input, regex, std::forward<Args>(args)...);         \
+    }                                                                               \
   }
 
 CUDF_REGEX_DISPATCH(contains_re)
@@ -57,29 +61,45 @@ struct regex_backend {
   static constexpr bool supports_unbounded_nesting =
     std::is_same_v<program, strings::regex_program>;
 
-  static std::unique_ptr<program> create(
-    experimental::regex_operation operation,
-    std::string_view pattern,
-    strings::regex_flags flags                             = strings::regex_flags::DEFAULT,
-    strings::capture_groups captures                       = strings::capture_groups::EXTRACT,
-    experimental::regex_jit_program_options const& options = {})
-  {
-    if constexpr (std::is_same_v<program, strings::regex_program>) {
-      return program::create(pattern, flags, captures);
-    } else {
-      return program::create(pattern, operation, options, flags, captures);
-    }
+#define CUDF_REGEX_CREATE(name)                                                                \
+  static std::unique_ptr<program> create_##name(                                               \
+    std::string_view pattern,                                                                  \
+    strings::regex_flags flags                             = strings::regex_flags::DEFAULT,    \
+    strings::capture_groups captures                       = strings::capture_groups::EXTRACT, \
+    experimental::regex_jit_program_options const& options = {})                               \
+  {                                                                                            \
+    if constexpr (std::is_same_v<program, strings::regex_program>) {                           \
+      return program::create(pattern, flags, captures);                                        \
+    } else {                                                                                   \
+      return program::create_##name(pattern, options, flags, captures);                        \
+    }                                                                                          \
+  }                                                                                            \
+                                                                                               \
+  static std::unique_ptr<program> create_##name(                                               \
+    std::string_view pattern,                                                                  \
+    experimental::regex_jit_program_options const& options,                                    \
+    strings::regex_flags flags       = strings::regex_flags::DEFAULT,                          \
+    strings::capture_groups captures = strings::capture_groups::EXTRACT)                       \
+  {                                                                                            \
+    return create_##name(pattern, flags, captures, options);                                   \
   }
 
-  static std::unique_ptr<program> create(
-    experimental::regex_operation operation,
-    std::string_view pattern,
-    experimental::regex_jit_program_options const& options,
-    strings::regex_flags flags       = strings::regex_flags::DEFAULT,
-    strings::capture_groups captures = strings::capture_groups::EXTRACT)
-  {
-    return create(operation, pattern, flags, captures, options);
-  }
+  CUDF_REGEX_CREATE(contains)
+  CUDF_REGEX_CREATE(matches)
+  CUDF_REGEX_CREATE(count)
+  CUDF_REGEX_CREATE(find)
+  CUDF_REGEX_CREATE(extract)
+  CUDF_REGEX_CREATE(extract_single)
+  CUDF_REGEX_CREATE(extract_all_record)
+  CUDF_REGEX_CREATE(findall)
+  CUDF_REGEX_CREATE(replace)
+  CUDF_REGEX_CREATE(replace_with_backrefs)
+  CUDF_REGEX_CREATE(split)
+  CUDF_REGEX_CREATE(rsplit)
+  CUDF_REGEX_CREATE(split_record)
+  CUDF_REGEX_CREATE(rsplit_record)
+
+#undef CUDF_REGEX_CREATE
 
   static std::unique_ptr<column> contains_re(strings_column_view const& input, program const& regex)
   {
@@ -140,32 +160,44 @@ struct regex_backend {
     return regex_backend_detail::replace_with_backrefs(input, regex, replacement);
   }
 
-  static std::unique_ptr<table> split_re(strings_column_view const& input,
-                                         program const& regex,
-                                         size_type maxsplit = -1)
+  static std::unique_ptr<table> split_re(
+    strings_column_view const& input,
+    program const& regex,
+    size_type maxsplit                = -1,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
-    return regex_backend_detail::split_re(input, regex, maxsplit);
+    return regex_backend_detail::split_re(input, regex, maxsplit, stream, mr);
   }
 
-  static std::unique_ptr<table> rsplit_re(strings_column_view const& input,
-                                          program const& regex,
-                                          size_type maxsplit = -1)
+  static std::unique_ptr<table> rsplit_re(
+    strings_column_view const& input,
+    program const& regex,
+    size_type maxsplit                = -1,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
-    return regex_backend_detail::rsplit_re(input, regex, maxsplit);
+    return regex_backend_detail::rsplit_re(input, regex, maxsplit, stream, mr);
   }
 
-  static std::unique_ptr<column> split_record_re(strings_column_view const& input,
-                                                 program const& regex,
-                                                 size_type maxsplit = -1)
+  static std::unique_ptr<column> split_record_re(
+    strings_column_view const& input,
+    program const& regex,
+    size_type maxsplit                = -1,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
-    return regex_backend_detail::split_record_re(input, regex, maxsplit);
+    return regex_backend_detail::split_record_re(input, regex, maxsplit, stream, mr);
   }
 
-  static std::unique_ptr<column> rsplit_record_re(strings_column_view const& input,
-                                                  program const& regex,
-                                                  size_type maxsplit = -1)
+  static std::unique_ptr<column> rsplit_record_re(
+    strings_column_view const& input,
+    program const& regex,
+    size_type maxsplit                = -1,
+    cuda::stream_ref stream           = cudf::get_default_stream(),
+    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
-    return regex_backend_detail::rsplit_record_re(input, regex, maxsplit);
+    return regex_backend_detail::rsplit_record_re(input, regex, maxsplit, stream, mr);
   }
 };
 

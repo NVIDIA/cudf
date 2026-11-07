@@ -37,10 +37,9 @@ bool equivalent_predicates(character_predicate const& left, character_predicate 
       left.ranges.size() != right.ranges.size()) {
     return false;
   }
-  return std::equal(
-    left.ranges.begin(), left.ranges.end(), right.ranges.begin(), [](auto& lhs, auto& rhs) {
-      return lhs.first == rhs.first && lhs.last == rhs.last;
-    });
+  return std::ranges::equal(left.ranges, right.ranges, [](auto& lhs, auto& rhs) {
+    return lhs.first == rhs.first && lhs.last == rhs.last;
+  });
 }
 
 std::optional<builtin_character_class> adapted_builtin(predicate_class value)
@@ -199,9 +198,9 @@ void build_assertion_start_byte_filter(deterministic_machine& machine)
   auto first_boundary =
     machine.boundary_accepts.begin() + machine.initial_state * machine.boundary_class_count;
   // A nullable match can succeed before a byte that cannot start a consuming path.
-  if (std::any_of(first_boundary, first_boundary + machine.boundary_class_count, [](auto accepts) {
-        return accepts != 0;
-      })) {
+  if (std::ranges::any_of(first_boundary,
+                          first_boundary + machine.boundary_class_count,
+                          [](auto accepts) { return accepts != 0; })) {
     return;
   }
   std::size_t candidates        = 0;
@@ -361,9 +360,8 @@ std::optional<deterministic_nfa_graph> make_deterministic_graph(instruction_ir c
 
     auto append_successors = [&](deterministic_nfa_node& node) {
       auto successors = block.successors;
-      std::stable_sort(successors.begin(), successors.end(), [](auto& left, auto& right) {
-        return left.priority < right.priority;
-      });
+      std::ranges::stable_sort(
+        successors, [](auto& left, auto& right) { return left.priority < right.priority; });
       for (auto edge : successors)
         node.targets.push_back(block_starts[edge.target]);
     };
@@ -411,8 +409,8 @@ std::optional<std::vector<std::uint32_t>> make_deterministic_alphabet(
       if (last < unicode_limit - 1) boundaries.push_back(last + 1);
     }
   }
-  std::sort(boundaries.begin(), boundaries.end());
-  boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+  std::ranges::sort(boundaries);
+  boundaries.erase(std::ranges::unique(boundaries).begin(), boundaries.end());
 
   std::map<std::vector<std::uint64_t>, std::uint16_t> class_ids;
   std::vector<std::uint32_t> representatives;
@@ -451,7 +449,7 @@ std::optional<std::vector<std::uint32_t>> make_deterministic_alphabet(
   }
   for (auto interval : intervals) {
     if (interval.last < 256) continue;
-    interval.first = std::max(interval.first, 256U);
+    interval.first = std::ranges::max(interval.first, 256U);
     if (!machine.unicode_intervals.empty() &&
         machine.unicode_intervals.back().class_id == interval.class_id &&
         machine.unicode_intervals.back().last + 1 == interval.first) {
@@ -469,8 +467,7 @@ bool has_unique_assertion_match_end(instruction_ir const& ir, deterministic_nfa_
   // If no consuming node matches a newline, a single candidate start cannot reach
   // both positions. Branch priority then cannot change the observable match span.
   auto line_end_is_unique =
-    !ir.options.multiline &&
-    std::none_of(graph.nodes.begin(), graph.nodes.end(), [&](auto const& node) {
+    !ir.options.multiline && std::ranges::none_of(graph.nodes, [&](auto const& node) {
       return node.consumes &&
              (node.predicate.matches(U'\n') ||
               (ir.options.extended_newline &&
@@ -596,8 +593,7 @@ std::optional<glushkov_machine> make_glushkov_machine(instruction_ir const& ir, 
   machine.fixed_match_bytes        = fixed_match_byte_width(*graph, ir.options.characters);
   machine.repeated_predicate_count = repeated_predicate_count(*graph);
   if (machine.repeated_predicate_count.has_value()) {
-    auto repeated = std::find_if(
-      graph->nodes.begin(), graph->nodes.end(), [](auto& node) { return node.consumes; });
+    auto repeated = std::ranges::find_if(graph->nodes, [](auto& node) { return node.consumes; });
     machine.repeated_predicate_class = repeated->predicate.recognized;
   }
 
@@ -645,10 +641,10 @@ std::optional<glushkov_machine> make_glushkov_machine(instruction_ir const& ir, 
   std::vector<std::pair<std::int32_t, std::uint64_t>> spans(span_sources.begin(),
                                                             span_sources.end());
   // common forward spans become shifts; uncommon and backward edges stay explicit.
-  std::stable_sort(spans.begin(), spans.end(), [](auto& left, auto& right) {
+  std::ranges::stable_sort(spans, [](auto& left, auto& right) {
     return std::popcount(left.second) > std::popcount(right.second);
   });
-  auto shift_count = std::min<std::size_t>(spans.size(), 8U);
+  auto shift_count = std::ranges::min(spans.size(), std::size_t{8});
   machine.shifts.reserve(shift_count);
   for (std::size_t index = 0; index < shift_count; ++index) {
     machine.shifts.push_back({spans[index].second, static_cast<std::uint8_t>(spans[index].first)});
@@ -723,7 +719,7 @@ std::optional<deterministic_machine> make_assertion_deterministic_machine(
   std::vector<std::uint8_t> context_masks;
   for (std::uint8_t mask = 0; mask < 64U; ++mask) {
     auto relevant = static_cast<std::uint8_t>(mask & machine.assertion_mask);
-    if (std::find(context_masks.begin(), context_masks.end(), relevant) == context_masks.end()) {
+    if (std::ranges::find(context_masks, relevant) == context_masks.end()) {
       context_masks.push_back(relevant);
     }
   }
@@ -764,14 +760,13 @@ std::optional<deterministic_machine> make_assertion_deterministic_machine(
       for (auto target = node.targets.rbegin(); target != node.targets.rend(); ++target)
         work.push_back(*target);
     }
-    std::sort(result.consumers.begin(), result.consumers.end());
-    result.consumers.erase(std::unique(result.consumers.begin(), result.consumers.end()),
-                           result.consumers.end());
+    std::ranges::sort(result.consumers);
+    result.consumers.erase(std::ranges::unique(result.consumers).begin(), result.consumers.end());
     return result;
   };
   auto canonicalize = [](std::vector<std::size_t>& state) {
-    std::sort(state.begin(), state.end());
-    state.erase(std::unique(state.begin(), state.end()), state.end());
+    std::ranges::sort(state);
+    state.erase(std::ranges::unique(state).begin(), state.end());
   };
 
   constexpr std::size_t max_table_items = 4U * 1024U * 1024U;
@@ -931,9 +926,8 @@ std::optional<deterministic_machine> make_deterministic_machine(instruction_ir c
 
     auto append_successors = [&](deterministic_nfa_node& node) {
       auto successors = block.successors;
-      std::stable_sort(successors.begin(), successors.end(), [](auto& left, auto& right) {
-        return left.priority < right.priority;
-      });
+      std::ranges::stable_sort(
+        successors, [](auto& left, auto& right) { return left.priority < right.priority; });
       for (auto edge : successors)
         node.targets.push_back(block_starts[edge.target]);
     };
@@ -1014,9 +1008,8 @@ std::optional<deterministic_machine> make_deterministic_machine(instruction_ir c
       }
     }
     if (!preserve_priority) {
-      std::sort(result.ordered.begin(), result.ordered.end());
-      result.ordered.erase(std::unique(result.ordered.begin(), result.ordered.end()),
-                           result.ordered.end());
+      std::ranges::sort(result.ordered);
+      result.ordered.erase(std::ranges::unique(result.ordered).begin(), result.ordered.end());
       result.captures.assign(result.ordered.size(), {});
     }
     return result;
@@ -1041,8 +1034,8 @@ std::optional<deterministic_machine> make_deterministic_machine(instruction_ir c
       if (last < unicode_limit - 1) boundaries.push_back(last + 1);
     }
   }
-  std::sort(boundaries.begin(), boundaries.end());
-  boundaries.erase(std::unique(boundaries.begin(), boundaries.end()), boundaries.end());
+  std::ranges::sort(boundaries);
+  boundaries.erase(std::ranges::unique(boundaries).begin(), boundaries.end());
 
   std::map<std::vector<std::uint64_t>, std::uint16_t> class_ids;
   std::vector<std::uint32_t> representatives;
@@ -1086,7 +1079,7 @@ std::optional<deterministic_machine> make_deterministic_machine(instruction_ir c
   }
   for (auto interval : intervals) {
     if (interval.last < 256) continue;
-    interval.first = std::max(interval.first, 256U);
+    interval.first = std::ranges::max(interval.first, 256U);
     if (!machine.unicode_intervals.empty() &&
         machine.unicode_intervals.back().class_id == interval.class_id &&
         machine.unicode_intervals.back().last + 1 == interval.first) {
@@ -1153,16 +1146,14 @@ std::optional<deterministic_machine> make_deterministic_machine(instruction_ir c
           next.bits[word] |= start_state.bits[word];
         for (std::size_t start_index = 0; start_index < start_state.ordered.size(); ++start_index) {
           auto node_index = start_state.ordered[start_index];
-          if (std::find(next.ordered.begin(), next.ordered.end(), node_index) ==
-              next.ordered.end()) {
+          if (std::ranges::find(next.ordered, node_index) == next.ordered.end()) {
             next.ordered.push_back(node_index);
             next.captures.push_back(start_state.captures[start_index]);
           }
         }
         if (!preserve_priority) {
-          std::sort(next.ordered.begin(), next.ordered.end());
-          next.ordered.erase(std::unique(next.ordered.begin(), next.ordered.end()),
-                             next.ordered.end());
+          std::ranges::sort(next.ordered);
+          next.ordered.erase(std::ranges::unique(next.ordered).begin(), next.ordered.end());
           next.captures.assign(next.ordered.size(), {});
         }
       }
@@ -1179,19 +1170,16 @@ std::optional<deterministic_machine> make_deterministic_machine(instruction_ir c
         target = existing->second;
         if (state_capture_actions[target] != next.captures) { capture_paths_deterministic = false; }
       }
-      if (std::none_of(
-            states[target].begin(), states[target].end(), [](auto word) { return word != 0; })) {
+      if (std::ranges::none_of(states[target], [](auto word) { return word != 0; })) {
         machine.dead_state = target;
       }
       auto accepts  = machine_bit(states[target], accept_bit);
-      auto consumes = std::any_of(state_orders[target].begin(),
-                                  state_orders[target].end(),
-                                  [&](auto node_index) { return node_index != accept_bit; });
+      auto consumes = std::ranges::any_of(
+        state_orders[target], [&](auto node_index) { return node_index != accept_bit; });
       if (accepts && consumes) terminal_accept = false;
       std::vector<deterministic_capture_action> accept_captures;
       if (accepts) {
-        auto accept =
-          std::find(state_orders[target].begin(), state_orders[target].end(), accept_bit);
+        auto accept     = std::ranges::find(state_orders[target], accept_bit);
         auto index      = static_cast<std::size_t>(accept - state_orders[target].begin());
         accept_captures = state_capture_actions[target][index];
       }
@@ -1237,9 +1225,8 @@ execution_plan::execution_plan(instruction_ir ir) : ir_(std::move(ir))
     own_storage_words_       = storage_words_;
     std::size_t nested_words = 0;
     for (auto& nested : lookarounds_)
-      nested_words = std::max(nested_words, nested.storage_words_);
-    if (!capture_slots_.empty() &&
-        std::any_of(lookarounds_.begin(), lookarounds_.end(), [](auto const& nested) {
+      nested_words = std::ranges::max(nested_words, nested.storage_words_);
+    if (!capture_slots_.empty() && std::ranges::any_of(lookarounds_, [](auto const& nested) {
           return !nested.capture_slots_.empty();
         }))
       nested_words += static_cast<std::size_t>(ir_.capture_count + 1) * 2;
@@ -1275,9 +1262,7 @@ std::optional<execution_plan::fixed_ascii_suffix> execution_plan::fixed_ascii_su
   auto eligible_predicate = [](character_predicate const& predicate) {
     return predicate.recognized != predicate_class::ANY && !predicate.negated &&
            !predicate.ranges.empty() &&
-           std::all_of(predicate.ranges.begin(), predicate.ranges.end(), [](auto& range) {
-             return range.last <= 0x7f;
-           });
+           std::ranges::all_of(predicate.ranges, [](auto& range) { return range.last <= 0x7f; });
   };
 
   auto visited = std::vector<bool>(ir_.blocks.size(), false);
@@ -1609,9 +1594,8 @@ std::optional<execution_plan::utf8_literal> execution_plan::exact_literal() cons
 std::optional<std::string> execution_plan::exact_ascii_literal() const
 {
   auto literal = exact_literal();
-  if (!literal.has_value() || std::any_of(literal->codepoints.begin(),
-                                          literal->codepoints.end(),
-                                          [](auto codepoint) { return codepoint > 0x7fU; })) {
+  if (!literal.has_value() ||
+      std::ranges::any_of(literal->codepoints, [](auto codepoint) { return codepoint > 0x7fU; })) {
     return std::nullopt;
   }
   return encode_utf8_literal(literal->codepoints);
@@ -1621,9 +1605,8 @@ std::optional<execution_plan::utf8_literal> execution_plan::exact_utf8_literal()
 {
   if (ir_.options.characters == character_mode::BYTES) return std::nullopt;
   auto literal = exact_literal();
-  return literal.has_value() && std::any_of(literal->codepoints.begin(),
-                                            literal->codepoints.end(),
-                                            [](auto value) { return value > 0x7fU; })
+  return literal.has_value() &&
+             std::ranges::any_of(literal->codepoints, [](auto value) { return value > 0x7fU; })
            ? std::move(literal)
            : std::nullopt;
 }
@@ -1661,9 +1644,7 @@ std::optional<std::string> execution_plan::mandatory_ascii_literal() const
     for (auto& instruction : ir_.blocks[block].instructions) {
       auto* matched = std::get_if<match_literal>(&instruction);
       if (matched == nullptr || matched->value.size() < 2U ||
-          std::any_of(matched->value.begin(), matched->value.end(), [](auto codepoint) {
-            return codepoint > 0x7f;
-          })) {
+          std::ranges::any_of(matched->value, [](auto codepoint) { return codepoint > 0x7f; })) {
         continue;
       }
       auto literal = std::string{};
@@ -1674,9 +1655,8 @@ std::optional<std::string> execution_plan::mandatory_ascii_literal() const
       candidates.emplace_back(block, std::move(literal));
     }
   }
-  std::stable_sort(candidates.begin(), candidates.end(), [](auto& lhs, auto& rhs) {
-    return lhs.second.size() > rhs.second.size();
-  });
+  std::ranges::stable_sort(
+    candidates, [](auto& lhs, auto& rhs) { return lhs.second.size() > rhs.second.size(); });
 
   for (auto& [candidate, literal] : candidates) {
     std::vector<bool> reachable(ir_.blocks.size(), false);
@@ -1722,8 +1702,7 @@ std::vector<std::size_t> execution_plan::live_capture_slots() const
     for (std::uint32_t capture = 1; capture <= ir_.capture_count; ++capture) {
       if (ir_.options.extract_capture_group && capture != *ir_.options.extract_capture_group)
         continue;
-      if (std::find(whole_match_captures_.begin(), whole_match_captures_.end(), capture) !=
-          whole_match_captures_.end()) {
+      if (std::ranges::find(whole_match_captures_, capture) != whole_match_captures_.end()) {
         continue;
       }
       auto slot       = static_cast<std::size_t>(capture) * 2U;
@@ -1820,7 +1799,7 @@ bool execution_plan::is_whole_match_capture(std::uint32_t capture_index) const
     for (auto edge : candidate.successors)
       predecessors[edge.target].push_back(candidate.id);
   }
-  std::fill(visited.begin(), visited.end(), false);
+  visited.assign(visited.size(), false);
   block               = ir_.accept;
   auto ends_at_accept = false;
   while (block < ir_.blocks.size() && !visited[block]) {
@@ -1900,9 +1879,8 @@ void execution_plan::prepare_start_seeker(deterministic_nfa_graph const& graph)
   std::array<std::uint64_t, 4> bitmap{};
   for (auto code_point : points) {
     if (code_point > 255 && ir_.options.characters == character_mode::BYTES) continue;
-    if (!std::any_of(first.begin(), first.end(), [&](auto id) {
-          return graph.nodes[id].predicate.matches(code_point);
-        }))
+    if (!std::ranges::any_of(
+          first, [&](auto id) { return graph.nodes[id].predicate.matches(code_point); }))
       continue;
     auto byte = ir_.options.characters == character_mode::BYTES || code_point < 128
                   ? static_cast<std::uint32_t>(code_point)
@@ -1964,7 +1942,8 @@ void execution_plan::prepare_thompson()
     }
   }
   frontier_words_ =
-    std::max<std::size_t>(1, std::count(frontier_targets.begin(), frontier_targets.end(), true)) *
+    std::ranges::max(std::size_t{1},
+                     static_cast<std::size_t>(std::ranges::count(frontier_targets, true))) *
     record;
   storage_words_ =
     2 * frontier_words_ + closure_records_ * record + record + 2 * ((states + 63) / 64);
@@ -1990,9 +1969,8 @@ void execution_plan::select()
       std::erase_if(block.instructions, [&](instruction const& item) {
         auto* capture = std::get_if<write_capture>(&item);
         return capture != nullptr &&
-               std::find(whole_match_captures_.begin(),
-                         whole_match_captures_.end(),
-                         capture->capture_index) != whole_match_captures_.end();
+               std::ranges::find(whole_match_captures_, capture->capture_index) !=
+                 whole_match_captures_.end();
       });
     }
   }
@@ -2036,10 +2014,8 @@ void execution_plan::select()
   }
   if (!line_tail_literal_.has_value() && !word_run_minimum_.has_value() &&
       !ascii_literal_.has_value() && !utf8_literal_.has_value()) {
-    auto replacement_uses_captures =
-      std::any_of(ir_.replacement.begin(), ir_.replacement.end(), [](auto& token) {
-        return token.type == replacement_token::kind::CAPTURE;
-      });
+    auto replacement_uses_captures = std::ranges::any_of(
+      ir_.replacement, [](auto& token) { return token.type == replacement_token::kind::CAPTURE; });
     auto span_or_count =
       ir_.control.result == result_shape::MATCH_SPAN ||
       ir_.control.result == result_shape::MATCH_COUNT ||

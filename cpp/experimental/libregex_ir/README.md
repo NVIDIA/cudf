@@ -72,7 +72,7 @@ extern "C" __global__ void contains_word(char const* data,
                                        bool* result)
 {
   if (blockIdx.x == 0 && threadIdx.x == 0) {
-    *result = regex_ir_execute(data, size);
+    *result = regex_ir_execute(nullptr, data, size);
   }
 }
 ```
@@ -83,10 +83,11 @@ offset array, pointer/length pairs, or another layout. The matcher operates on
 individual inputs and does not require a column representation.
 
 The device signature depends on the operation and metadata. For example, find
-and extraction write spans, replacement accepts an output buffer, and a nonzero
-`workspace_bytes` adds a leading `char* workspace` argument. Supply that many
-bytes of eight-byte-aligned device storage per concurrent worker. Sequential
-calls can reuse the same workspace without initialization. The generated
+and extraction write spans and replacement accepts an output buffer. Every
+matcher takes a leading `char* workspace` argument. Pass `nullptr` when
+`workspace_bytes` is zero; otherwise, supply that many bytes of eight-byte-aligned
+device storage per concurrent worker. Sequential calls can reuse the same
+workspace without initialization. The generated
 signature is authoritative; [cuda_abi.hpp](detail/cuda_abi.hpp) centralizes its
 internal descriptions.
 

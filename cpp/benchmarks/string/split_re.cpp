@@ -47,8 +47,7 @@ static void bench_split_re(nvbench::state& state)
   auto& pattern = patterns[pattern_index];
   auto prog = backend == "interpreter" ? cudf::strings::regex_program::create(pattern) : nullptr;
   auto jit_program = backend == "jit"
-                       ? cudf::experimental::regex_jit_program::create(
-                           pattern, cudf::experimental::regex_operation::SPLIT_RECORD)
+                       ? cudf::experimental::regex_jit_program::create_split_record(pattern)
                        : nullptr;
 
   data_profile const profile = data_profile_builder().distribution(

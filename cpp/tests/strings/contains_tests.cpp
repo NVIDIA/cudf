@@ -43,9 +43,7 @@ TYPED_TEST(StringsContainsTests, IgnoreCaseSimpleMappings)
     {"İ", "i", "I", "ı", "K", "k", "K", "S", "s", "ſ", "ǅ", "ǆ", "Ǆ"});
   auto view  = cudf::strings_column_view(input);
   auto check = [&](std::string_view pattern, std::initializer_list<bool> values) {
-    auto program = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                                     pattern,
-                                     cudf::strings::regex_flags::IGNORECASE);
+    auto program = TypeParam::create_contains(pattern, cudf::strings::regex_flags::IGNORECASE);
     auto actual  = TypeParam::contains_re(view, *program);
     cudf::test::fixed_width_column_wrapper<bool> expected(values.begin(), values.end());
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*actual, expected);
@@ -64,7 +62,7 @@ TYPED_TEST(StringsContainsTests, PrioritySensitiveFindStarts)
   auto view = cudf::strings_column_view(input);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({0, 0, 1, 0, 1, -1, -1});
   for (auto pattern : {R"(\ba*(ab)*)", R"(\ba{0,1}(ab){0,1})", R"(\ba*\b)"}) {
-    auto program = TypeParam::create(cudf::experimental::regex_operation::FIND, pattern);
+    auto program = TypeParam::create_find(pattern);
     auto actual  = TypeParam::find_re(view, *program);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*actual, expected);
   }
@@ -87,8 +85,8 @@ TYPED_TEST(StringsContainsTests, PrioritySensitiveEndAnchors)
         {0, 1, 0, multiline ? 0 : 3, multiline ? 0 : -1, -1, -1, extended ? 0 : -1, 0});
       cudf::test::fixed_width_column_wrapper<cudf::size_type> counts(
         {1, 1, 1, multiline ? 2 : 1, multiline ? 1 : 0, 0, 0, extended ? 1 : 0, 1});
-      auto find  = TypeParam::create(cudf::experimental::regex_operation::FIND, pattern, mode);
-      auto count = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern, mode);
+      auto find  = TypeParam::create_find(pattern, mode);
+      auto count = TypeParam::create_count(pattern, mode);
       CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*TypeParam::find_re(view, *find), starts);
       CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*TypeParam::count_re(view, *count), counts);
     }
@@ -208,7 +206,7 @@ TYPED_TEST(StringsContainsTests, ContainsTest)
       h_expected,
       h_expected + h_strings.size(),
       cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, ptn);
+    auto prog    = TypeParam::create_contains(ptn);
     auto results = TypeParam::contains_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -229,7 +227,7 @@ TYPED_TEST(StringsContainsTests, MatchesTest)
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, true, false, false, false, false},
       cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
+    auto prog    = TypeParam::create_matches(pattern);
     auto results = TypeParam::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -238,7 +236,7 @@ TYPED_TEST(StringsContainsTests, MatchesTest)
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, false, true, true, false, false},
       cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
+    auto prog    = TypeParam::create_matches(pattern);
     auto results = TypeParam::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -247,7 +245,7 @@ TYPED_TEST(StringsContainsTests, MatchesTest)
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, false, false, false, false, false},
       cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
+    auto prog    = TypeParam::create_matches(pattern);
     auto results = TypeParam::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -256,7 +254,7 @@ TYPED_TEST(StringsContainsTests, MatchesTest)
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {true, true, true, true, true, false, true},
       cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
+    auto prog    = TypeParam::create_matches(pattern);
     auto results = TypeParam::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -281,7 +279,7 @@ TYPED_TEST(StringsContainsTests, MatchesIPV4Test)
       "$";
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {true, true, false, false, false, false, true, true, true, true});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
+    auto prog    = TypeParam::create_matches(pattern);
     auto results = TypeParam::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);
   }
@@ -292,7 +290,7 @@ TYPED_TEST(StringsContainsTests, MatchesIPV4Test)
       "\\.([0-9]|[1-9][0-9]|1([0-9][0-9])|2([0-4][0-9]|5[0-5]))$";
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, false, false, false, false, false, false, false, true});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
+    auto prog    = TypeParam::create_matches(pattern);
     auto results = TypeParam::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);
   }
@@ -303,7 +301,7 @@ TYPED_TEST(StringsContainsTests, MatchesIPV4Test)
       "\\.([0-9]|[1-9][0-9]|1([0-9][0-9])|2([0-4][0-9]|5[0-5]))$";
     cudf::test::fixed_width_column_wrapper<bool> expected(
       {false, false, false, false, false, false, true, true, false, false});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
+    auto prog    = TypeParam::create_matches(pattern);
     auto results = TypeParam::matches_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);
   }
@@ -316,29 +314,29 @@ TYPED_TEST(StringsContainsTests, OctalTest)
   auto expected     = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0, 0, 0});
 
   auto pattern = std::string("\\101");
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  auto prog    = TypeParam::create_contains(pattern);
   auto results = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern = std::string("\\1013");
-  prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog    = TypeParam::create_contains(pattern);
   results = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern = std::string("D*\\101\\063");
-  prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog    = TypeParam::create_contains(pattern);
   results = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern  = std::string("\\719");
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 1, 0});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   results  = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern  = std::string(R"([\7][\11][\15])");
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 1});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   results  = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
@@ -373,13 +371,13 @@ TYPED_TEST(StringsContainsTests, HexTest)
     auto true_dat = cudf::detail::make_counting_transform_iterator(
       0, [ch](auto idx) { return ch == static_cast<char>(idx); });
     cudf::test::fixed_width_column_wrapper<bool> expected(true_dat, true_dat + count);
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+    auto prog    = TypeParam::create_contains(pattern);
     auto results = TypeParam::contains_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
     // also test hex character appearing in character class brackets
     pattern = "[" + pattern + "]";
-    prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+    prog    = TypeParam::create_contains(pattern);
     results = TypeParam::contains_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -398,53 +396,46 @@ TYPED_TEST(StringsContainsTests, EmbeddedNullCharacter)
 
   auto pattern  = std::string("A");
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 0, 0, 0, 0, 0, 0, 0, 0});
-  auto prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  auto prog     = TypeParam::create_contains(pattern);
   auto results  = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern  = std::string("B");
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 1, 1, 1, 1, 1, 1});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   results  = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern  = std::string("J\\0B");
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0, 0, 0, 0, 1});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   results  = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern  = std::string("[G-J][\\0]B");
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0, 1, 1, 1, 1});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   results  = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern  = std::string("[A-D][\\x00]B");
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 0, 0, 0, 0, 0, 0});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   results  = TypeParam::contains_re(strings_view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
 TYPED_TEST(StringsContainsTests, Errors)
 {
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(3?)+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?:3?)+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "3?+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "{3}a"),
-               cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(3?)+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(?:3?)+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("3?+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("{3}a"), cudf::logic_error);
 
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "aaaa{1234,5678}"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "aaaa{123,5678}"),
-               cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("aaaa{1234,5678}"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("aaaa{123,5678}"), cudf::logic_error);
 
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[a-C]"),
-               cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("[a-C]"), cudf::logic_error);
 }
 
 TYPED_TEST(StringsContainsTests, CountTest)
@@ -459,7 +450,7 @@ TYPED_TEST(StringsContainsTests, CountTest)
     auto pattern = std::string("[tT]he");
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       {2, 0, 0, 0, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -467,7 +458,7 @@ TYPED_TEST(StringsContainsTests, CountTest)
     auto pattern = std::string("@\\w+");
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       {1, 1, 0, 0, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -475,7 +466,7 @@ TYPED_TEST(StringsContainsTests, CountTest)
     auto pattern = std::string("\\d+:\\d+");
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       {0, 0, 2, 1, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -483,7 +474,7 @@ TYPED_TEST(StringsContainsTests, CountTest)
     auto pattern = std::string("o");
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       {3, 1, 0, 0, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -491,7 +482,7 @@ TYPED_TEST(StringsContainsTests, CountTest)
     auto pattern = std::string("\\blazy\\b");
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       {0, 2, 0, 0, 0, 0}, cudf::test::iterators::nulls_from_nullptrs(h_strings));
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(strings_view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -504,31 +495,31 @@ TYPED_TEST(StringsContainsTests, CountEmptyMatching)
   auto patterns = std::vector<std::string>{"a*", "X?", "b{0,}", "()", "(?:)", "[A-Z]*"};
   auto expected = cudf::test::fixed_width_column_wrapper<int32_t>({6, 6, 1, 4});
   for (auto pattern : patterns) {
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   // "\\b", "\\B",
   expected     = cudf::test::fixed_width_column_wrapper<int32_t>({1, 1, 1, 1});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, "^");
+  auto prog    = TypeParam::create_count("^");
   auto results = TypeParam::count_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
-  prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, "$");
+  prog    = TypeParam::create_count("$");
   results = TypeParam::count_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   expected = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0, 1, 0});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::COUNT, "^$");
+  prog     = TypeParam::create_count("^$");
   results  = TypeParam::count_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   expected = cudf::test::fixed_width_column_wrapper<int32_t>({2, 2, 0, 2});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::COUNT, "\\b");
+  prog     = TypeParam::create_count("\\b");
   results  = TypeParam::count_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   expected = cudf::test::fixed_width_column_wrapper<int32_t>({4, 4, 1, 2});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::COUNT, "\\B");
+  prog     = TypeParam::create_count("\\B");
   results  = TypeParam::count_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
@@ -542,7 +533,7 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
     // exact match
     auto pattern = std::string("a{3}");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({0, 0, 1, 1, 1, 2});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -550,7 +541,7 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
     // range match (greedy quantifier)
     auto pattern = std::string("a{3,5}");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({0, 0, 1, 1, 1, 1});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -558,7 +549,7 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
     // minimum match (greedy quantifier)
     auto pattern = std::string("a{2,}");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({0, 1, 1, 1, 1, 1});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -566,7 +557,7 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
     // range match (lazy quantifier)
     auto pattern = std::string("a{2,4}?");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({0, 1, 1, 2, 2, 3});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -574,7 +565,7 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
     // minimum match (lazy quantifier)
     auto pattern = std::string("a{1,}?");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 2, 3, 4, 5, 6});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -582,7 +573,7 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
     // zero match
     auto pattern = std::string("aaaa{0}");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({0, 0, 1, 1, 1, 2});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -590,7 +581,7 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
     // poorly formed
     auto pattern = std::string("aaaa{n,m}");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({0, 0, 0, 0, 0, 0});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -598,18 +589,18 @@ TYPED_TEST(StringsContainsTests, FixedQuantifier)
 
 TYPED_TEST(StringsContainsTests, ZeroRangeQuantifier)
 {
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a{0}"));
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a{0,1}"));
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a{0,}"));
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(ab){0}"));
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(ab){0,1}"));
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(ab){0,}"));
+  EXPECT_NO_THROW(TypeParam::create_contains("a{0}"));
+  EXPECT_NO_THROW(TypeParam::create_contains("a{0,1}"));
+  EXPECT_NO_THROW(TypeParam::create_contains("a{0,}"));
+  EXPECT_NO_THROW(TypeParam::create_contains("(ab){0}"));
+  EXPECT_NO_THROW(TypeParam::create_contains("(ab){0,1}"));
+  EXPECT_NO_THROW(TypeParam::create_contains("(ab){0,}"));
 
   auto input = cudf::test::strings_column_wrapper({"a", "", "abc", "XYAZ", "ABC", "ZYXA"});
   auto sv    = cudf::strings_column_view(input);
 
   auto pattern = std::string("A{0,}");  // should match everyting
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  auto prog    = TypeParam::create_contains(pattern);
 
   {
     auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 1, 1});
@@ -618,13 +609,13 @@ TYPED_TEST(StringsContainsTests, ZeroRangeQuantifier)
   }
   {
     auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 1, 4, 5, 4, 5});
-    prog          = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    prog          = TypeParam::create_count(pattern);
     auto results  = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 
   pattern = std::string("(?:ab){0,3}");
-  prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog    = TypeParam::create_contains(pattern);
 
   {
     auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 1, 1});
@@ -633,7 +624,7 @@ TYPED_TEST(StringsContainsTests, ZeroRangeQuantifier)
   }
   {
     auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 1, 3, 5, 4, 5});
-    prog          = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    prog          = TypeParam::create_count(pattern);
     auto results  = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -648,7 +639,7 @@ TYPED_TEST(StringsContainsTests, NestedQuantifier)
   auto sv      = cudf::strings_column_view(input);
   auto pattern = std::string(R"((\d{4}\s){4})");
   cudf::test::fixed_width_column_wrapper<bool> expected({true, false, false, true});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  auto prog    = TypeParam::create_contains(pattern);
   auto results = TypeParam::contains_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
@@ -678,34 +669,25 @@ TYPED_TEST(StringsContainsTests, DeeplyNestedNoStackOverflow)
 
   // The pattern matches any row containing 'a'.
   cudf::test::fixed_width_column_wrapper<bool> expected({true, false, true, false});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  auto prog    = TypeParam::create_contains(pattern);
   auto results = TypeParam::contains_re(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
 TYPED_TEST(StringsContainsTests, QuantifierErrors)
 {
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "^+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "$+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(^)+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "($)+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "\\A+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "\\Z+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(\\A)+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(\\Z)+"),
-               cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("^+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("$+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(^)+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("($)+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("\\A+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("\\Z+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(\\A)+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(\\Z)+"), cudf::logic_error);
 
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(^($))+"),
-               cudf::logic_error);
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(^a($))+"));
-  EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(^(a$))+"));
+  EXPECT_THROW(TypeParam::create_contains("(^($))+"), cudf::logic_error);
+  EXPECT_NO_THROW(TypeParam::create_contains("(^a($))+"));
+  EXPECT_NO_THROW(TypeParam::create_contains("(^(a$))+"));
 }
 
 TYPED_TEST(StringsContainsTests, OverlappedClasses)
@@ -716,14 +698,14 @@ TYPED_TEST(StringsContainsTests, OverlappedClasses)
   {
     auto pattern = std::string("[e-gb-da-c]");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({7, 4, 0, 0, 1});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
     auto pattern = std::string("[á-éê-ú]");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({0, 1, 0, 6, 0});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -737,14 +719,14 @@ TYPED_TEST(StringsContainsTests, NegatedClasses)
   {
     auto pattern = std::string("[^a-f]");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 4, 0, 5, 3});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
     auto pattern = std::string("[^a-eá-é]");
     cudf::test::fixed_width_column_wrapper<int32_t> expected({2, 5, 0, 1, 3});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
+    auto prog    = TypeParam::create_count(pattern);
     auto results = TypeParam::count_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -757,51 +739,48 @@ TYPED_TEST(StringsContainsTests, IncompleteClassesRange)
 
   {
     auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 0, 1, 1});
-    auto prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[a-z]");
+    auto prog     = TypeParam::create_contains("[a-z]");
     auto results  = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
     expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 0, 1, 1});
-    prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                             "[a-m-z]");  // same as [a-mz-]
+    prog     = TypeParam::create_contains("[a-m-z]");  // same as [a-mz-]
     results  = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
     expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 0, 0, 1});
-    prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                             "[a-f-q-z]");  // same as [a-fq-z-]
+    prog     = TypeParam::create_contains("[a-f-q-z]");  // same as [a-fq-z-]
     results  = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
     expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 0, 1, 1});
-    prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                             "[g-g-z]");  // same as [gz-]
+    prog     = TypeParam::create_contains("[g-g-z]");  // same as [gz-]
     results  = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
     cudf::test::fixed_width_column_wrapper<bool> expected({1, 1, 0, 1, 1});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[g-]");
+    auto prog    = TypeParam::create_contains("[g-]");
     auto results = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-    prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[-k]");
+    prog    = TypeParam::create_contains("[-k]");
     results = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
     cudf::test::fixed_width_column_wrapper<bool> expected({1, 1, 0, 0, 1});
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[-]");
+    auto prog    = TypeParam::create_contains("[-]");
     auto results = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
-    prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[+--]");
+    prog    = TypeParam::create_contains("[+--]");
     results = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-    prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[a-c-]");
+    prog    = TypeParam::create_contains("[a-c-]");
     results = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
-    prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "[-d-f]");
+    prog    = TypeParam::create_contains("[-d-f]");
     results = TypeParam::contains_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -814,9 +793,8 @@ TYPED_TEST(StringsContainsTests, MultiLine)
   auto view = cudf::strings_column_view(input);
 
   auto pattern = std::string("^abé$");
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
-  auto prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, pattern, cudf::strings::regex_flags::MULTILINE);
+  auto prog    = TypeParam::create_contains(pattern);
+  auto prog_ml = TypeParam::create_contains(pattern, cudf::strings::regex_flags::MULTILINE);
 
   auto expected_contains = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0, 1, 1});
   auto results           = TypeParam::contains_re(view, *prog_ml);
@@ -825,9 +803,8 @@ TYPED_TEST(StringsContainsTests, MultiLine)
   results           = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_contains);
 
-  prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
-  prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::MATCHES, pattern, cudf::strings::regex_flags::MULTILINE);
+  prog    = TypeParam::create_matches(pattern);
+  prog_ml = TypeParam::create_matches(pattern, cudf::strings::regex_flags::MULTILINE);
 
   auto expected_matches = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0, 1, 0});
   results               = TypeParam::matches_re(view, *prog_ml);
@@ -836,9 +813,8 @@ TYPED_TEST(StringsContainsTests, MultiLine)
   results          = TypeParam::matches_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_matches);
 
-  prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
-  prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, pattern, cudf::strings::regex_flags::MULTILINE);
+  prog    = TypeParam::create_count(pattern);
+  prog_ml = TypeParam::create_count(pattern, cudf::strings::regex_flags::MULTILINE);
 
   auto expected_count = cudf::test::fixed_width_column_wrapper<int32_t>({2, 1, 1, 0, 1, 1});
   results             = TypeParam::count_re(view, *prog_ml);
@@ -859,13 +835,10 @@ TYPED_TEST(StringsContainsTests, SpecialNewLines)
   auto view  = cudf::strings_column_view(input);
 
   auto pattern  = std::string("^zzé$");
-  auto prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                                pattern,
-                                cudf::strings::regex_flags::EXT_NEWLINE);
+  auto prog     = TypeParam::create_contains(pattern, cudf::strings::regex_flags::EXT_NEWLINE);
   auto ml_flags = static_cast<cudf::strings::regex_flags>(cudf::strings::regex_flags::EXT_NEWLINE |
                                                           cudf::strings::regex_flags::MULTILINE);
-  auto prog_ml =
-    TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern, ml_flags);
+  auto prog_ml  = TypeParam::create_contains(pattern, ml_flags);
 
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 1, 0, 1, 0});
   auto results  = TypeParam::contains_re(view, *prog);
@@ -874,9 +847,8 @@ TYPED_TEST(StringsContainsTests, SpecialNewLines)
   results  = TypeParam::contains_re(view, *prog_ml);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::MATCHES, pattern, cudf::strings::regex_flags::EXT_NEWLINE);
-  prog_ml = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern, ml_flags);
+  prog    = TypeParam::create_matches(pattern, cudf::strings::regex_flags::EXT_NEWLINE);
+  prog_ml = TypeParam::create_matches(pattern, ml_flags);
 
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 1, 0, 1, 0});
   results  = TypeParam::matches_re(view, *prog);
@@ -885,9 +857,8 @@ TYPED_TEST(StringsContainsTests, SpecialNewLines)
   results  = TypeParam::matches_re(view, *prog_ml);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, pattern, cudf::strings::regex_flags::EXT_NEWLINE);
-  prog_ml = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern, ml_flags);
+  prog    = TypeParam::create_count(pattern, cudf::strings::regex_flags::EXT_NEWLINE);
+  prog_ml = TypeParam::create_count(pattern, ml_flags);
 
   auto counts = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0, 1, 0, 1, 0});
   results     = TypeParam::count_re(view, *prog);
@@ -897,23 +868,21 @@ TYPED_TEST(StringsContainsTests, SpecialNewLines)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, counts);
 
   pattern  = std::string("q.*l");
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 0, 0});
   results  = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   // inst ANY will stop matching on first 'newline' and so should not match anything here
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                           pattern,
-                           cudf::strings::regex_flags::EXT_NEWLINE);
+  prog     = TypeParam::create_contains(pattern, cudf::strings::regex_flags::EXT_NEWLINE);
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0});
   results  = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   // including the DOTALL flag accepts the newline characters
   auto dot_flags = static_cast<cudf::strings::regex_flags>(cudf::strings::regex_flags::EXT_NEWLINE |
                                                            cudf::strings::regex_flags::DOTALL);
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern, dot_flags);
-  expected = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 0, 0});
-  results  = TypeParam::contains_re(view, *prog);
+  prog           = TypeParam::create_contains(pattern, dot_flags);
+  expected       = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 0, 0});
+  results        = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -924,9 +893,8 @@ TYPED_TEST(StringsContainsTests, EndOfString)
   auto view = cudf::strings_column_view(input);
 
   auto pattern = std::string("\\Aabé\\Z");
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
-  auto prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, pattern, cudf::strings::regex_flags::MULTILINE);
+  auto prog    = TypeParam::create_contains(pattern);
+  auto prog_ml = TypeParam::create_contains(pattern, cudf::strings::regex_flags::MULTILINE);
 
   auto results  = TypeParam::contains_re(view, *prog);
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 1, 0, 0, 0});
@@ -934,17 +902,15 @@ TYPED_TEST(StringsContainsTests, EndOfString)
   results = TypeParam::contains_re(view, *prog_ml);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog    = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
-  prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::MATCHES, pattern, cudf::strings::regex_flags::MULTILINE);
+  prog    = TypeParam::create_matches(pattern);
+  prog_ml = TypeParam::create_matches(pattern, cudf::strings::regex_flags::MULTILINE);
   results = TypeParam::matches_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
   results = TypeParam::matches_re(view, *prog_ml);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
-  prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, pattern, cudf::strings::regex_flags::MULTILINE);
+  prog                = TypeParam::create_count(pattern);
+  prog_ml             = TypeParam::create_count(pattern, cudf::strings::regex_flags::MULTILINE);
   results             = TypeParam::count_re(view, *prog);
   auto expected_count = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0, 1, 0, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_count);
@@ -952,12 +918,11 @@ TYPED_TEST(StringsContainsTests, EndOfString)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_count);
 
   pattern  = std::string("abé$");
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0, 1, 1});
   results  = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
-  prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, pattern, cudf::strings::regex_flags::MULTILINE);
+  prog_ml  = TypeParam::create_contains(pattern, cudf::strings::regex_flags::MULTILINE);
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0, 1, 1});
   results  = TypeParam::contains_re(view, *prog_ml);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
@@ -969,9 +934,8 @@ TYPED_TEST(StringsContainsTests, DotAll)
   auto view  = cudf::strings_column_view(input);
 
   auto pattern     = std::string("a.*f");
-  auto prog        = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
-  auto prog_dotall = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, pattern, cudf::strings::regex_flags::DOTALL);
+  auto prog        = TypeParam::create_contains(pattern);
+  auto prog_dotall = TypeParam::create_contains(pattern, cudf::strings::regex_flags::DOTALL);
 
   auto expected_contains = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0});
   auto results           = TypeParam::contains_re(view, *prog_dotall);
@@ -980,9 +944,8 @@ TYPED_TEST(StringsContainsTests, DotAll)
   results           = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_contains);
 
-  prog        = TypeParam::create(cudf::experimental::regex_operation::MATCHES, pattern);
-  prog_dotall = TypeParam::create(
-    cudf::experimental::regex_operation::MATCHES, pattern, cudf::strings::regex_flags::DOTALL);
+  prog        = TypeParam::create_matches(pattern);
+  prog_dotall = TypeParam::create_matches(pattern, cudf::strings::regex_flags::DOTALL);
 
   auto expected_matches = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0});
   results               = TypeParam::matches_re(view, *prog_dotall);
@@ -992,9 +955,8 @@ TYPED_TEST(StringsContainsTests, DotAll)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_matches);
 
   pattern     = std::string("a.*?f");
-  prog        = TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern);
-  prog_dotall = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, pattern, cudf::strings::regex_flags::DOTALL);
+  prog        = TypeParam::create_count(pattern);
+  prog_dotall = TypeParam::create_count(pattern, cudf::strings::regex_flags::DOTALL);
 
   auto expected_count = cudf::test::fixed_width_column_wrapper<int32_t>({2, 1, 1, 0});
   results             = TypeParam::count_re(view, *prog_dotall);
@@ -1006,9 +968,8 @@ TYPED_TEST(StringsContainsTests, DotAll)
   auto both_flags = static_cast<cudf::strings::regex_flags>(cudf::strings::regex_flags::DOTALL |
                                                             cudf::strings::regex_flags::MULTILINE);
   expected_count  = cudf::test::fixed_width_column_wrapper<int32_t>({2, 1, 1, 0});
-  auto prog_both =
-    TypeParam::create(cudf::experimental::regex_operation::COUNT, pattern, both_flags);
-  results = TypeParam::count_re(view, *prog_both);
+  auto prog_both  = TypeParam::create_count(pattern, both_flags);
+  results         = TypeParam::count_re(view, *prog_both);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_count);
 }
 
@@ -1025,13 +986,12 @@ TYPED_TEST(StringsContainsTests, ASCII)
 
   for (auto ptn : patterns) {
     auto expected_contains = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 0, 0});
-    auto prog              = TypeParam::create(
-      cudf::experimental::regex_operation::CONTAINS, ptn, cudf::strings::regex_flags::ASCII);
-    auto results = TypeParam::contains_re(view, *prog);
+    auto prog              = TypeParam::create_contains(ptn, cudf::strings::regex_flags::ASCII);
+    auto results           = TypeParam::contains_re(view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_contains);
 
     expected_contains = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1});
-    prog              = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, ptn);
+    prog              = TypeParam::create_contains(ptn);
     results           = TypeParam::contains_re(view, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_contains);
   }
@@ -1043,33 +1003,27 @@ TYPED_TEST(StringsContainsTests, CountASCII)
     cudf::test::strings_column_wrapper({"ab_c \t\f\r 12", "á_é 　❽❽", "aZ ❽4", "XYZ　8"});
   auto view = cudf::strings_column_view(input);
 
-  auto prog = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, R"(\w)", cudf::strings::regex_flags::ASCII);
+  auto prog     = TypeParam::create_count(R"(\w)", cudf::strings::regex_flags::ASCII);
   auto results  = TypeParam::count_re(view, *prog);
   auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1, 3, 4});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, R"(\W)", cudf::strings::regex_flags::ASCII);
+  prog     = TypeParam::create_count(R"(\W)", cudf::strings::regex_flags::ASCII);
   results  = TypeParam::count_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({5, 6, 2, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, R"(\d)", cudf::strings::regex_flags::ASCII);
+  prog     = TypeParam::create_count(R"(\d)", cudf::strings::regex_flags::ASCII);
   results  = TypeParam::count_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 0, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, R"(\D)", cudf::strings::regex_flags::ASCII);
+  prog     = TypeParam::create_count(R"(\D)", cudf::strings::regex_flags::ASCII);
   results  = TypeParam::count_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({9, 7, 4, 4});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, R"(\s)", cudf::strings::regex_flags::ASCII);
+  prog     = TypeParam::create_count(R"(\s)", cudf::strings::regex_flags::ASCII);
   results  = TypeParam::count_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({5, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::COUNT, R"(\S)", cudf::strings::regex_flags::ASCII);
+  prog     = TypeParam::create_count(R"(\S)", cudf::strings::regex_flags::ASCII);
   results  = TypeParam::count_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 6, 4, 5});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
@@ -1081,27 +1035,23 @@ TYPED_TEST(StringsContainsTests, IgnoreCase)
   auto view  = cudf::strings_column_view(input);
 
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0, 0});
-  auto prog     = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, "abc", cudf::strings::regex_flags::IGNORECASE);
-  auto results = TypeParam::contains_re(view, *prog);
+  auto prog     = TypeParam::create_contains("abc", cudf::strings::regex_flags::IGNORECASE);
+  auto results  = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 0, 0});
-  prog     = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, "[a-c]", cudf::strings::regex_flags::IGNORECASE);
-  results = TypeParam::contains_re(view, *prog);
+  prog     = TypeParam::create_contains("[a-c]", cudf::strings::regex_flags::IGNORECASE);
+  results  = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 1, 1});
-  prog     = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, "áéſ", cudf::strings::regex_flags::IGNORECASE);
-  results = TypeParam::contains_re(view, *prog);
+  prog     = TypeParam::create_contains("áéſ", cudf::strings::regex_flags::IGNORECASE);
+  results  = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 1, 1});
-  prog     = TypeParam::create(
-    cudf::experimental::regex_operation::CONTAINS, "[á-é]", cudf::strings::regex_flags::IGNORECASE);
-  results = TypeParam::contains_re(view, *prog);
+  prog     = TypeParam::create_contains("[á-é]", cudf::strings::regex_flags::IGNORECASE);
+  results  = TypeParam::contains_re(view, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
@@ -1127,51 +1077,55 @@ TYPED_TEST(StringsContainsTests, InlineFlags)
   };
   for (auto const& [inline_ptn, ptn, flags] : tests) {
     SCOPED_TRACE(inline_ptn);
-    auto compare = [&](cudf::experimental::regex_operation operation, auto execute) {
-      auto prog_inline = TypeParam::create(operation, inline_ptn);
-      auto prog        = TypeParam::create(operation, ptn, flags);
-      auto results     = execute(view, *prog_inline);
-      auto expected    = execute(view, *prog);
+    auto compare = [&](auto prog_inline, auto prog, auto execute) {
+      auto results  = execute(view, *prog_inline);
+      auto expected = execute(view, *prog);
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, *expected);
     };
-    EXPECT_NO_THROW(compare(cudf::experimental::regex_operation::CONTAINS, TypeParam::contains_re));
-    EXPECT_NO_THROW(compare(cudf::experimental::regex_operation::MATCHES, TypeParam::matches_re));
-    EXPECT_NO_THROW(compare(cudf::experimental::regex_operation::COUNT, TypeParam::count_re));
+    EXPECT_NO_THROW(compare(TypeParam::create_contains(inline_ptn),
+                            TypeParam::create_contains(ptn, flags),
+                            TypeParam::contains_re));
+    EXPECT_NO_THROW(compare(TypeParam::create_matches(inline_ptn),
+                            TypeParam::create_matches(ptn, flags),
+                            TypeParam::matches_re));
+    EXPECT_NO_THROW(compare(TypeParam::create_count(inline_ptn),
+                            TypeParam::create_count(ptn, flags),
+                            TypeParam::count_re));
   }
 
   // inline flags in the middle of the pattern apply to the remainder of the enclosing group
-  auto prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a(?i)bc");
+  auto prog     = TypeParam::create_contains("a(?i)bc");
   auto results  = TypeParam::contains_re(view, *prog);
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0, 1, 0, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(a(?i)b)c");
+  prog     = TypeParam::create_contains("(a(?i)b)c");
   results  = TypeParam::contains_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0, 0, 0, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?i:a)bc");
+  prog     = TypeParam::create_contains("(?i:a)bc");
   results  = TypeParam::contains_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 0, 1, 0, 0, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?:x|a(?i)B)c");
+  prog     = TypeParam::create_contains("(?:x|a(?i)B)c");
   results  = TypeParam::contains_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 0, 0, 0, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, "ABC|(?i)abc");
+  prog    = TypeParam::create_count("ABC|(?i)abc");
   results = TypeParam::count_re(view, *prog);
   auto expected_count =
     cudf::test::fixed_width_column_wrapper<int32_t>({1, 1, 1, 1, 1, 1, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_count);
 
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "c(?m)$");
+  prog     = TypeParam::create_contains("c(?m)$");
   results  = TypeParam::contains_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 0, 1, 1, 0, 0, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a(?s:.)f");
+  prog     = TypeParam::create_contains("a(?s:.)f");
   results  = TypeParam::contains_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0, 0, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
@@ -1182,30 +1136,23 @@ TYPED_TEST(StringsContainsTests, InlineFlags)
     pattern += "(?i)";
   }
   pattern += "abc";
-  prog     = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, pattern);
+  prog     = TypeParam::create_contains(pattern);
   results  = TypeParam::contains_re(view, *prog);
   expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 1, 1, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   // unsupported inline flags
   if constexpr (std::is_same_v<TypeParam, cudf::test::interpreter_regex_backend>) {
-    EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?x)abc"),
-                 cudf::logic_error);
+    EXPECT_THROW(TypeParam::create_contains("(?x)abc"), cudf::logic_error);
   } else {
-    EXPECT_NO_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?x)abc"));
+    EXPECT_NO_THROW(TypeParam::create_contains("(?x)abc"));
   }
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?-i)abc"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?)abc"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(?i)*abc"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a(?i)*"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a(?i)(?s)+b"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a(?m){2}"),
-               cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(?-i)abc"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(?)abc"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("(?i)*abc"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("a(?i)*"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("a(?i)(?s)+b"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_contains("a(?m){2}"), cudf::logic_error);
 }
 
 TYPED_TEST(StringsContainsTests, MediumRegex)
@@ -1214,7 +1161,7 @@ TYPED_TEST(StringsContainsTests, MediumRegex)
   std::string medium_regex =
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
     "http://www.world.com";
-  auto prog = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, medium_regex);
+  auto prog = TypeParam::create_contains(medium_regex);
 
   std::vector<char const*> h_strings{
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
@@ -1231,13 +1178,13 @@ TYPED_TEST(StringsContainsTests, MediumRegex)
     cudf::test::fixed_width_column_wrapper<bool> expected({true, false, false});
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
   }
-  prog = TypeParam::create(cudf::experimental::regex_operation::MATCHES, medium_regex);
+  prog = TypeParam::create_matches(medium_regex);
   {
     auto results = TypeParam::matches_re(strings_view, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({true, false, false});
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
   }
-  prog = TypeParam::create(cudf::experimental::regex_operation::COUNT, medium_regex);
+  prog = TypeParam::create_count(medium_regex);
   {
     auto results = TypeParam::count_re(strings_view, *prog);
     cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 0, 0});
@@ -1251,7 +1198,7 @@ TYPED_TEST(StringsContainsTests, LargeRegex)
   std::string large_regex =
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
     "http://www.world.com I'm here @home zzzz";
-  auto prog = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, large_regex);
+  auto prog = TypeParam::create_contains(large_regex);
 
   std::vector<char const*> h_strings{
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
@@ -1268,13 +1215,13 @@ TYPED_TEST(StringsContainsTests, LargeRegex)
     cudf::test::fixed_width_column_wrapper<bool> expected({true, false, false});
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
   }
-  prog = TypeParam::create(cudf::experimental::regex_operation::MATCHES, large_regex);
+  prog = TypeParam::create_matches(large_regex);
   {
     auto results = TypeParam::matches_re(strings_view, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({true, false, false});
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
   }
-  prog = TypeParam::create(cudf::experimental::regex_operation::COUNT, large_regex);
+  prog = TypeParam::create_count(large_regex);
   {
     auto results = TypeParam::count_re(strings_view, *prog);
     cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 0, 0});
@@ -1287,7 +1234,7 @@ TYPED_TEST(StringsContainsTests, ExtraLargeRegex)
   // This results in 321 regex instructions which is above the 'large' range.
   std::string data(320, '0');
   cudf::test::strings_column_wrapper strings({data, data, data, data, data, "00"});
-  auto prog = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, data);
+  auto prog = TypeParam::create_contains(data);
 
   auto strings_view = cudf::strings_column_view(strings);
   {
@@ -1295,13 +1242,13 @@ TYPED_TEST(StringsContainsTests, ExtraLargeRegex)
     cudf::test::fixed_width_column_wrapper<bool> expected({true, true, true, true, true, false});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
-  prog = TypeParam::create(cudf::experimental::regex_operation::MATCHES, data);
+  prog = TypeParam::create_matches(data);
   {
     auto results = TypeParam::matches_re(strings_view, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({true, true, true, true, true, false});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
-  prog = TypeParam::create(cudf::experimental::regex_operation::COUNT, data);
+  prog = TypeParam::create_count(data);
   {
     auto results = TypeParam::count_re(strings_view, *prog);
     cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 1, 1, 1, 1, 0});
@@ -1318,12 +1265,10 @@ TYPED_TEST(StringsContainsTests, CrlfLineAnchorExtNewline)
     {"abc\r\n", "abc\n", "abc\r", "abc", "a\r\nb", "abc\r\n\r\n", "", "abc" NEXT_LINE});
   auto view = cudf::strings_column_view(input);
 
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                                "^abc$",
-                                cudf::strings::regex_flags::EXT_NEWLINE);
+  auto prog    = TypeParam::create_contains("^abc$", cudf::strings::regex_flags::EXT_NEWLINE);
   auto both    = static_cast<cudf::strings::regex_flags>(cudf::strings::regex_flags::EXT_NEWLINE |
                                                       cudf::strings::regex_flags::MULTILINE);
-  auto prog_ml = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "^abc$", both);
+  auto prog_ml = TypeParam::create_contains("^abc$", both);
 
   // Java: ^abc$ EXT(non-ml) = {1,1,1,1,0,0,0,1}
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 0, 0, 0, 1});
@@ -1345,7 +1290,7 @@ TYPED_TEST(StringsContainsTests, CrlfBolAnchorExtNewline)
   auto view  = cudf::strings_column_view(input);
   auto both  = static_cast<cudf::strings::regex_flags>(cudf::strings::regex_flags::EXT_NEWLINE |
                                                       cudf::strings::regex_flags::MULTILINE);
-  auto prog  = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "^\n", both);
+  auto prog  = TypeParam::create_contains("^\n", both);
 
   auto expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0});
   auto results  = TypeParam::contains_re(view, *prog);
@@ -1407,41 +1352,41 @@ TYPED_TEST(StringsContainsTests, CrlfEdgeCasesExtNewline)
   };
 
   {  // contains ^abc$  (non-multiline / multiline)
-    auto p  = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "^abc$", EXT);
-    auto pm = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "^abc$", MLX);
+    auto p  = TypeParam::create_contains("^abc$", EXT);
+    auto pm = TypeParam::create_contains("^abc$", MLX);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::contains_re(view, *p),
                                    to_col(&edge_case::abc_anchored_en));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::contains_re(view, *pm),
                                    to_col(&edge_case::abc_anchored_ml));
   }
   {  // matches_re abc$  (match at start of string)
-    auto p = TypeParam::create(cudf::experimental::regex_operation::MATCHES, "abc$", EXT);
+    auto p = TypeParam::create_matches("abc$", EXT);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::matches_re(view, *p),
                                    to_col(&edge_case::abc_dollar_matches));
   }
   {  // count_re [a-z]+$  (non-multiline / multiline)
-    auto p  = TypeParam::create(cudf::experimental::regex_operation::COUNT, "[a-z]+$", EXT);
-    auto pm = TypeParam::create(cudf::experimental::regex_operation::COUNT, "[a-z]+$", MLX);
+    auto p  = TypeParam::create_count("[a-z]+$", EXT);
+    auto pm = TypeParam::create_count("[a-z]+$", MLX);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::count_re(view, *p),
                                    to_col(&edge_case::az_dollar_count_en));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::count_re(view, *pm),
                                    to_col(&edge_case::az_dollar_count_ml));
   }
   {  // count_re ^[a-z]+  (multiline line-starts)
-    auto pm = TypeParam::create(cudf::experimental::regex_operation::COUNT, "^[a-z]+", MLX);
+    auto pm = TypeParam::create_count("^[a-z]+", MLX);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::count_re(view, *pm),
                                    to_col(&edge_case::az_start_count_ml));
   }
   {  // CRLF-coupling discriminators: \r$ never matches inside \r\n; ^\n likewise
-    auto pe = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "\\r$", MLX);
+    auto pe = TypeParam::create_contains("\\r$", MLX);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::contains_re(view, *pe),
                                    to_col(&edge_case::cr_dollar_ml));
-    auto pb = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "^\n", MLX);
+    auto pb = TypeParam::create_contains("^\n", MLX);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::contains_re(view, *pb),
                                    to_col(&edge_case::start_nl_ml));
   }
   {  // alternation containing $ (the #14856 construct) works natively, no transpiler
-    auto p = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "(a$|b)", EXT);
+    auto p = TypeParam::create_contains("(a$|b)", EXT);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::contains_re(view, *p),
                                    to_col(&edge_case::alt_a_or_b_en));
   }
@@ -1469,8 +1414,7 @@ TYPED_TEST(StringsContainsTests, CrlfDefaultLfOnlyNoExtNewline)
                                                    "a\n\nb"});
   auto view  = cudf::strings_column_view(input);
 
-  auto prog = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                                "^abc$");  // default flags: no EXT_NEWLINE
+  auto prog = TypeParam::create_contains("^abc$");  // default flags: no EXT_NEWLINE
   auto expected =
     cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::contains_re(view, *prog), expected);
@@ -1483,13 +1427,13 @@ TYPED_TEST(StringsContainsTests, AlternationNullableBranch)
     {"ah", "abch", "adeh", "afghh", "abcde", "a", "h", "", "xabchx"});
   auto sv = cudf::strings_column_view(input);
 
-  auto prog = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a(bc|de|fg|)h");
+  auto prog = TypeParam::create_contains("a(bc|de|fg|)h");
   {
     auto results = TypeParam::contains_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({1, 1, 1, 1, 0, 0, 0, 0, 1});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
-  prog = TypeParam::create(cudf::experimental::regex_operation::COUNT, "a(bc|de|fg|)h");
+  prog = TypeParam::create_count("a(bc|de|fg|)h");
   {
     auto results = TypeParam::count_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 1, 1, 1, 0, 0, 0, 0, 1});
@@ -1504,7 +1448,7 @@ TYPED_TEST(StringsContainsTests, BoundedRepetitionGap)
     {"acv", "abcv", "abbcv", "abbbcv", "abbbbcv", "abbbbbcv", "av", "acvx", "xacvx", ""});
   auto sv = cudf::strings_column_view(input);
 
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "ab{0,4}cv");
+  auto prog    = TypeParam::create_contains("ab{0,4}cv");
   auto results = TypeParam::contains_re(sv, *prog);
   cudf::test::fixed_width_column_wrapper<bool> expected({1, 1, 1, 1, 1, 0, 0, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -1529,16 +1473,14 @@ TYPED_TEST(StringsContainsTests, ExtNewlineDotAny)
 
   // DEFAULT: only \n excluded — \r and extended newlines are matched by '.'
   {
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a.b");
+    auto prog    = TypeParam::create_contains("a.b");
     auto results = TypeParam::contains_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({1, 0, 1, 1, 1, 1, 0, 0});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   // EXT_NEWLINE: \r and all extended newlines also excluded
   {
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS,
-                                  "a.b",
-                                  cudf::strings::regex_flags::EXT_NEWLINE);
+    auto prog    = TypeParam::create_contains("a.b", cudf::strings::regex_flags::EXT_NEWLINE);
     auto results = TypeParam::contains_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({1, 0, 0, 0, 0, 0, 0, 0});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -1551,9 +1493,8 @@ TYPED_TEST(StringsContainsTests, ExtNewlineDotAny)
        "a\xc2\x85"
        "b",
        ""});
-    auto sv2  = cudf::strings_column_view(input2);
-    auto prog = TypeParam::create(
-      cudf::experimental::regex_operation::CONTAINS, ".+", cudf::strings::regex_flags::EXT_NEWLINE);
+    auto sv2     = cudf::strings_column_view(input2);
+    auto prog    = TypeParam::create_contains(".+", cudf::strings::regex_flags::EXT_NEWLINE);
     auto results = TypeParam::contains_re(sv2, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected2({1, 0, 1, 0});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected2);
@@ -1568,7 +1509,7 @@ TYPED_TEST(StringsContainsTests, AlternationPriorityCount)
     // "a|aa": "a" wins, so "aaaa" counts as 4 individual matches, not 2 "aa" matches.
     auto input   = cudf::test::strings_column_wrapper({"aaaa", "aaaaaa", "aaab", "a", "b", ""});
     auto sv      = cudf::strings_column_view(input);
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, "a|aa");
+    auto prog    = TypeParam::create_count("a|aa");
     auto results = TypeParam::count_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<int32_t> expected({4, 6, 3, 1, 0, 0});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -1577,7 +1518,7 @@ TYPED_TEST(StringsContainsTests, AlternationPriorityCount)
     // "foo|foobar": "foo" wins when both alternatives start at the same position.
     auto input   = cudf::test::strings_column_wrapper({"foo", "foobar", "foofoo", "bar", ""});
     auto sv      = cudf::strings_column_view(input);
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::COUNT, "foo|foobar");
+    auto prog    = TypeParam::create_count("foo|foobar");
     auto results = TypeParam::count_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 1, 2, 0, 0});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -1592,13 +1533,13 @@ TYPED_TEST(StringsContainsTests, LazyQuantifiers)
   auto sv = cudf::strings_column_view(input);
 
   {
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "x.*?x");
+    auto prog    = TypeParam::create_contains("x.*?x");
     auto results = TypeParam::contains_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({0, 0, 1, 1, 0, 1});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
-    auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "x.+?x");
+    auto prog    = TypeParam::create_contains("x.+?x");
     auto results = TypeParam::contains_re(sv, *prog);
     cudf::test::fixed_width_column_wrapper<bool> expected({0, 0, 1, 1, 0, 1});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -1621,7 +1562,7 @@ TYPED_TEST(StringsContainsTests, WhitespaceControlCharacters)
                                         "a b",
                                         "ab"});
   auto sv      = cudf::strings_column_view(input);
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::CONTAINS, "a\\sb");
+  auto prog    = TypeParam::create_contains("a\\sb");
   auto results = TypeParam::contains_re(sv, *prog);
   cudf::test::fixed_width_column_wrapper<bool> expected({1, 1, 1, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);

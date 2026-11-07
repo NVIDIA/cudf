@@ -54,15 +54,15 @@ static void bench_replace(nvbench::state& state)
   // Wrap in a capture group for backref replace so \1 references the whole match
   auto const pat =
     (rtype == "backref") ? "(" + patterns[pattern_index] + ")" : patterns[pattern_index];
-  auto program = backend == "interpreter" ? cudf::strings::regex_program::create(pat) : nullptr;
-  auto jit_operation = rtype == "backref"
-                         ? cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS
-                         : cudf::experimental::regex_operation::REPLACE;
-  auto jit_options   = cudf::experimental::regex_jit_program_options{
-      .replacement = rtype == "backref" ? "#\\1X" : "77"};
-  auto jit_program = backend == "jit" ? cudf::experimental::regex_jit_program::create(
-                                          pat, jit_operation, jit_options)
-                                      : nullptr;
+  auto program     = backend == "interpreter" ? cudf::strings::regex_program::create(pat) : nullptr;
+  auto jit_options = cudf::experimental::regex_jit_program_options{
+    .replacement = rtype == "backref" ? "#\\1X" : "77"};
+  auto jit_program =
+    backend == "jit"
+      ? (rtype == "backref"
+           ? cudf::experimental::regex_jit_program::create_replace_with_backrefs(pat, jit_options)
+           : cudf::experimental::regex_jit_program::create_replace(pat, jit_options))
+      : nullptr;
 
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

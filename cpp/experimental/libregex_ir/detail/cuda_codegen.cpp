@@ -76,7 +76,7 @@ void require_identifier(std::string_view value, std::string_view field)
     return first_is_valid(character) || std::isdigit(character) != 0;
   };
   if (value.empty() || !first_is_valid(static_cast<std::uint8_t>(value.front())) ||
-      !std::all_of(value.begin() + 1, value.end(), [&](char character) {
+      !std::ranges::all_of(value.begin() + 1, value.end(), [&](char character) {
         return rest_is_valid(static_cast<std::uint8_t>(character));
       })) {
     throw std::invalid_argument(std::format("{} must be a valid source identifier", field));
@@ -165,9 +165,8 @@ class cuda_source_emitter {
     if (word_namespace_.empty() && !plan_.lookarounds_.empty()) {
       auto needs_words = [&](auto&& self, execution_plan const& plan) -> bool {
         if (plan.uses_unicode_word_boundaries()) return true;
-        return std::any_of(plan.lookarounds_.begin(), plan.lookarounds_.end(), [&](auto& nested) {
-          return self(self, nested);
-        });
+        return std::ranges::any_of(plan.lookarounds_,
+                                   [&](auto& nested) { return self(self, nested); });
       };
       if (needs_words(needs_words, plan_)) {
         word_namespace_ = options_.symbol_prefix + "_lookaround_words";
@@ -213,9 +212,9 @@ struct pattern : policy {{)CUDA");
       for (auto& instruction : block.instructions) {
         auto* character_match = std::get_if<match_character>(&instruction);
         if (character_match != nullptr) {
-          auto unicode_range = std::any_of(character_match->predicate.ranges.begin(),
-                                           character_match->predicate.ranges.end(),
-                                           [](codepoint_range range) { return range.last > 127; });
+          auto unicode_range =
+            std::ranges::any_of(character_match->predicate.ranges,
+                                [](codepoint_range range) { return range.last > 127; });
           unicode_predicate |= character_match->predicate.negated || unicode_range;
           positive_unicode_predicate |=
             !character_match->predicate.negated && unicode_range &&
@@ -275,7 +274,7 @@ struct pattern : policy {{)CUDA");
   void array(std::string_view name, std::string_view type, Range const& values, bool small = true)
   {
     auto const width = type == "u8" ? 1U : type == "u16" ? 2U : type == "u32" ? 4U : 8U;
-    auto const bytes = std::max(std::size(values), std::size_t{1}) * width;
+    auto const bytes = std::ranges::max(std::size(values), std::size_t{1}) * width;
     auto const in_constant_memory = small && constants_.reserve(bytes);
     output_.emit(R"CUDA(
 __device__ {} {} const {}[] = {{)CUDA",
@@ -443,7 +442,8 @@ __device__ __forceinline__ static void whole_captures(i64* spans, i64 begin, i64
       R"CUDA(
 __device__ __forceinline__ static bool literal_guard(input input_value, i64 pos) {{)CUDA");
     if (plan_.utf8_literal_pivot_) {
-      auto offset = std::min(*plan_.utf8_literal_pivot_, literal.size() - sizeof(std::uint64_t));
+      auto offset =
+        std::ranges::min(*plan_.utf8_literal_pivot_, literal.size() - sizeof(std::uint64_t));
       std::uint64_t value = 0;
       for (std::uint32_t index = 0; index < 8; ++index)
         value |= std::uint64_t(static_cast<std::uint8_t>(literal[offset + index])) << (8 * index);
@@ -579,7 +579,7 @@ __device__ __forceinline__ static bool string_boolean(input input_value)
     std::vector<std::size_t> frequency(machine.class_count);
     for (auto cls : machine.byte_classes)
       ++frequency[cls];
-    auto default_class = std::max_element(frequency.begin(), frequency.end()) - frequency.begin();
+    auto default_class = std::ranges::max_element(frequency) - frequency.begin();
     std::vector<deterministic_interval> intervals;
     for (std::uint32_t byte = 0; byte < 256;) {
       auto cls = machine.byte_classes[byte];
@@ -765,8 +765,7 @@ __device__ __forceinline__ static void {}(u32 index, i64 pos, i64* spans) {{ swi
       for (std::size_t index = 0; index < actions.size(); ++index) {
         std::vector<std::pair<std::uint32_t, bool>> key;
         for (auto action : actions[index])
-          if (std::find(plan_.capture_slots_.begin(), plan_.capture_slots_.end(), action.slot) !=
-              plan_.capture_slots_.end())
+          if (std::ranges::find(plan_.capture_slots_, action.slot) != plan_.capture_slots_.end())
             key.emplace_back(action.slot, static_cast<bool>(action.reset_end));
         if (!key.empty()) groups[key].push_back(index);
       }
@@ -789,11 +788,10 @@ __device__ __forceinline__ static void {}(u32 index, i64 pos, i64* spans) {{ swi
 
   void emit_glushkov(glushkov_machine const& machine)
   {
-    auto accepts_any_first =
-      !plan_.ir_.control.require_end &&
-      std::all_of(machine.reach_masks.begin(), machine.reach_masks.end(), [&](auto reach_mask) {
-        return (reach_mask & machine.first_set & machine.accept_mask) != 0;
-      });
+    auto accepts_any_first = !plan_.ir_.control.require_end &&
+                             std::ranges::all_of(machine.reach_masks, [&](auto reach_mask) {
+                               return (reach_mask & machine.first_set & machine.accept_mask) != 0;
+                             });
     constant("accepts_any_first", accepts_any_first);
     emit_classifier(machine.alphabet);
     output_.emit(
@@ -887,7 +885,7 @@ using Pattern = {}::pattern;
 using namespace regex_ir::device;
 input input_value{{data, size}};
 auto* scratch = {};)CUDA",
-      matcher_signature(abi, options_.execute_function, plan_.workspace_bytes_ != 0),
+      matcher_signature(abi, options_.execute_function),
       options_.symbol_prefix,
       plan_.workspace_bytes_ ? "reinterpret_cast<i64*>(workspace)" : "static_cast<i64*>(nullptr)");
     if (plan_.anchored_boolean_result_) {
@@ -924,8 +922,7 @@ auto* scratch = {};)CUDA",
                    matcher_signature(matcher_abi::LIMITED_SPLIT,
                                      options_.execute_function == "regex_ir_execute"
                                        ? "regex_ir_split_execute_limited"
-                                       : options_.execute_function + "_limited",
-                                     plan_.workspace_bytes_ != 0),
+                                       : options_.execute_function + "_limited"),
                    options_.symbol_prefix,
                    plan_.workspace_bytes_ ? "reinterpret_cast<i64*>(workspace)" : "nullptr");
     }
@@ -982,7 +979,7 @@ void cuda_source_emitter::emit_thompson(deterministic_nfa_graph const& graph)
   if (plan_.ir_.assertion_program || !plan_.lookarounds_.empty()) {
     auto count = plan_.capture_slots_.size();
     auto mask  = count >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << count) - 1;
-    std::fill(capture_masks.begin(), capture_masks.end(), mask);
+    std::ranges::fill(capture_masks, mask);
   }
   output_.emit(R"CUDA(
 __device__ static constexpr u64 capture_mask(u32 state) {{ switch (state) {{)CUDA");
@@ -1020,7 +1017,7 @@ __device__ __forceinline__ static i32 dispatch(
     if (node.capture) {
       auto slot  = node.capture->capture_index * 2 + (node.capture->action == capture_action::END);
       auto write = [&](std::size_t slot, std::string_view value) {
-        auto found = std::find(plan_.capture_slots_.begin(), plan_.capture_slots_.end(), slot);
+        auto found = std::ranges::find(plan_.capture_slots_, slot);
         if (found != plan_.capture_slots_.end())
           output_.emit("work.active[{}] = {};", found - plan_.capture_slots_.begin() + 1, value);
       };
@@ -1113,7 +1110,7 @@ __device__ __forceinline__ static i32 dispatch(
           points.push_back(range.first);
           if (range.last < 0x10ffff) points.push_back(range.last + 1);
         }
-      return std::none_of(points.begin(), points.end(), [&](auto code_point) {
+      return std::ranges::none_of(points, [&](auto code_point) {
         return loop.predicate.matches(code_point) && other.matches(code_point);
       });
     };
@@ -1161,8 +1158,8 @@ __device__ __forceinline__ static i32 dispatch(
     simple_path.push_back(simple_state);
     auto& node = graph.nodes[simple_state];
     if (node.accepts) break;
-    auto loop = std::find_if(
-      loops.begin(), loops.end(), [&](auto& candidate) { return candidate.state == simple_state; });
+    auto loop =
+      std::ranges::find_if(loops, [&](auto& candidate) { return candidate.state == simple_state; });
     if (loop != loops.end()) {
       simple_state = node.targets[1];
     } else if (node.targets.size() == 1) {
@@ -1185,16 +1182,15 @@ __device__ __forceinline__ static bool simple_capture_find(
       auto& node = graph.nodes[state];
       if (node.capture) {
         auto slot = node.capture->capture_index * 2 + (node.capture->action == capture_action::END);
-        if (std::find(plan_.capture_slots_.begin(), plan_.capture_slots_.end(), slot) !=
-            plan_.capture_slots_.end())
+        if (std::ranges::find(plan_.capture_slots_, slot) != plan_.capture_slots_.end())
           output_.emit("if (captures != nullptr) captures[{}] = pos;", slot);
       }
       if (node.assertion)
         output_.emit("if (!assertion<{}>(input_value, pos, {})) return false;",
                      assertion_policy(*node.assertion),
                      assertion_name(*node.assertion));
-      auto loop = std::find_if(
-        loops.begin(), loops.end(), [&](auto& candidate) { return candidate.state == state; });
+      auto loop =
+        std::ranges::find_if(loops, [&](auto& candidate) { return candidate.state == state; });
       if (loop != loops.end()) {
         output_.emit(
           R"CUDA(pos = scan_ascii_run<pattern, {}>(input_value, pos);
@@ -1339,7 +1335,7 @@ compile_result render_cuda(instruction_ir const& ir,
       ir.entry < ir.blocks.size() && ir.blocks[ir.entry].instructions.empty() &&
       ir.blocks[ir.entry].successors.size() >= 2) {
     std::string source;
-    std::vector<std::pair<std::string, bool>> functions;
+    std::vector<std::string> functions;
     std::size_t workspace = 0;
     for (auto edge : ir.blocks[ir.entry].successors) {
       auto branch         = ir;
@@ -1350,18 +1346,16 @@ compile_result render_cuda(instruction_ir const& ir,
       branch_options.execute_function += suffix;
       auto result = render_cuda(optimize(std::move(branch), {}), branch_options, constants);
       source += result.cuda_source;
-      functions.emplace_back(branch_options.execute_function, result.workspace_bytes != 0);
-      workspace = std::max(workspace, result.workspace_bytes);
+      functions.push_back(branch_options.execute_function);
+      workspace = std::ranges::max(workspace, result.workspace_bytes);
     }
-    source +=
-      matcher_signature(matcher_abi::BOOLEAN, options.execute_function, workspace != 0) + R"CUDA( {
+    source += matcher_signature(matcher_abi::BOOLEAN, options.execute_function) + R"CUDA( {
 )CUDA";
-    for (auto& [function, external] : functions)
+    for (auto const& function : functions)
       source += std::format(
-        R"CUDA(if ({}({}data, size)) return true;
+        R"CUDA(if ({}(workspace, data, size)) return true;
 )CUDA",
-        function,
-        external ? "workspace, " : "");
+        function);
     source += R"CUDA(return false;
 }
 )CUDA";

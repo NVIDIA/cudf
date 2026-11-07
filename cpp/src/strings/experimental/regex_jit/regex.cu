@@ -239,30 +239,32 @@ regex_ir::compile_options make_compile_options(strings::regex_flags flags)
   return options;
 }
 
-regex_ir::operation_kind internal_operation(regex_operation operation)
+regex_ir::operation_kind internal_operation(regex_jit_program::kind operation)
 {
   switch (operation) {
-    case regex_operation::CONTAINS: return regex_ir::operation_kind::CONTAINS;
-    case regex_operation::MATCHES: return regex_ir::operation_kind::MATCHES;
-    case regex_operation::COUNT: return regex_ir::operation_kind::COUNT;
-    case regex_operation::FIND: return regex_ir::operation_kind::FIND;
-    case regex_operation::EXTRACT:
-    case regex_operation::EXTRACT_SINGLE:
-    case regex_operation::EXTRACT_ALL_RECORD:
-    case regex_operation::FINDALL:
-    case regex_operation::REPLACE:
-    case regex_operation::REPLACE_WITH_BACKREFS: return regex_ir::operation_kind::EXTRACT;
-    case regex_operation::SPLIT:
-    case regex_operation::RSPLIT:
-    case regex_operation::SPLIT_RECORD:
-    case regex_operation::RSPLIT_RECORD: return regex_ir::operation_kind::SPLIT;
+    case regex_jit_program::kind::CONTAINS: return regex_ir::operation_kind::CONTAINS;
+    case regex_jit_program::kind::MATCHES: return regex_ir::operation_kind::MATCHES;
+    case regex_jit_program::kind::COUNT: return regex_ir::operation_kind::COUNT;
+    case regex_jit_program::kind::FIND: return regex_ir::operation_kind::FIND;
+    case regex_jit_program::kind::EXTRACT:
+    case regex_jit_program::kind::EXTRACT_SINGLE:
+    case regex_jit_program::kind::EXTRACT_ALL_RECORD:
+    case regex_jit_program::kind::FINDALL:
+    case regex_jit_program::kind::REPLACE:
+    case regex_jit_program::kind::REPLACE_WITH_BACKREFS: return regex_ir::operation_kind::EXTRACT;
+    case regex_jit_program::kind::SPLIT:
+    case regex_jit_program::kind::RSPLIT:
+    case regex_jit_program::kind::SPLIT_RECORD:
+    case regex_jit_program::kind::RSPLIT_RECORD: return regex_ir::operation_kind::SPLIT;
   }
   CUDF_FAIL("Invalid JIT regex operation");
 }
 
-void expect_operation(regex_jit_program const& prog, regex_operation expected, std::string_view api)
+void expect_operation(regex_jit_program const& prog,
+                      regex_jit_program::kind expected,
+                      std::string_view api)
 {
-  CUDF_EXPECTS(prog.operation() == expected,
+  CUDF_EXPECTS(prog.get_kind() == expected,
                std::format("{} requires a regex_jit_program created for that operation", api));
 }
 
@@ -309,7 +311,7 @@ retained_kernel compile_kernel(std::string const& matcher,
   CUDF_CUDA_TRY(cudaFuncGetAttributes(&attributes, compiled.get().get()));
   auto maximum_threads = attributes.maxThreadsPerBlock;
   CUDF_EXPECTS(maximum_threads >= 32, "regex JIT kernel does not support a full warp");
-  threads = std::min(threads, static_cast<std::uint32_t>(maximum_threads));
+  threads = std::ranges::min(threads, static_cast<std::uint32_t>(maximum_threads));
   threads -= threads % 32U;
   return {std::move(compiled), threads, workspace_bytes};
 }
@@ -330,13 +332,15 @@ void launch_kernel(retained_kernel const& prepared,
     return;
   }
   constexpr std::size_t target_bytes = 64U << 20U;
-  auto capacity                      = std::min<std::size_t>(
-    workers, std::max<std::size_t>(1, target_bytes / prepared.workspace_bytes));
+  auto capacity =
+    std::ranges::min(static_cast<std::size_t>(workers),
+                     std::ranges::max(std::size_t{1}, target_bytes / prepared.workspace_bytes));
   rmm::device_uvector<std::byte> workspace(capacity * prepared.workspace_bytes, stream, mr);
   for (size_type begin = 0; begin < workers;) {
-    auto count = static_cast<size_type>(std::min<std::size_t>(workers - begin, capacity));
-    auto end   = begin + count;
-    auto grid  = (static_cast<std::uint32_t>(count) + threads - 1U) / threads;
+    auto count =
+      static_cast<size_type>(std::ranges::min(static_cast<std::size_t>(workers - begin), capacity));
+    auto end  = begin + count;
+    auto grid = (static_cast<std::uint32_t>(count) + threads - 1U) / threads;
     prepared.value.launch_with(
       {grid, 1, 1}, {threads, 1, 1}, 0, stream, workspace.data(), begin, end, args...);
     begin = end;
@@ -407,17 +411,17 @@ span_cache_plan select_span_cache(input_data const& input,
   constexpr auto maximum_samples   = size_type{2048};
 
   if (!regex_jit_program_accessor::has_span_cache(prog) || input.rows == 0) { return {}; }
-  auto split_operation = prog.operation() == regex_operation::SPLIT ||
-                         prog.operation() == regex_operation::RSPLIT ||
-                         prog.operation() == regex_operation::SPLIT_RECORD ||
-                         prog.operation() == regex_operation::RSPLIT_RECORD;
+  auto split_operation = prog.get_kind() == regex_jit_program::kind::SPLIT ||
+                         prog.get_kind() == regex_jit_program::kind::RSPLIT ||
+                         prog.get_kind() == regex_jit_program::kind::SPLIT_RECORD ||
+                         prog.get_kind() == regex_jit_program::kind::RSPLIT_RECORD;
   auto values          = regex_jit_program_accessor::cache_values(prog);
   auto bytes_per_match = static_cast<std::size_t>(values) * sizeof(std::int64_t);
   if (bytes_per_match == 0) { return {}; }
   auto records       = max_scratch_bytes / static_cast<std::size_t>(input.rows) / bytes_per_match;
   auto fixed_records = split_operation ? std::size_t{1} : std::size_t{0};
   if (records <= fixed_records) { return {}; }
-  auto capacity = std::min<std::size_t>(max_capacity, records - fixed_records);
+  auto capacity = std::ranges::min(static_cast<std::size_t>(max_capacity), records - fixed_records);
 
   auto policy = regex_jit_program_accessor::options(prog).span_cache_policy;
   if (policy == regex_jit_span_cache_policy::OFF) { return {}; }
@@ -440,7 +444,7 @@ span_cache_plan select_span_cache(input_data const& input,
   auto known_average_bytes = static_cast<double>(input.chars_bytes) / input.rows;
   if (known_average_bytes * executor_weight < 384.0) { return {}; }
 
-  auto samples = std::min(input.rows, maximum_samples);
+  auto samples = std::ranges::min(input.rows, maximum_samples);
   rmm::device_uvector<std::uint64_t> statistics(4, stream, mr);
   CUDF_CUDA_TRY(
     cudaMemsetAsync(statistics.data(), 0, statistics.size() * sizeof(std::uint64_t), stream.get()));
@@ -475,7 +479,7 @@ span_cache_plan select_span_cache(input_data const& input,
   auto average_matches = static_cast<double>(host_statistics[2]) / valid;
   auto overflow_rate   = static_cast<double>(host_statistics[3]) / valid;
   auto beneficial      = average_bytes * executor_weight >= 384.0;
-  auto bounded         = average_matches <= std::min<double>(capacity, 1.25);
+  auto bounded         = average_matches <= std::ranges::min(static_cast<double>(capacity), 1.25);
   return beneficial && bounded && overflow_rate <= 0.01
            ? span_cache_plan{static_cast<size_type>(capacity)}
            : span_cache_plan{};
@@ -601,17 +605,17 @@ std::unique_ptr<column> fixed_result(strings_column_view const& input,
     // The scalar UTF-8 contains loop is latency-bound, while the find loop needs occupancy to
     // cover a complete scan. Unicode table lookups benefit from smaller blocks than other matchers.
     auto threads =
-      (utf8_literal && prog.operation() == regex_operation::CONTAINS) || average_bytes <= 64
-        ? std::min(prepared.threads, 256U)
+      (utf8_literal && prog.get_kind() == regex_jit_program::kind::CONTAINS) || average_bytes <= 64
+        ? std::ranges::min(prepared.threads, 256U)
         : prepared.threads;
     // Small batches need enough blocks to spread across the device, including short rows.
     constexpr auto small_batch_rows = size_type{65536};
-    if (data.rows <= small_batch_rows) { threads = std::min(threads, std::uint32_t{256}); }
+    if (data.rows <= small_batch_rows) { threads = std::ranges::min(threads, std::uint32_t{256}); }
     auto uses_character_flags = regex_jit_program_accessor::uses_character_flags(prog);
-    if (uses_character_flags && prog.operation() == regex_operation::FIND) {
-      threads = std::min(threads, 256U);
-    } else if (uses_character_flags && prog.operation() == regex_operation::COUNT) {
-      threads = std::min(threads, 512U);
+    if (uses_character_flags && prog.get_kind() == regex_jit_program::kind::FIND) {
+      threads = std::ranges::min(threads, 256U);
+    } else if (uses_character_flags && prog.get_kind() == regex_jit_program::kind::COUNT) {
+      threads = std::ranges::min(threads, 512U);
     }
     if (uses_character_flags) {
       launch_with_threads(prepared,
@@ -701,7 +705,7 @@ std::unique_ptr<column> enumerate_impl(strings_column_view const& input,
                                        cudf::memory_resources mr)
 {
   auto capture_count = prog.groups_count();
-  auto findall       = prog.operation() == regex_operation::FINDALL;
+  auto findall       = prog.get_kind() == regex_jit_program::kind::FINDALL;
   auto groups        = prog.capture() == strings::capture_groups::EXTRACT ? capture_count : 0;
   if (findall) {
     CUDF_EXPECTS(groups <= 1, "findall does not support more than 1 capture group");
@@ -876,7 +880,7 @@ std::vector<replacement_piece> parse_backref_replacement(std::string_view replac
       capture = capture * 10U + static_cast<std::uint64_t>(replacement[index] - '0');
     }
     auto max_group =
-      group_count.has_value() ? std::min(*group_count, size_type{99}) : size_type{99};
+      group_count.has_value() ? std::ranges::min(*group_count, size_type{99}) : size_type{99};
     CUDF_EXPECTS(capture <= static_cast<std::uint64_t>(max_group),
                  "Group index numbers must be in the range 0 to group count");
     flush_literal();
@@ -914,7 +918,7 @@ std::unique_ptr<column> replace_impl(strings_column_view const& input,
     launch_with_threads(prepared,
                         data,
                         stream,
-                        std::min(prepared.threads, desired_threads),
+                        std::ranges::min(prepared.threads, desired_threads),
                         mr.get_temporary_mr(),
                         args...);
   };
@@ -1002,8 +1006,8 @@ split_result generate_split_pairs(strings_column_view const& input,
                                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
-  auto reverse = prog.operation() == regex_operation::RSPLIT ||
-                 prog.operation() == regex_operation::RSPLIT_RECORD;
+  auto reverse = prog.get_kind() == regex_jit_program::kind::RSPLIT ||
+                 prog.get_kind() == regex_jit_program::kind::RSPLIT_RECORD;
   auto maxsplit = regex_jit_program_accessor::options(prog).maxsplit;
   auto reverse_limited =
     reverse && maxsplit > 0 && maxsplit < std::numeric_limits<size_type>::max();
@@ -1044,12 +1048,12 @@ split_result generate_split_pairs(strings_column_view const& input,
                               stream,
                               mr.get_temporary_mr());
   auto columns = static_cast<numeric_scalar<size_type> const&>(*maximum).value(stream);
-  if (reverse_limited) { columns = std::min(columns, maxsplit + 1); }
-  columns = std::max(columns, size_type{1});
+  if (reverse_limited) { columns = std::ranges::min(columns, maxsplit + 1); }
+  columns = std::ranges::max(columns, size_type{1});
 
   auto effective_count =
     cuda::proclaim_return_type<size_type>([reverse_limited, maxsplit] __device__(size_type count) {
-      return reverse_limited ? cuda::std::min(count, maxsplit + 1) : count;
+      return reverse_limited ? cuda::std::ranges::min(count, maxsplit + 1) : count;
     });
   auto effective_begin =
     cuda::transform_iterator(counts->view().begin<size_type>(), effective_count);
@@ -1179,7 +1183,7 @@ retained_kernel const& regex_jit_program_accessor::kernel(regex_jit_program cons
 
 std::unique_ptr<regex_jit_program> regex_jit_program::create(
   std::string_view pattern,
-  regex_operation operation,
+  regex_jit_program::kind operation,
   regex_jit_program_options const& program_options,
   strings::regex_flags flags,
   strings::capture_groups captures)
@@ -1188,13 +1192,139 @@ std::unique_ptr<regex_jit_program> regex_jit_program::create(
     new regex_jit_program(pattern, operation, program_options, flags, captures));
 }
 
+std::unique_ptr<regex_jit_program> regex_jit_program::create_contains(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::CONTAINS, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_matches(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::MATCHES, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_count(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::COUNT, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_find(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::FIND, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_extract(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::EXTRACT, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_extract_single(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::EXTRACT_SINGLE, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_extract_all_record(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::EXTRACT_ALL_RECORD, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_findall(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::FINDALL, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_replace(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::REPLACE, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_replace_with_backrefs(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::REPLACE_WITH_BACKREFS, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_split(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::SPLIT, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_rsplit(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::RSPLIT, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_split_record(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::SPLIT_RECORD, options, flags, captures);
+}
+
+std::unique_ptr<regex_jit_program> regex_jit_program::create_rsplit_record(
+  std::string_view pattern,
+  regex_jit_program_options const& options,
+  strings::regex_flags flags,
+  strings::capture_groups captures)
+{
+  return create(pattern, regex_jit_program::kind::RSPLIT_RECORD, options, flags, captures);
+}
+
 regex_jit_program::regex_jit_program(std::string_view pattern,
-                                     regex_operation operation,
+                                     regex_jit_program::kind operation,
                                      regex_jit_program_options const& program_options,
                                      strings::regex_flags flags,
                                      strings::capture_groups captures)
   : _pattern{pattern},
-    _operation{operation},
+    _kind{operation},
     _flags{flags},
     _captures{captures},
     _options{program_options}
@@ -1202,28 +1332,29 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
   try {
     auto compile_pattern = normalize_pattern(pattern);
     auto compile_options = make_compile_options(flags);
-    if (operation == regex_operation::EXTRACT_SINGLE && program_options.group.has_value()) {
+    if (operation == regex_jit_program::kind::EXTRACT_SINGLE && program_options.group.has_value()) {
       compile_options.extract_capture_group =
         static_cast<std::uint32_t>(*program_options.group + 1);
     }
     auto internal = internal_operation(operation);
-    if (operation == regex_operation::FINDALL && captures == strings::capture_groups::NON_CAPTURE) {
+    if (operation == regex_jit_program::kind::FINDALL &&
+        captures == strings::capture_groups::NON_CAPTURE) {
       internal = regex_ir::operation_kind::FIND_ALL;
     }
-    auto replacement_operation =
-      operation == regex_operation::REPLACE || operation == regex_operation::REPLACE_WITH_BACKREFS;
-    CUDF_EXPECTS(operation != regex_operation::REPLACE_WITH_BACKREFS ||
+    auto replacement_operation = operation == regex_jit_program::kind::REPLACE ||
+                                 operation == regex_jit_program::kind::REPLACE_WITH_BACKREFS;
+    CUDF_EXPECTS(operation != regex_jit_program::kind::REPLACE_WITH_BACKREFS ||
                    !program_options.max_replace_count.has_value(),
                  "max_replace_count is only supported for replace_re programs");
     auto native_replace   = replacement_operation && !program_options.max_replace_count.has_value();
     auto replacement_text = program_options.replacement.value_or("");
-    if (operation == regex_operation::REPLACE_WITH_BACKREFS) {
+    if (operation == regex_jit_program::kind::REPLACE_WITH_BACKREFS) {
       CUDF_EXPECTS(program_options.replacement.has_value(),
                    "replace_with_backrefs requires a replacement in regex_jit_program_options");
     }
     auto replacement      = detail::literal_replacement(replacement_text);
     auto validation_error = std::optional<std::string>{};
-    if (native_replace && operation == regex_operation::REPLACE_WITH_BACKREFS) {
+    if (native_replace && operation == regex_jit_program::kind::REPLACE_WITH_BACKREFS) {
       try {
         replacement = detail::parse_backref_replacement(replacement_text, std::nullopt);
       } catch (cudf::logic_error const& error) {
@@ -1243,7 +1374,7 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
                                  detail::regex_jit::encode_replacement(replacement),
                                  compile_options);
       } catch (std::invalid_argument const& error) {
-        if (operation != regex_operation::REPLACE_WITH_BACKREFS) { throw; }
+        if (operation != regex_jit_program::kind::REPLACE_WITH_BACKREFS) { throw; }
         auto fallback = regex_ir::compile(compile_pattern, internal, std::nullopt, compile_options);
         validation_error = error.what();
         replacement      = detail::literal_replacement("");
@@ -1252,7 +1383,7 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
       }
     }();
     auto capture_count = static_cast<size_type>(compiled.capture_count);
-    if (!native_replace && operation == regex_operation::REPLACE_WITH_BACKREFS &&
+    if (!native_replace && operation == regex_jit_program::kind::REPLACE_WITH_BACKREFS &&
         !validation_error.has_value()) {
       try {
         replacement = detail::parse_backref_replacement(replacement_text, capture_count);
@@ -1297,10 +1428,10 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
         }
       };
     switch (operation) {
-      case regex_operation::CONTAINS:
-      case regex_operation::MATCHES:
-      case regex_operation::COUNT:
-      case regex_operation::FIND:
+      case regex_jit_program::kind::CONTAINS:
+      case regex_jit_program::kind::MATCHES:
+      case regex_jit_program::kind::COUNT:
+      case regex_jit_program::kind::FIND:
         add_pass(
           kernel_role::PRIMARY,
           [&](bool offset64) {
@@ -1308,7 +1439,7 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
               offset64, internal, repeated_builtin, KERNEL_ENTRY);
           },
           "cudf.experimental.regex.fixed");
-        if (operation == regex_operation::CONTAINS) {
+        if (operation == regex_jit_program::kind::CONTAINS) {
           if (exact_literal_bytes.has_value()) {
             for (auto offset64 : offset_widths) {
               auto prepared                                             = compile_kernel(matcher,
@@ -1324,7 +1455,7 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
           }
         }
         break;
-      case regex_operation::EXTRACT:
+      case regex_jit_program::kind::EXTRACT:
         add_pass(
           kernel_role::PRIMARY,
           [&](bool offset64) {
@@ -1333,7 +1464,7 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
           },
           "cudf.experimental.regex.extract");
         break;
-      case regex_operation::EXTRACT_SINGLE: {
+      case regex_jit_program::kind::EXTRACT_SINGLE: {
         CUDF_EXPECTS(program_options.group.has_value(),
                      "extract_single requires a group in regex_jit_program_options");
         auto group = *program_options.group;
@@ -1346,9 +1477,9 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
           "cudf.experimental.regex.extract_single");
         break;
       }
-      case regex_operation::EXTRACT_ALL_RECORD:
-      case regex_operation::FINDALL: {
-        auto findall = operation == regex_operation::FINDALL;
+      case regex_jit_program::kind::EXTRACT_ALL_RECORD:
+      case regex_jit_program::kind::FINDALL: {
+        auto findall = operation == regex_jit_program::kind::FINDALL;
         auto groups  = captures == strings::capture_groups::EXTRACT ? capture_count : 0;
         auto slots   = (capture_count + 1) * 2;
         add_pass(
@@ -1396,8 +1527,8 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
         }
         break;
       }
-      case regex_operation::REPLACE:
-      case regex_operation::REPLACE_WITH_BACKREFS: {
+      case regex_jit_program::kind::REPLACE:
+      case regex_jit_program::kind::REPLACE_WITH_BACKREFS: {
         if (native_replace) {
           add_pass(
             kernel_role::PRIMARY,
@@ -1468,12 +1599,12 @@ regex_jit_program::regex_jit_program(std::string_view pattern,
         }
         break;
       }
-      case regex_operation::SPLIT:
-      case regex_operation::RSPLIT:
-      case regex_operation::SPLIT_RECORD:
-      case regex_operation::RSPLIT_RECORD: {
-        auto reverse =
-          operation == regex_operation::RSPLIT || operation == regex_operation::RSPLIT_RECORD;
+      case regex_jit_program::kind::SPLIT:
+      case regex_jit_program::kind::RSPLIT:
+      case regex_jit_program::kind::SPLIT_RECORD:
+      case regex_jit_program::kind::RSPLIT_RECORD: {
+        auto reverse = operation == regex_jit_program::kind::RSPLIT ||
+                       operation == regex_jit_program::kind::RSPLIT_RECORD;
         add_pass(
           kernel_role::PRIMARY,
           [&](bool offset64) {
@@ -1542,7 +1673,7 @@ strings::regex_flags regex_jit_program::flags() const { return _flags; }
 
 strings::capture_groups regex_jit_program::capture() const { return _captures; }
 
-regex_operation regex_jit_program::operation() const { return _operation; }
+regex_jit_program::kind regex_jit_program::get_kind() const { return _kind; }
 
 size_type regex_jit_program::groups_count() const { return _impl->capture_count; }
 
@@ -1552,7 +1683,7 @@ std::unique_ptr<column> contains_re(strings_column_view const& input,
                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::CONTAINS, "contains_re");
+  expect_operation(prog, regex_jit_program::kind::CONTAINS, "contains_re");
   return detail::fixed_result(input, prog, data_type{type_id::BOOL8}, stream, mr);
 }
 
@@ -1562,7 +1693,7 @@ std::unique_ptr<column> matches_re(strings_column_view const& input,
                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::MATCHES, "matches_re");
+  expect_operation(prog, regex_jit_program::kind::MATCHES, "matches_re");
   return detail::fixed_result(input, prog, data_type{type_id::BOOL8}, stream, mr);
 }
 
@@ -1572,7 +1703,7 @@ std::unique_ptr<column> count_re(strings_column_view const& input,
                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::COUNT, "count_re");
+  expect_operation(prog, regex_jit_program::kind::COUNT, "count_re");
   return detail::fixed_result(input, prog, data_type{type_id::INT32}, stream, mr);
 }
 
@@ -1582,7 +1713,7 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::FIND, "find_re");
+  expect_operation(prog, regex_jit_program::kind::FIND, "find_re");
   return detail::fixed_result(input, prog, data_type{type_id::INT32}, stream, mr);
 }
 
@@ -1592,7 +1723,7 @@ std::unique_ptr<table> extract(strings_column_view const& input,
                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::EXTRACT, "extract");
+  expect_operation(prog, regex_jit_program::kind::EXTRACT, "extract");
   return detail::extract_impl(input, prog, stream, mr);
 }
 
@@ -1603,7 +1734,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::EXTRACT_SINGLE, "extract_single");
+  expect_operation(prog, regex_jit_program::kind::EXTRACT_SINGLE, "extract_single");
   auto& options = regex_jit_program_accessor::options(prog);
   CUDF_EXPECTS(options.group == group,
                "extract_single group does not match the regex_jit_program group");
@@ -1620,7 +1751,7 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::EXTRACT_ALL_RECORD, "extract_all_record");
+  expect_operation(prog, regex_jit_program::kind::EXTRACT_ALL_RECORD, "extract_all_record");
   return detail::enumerate_impl(input, prog, stream, mr);
 }
 
@@ -1630,7 +1761,7 @@ std::unique_ptr<column> findall(strings_column_view const& input,
                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::FINDALL, "findall");
+  expect_operation(prog, regex_jit_program::kind::FINDALL, "findall");
   return detail::enumerate_impl(input, prog, stream, mr);
 }
 
@@ -1642,7 +1773,7 @@ std::unique_ptr<column> replace_re(strings_column_view const& input,
                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::REPLACE, "replace_re");
+  expect_operation(prog, regex_jit_program::kind::REPLACE, "replace_re");
   CUDF_EXPECTS(replacement.is_valid(stream), "Parameter replacement must be valid");
   auto& options = regex_jit_program_accessor::options(prog);
   CUDF_EXPECTS(options.replacement.value_or("") == replacement.to_string(stream),
@@ -1659,7 +1790,7 @@ std::unique_ptr<column> replace_with_backrefs(strings_column_view const& input,
                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::REPLACE_WITH_BACKREFS, "replace_with_backrefs");
+  expect_operation(prog, regex_jit_program::kind::REPLACE_WITH_BACKREFS, "replace_with_backrefs");
   CUDF_EXPECTS(!prog.pattern().empty(), "Parameter pattern must not be empty");
   auto& options = regex_jit_program_accessor::options(prog);
   CUDF_EXPECTS(
@@ -1677,7 +1808,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::SPLIT, "split_re");
+  expect_operation(prog, regex_jit_program::kind::SPLIT, "split_re");
   expect_split_parameters(prog, maxsplit, "split_re");
   return detail::split_table_impl(input, prog, stream, mr);
 }
@@ -1689,7 +1820,7 @@ std::unique_ptr<table> rsplit_re(strings_column_view const& input,
                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::RSPLIT, "rsplit_re");
+  expect_operation(prog, regex_jit_program::kind::RSPLIT, "rsplit_re");
   expect_split_parameters(prog, maxsplit, "rsplit_re");
   return detail::split_table_impl(input, prog, stream, mr);
 }
@@ -1701,7 +1832,7 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::SPLIT_RECORD, "split_record_re");
+  expect_operation(prog, regex_jit_program::kind::SPLIT_RECORD, "split_record_re");
   expect_split_parameters(prog, maxsplit, "split_record_re");
   return detail::split_record_impl(input, prog, stream, mr);
 }
@@ -1713,7 +1844,7 @@ std::unique_ptr<column> rsplit_record_re(strings_column_view const& input,
                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  expect_operation(prog, regex_operation::RSPLIT_RECORD, "rsplit_record_re");
+  expect_operation(prog, regex_jit_program::kind::RSPLIT_RECORD, "rsplit_record_re");
   expect_split_parameters(prog, maxsplit, "rsplit_record_re");
   return detail::split_record_impl(input, prog, stream, mr);
 }

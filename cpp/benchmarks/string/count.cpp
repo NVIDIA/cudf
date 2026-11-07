@@ -52,9 +52,8 @@ static void bench_count(nvbench::state& state)
 
   auto& pattern = patterns[pattern_index];
   auto prog = backend == "interpreter" ? cudf::strings::regex_program::create(pattern) : nullptr;
-  auto jit_program = backend == "jit" ? cudf::experimental::regex_jit_program::create(
-                                          pattern, cudf::experimental::regex_operation::COUNT)
-                                      : nullptr;
+  auto jit_program =
+    backend == "jit" ? cudf::experimental::regex_jit_program::create_count(pattern) : nullptr;
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   // gather some throughput statistics as well
   auto data_size = table->alloc_size();

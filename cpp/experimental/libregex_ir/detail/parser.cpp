@@ -78,9 +78,8 @@ bool can_consume_character(node const& value)
     case node_kind::GROUP: return can_consume_character(*value.children.front());
     case node_kind::CONCATENATE:
     case node_kind::ALTERNATE:
-      return std::any_of(value.children.begin(), value.children.end(), [](auto& child) {
-        return can_consume_character(*child);
-      });
+      return std::ranges::any_of(value.children,
+                                 [](auto& child) { return can_consume_character(*child); });
     case node_kind::REPEAT: return can_consume_character(*value.children.front());
   }
   return false;
@@ -93,9 +92,8 @@ bool is_unconditional_empty(node const& value)
     case node_kind::GROUP: return is_unconditional_empty(*value.children.front());
     case node_kind::CONCATENATE:
     case node_kind::ALTERNATE:
-      return std::all_of(value.children.begin(), value.children.end(), [](auto& child) {
-        return is_unconditional_empty(*child);
-      });
+      return std::ranges::all_of(value.children,
+                                 [](auto& child) { return is_unconditional_empty(*child); });
     case node_kind::PREDICATE:
     case node_kind::REPEAT:
     case node_kind::ASSERTION:
@@ -113,13 +111,11 @@ bool can_match_empty(node const& value)
     case node_kind::PREDICATE: return false;
     case node_kind::GROUP: return can_match_empty(*value.children.front());
     case node_kind::CONCATENATE:
-      return std::all_of(value.children.begin(), value.children.end(), [](auto& child) {
-        return can_match_empty(*child);
-      });
+      return std::ranges::all_of(value.children,
+                                 [](auto& child) { return can_match_empty(*child); });
     case node_kind::ALTERNATE:
-      return std::any_of(value.children.begin(), value.children.end(), [](auto& child) {
-        return can_match_empty(*child);
-      });
+      return std::ranges::any_of(value.children,
+                                 [](auto& child) { return can_match_empty(*child); });
     case node_kind::REPEAT: return value.minimum == 0 || can_match_empty(*value.children.front());
   }
   return false;
@@ -128,24 +124,21 @@ bool can_match_empty(node const& value)
 bool contains_lookaround(node const& value)
 {
   if (value.kind == node_kind::LOOKAROUND) return true;
-  return std::any_of(value.children.begin(), value.children.end(), [](auto& child) {
-    return contains_lookaround(*child);
-  });
+  return std::ranges::any_of(value.children,
+                             [](auto& child) { return contains_lookaround(*child); });
 }
 
 bool contains_capture(node const& value)
 {
   if (value.kind == node_kind::GROUP && value.capturing) return true;
-  return std::any_of(value.children.begin(), value.children.end(), [](auto& child) {
-    return contains_capture(*child);
-  });
+  return std::ranges::any_of(value.children, [](auto& child) { return contains_capture(*child); });
 }
 
 void normalize_ranges(character_predicate& predicate)
 {
   if (predicate.ranges.empty()) { return; }
 
-  std::sort(predicate.ranges.begin(), predicate.ranges.end(), [](auto& lhs, auto& rhs) {
+  std::ranges::sort(predicate.ranges, [](auto& lhs, auto& rhs) {
     return lhs.first < rhs.first || (lhs.first == rhs.first && lhs.last < rhs.last);
   });
 
@@ -234,14 +227,11 @@ bool append_posix_class(character_predicate& predicate, std::string_view name)
 void add_case_pair(character_predicate& predicate, char32_t first, char32_t last)
 {
   predicate.ranges.push_back({first, last});
-  auto mapping = std::lower_bound(
-    std::begin(unicode_case_ranges),
-    std::end(unicode_case_ranges),
-    static_cast<std::uint32_t>(first),
-    [](unicode_case_range const& range, std::uint32_t value) { return range.last < value; });
+  auto mapping = std::ranges::lower_bound(
+    unicode_case_ranges, static_cast<std::uint32_t>(first), {}, &unicode_case_range::last);
   for (; mapping != std::end(unicode_case_ranges) && mapping->first <= last; ++mapping) {
-    auto begin = std::max(static_cast<std::uint32_t>(first), mapping->first);
-    auto end   = std::min(static_cast<std::uint32_t>(last), mapping->last);
+    auto begin = std::ranges::max(static_cast<std::uint32_t>(first), mapping->first);
+    auto end   = std::ranges::min(static_cast<std::uint32_t>(last), mapping->last);
     if (mapping->delta == 0) {
       // Complete swapped pairs are already in the original range. Only cut pairs extend it.
       if ((begin - mapping->first) % 2) predicate.ranges.push_back({begin - 1, begin - 1});
@@ -259,8 +249,8 @@ void add_inline_case_pair(character_predicate& predicate, char32_t first, char32
   folded.ranges.push_back({first, last});
   if (ascii) {
     for (auto range : {codepoint_range{U'A', U'Z'}, codepoint_range{U'a', U'z'}}) {
-      auto begin = std::max(first, range.first);
-      auto end   = std::min(last, range.last);
+      auto begin = std::ranges::max(first, range.first);
+      auto end   = std::ranges::min(last, range.last);
       if (begin <= end) {
         auto const delta = range.first == U'A' ? 32 : -32;
         folded.ranges.push_back(
@@ -278,21 +268,17 @@ void add_inline_case_pair(character_predicate& predicate, char32_t first, char32
         auto target_first = static_cast<char32_t>(mapping.first + mapping.delta);
         auto target_last  = static_cast<char32_t>(mapping.last + mapping.delta);
         for (auto range : previous) {
-          auto begin = std::max(range.first, target_first);
-          auto end   = std::min(range.last, target_last);
+          auto begin = std::ranges::max(range.first, target_first);
+          auto end   = std::ranges::min(range.last, target_last);
           if (begin <= end)
             folded.ranges.push_back({static_cast<char32_t>(begin - mapping.delta),
                                      static_cast<char32_t>(end - mapping.delta)});
         }
       }
       normalize_ranges(folded);
-      if (std::equal(previous.begin(),
-                     previous.end(),
-                     folded.ranges.begin(),
-                     folded.ranges.end(),
-                     [](auto left, auto right) {
-                       return left.first == right.first && left.last == right.last;
-                     }))
+      if (std::ranges::equal(previous, folded.ranges, [](auto left, auto right) {
+            return left.first == right.first && left.last == right.last;
+          }))
         break;
     }
   }

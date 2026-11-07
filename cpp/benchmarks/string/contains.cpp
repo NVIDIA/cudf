@@ -52,9 +52,8 @@ static void bench_contains(nvbench::state& state)
 
   auto pattern = patterns[pattern_index];
   auto program = backend == "interpreter" ? cudf::strings::regex_program::create(pattern) : nullptr;
-  auto jit_program = backend == "jit" ? cudf::experimental::regex_jit_program::create(
-                                          pattern, cudf::experimental::regex_operation::CONTAINS)
-                                      : nullptr;
+  auto jit_program =
+    backend == "jit" ? cudf::experimental::regex_jit_program::create_contains(pattern) : nullptr;
   state.add_global_memory_reads<nvbench::int8_t>(col->alloc_size());
   state.add_global_memory_writes<nvbench::int32_t>(input.size());
 

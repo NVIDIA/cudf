@@ -50,14 +50,12 @@ TEST_F(RegexJitProgramTest, BackreferencesRejectReplacementLimit)
     SCOPED_TRACE(limit);
     auto options =
       cudf::experimental::regex_jit_program_options{.replacement = "X", .max_replace_count = limit};
-    EXPECT_THROW(cudf::experimental::regex_jit_program::create(
-                   "(a)", cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS, options),
+    EXPECT_THROW(cudf::test::jit_regex_backend::create_replace_with_backrefs("(a)", options),
                  cudf::logic_error);
   }
   auto options =
     cudf::experimental::regex_jit_program_options{.replacement = "X", .max_replace_count = 1};
-  auto program = cudf::experimental::regex_jit_program::create(
-    "(a)", cudf::experimental::regex_operation::REPLACE, options);
+  auto program = cudf::test::jit_regex_backend::create_replace("(a)", options);
   cudf::test::strings_column_wrapper input({"aa"});
   auto result = cudf::experimental::replace_re(
     cudf::strings_column_view{input}, *program, cudf::string_scalar("X"), 1);
@@ -69,15 +67,10 @@ TEST_F(RegexJitProgramTest, FixedWidthAlternativesMaterialization)
 {
   cudf::test::strings_column_wrapper input({"abcabc", "abca", ""});
   auto const view = cudf::strings_column_view{input};
-  auto findall =
-    cudf::experimental::regex_jit_program::create("bca|abc",
-                                                  cudf::experimental::regex_operation::FINDALL,
-                                                  {},
-                                                  cudf::strings::regex_flags::DEFAULT,
-                                                  cudf::strings::capture_groups::NON_CAPTURE);
-  auto split = cudf::experimental::regex_jit_program::create(
-    "bca|abc", cudf::experimental::regex_operation::SPLIT_RECORD);
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  auto findall    = cudf::test::jit_regex_backend::create_findall(
+    "bca|abc", {}, cudf::strings::regex_flags::DEFAULT, cudf::strings::capture_groups::NON_CAPTURE);
+  auto split = cudf::test::jit_regex_backend::create_split_record("bca|abc");
+  using LCW  = cudf::test::lists_column_wrapper<cudf::string_view>;
   LCW matches{{"abc", "abc"}, {"abc"}, {}};
   LCW fields{{"", "", ""}, {"", "a"}, {""}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*cudf::experimental::findall(view, *findall), matches);
@@ -112,9 +105,8 @@ TEST_F(RegexJitProgramTest, ScopedFlags)
     SCOPED_TRACE(test.pattern);
     SCOPED_TRACE(test.text);
     cudf::test::strings_column_wrapper input({test.text});
-    auto program = cudf::experimental::regex_jit_program::create(
-      test.pattern, cudf::experimental::regex_operation::CONTAINS);
-    auto result = cudf::experimental::contains_re(cudf::strings_column_view{input}, *program);
+    auto program = cudf::test::jit_regex_backend::create_contains(test.pattern);
+    auto result  = cudf::experimental::contains_re(cudf::strings_column_view{input}, *program);
     cudf::test::fixed_width_column_wrapper<bool> expected({test.expected});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
   }
@@ -123,9 +115,8 @@ TEST_F(RegexJitProgramTest, ScopedFlags)
 TEST_F(RegexJitProgramTest, ScopedFlagsPreserveCaptures)
 {
   cudf::test::strings_column_wrapper input({"ABc", "AbC", "abC"});
-  auto program = cudf::experimental::regex_jit_program::create(
-    R"((?i:(a)(?-i:B))(?i:(c)))", cudf::experimental::regex_operation::EXTRACT);
-  auto result = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+  auto program = cudf::test::jit_regex_backend::create_extract(R"((?i:(a)(?-i:B))(?i:(c)))");
+  auto result  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
   cudf::test::strings_column_wrapper first({"A", "", ""}, {true, false, false});
   cudf::test::strings_column_wrapper second({"c", "", ""}, {true, false, false});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view().column(0), first);
@@ -139,9 +130,8 @@ TEST_F(RegexJitProgramTest, ScopedClassesCount)
   auto check      = [&](char const* pattern,
                    cudf::strings::regex_flags flags,
                    std::initializer_list<cudf::size_type> values) {
-    auto program = cudf::experimental::regex_jit_program::create(
-      pattern, cudf::experimental::regex_operation::COUNT, {}, flags);
-    auto result = cudf::experimental::count_re(view, *program);
+    auto program = cudf::test::jit_regex_backend::create_count(pattern, {}, flags);
+    auto result  = cudf::experimental::count_re(view, *program);
     cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(values.begin(), values.end());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
   };
@@ -163,25 +153,19 @@ TEST_F(RegexJitProgramTest, InvalidInlineFlags)
                        "(?-i)a",
                        "(?i--m:a)"}) {
     SCOPED_TRACE(pattern);
-    EXPECT_THROW(cudf::experimental::regex_jit_program::create(
-                   pattern, cudf::experimental::regex_operation::CONTAINS),
-                 cudf::logic_error);
+    EXPECT_THROW(cudf::test::jit_regex_backend::create_contains(pattern), cudf::logic_error);
   }
 }
 
 TEST_F(RegexJitProgramTest, MetadataAndOperationValidation)
 {
-  auto program =
-    cudf::experimental::regex_jit_program::create("(a)",
-                                                  cudf::experimental::regex_operation::COUNT,
-                                                  {},
-                                                  cudf::strings::regex_flags::MULTILINE,
-                                                  cudf::strings::capture_groups::NON_CAPTURE);
+  auto program = cudf::test::jit_regex_backend::create_count(
+    "(a)", {}, cudf::strings::regex_flags::MULTILINE, cudf::strings::capture_groups::NON_CAPTURE);
 
   EXPECT_EQ(program->pattern(), "(a)");
   EXPECT_EQ(program->flags(), cudf::strings::regex_flags::MULTILINE);
   EXPECT_EQ(program->capture(), cudf::strings::capture_groups::NON_CAPTURE);
-  EXPECT_EQ(program->operation(), cudf::experimental::regex_operation::COUNT);
+  EXPECT_EQ(program->get_kind(), cudf::experimental::regex_jit_program::kind::COUNT);
   EXPECT_EQ(program->groups_count(), 1);
 
   auto input = cudf::test::strings_column_wrapper({"a"});
@@ -191,9 +175,8 @@ TEST_F(RegexJitProgramTest, MetadataAndOperationValidation)
 
 TEST_F(RegexJitProgramTest, NullableAlternationDoesNotJoinSuccessiveBranches)
 {
-  auto input = cudf::test::strings_column_wrapper({"abcdefgh"});
-  auto prog  = cudf::experimental::regex_jit_program::create(
-    "a(bc|de|fg|)h", cudf::experimental::regex_operation::CONTAINS);
+  auto input   = cudf::test::strings_column_wrapper({"abcdefgh"});
+  auto prog    = cudf::test::jit_regex_backend::create_contains("a(bc|de|fg|)h");
   auto results = cudf::experimental::contains_re(cudf::strings_column_view{input}, *prog);
   cudf::test::fixed_width_column_wrapper<bool> expected({false});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
@@ -203,9 +186,8 @@ TEST_F(RegexJitProgramTest, Lookahead)
 {
   auto input = cudf::test::strings_column_wrapper({"ab", "ac", "a", "", "aab", "cab"});
   auto check = [&](std::string_view pattern, std::initializer_list<bool> values) {
-    auto program = cudf::experimental::regex_jit_program::create(
-      pattern, cudf::experimental::regex_operation::CONTAINS);
-    auto actual = cudf::experimental::contains_re(cudf::strings_column_view{input}, *program);
+    auto program = cudf::test::jit_regex_backend::create_contains(pattern);
+    auto actual  = cudf::experimental::contains_re(cudf::strings_column_view{input}, *program);
     cudf::test::fixed_width_column_wrapper<bool> expected(values.begin(), values.end());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, expected);
   };
@@ -218,9 +200,8 @@ TEST_F(RegexJitProgramTest, Lookbehind)
 {
   auto input = cudf::test::strings_column_wrapper({"ab", "cb", "b", "", "aab", "abc"});
   auto check = [&](std::string_view pattern, std::initializer_list<bool> values) {
-    auto program = cudf::experimental::regex_jit_program::create(
-      pattern, cudf::experimental::regex_operation::CONTAINS);
-    auto actual = cudf::experimental::contains_re(cudf::strings_column_view{input}, *program);
+    auto program = cudf::test::jit_regex_backend::create_contains(pattern);
+    auto actual  = cudf::experimental::contains_re(cudf::strings_column_view{input}, *program);
     cudf::test::fixed_width_column_wrapper<bool> expected(values.begin(), values.end());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, expected);
   };
@@ -236,12 +217,8 @@ TEST_F(RegexJitProgramTest, PrioritySensitivePatternsPreserveMatchSpan)
                            cudf::test::lists_column_wrapper<cudf::string_view> const& expected,
                            cudf::strings::regex_flags flags = cudf::strings::regex_flags::DEFAULT) {
     auto input = cudf::test::strings_column_wrapper({input_value});
-    auto prog =
-      cudf::experimental::regex_jit_program::create(pattern,
-                                                    cudf::experimental::regex_operation::FINDALL,
-                                                    {},
-                                                    flags,
-                                                    cudf::strings::capture_groups::NON_CAPTURE);
+    auto prog  = cudf::test::jit_regex_backend::create_findall(
+      pattern, {}, flags, cudf::strings::capture_groups::NON_CAPTURE);
     auto matches = cudf::experimental::findall(cudf::strings_column_view{input}, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(matches->view(), expected);
   };
@@ -262,10 +239,8 @@ TEST_F(RegexJitProgramTest, IgnoreCaseCharacterClassRanges)
   auto view = cudf::strings_column_view(input);
 
   auto check = [&](std::string_view pattern, std::initializer_list<bool> expected_values) {
-    auto program =
-      cudf::test::jit_regex_backend::create(cudf::experimental::regex_operation::CONTAINS,
-                                            pattern,
-                                            cudf::strings::regex_flags::IGNORECASE);
+    auto program = cudf::test::jit_regex_backend::create_contains(
+      pattern, cudf::strings::regex_flags::IGNORECASE);
     auto results = cudf::test::jit_regex_backend::contains_re(view, *program);
     cudf::test::fixed_width_column_wrapper<bool> expected(expected_values.begin(),
                                                           expected_values.end());
@@ -285,15 +260,13 @@ TEST_F(RegexJitProgramTest, AsciiWhitespaceBoundaries)
   auto view  = cudf::strings_column_view(input);
   auto flags = cudf::strings::regex_flags::ASCII;
 
-  auto whitespace = cudf::test::jit_regex_backend::create(
-    cudf::experimental::regex_operation::COUNT, R"(\s)", flags);
-  auto results = cudf::test::jit_regex_backend::count_re(view, *whitespace);
+  auto whitespace = cudf::test::jit_regex_backend::create_count(R"(\s)", flags);
+  auto results    = cudf::test::jit_regex_backend::count_re(view, *whitespace);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> whitespace_expected({0, 1, 1, 1, 0, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, whitespace_expected);
 
-  auto non_whitespace = cudf::test::jit_regex_backend::create(
-    cudf::experimental::regex_operation::COUNT, R"(\S)", flags);
-  results = cudf::test::jit_regex_backend::count_re(view, *non_whitespace);
+  auto non_whitespace = cudf::test::jit_regex_backend::create_count(R"(\S)", flags);
+  results             = cudf::test::jit_regex_backend::count_re(view, *non_whitespace);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> non_whitespace_expected(
     {1, 0, 0, 0, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, non_whitespace_expected);
@@ -303,17 +276,16 @@ TEST_F(RegexJitProgramTest, LookbehindCapturesOutsideMatch)
 {
   auto input   = cudf::test::strings_column_wrapper({"abc", "aabc", "bc", "a", "", "abc"},
                                                     {true, true, true, true, true, false});
-  auto program = cudf::experimental::regex_jit_program::create(
-    R"((?<=([ab]+)([bc]+))$)", cudf::experimental::regex_operation::EXTRACT);
-  auto actual = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+  auto program = cudf::test::jit_regex_backend::create_extract(R"((?<=([ab]+)([bc]+))$)");
+  auto actual  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
   cudf::test::strings_column_wrapper first({"a", "aa", "b", "", "", ""},
                                            {true, true, true, false, false, false});
   cudf::test::strings_column_wrapper second({"bc", "bc", "c", "", "", ""},
                                             {true, true, true, false, false, false});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(actual->view().column(0), first);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(actual->view().column(1), second);
-  auto single = cudf::experimental::regex_jit_program::create(
-    R"((?<=([ab]+)([bc]+))$)", cudf::experimental::regex_operation::EXTRACT_SINGLE, {.group = 1});
+  auto single =
+    cudf::test::jit_regex_backend::create_extract_single(R"((?<=([ab]+)([bc]+))$)", {.group = 1});
   auto selected = cudf::experimental::extract_single(cudf::strings_column_view{input}, *single, 1);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*selected, second);
 }
@@ -322,9 +294,8 @@ TEST_F(RegexJitProgramTest, LookaheadCapturesOutsideMatch)
 {
   auto input =
     cudf::test::strings_column_wrapper({"aaa", "ab", "", "aaa"}, {true, true, true, false});
-  auto program = cudf::experimental::regex_jit_program::create(
-    R"((?=(a+))a)", cudf::experimental::regex_operation::EXTRACT);
-  auto actual = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+  auto program = cudf::test::jit_regex_backend::create_extract(R"((?=(a+))a)");
+  auto actual  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
   cudf::test::strings_column_wrapper expected({"aaa", "a", "", ""}, {true, true, false, false});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(actual->view().column(0), expected);
 }
@@ -332,40 +303,37 @@ TEST_F(RegexJitProgramTest, LookaheadCapturesOutsideMatch)
 TEST_F(RegexJitProgramTest, NegativeLookaheadDiscardsCaptures)
 {
   auto input   = cudf::test::strings_column_wrapper({"abx", "abc", "a"});
-  auto program = cudf::experimental::regex_jit_program::create(
-    R"(a(?!(b)c))", cudf::experimental::regex_operation::EXTRACT);
-  auto actual = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+  auto program = cudf::test::jit_regex_backend::create_extract(R"(a(?!(b)c))");
+  auto actual  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
   cudf::test::strings_column_wrapper expected({"", "", ""}, {false, false, false});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(actual->view().column(0), expected);
 }
 
 TEST_F(RegexJitProgramTest, LookaroundMaterializationAndCaching)
 {
-  using backend   = cudf::test::jit_regex_backend;
-  using operation = cudf::experimental::regex_operation;
-  using policy    = cudf::experimental::regex_jit_span_cache_policy;
-  auto input      = cudf::test::strings_column_wrapper({"ab ab", "ac", ""});
-  auto view       = cudf::strings_column_view{input};
+  using backend = cudf::test::jit_regex_backend;
+  using policy  = cudf::experimental::regex_jit_span_cache_policy;
+  auto input    = cudf::test::strings_column_wrapper({"ab ab", "ac", ""});
+  auto view     = cudf::strings_column_view{input};
   for (auto cache : {policy::OFF, policy::FORCE}) {
-    auto program = backend::create(operation::FINDALL, R"(a(?=b))", {.span_cache_policy = cache});
+    auto program = backend::create_findall(R"(a(?=b))", {.span_cache_policy = cache});
     auto actual  = backend::findall(view, *program);
     using LCW    = cudf::test::lists_column_wrapper<cudf::string_view>;
     LCW expected({{"a", "a"}, {}, {}});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, expected);
 
-    program = backend::create(
-      operation::REPLACE, R"(a(?=b))", {.replacement = "x", .span_cache_policy = cache});
+    program =
+      backend::create_replace(R"(a(?=b))", {.replacement = "x", .span_cache_policy = cache});
     actual = backend::replace_re(view, *program, cudf::string_scalar{"x"});
     cudf::test::strings_column_wrapper replaced({"xb xb", "ac", ""});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, replaced);
-    program = backend::create(operation::REPLACE_WITH_BACKREFS,
-                              R"((?=(ab))a)",
-                              {.replacement = R"(\1)", .span_cache_policy = cache});
-    actual  = backend::replace_with_backrefs(view, *program, R"(\1)");
+    program = backend::create_replace_with_backrefs(
+      R"((?=(ab))a)", {.replacement = R"(\1)", .span_cache_policy = cache});
+    actual = backend::replace_with_backrefs(view, *program, R"(\1)");
     cudf::test::strings_column_wrapper captured_replacement({"abb abb", "ac", ""});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, captured_replacement);
 
-    program = backend::create(operation::SPLIT_RECORD, R"((?<=a)b)", {.span_cache_policy = cache});
+    program = backend::create_split_record(R"((?<=a)b)", {.span_cache_policy = cache});
     actual  = backend::split_record_re(view, *program);
     LCW fields({{"a", " a", ""}, {"ac"}, {""}});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, fields);
@@ -378,9 +346,8 @@ TEST_F(RegexJitProgramTest, NullableLookaroundRepeatCaptures)
   cudf::test::strings_column_wrapper expected({"", "", "", "", "", ""},
                                               {true, true, true, true, true, false});
   for (auto pattern : {R"(((?=a))*a)", R"(((?=a)a?)*a)"}) {
-    auto program = cudf::experimental::regex_jit_program::create(
-      pattern, cudf::experimental::regex_operation::EXTRACT);
-    auto actual = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+    auto program = cudf::test::jit_regex_backend::create_extract(pattern);
+    auto actual  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(actual->view().column(0), expected);
   }
 }
@@ -388,9 +355,8 @@ TEST_F(RegexJitProgramTest, NullableLookaroundRepeatCaptures)
 TEST_F(RegexJitProgramTest, LookbehindNullableRepeatCaptures)
 {
   auto input   = cudf::test::strings_column_wrapper({"ab", "aab", "aaab", "b", "😀ab"});
-  auto program = cudf::experimental::regex_jit_program::create(
-    R"((?<=((?=a)a?)*)b)", cudf::experimental::regex_operation::EXTRACT);
-  auto actual = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+  auto program = cudf::test::jit_regex_backend::create_extract(R"((?<=((?=a)a?)*)b)");
+  auto actual  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
   cudf::test::strings_column_wrapper expected({"", "", "", "", ""},
                                               {true, true, true, false, true});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(actual->view().column(0), expected);
@@ -400,9 +366,8 @@ TEST_F(RegexJitProgramTest, LookbehindExternalWorkspace)
 {
   std::vector<std::string> values{std::string(400, 'a') + "b", "b", ""};
   auto input   = cudf::test::strings_column_wrapper(values.begin(), values.end());
-  auto program = cudf::experimental::regex_jit_program::create(
-    R"((?<=((a|aa){200}))b)", cudf::experimental::regex_operation::EXTRACT);
-  auto actual = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+  auto program = cudf::test::jit_regex_backend::create_extract(R"((?<=((a|aa){200}))b)");
+  auto actual  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
   std::vector<std::string> captured{std::string(200, 'a'), "", ""};
   cudf::test::strings_column_wrapper first(
     captured.begin(), captured.end(), cudf::test::iterators::nulls_at({1, 2}));
@@ -413,22 +378,21 @@ TEST_F(RegexJitProgramTest, LookbehindExternalWorkspace)
 
 TEST_F(RegexJitProgramTest, LookaroundEmptyMatches)
 {
-  using backend   = cudf::test::jit_regex_backend;
-  using operation = cudf::experimental::regex_operation;
-  using policy    = cudf::experimental::regex_jit_span_cache_policy;
-  using LCW       = cudf::test::lists_column_wrapper<cudf::string_view>;
-  auto input      = cudf::test::strings_column_wrapper({"aaa", "", "éé"});
-  auto view       = cudf::strings_column_view{input};
-  auto check      = [&](std::string_view pattern,
+  using backend = cudf::test::jit_regex_backend;
+  using policy  = cudf::experimental::regex_jit_span_cache_policy;
+  using LCW     = cudf::test::lists_column_wrapper<cudf::string_view>;
+  auto input    = cudf::test::strings_column_wrapper({"aaa", "", "éé"});
+  auto view     = cudf::strings_column_view{input};
+  auto check    = [&](std::string_view pattern,
                    std::initializer_list<cudf::size_type> counts,
                    LCW const& expected) {
-    auto program = backend::create(operation::COUNT, pattern);
+    auto program = backend::create_count(pattern);
     auto actual  = backend::count_re(view, *program);
     cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_counts(counts.begin(),
                                                                             counts.end());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, expected_counts);
     for (auto cache : {policy::OFF, policy::FORCE}) {
-      program = backend::create(operation::FINDALL, pattern, {.span_cache_policy = cache});
+      program = backend::create_findall(pattern, {.span_cache_policy = cache});
       actual  = backend::findall(view, *program);
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(*actual, expected);
     }
@@ -456,9 +420,8 @@ TEST_F(RegexJitProgramTest, LookbehindMalformedUtf8)
     "\xf0\x80\x80"
     "a"};
   auto input   = cudf::test::strings_column_wrapper(values.begin(), values.end());
-  auto program = cudf::experimental::regex_jit_program::create(
-    R"((?<=(.))a)", cudf::experimental::regex_operation::EXTRACT);
-  auto actual = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
+  auto program = cudf::test::jit_regex_backend::create_extract(R"((?<=(.))a)");
+  auto actual  = cudf::experimental::extract(cudf::strings_column_view{input}, *program);
   cudf::test::strings_column_wrapper expected({"\x80", "\x80", "\xc3", "\xc2\x80", "\x80", "\x80"});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(actual->view().column(0), expected);
 }
@@ -485,15 +448,13 @@ TEST_F(RegexJitProgramTest, UpstreamLookaroundCaptures)
   };
   for (auto const& test : cases) {
     SCOPED_TRACE(test.pattern);
-    auto input   = cudf::test::strings_column_wrapper({test.text});
-    auto view    = cudf::strings_column_view{input};
-    auto program = cudf::experimental::regex_jit_program::create(
-      test.pattern, cudf::experimental::regex_operation::CONTAINS);
+    auto input    = cudf::test::strings_column_wrapper({test.text});
+    auto view     = cudf::strings_column_view{input};
+    auto program  = cudf::test::jit_regex_backend::create_contains(test.pattern);
     auto contains = cudf::experimental::contains_re(view, *program);
     cudf::test::fixed_width_column_wrapper<bool> matched({test.matches});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*contains, matched);
-    program = cudf::experimental::regex_jit_program::create(
-      test.pattern, cudf::experimental::regex_operation::EXTRACT);
+    program        = cudf::test::jit_regex_backend::create_extract(test.pattern);
     auto extracted = cudf::experimental::extract(view, *program);
     ASSERT_EQ(extracted->num_columns(), test.captures.size());
     for (std::size_t group = 0; group < test.captures.size(); ++group) {
@@ -525,10 +486,8 @@ TEST_F(RegexJitProgramTest, FindallOffsetsAndSpanCache)
   LCW expected(
     {{"3-A"}, {"4-May", "5-Day", "6-Hay"}, {"12-Dec", "2021-Jan"}, {}, {}, {}, {}, {"25-9000"}},
     valids.data());
-  auto prog = cudf::test::jit_regex_backend::create(
-    cudf::experimental::regex_operation::FINDALL,
-    pattern,
-    {.span_cache_policy = cudf::experimental::regex_jit_span_cache_policy::FORCE});
+  auto prog = cudf::test::jit_regex_backend::create_findall(
+    pattern, {.span_cache_policy = cudf::experimental::regex_jit_span_cache_policy::FORCE});
   auto results = cudf::test::jit_regex_backend::findall(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
@@ -548,10 +507,8 @@ TEST_F(RegexJitProgramTest, FindallNoMatchesOffsetsAndSpanCache)
   auto pattern = std::string("^zzz$");
   using LCW    = cudf::test::lists_column_wrapper<cudf::string_view>;
   LCW expected({{}, {}, {}, {}, {}});
-  auto prog = cudf::test::jit_regex_backend::create(
-    cudf::experimental::regex_operation::FINDALL,
-    pattern,
-    {.span_cache_policy = cudf::experimental::regex_jit_span_cache_policy::OFF});
+  auto prog = cudf::test::jit_regex_backend::create_findall(
+    pattern, {.span_cache_policy = cudf::experimental::regex_jit_span_cache_policy::OFF});
   auto results = cudf::test::jit_regex_backend::findall(sv, *prog);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }

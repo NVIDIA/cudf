@@ -24,30 +24,6 @@ namespace CUDF_EXPORT cudf {
 namespace experimental {
 
 /**
- * @brief Regex operation represented by a JIT regex program
- *
- * Regex JIT programs are specialized for the result and control flow required
- * by one API. The discriminator prevents a program from being used by a different
- * API.
- */
-enum class regex_operation : std::uint8_t {
-  CONTAINS = 0,           ///< Used by contains_re
-  MATCHES,                ///< Used by matches_re
-  COUNT,                  ///< Used by count_re
-  FIND,                   ///< Used by find_re
-  EXTRACT,                ///< Used by extract
-  EXTRACT_SINGLE,         ///< Used by extract_single
-  EXTRACT_ALL_RECORD,     ///< Used by extract_all_record
-  FINDALL,                ///< Used by findall
-  REPLACE,                ///< Used by replace_re
-  REPLACE_WITH_BACKREFS,  ///< Used by replace_with_backrefs
-  SPLIT,                  ///< Used by split_re
-  RSPLIT,                 ///< Used by rsplit_re
-  SPLIT_RECORD,           ///< Used by split_record_re
-  RSPLIT_RECORD,          ///< Used by rsplit_record_re
-};
-
-/**
  * @brief Policy controlling bounded span caching in materializing regex JIT APIs
  */
 enum class regex_jit_span_cache_policy : std::uint8_t {
@@ -81,21 +57,248 @@ struct regex_jit_program_options {
  * after enabling large strings.
  */
 struct regex_jit_program {
+  /**
+   * @brief Regex operation represented by a JIT regex program
+   *
+   * Regex JIT programs are specialized for the result and control flow required
+   * by one API. The discriminator prevents a program from being used by a different
+   * API.
+   */
+  enum class kind : std::uint8_t {
+    CONTAINS,               ///< Testing whether strings contain a match
+    MATCHES,                ///< Testing for a match at the start of each string
+    COUNT,                  ///< Counting non-overlapping matches
+    FIND,                   ///< Finding the starting position of the first match
+    EXTRACT,                ///< Extracting the first match's capture groups into separate columns
+    EXTRACT_SINGLE,         ///< Extracting one capture group from the first match
+    EXTRACT_ALL_RECORD,     ///< Extracting capture-group records for all matches
+    FINDALL,                ///< Finding all non-overlapping matches
+    REPLACE,                ///< Replacing matches with literal text
+    REPLACE_WITH_BACKREFS,  ///< Replacing matches with capture-group back-references
+    SPLIT,                  ///< Splitting strings from the beginning into table columns
+    RSPLIT,                 ///< Splitting strings from the end into table columns
+    SPLIT_RECORD,           ///< Splitting strings from the beginning into lists of fields
+    RSPLIT_RECORD,          ///< Splitting strings from the end into lists of fields
+  };
+
   struct regex_jit_program_impl;
 
   /**
-   * @brief Creates an operation-specialized regex JIT program
+   * @brief Creates a regex JIT program specialized for testing whether strings contain a match
    *
    * @param pattern Regex pattern to compile
-   * @param operation Regex API operation implemented by the program
    * @param options Operation-specific JIT compilation options
    * @param flags Regex matching flags
    * @param captures Capture-group behavior
    * @return Owning pointer to the compiled regex JIT program
    */
-  static std::unique_ptr<regex_jit_program> create(
+  static std::unique_ptr<regex_jit_program> create_contains(
     std::string_view pattern,
-    regex_operation operation,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for testing for a match at the start of each
+   * string
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_matches(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for counting non-overlapping matches
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_count(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for finding the starting position of the first
+   * match
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_find(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for extracting the first match's capture groups
+   * into separate columns
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_extract(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for extracting one capture group from the first
+   * match
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_extract_single(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for extracting capture-group records for all
+   * matches
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_extract_all_record(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for finding all non-overlapping matches
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_findall(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for replacing matches with literal text
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_replace(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for replacing matches with capture-group
+   * back-references
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_replace_with_backrefs(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for splitting strings from the beginning into
+   * table columns
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_split(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for splitting strings from the end into table
+   * columns
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_rsplit(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for splitting strings from the beginning into
+   * lists of fields
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_split_record(
+    std::string_view pattern,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
+  /**
+   * @brief Creates a regex JIT program specialized for splitting strings from the end into lists of
+   * fields
+   *
+   * @param pattern Regex pattern to compile
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create_rsplit_record(
+    std::string_view pattern,
     regex_jit_program_options const& options = {},
     strings::regex_flags flags               = strings::regex_flags::DEFAULT,
     strings::capture_groups captures         = strings::capture_groups::EXTRACT);
@@ -142,28 +345,45 @@ struct regex_jit_program {
   [[nodiscard]] strings::capture_groups capture() const;
 
   /**
-   * @brief Returns the regex API operation implemented by this program
-   *
-   * @return The regex API operation implemented by this program
-   */
-  [[nodiscard]] regex_operation operation() const;
-
-  /**
    * @brief Returns the number of capture groups in the compiled pattern
    *
    * @return The number of capture groups in the compiled pattern
    */
   [[nodiscard]] size_type groups_count() const;
 
+  /**
+   * @brief Returns the regex API operation implemented by this program
+   *
+   * @return The regex API operation implemented by this program
+   */
+  [[nodiscard]] kind get_kind() const;
+
  private:
+  /**
+   * @brief Creates an operation-specialized regex JIT program
+   *
+   * @param pattern Regex pattern to compile
+   * @param operation Regex API operation implemented by the program
+   * @param options Operation-specific JIT compilation options
+   * @param flags Regex matching flags
+   * @param captures Capture-group behavior
+   * @return Owning pointer to the compiled regex JIT program
+   */
+  static std::unique_ptr<regex_jit_program> create(
+    std::string_view pattern,
+    kind operation,
+    regex_jit_program_options const& options = {},
+    strings::regex_flags flags               = strings::regex_flags::DEFAULT,
+    strings::capture_groups captures         = strings::capture_groups::EXTRACT);
+
   regex_jit_program(std::string_view pattern,
-                    regex_operation operation,
+                    kind operation,
                     regex_jit_program_options const& options,
                     strings::regex_flags flags,
                     strings::capture_groups captures);
 
   std::string _pattern;
-  regex_operation _operation;
+  kind _kind;
   strings::regex_flags _flags;
   strings::capture_groups _captures;
   regex_jit_program_options _options;
@@ -176,7 +396,7 @@ struct regex_jit_program {
  * @brief Tests whether each input string contains a match.
  *
  * @param input Strings to search.
- * @param prog Compiled JIT program created for `regex_operation::CONTAINS`.
+ * @param prog Compiled JIT program specialized for testing whether strings contain a match.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
  * @return A Boolean column with one value per input string; null rows remain null.
@@ -192,7 +412,7 @@ std::unique_ptr<column> contains_re(
  * @brief Tests whether each input string matches from its first character.
  *
  * @param input Strings to test.
- * @param prog Compiled JIT program created for `regex_operation::MATCHES`.
+ * @param prog Compiled JIT program specialized for testing for a match at the start of each string.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
  * @return A Boolean column with one value per input string; null rows remain null.
@@ -208,7 +428,7 @@ std::unique_ptr<column> matches_re(
  * @brief Counts non-overlapping matches in each input string.
  *
  * @param input Strings to search.
- * @param prog Compiled JIT program created for `regex_operation::COUNT`.
+ * @param prog Compiled JIT program specialized for counting non-overlapping matches.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
  * @return An INT32 column containing the match count for each row; null rows remain null.
@@ -224,7 +444,8 @@ std::unique_ptr<column> count_re(
  * @brief Extracts the first match's capture groups into separate strings columns.
  *
  * @param input Strings to search.
- * @param prog Compiled JIT program created for `regex_operation::EXTRACT` with capture groups.
+ * @param prog Compiled JIT program specialized for extracting the first match's capture groups into
+ * separate columns.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
  * @return A table with one strings column per capture group.
@@ -239,7 +460,8 @@ std::unique_ptr<table> extract(strings_column_view const& input,
  * @brief Extracts capture-group records for all matches into a lists column.
  *
  * @param input Strings to search.
- * @param prog Compiled JIT program created for `regex_operation::EXTRACT_ALL_RECORD`.
+ * @param prog Compiled JIT program specialized for extracting capture-group records for all
+ * matches.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
  * @return A lists column whose rows contain the extracted records.
@@ -255,7 +477,8 @@ std::unique_ptr<column> extract_all_record(
  * @brief Extracts one capture group from the first match in each input string.
  *
  * @param input Strings to search.
- * @param prog Compiled JIT program created for `regex_operation::EXTRACT_SINGLE`.
+ * @param prog Compiled JIT program specialized for extracting one capture group from the first
+ * match.
  * @param group Zero-based capture-group index selected when creating `prog`.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
@@ -274,7 +497,7 @@ std::unique_ptr<column> extract_single(
  * @brief Finds all non-overlapping matches in each input string.
  *
  * @param input Strings to search.
- * @param prog Compiled JIT program created for `regex_operation::FINDALL`.
+ * @param prog Compiled JIT program specialized for finding all non-overlapping matches.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
  * @return A lists column containing each row's matches.
@@ -290,7 +513,8 @@ std::unique_ptr<column> findall(
  * @brief Finds the starting character position of the first match.
  *
  * @param input Strings to search.
- * @param prog Compiled JIT program created for `regex_operation::FIND`.
+ * @param prog Compiled JIT program specialized for finding the starting position of the first
+ * match.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
  * @return An INT32 column containing the character position, or -1 when no match is found.
@@ -306,7 +530,7 @@ std::unique_ptr<column> find_re(
  * @brief Replaces matches using a literal replacement string.
  *
  * @param input Strings to transform.
- * @param prog Compiled JIT program created for `regex_operation::REPLACE`.
+ * @param prog Compiled JIT program specialized for replacing matches with literal text.
  * @param replacement Literal text inserted for each match.
  * @param max_replace_count Maximum number of replacements per row, if limited; it must match the
  *                          limit configured in `prog`.
@@ -329,7 +553,8 @@ std::unique_ptr<column> replace_re(
  * @brief Replaces matches using a template containing capture-group back-references.
  *
  * @param input Strings to transform.
- * @param prog Compiled JIT program created for `regex_operation::REPLACE_WITH_BACKREFS`.
+ * @param prog Compiled JIT program specialized for replacing matches with capture-group
+ * back-references.
  * @param replacement Replacement template, which must equal the template used to create `prog`.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
@@ -349,7 +574,8 @@ std::unique_ptr<column> replace_with_backrefs(
  * @brief Splits strings from the beginning and returns fields as table columns.
  *
  * @param input Strings to split.
- * @param prog Compiled JIT program created for `regex_operation::SPLIT`.
+ * @param prog Compiled JIT program specialized for splitting strings from the beginning into table
+ * columns.
  * @param maxsplit Maximum number of splits per row, or -1 for no limit; must match `prog`.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
@@ -367,7 +593,8 @@ std::unique_ptr<table> split_re(
  * @brief Splits strings from the end and returns fields as table columns.
  *
  * @param input Strings to split.
- * @param prog Compiled JIT program created for `regex_operation::RSPLIT`.
+ * @param prog Compiled JIT program specialized for splitting strings from the end into table
+ * columns.
  * @param maxsplit Maximum number of splits per row, or -1 for no limit; must match `prog`.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
@@ -385,7 +612,8 @@ std::unique_ptr<table> rsplit_re(
  * @brief Splits strings from the beginning and returns each row's fields in a list.
  *
  * @param input Strings to split.
- * @param prog Compiled JIT program created for `regex_operation::SPLIT_RECORD`.
+ * @param prog Compiled JIT program specialized for splitting strings from the beginning into lists
+ * of fields.
  * @param maxsplit Maximum number of splits per row, or -1 for no limit; must match `prog`.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.
@@ -403,7 +631,8 @@ std::unique_ptr<column> split_record_re(
  * @brief Splits strings from the end and returns each row's fields in a list.
  *
  * @param input Strings to split.
- * @param prog Compiled JIT program created for `regex_operation::RSPLIT_RECORD`.
+ * @param prog Compiled JIT program specialized for splitting strings from the end into lists of
+ * fields.
  * @param maxsplit Maximum number of splits per row, or -1 for no limit; must match `prog`.
  * @param stream CUDA stream used to execute the operation.
  * @param mr Device memory resource used to allocate the result.

@@ -26,28 +26,19 @@ std::string preamble(bool offset64, std::optional<matcher_abi> abi = std::nullop
   if (abi) {
     auto symbol =
       *abi == matcher_abi::LIMITED_SPLIT ? "regex_ir_split_execute_limited" : "regex_ir_execute";
-    result += std::format(R"CUDA(#if CUDF_REGEX_IR_DISPATCH_WORKSPACE_BYTES
-{};
-#else
-{};
-#endif
-)CUDA",
-                          regex_ir::matcher_signature(*abi, symbol, true),
-                          regex_ir::matcher_signature(*abi, symbol, false));
-    auto spec = regex_ir::layout(*abi);
     result += std::format(
-      R"CUDA(
+      R"CUDA({};
+
 struct matcher {{
-  __device__ static {} call(char* workspace, char const* data, i64 size{})
+  template <typename... Args>
+  __device__ static auto call(char* workspace, char const* data, i64 size, Args... args)
   {{
-    return {}(CUDF_REGEX_IR_DISPATCH_MATCHER_ARGUMENT data, size{});
+    return {}(workspace, data, size, args...);
   }}
 }};
 )CUDA",
-      spec.result,
-      spec.parameters,
-      symbol,
-      spec.arguments);
+      regex_ir::matcher_signature(*abi, symbol),
+      symbol);
   }
   return result;
 }
@@ -58,7 +49,7 @@ std::string entry(std::string_view source,
                   std::string_view body)
 {
   if (name.empty() || !(std::isalpha(static_cast<std::uint8_t>(name[0])) || name[0] == '_') ||
-      !std::all_of(name.begin() + 1, name.end(), [](std::uint8_t character) {
+      !std::ranges::all_of(name.begin() + 1, name.end(), [](std::uint8_t character) {
         return std::isalnum(character) || character == '_';
       }))
     throw std::invalid_argument("kernel_name must be a valid source identifier");
@@ -97,11 +88,9 @@ std::string make_module(std::string wrapper, std::size_t workspace_bytes)
   return std::format(R"CUDA(#define CUDF_REGEX_IR_DISPATCH_WORKSPACE_BYTES {}
 #if CUDF_REGEX_IR_DISPATCH_WORKSPACE_BYTES > 0
 #define CUDF_REGEX_IR_DISPATCH_KERNEL_PARAMETERS char* scratch, i32 tile_begin, i32 tile_end,
-#define CUDF_REGEX_IR_DISPATCH_MATCHER_ARGUMENT workspace,
 #define CUDF_REGEX_IR_DISPATCH_WORKER worker worker_state{{i32(threadIdx.x + blockDim.x * blockIdx.x), scratch, tile_begin, tile_end, CUDF_REGEX_IR_DISPATCH_WORKSPACE_BYTES}};
 #else
 #define CUDF_REGEX_IR_DISPATCH_KERNEL_PARAMETERS
-#define CUDF_REGEX_IR_DISPATCH_MATCHER_ARGUMENT
 #define CUDF_REGEX_IR_DISPATCH_WORKER worker worker_state{{i32(threadIdx.x + blockDim.x * blockIdx.x)}};
 #endif
 {}
@@ -424,7 +413,7 @@ std::string make_span_cache_sample_kernel(
     ", i32 samples, i32 capacity, u64* stats",
     std::format("sample<matcher, {}, {}, {}>(worker_state, strings, samples, capacity, stats);",
                 split,
-                std::max(slots, 2),
+                std::ranges::max(slots, 2),
                 limit));
 }
 }  // namespace cudf::experimental::detail::regex_jit

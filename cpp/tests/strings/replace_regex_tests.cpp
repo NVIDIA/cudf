@@ -52,8 +52,7 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceRegexTest)
   auto repl    = cudf::string_scalar("=");
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(), h_expected.end(), cudf::test::iterators::nulls_from_nullptrs(h_expected));
-  auto prog = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE,
+  auto prog = TypeParam::create_replace(
     pattern,
     {.replacement       = "=",
      .span_cache_policy = cudf::experimental::regex_jit_span_cache_policy::FORCE});
@@ -64,18 +63,12 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceRegexTest)
 TYPED_TEST(StringsReplaceRegexTest, InvalidRegex)
 {
   // these are quantifiers that do not have a preceding character/class
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::REPLACE, "*"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::REPLACE, "|"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::REPLACE, "+"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::REPLACE, "ab(*)"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::REPLACE, "\\"),
-               cudf::logic_error);
-  EXPECT_THROW(TypeParam::create(cudf::experimental::regex_operation::REPLACE, "\\p"),
-               cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_replace("*"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_replace("|"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_replace("+"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_replace("ab(*)"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_replace("\\"), cudf::logic_error);
+  EXPECT_THROW(TypeParam::create_replace("\\p"), cudf::logic_error);
 }
 
 TYPED_TEST(StringsReplaceRegexTest, WithEmptyPattern)
@@ -87,9 +80,8 @@ TYPED_TEST(StringsReplaceRegexTest, WithEmptyPattern)
 
   auto empty_pattern = std::string("");
   auto repl          = cudf::string_scalar("bbb");
-  auto prog          = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE, empty_pattern, {.replacement = "bbb"});
-  auto results = TypeParam::replace_re(strings_view, *prog, repl);
+  auto prog          = TypeParam::create_replace(empty_pattern, {.replacement = "bbb"});
+  auto results       = TypeParam::replace_re(strings_view, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, strings);
 }
 
@@ -101,15 +93,11 @@ TYPED_TEST(StringsReplaceRegexTest, MultiReplacement)
   auto pattern = std::string("aba");
   auto repl    = cudf::string_scalar("_");
   cudf::test::strings_column_wrapper expected({"_ bcd _", "_b_ abababa"});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE,
-                                pattern,
-                                   {.replacement = "_", .max_replace_count = 2});
+  auto prog    = TypeParam::create_replace(pattern, {.replacement = "_", .max_replace_count = 2});
   auto results = TypeParam::replace_re(sv, *prog, repl, 2);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
-  prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE,
-                           pattern,
-                              {.replacement = "_", .max_replace_count = 0});
+  prog    = TypeParam::create_replace(pattern, {.replacement = "_", .max_replace_count = 0});
   results = TypeParam::replace_re(sv, *prog, repl, 0);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, input);
 }
@@ -123,16 +111,14 @@ TYPED_TEST(StringsReplaceRegexTest, WordBoundary)
   auto repl     = cudf::string_scalar("X");
   auto expected = cudf::test::strings_column_wrapper(
     {"XabaX XbcdX\nXabaX", "XzézX", "XA1B2X-Xé3X", "XeX XéX", "X_X", "Xa_bX"});
-  auto prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "X"});
+  auto prog    = TypeParam::create_replace(pattern, {.replacement = "X"});
   auto results = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   pattern  = std::string("\\B");
   expected = cudf::test::strings_column_wrapper(
     {"aXbXa bXcXd\naXbXa", "zXéXz", "AX1XBX2-éX3", "e é", "_", "aX_Xb"});
-  prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "X"});
+  prog    = TypeParam::create_replace(pattern, {.replacement = "X"});
   results = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -147,14 +133,12 @@ TYPED_TEST(StringsReplaceRegexTest, Alternation)
   auto repl    = cudf::string_scalar("_");
   auto expected =
     cudf::test::strings_column_wrapper({"__ brr __ hello _", "_ABC_2022", "abé123 _ 89xyz"});
-  auto prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
+  auto prog    = TypeParam::create_replace(pattern, {.replacement = "_"});
   auto results = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   pattern = std::string(R"((\s|^)\d+($|\s))");
-  prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
+  prog    = TypeParam::create_replace(pattern, {.replacement = "_"});
   results = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -167,16 +151,14 @@ TYPED_TEST(StringsReplaceRegexTest, ZeroLengthMatch)
   auto pattern  = std::string("D*");
   auto repl     = cudf::string_scalar("_");
   auto expected = cudf::test::strings_column_wrapper({"__", "_z_é_z_", "__s__s_", "_"});
-  auto prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
-  auto results = TypeParam::replace_re(sv, *prog, repl);
+  auto prog     = TypeParam::create_replace(pattern, {.replacement = "_"});
+  auto results  = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   pattern  = std::string("D?s?");
   expected = cudf::test::strings_column_wrapper({"___", "_z_é_z_", "___", "_"});
-  prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
-  results = TypeParam::replace_re(sv, *prog, repl);
+  prog     = TypeParam::create_replace(pattern, {.replacement = "_"});
+  results  = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
@@ -185,9 +167,8 @@ TYPED_TEST(StringsReplaceRegexTest, ZeroRangeQuantifier)
   auto input = cudf::test::strings_column_wrapper({"a", "", "123", "XYAZ", "abc", "zéyab"});
   auto sv    = cudf::strings_column_view(input);
 
-  auto pattern = std::string("A{0,5}");
-  auto prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
+  auto pattern  = std::string("A{0,5}");
+  auto prog     = TypeParam::create_replace(pattern, {.replacement = "_"});
   auto repl     = cudf::string_scalar("_");
   auto expected = cudf::test::strings_column_wrapper(
     {"_a_", "_", "_1_2_3_", "_X_Y__Z_", "_a_b_c_", "_z_é_y_a_b_"});
@@ -195,16 +176,14 @@ TYPED_TEST(StringsReplaceRegexTest, ZeroRangeQuantifier)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern = std::string("[a0-9]{0,2}");
-  prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
+  prog    = TypeParam::create_replace(pattern, {.replacement = "_"});
   expected =
     cudf::test::strings_column_wrapper({"__", "_", "___", "_X_Y_A_Z_", "__b_c_", "_z_é_y__b_"});
   results = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   pattern = std::string("(?:ab){0,3}");
-  prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
+  prog    = TypeParam::create_replace(pattern, {.replacement = "_"});
   expected =
     cudf::test::strings_column_wrapper({"_a_", "_", "_1_2_3_", "_X_Y_A_Z_", "__c_", "_z_é_y__"});
   results = TypeParam::replace_re(sv, *prog, repl);
@@ -222,14 +201,12 @@ TYPED_TEST(StringsReplaceRegexTest, Multiline)
   auto pattern = std::string("^aba$");
   auto repl    = cudf::string_scalar("_");
   cudf::test::strings_column_wrapper expected_ml({"bcd\n_\nefg", "_\naba abab\n_", "_"});
-  auto prog = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"}, multiline);
+  auto prog    = TypeParam::create_replace(pattern, {.replacement = "_"}, multiline);
   auto results = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected_ml);
 
   cudf::test::strings_column_wrapper expected({"bcd\naba\nefg", "aba\naba abab\naba", "_"});
-  prog =
-    TypeParam::create(cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"});
+  prog    = TypeParam::create_replace(pattern, {.replacement = "_"});
   results = TypeParam::replace_re(sv, *prog, repl);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
@@ -238,37 +215,31 @@ TYPED_TEST(StringsReplaceRegexTest, Multiline)
   pattern            = std::string("(^aba)");
   cudf::test::strings_column_wrapper br_expected_ml(
     {"bcd\n[aba]\nefg", "[aba]\n[aba] abab\n[aba]", "[aba]"});
-  prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                           pattern,
-                              {.replacement = repl_template},
-                           multiline);
+  prog =
+    TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template}, multiline);
   results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, br_expected_ml);
 
   cudf::test::strings_column_wrapper br_expected(
     {"bcd\naba\nefg", "[aba]\naba abab\naba", "[aba]"});
-  prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                           pattern,
-                              {.replacement = repl_template});
+  prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, br_expected);
 }
 
 TYPED_TEST(StringsReplaceRegexTest, SpecialNewLines)
 {
-  auto input    = cudf::test::strings_column_wrapper({"zzé" NEXT_LINE "qqq" NEXT_LINE "zzé",
-                                                      "qqq" NEXT_LINE "zzé" NEXT_LINE "lll",
-                                                      "zzé",
-                                                      "",
-                                                      "zzé" PARAGRAPH_SEPARATOR,
-                                                      "abc\rzzé\r"});
-  auto view     = cudf::strings_column_view(input);
-  auto repl     = cudf::string_scalar("_");
-  auto pattern  = std::string("^zzé$");
-  auto prog     = TypeParam::create(cudf::experimental::regex_operation::REPLACE,
-                                pattern,
-                                    {.replacement = "_"},
-                                cudf::strings::regex_flags::EXT_NEWLINE);
+  auto input   = cudf::test::strings_column_wrapper({"zzé" NEXT_LINE "qqq" NEXT_LINE "zzé",
+                                                     "qqq" NEXT_LINE "zzé" NEXT_LINE "lll",
+                                                     "zzé",
+                                                     "",
+                                                     "zzé" PARAGRAPH_SEPARATOR,
+                                                     "abc\rzzé\r"});
+  auto view    = cudf::strings_column_view(input);
+  auto repl    = cudf::string_scalar("_");
+  auto pattern = std::string("^zzé$");
+  auto prog    = TypeParam::create_replace(
+    pattern, {.replacement = "_"}, cudf::strings::regex_flags::EXT_NEWLINE);
   auto results  = TypeParam::replace_re(view, *prog, repl);
   auto expected = cudf::test::strings_column_wrapper({"zzé" NEXT_LINE "qqq" NEXT_LINE "zzé",
                                                       "qqq" NEXT_LINE "zzé" NEXT_LINE "lll",
@@ -280,24 +251,21 @@ TYPED_TEST(StringsReplaceRegexTest, SpecialNewLines)
 
   auto both_flags = static_cast<cudf::strings::regex_flags>(
     cudf::strings::regex_flags::EXT_NEWLINE | cudf::strings::regex_flags::MULTILINE);
-  auto prog_ml = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE, pattern, {.replacement = "_"}, both_flags);
-  results  = TypeParam::replace_re(view, *prog_ml, repl);
-  expected = cudf::test::strings_column_wrapper({"_" NEXT_LINE "qqq" NEXT_LINE "_",
-                                                 "qqq" NEXT_LINE "_" NEXT_LINE "lll",
-                                                 "_",
-                                                 "",
-                                                 "_" PARAGRAPH_SEPARATOR,
-                                                 "abc\r_\r"});
+  auto prog_ml = TypeParam::create_replace(pattern, {.replacement = "_"}, both_flags);
+  results      = TypeParam::replace_re(view, *prog_ml, repl);
+  expected     = cudf::test::strings_column_wrapper({"_" NEXT_LINE "qqq" NEXT_LINE "_",
+                                                     "qqq" NEXT_LINE "_" NEXT_LINE "lll",
+                                                     "_",
+                                                     "",
+                                                     "_" PARAGRAPH_SEPARATOR,
+                                                     "abc\r_\r"});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);
 
   auto repl_template = std::string("[\\1]");
   pattern            = std::string("(^zzé$)");
-  prog               = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                           pattern,
-                                         {.replacement = repl_template},
-                           both_flags);
-  results            = TypeParam::replace_with_backrefs(view, *prog, repl_template);
+  prog =
+    TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template}, both_flags);
+  results  = TypeParam::replace_with_backrefs(view, *prog, repl_template);
   expected = cudf::test::strings_column_wrapper({"[zzé]" NEXT_LINE "qqq" NEXT_LINE "[zzé]",
                                                  "qqq" NEXT_LINE "[zzé]" NEXT_LINE "lll",
                                                  "[zzé]",
@@ -333,9 +301,7 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceBackrefsRegexTest)
   auto repl_template = std::string("\\1-\\2");
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(), h_expected.end(), cudf::test::iterators::nulls_from_nullptrs(h_expected));
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                                pattern,
-                                   {.replacement = repl_template});
+  auto prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   auto results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -350,9 +316,7 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceBackrefsRegexAltIndexPatternTest)
 
   cudf::test::strings_column_wrapper expected(
     {"3 X 120 5 X 340 89 X 670", "99 X 00: 888 X 7770:: 0 X 56730"});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                                pattern,
-                                   {.replacement = repl_template});
+  auto prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   auto results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -373,9 +337,7 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceBackrefsRegexReversedTest)
                                                "twXt+oZhréé fouXf+rZivé",
                                                "abcXé+dZfgh",
                                                "tésXs+tZtrinXa+gZgain"});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                                pattern,
-                                   {.replacement = repl_template});
+  auto prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   auto results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -391,16 +353,12 @@ TYPED_TEST(StringsReplaceRegexTest, BackrefWithGreedyQuantifier)
 
   cudf::test::strings_column_wrapper expected(
     {"<h2>title</h2><p>ABC</p>", "<h2>1234567</h2><p>XYZ</p>"});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                                pattern,
-                                   {.replacement = repl_template});
+  auto prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   auto results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   pattern = std::string("<h1>([a-z\\d]+)</h1><h2>([A-Z]+)</h2>");
-  prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                           pattern,
-                              {.replacement = repl_template});
+  prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -421,9 +379,7 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceBackrefsRegexZeroIndexTest)
     "TEST1: TEST, 1; -TEST-T",
     "TES3",
   });
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                                pattern,
-                                   {.replacement = repl_template});
+  auto prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   auto results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -438,18 +394,14 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceBackrefsWithEmptyCapture)
   auto repl_template = std::string("[\\1]");
   auto expected =
     cudf::test::strings_column_wrapper({"one\ntwo[]", "three\n[]\n[]", "four[\r\n][]"});
-  auto prog    = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                                pattern,
-                                   {.replacement = repl_template});
+  auto prog    = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   auto results = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 
   // https://github.com/NVIDIA/cudf/issues/22707
   pattern  = std::string("^(a?)");
   expected = cudf::test::strings_column_wrapper({"[]one\ntwo", "[]three\n\n", "[]four\r\n"});
-  prog     = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                           pattern,
-                               {.replacement = repl_template});
+  prog     = TypeParam::create_replace_with_backrefs(pattern, {.replacement = repl_template});
   results  = TypeParam::replace_with_backrefs(sv, *prog, repl_template);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
@@ -460,15 +412,11 @@ TYPED_TEST(StringsReplaceRegexTest, ReplaceBackrefsRegexErrorTest)
   auto view = cudf::strings_column_view(strings);
 
   // group index(3) exceeds the group count(2)
-  auto prog = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                                "(\\w).(\\w)",
-                                {.replacement = "\\3"});
+  auto prog = TypeParam::create_replace_with_backrefs("(\\w).(\\w)", {.replacement = "\\3"});
   EXPECT_THROW(TypeParam::replace_with_backrefs(view, *prog, "\\3"), cudf::logic_error);
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS, "", {.replacement = "\\1"});
+  prog = TypeParam::create_replace_with_backrefs("", {.replacement = "\\1"});
   EXPECT_THROW(TypeParam::replace_with_backrefs(view, *prog, "\\1"), cudf::logic_error);
-  prog = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS, "(\\w)", {.replacement = ""});
+  prog = TypeParam::create_replace_with_backrefs("(\\w)", {.replacement = ""});
   EXPECT_THROW(TypeParam::replace_with_backrefs(view, *prog, ""), cudf::logic_error);
 }
 
@@ -478,8 +426,7 @@ TYPED_TEST(StringsReplaceRegexTest, MediumReplaceRegex)
   std::string medium_regex =
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
     "http://www.world.com";
-  auto prog = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE, medium_regex, {.replacement = ""});
+  auto prog = TypeParam::create_replace(medium_regex, {.replacement = ""});
 
   std::vector<char const*> h_strings{
     "hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
@@ -508,8 +455,7 @@ TYPED_TEST(StringsReplaceRegexTest, LargeReplaceRegex)
   std::string large_regex =
     "hello @abc @def world The (quick) brown @fox jumps over the lazy @dog hello "
     "http://www.world.com I'm here @home zzzz";
-  auto prog = TypeParam::create(
-    cudf::experimental::regex_operation::REPLACE, large_regex, {.replacement = ""});
+  auto prog = TypeParam::create_replace(large_regex, {.replacement = ""});
 
   std::vector<char const*> h_strings{
     "zzzz hello @abc @def world The quick brown @fox jumps over the lazy @dog hello "
@@ -539,10 +485,8 @@ TYPED_TEST(StringsReplaceRegexTest, CrlfLineAnchorExtNewline)
   auto input = cudf::test::strings_column_wrapper(
     {"abc\r\n", "abc\n", "abc\r", "abc", "a\r\nb", "abc\r\n\r\n", "", "abc" NEXT_LINE});
   auto view = cudf::strings_column_view(input);
-  auto prog = TypeParam::create(cudf::experimental::regex_operation::REPLACE,
-                                "abc$",
-                                {.replacement = "[X]"},
-                                cudf::strings::regex_flags::EXT_NEWLINE);
+  auto prog = TypeParam::create_replace(
+    "abc$", {.replacement = "[X]"}, cudf::strings::regex_flags::EXT_NEWLINE);
   auto repl = cudf::string_scalar("[X]");
 
   auto results  = TypeParam::replace_re(view, *prog, repl);
@@ -591,17 +535,13 @@ TYPED_TEST(StringsReplaceRegexTest, CrlfEdgeCasesExtNewline)
   };
 
   {  // replace_re  abc$ -> [X]   (\r\n preserved as a unit)
-    auto p = TypeParam::create(
-      cudf::experimental::regex_operation::REPLACE, "abc$", {.replacement = "[X]"}, EXT);
+    auto p = TypeParam::create_replace("abc$", {.replacement = "[X]"}, EXT);
     auto r = cudf::string_scalar("[X]");
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::replace_re(view, *p, r),
                                    str_col(&edge_case::exp_abc_dollar_X));
   }
   {  // replace_with_backrefs  (abc)$ -> [\1]   (the spark-rapids scenario, native pattern)
-    auto p = TypeParam::create(cudf::experimental::regex_operation::REPLACE_WITH_BACKREFS,
-                               "(abc)$",
-                               {.replacement = "[\\1]"},
-                               EXT);
+    auto p = TypeParam::create_replace_with_backrefs("(abc)$", {.replacement = "[\\1]"}, EXT);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*TypeParam::replace_with_backrefs(view, *p, "[\\1]"),
                                    str_col(&edge_case::exp_abc_backref));
   }
@@ -617,19 +557,17 @@ TYPED_TEST(StringsReplaceRegexTest, AlternationPriorityFirstWins)
     // "foo" wins over "foobar": "foobar" becomes "Xbar".
     auto input =
       cudf::test::strings_column_wrapper({"foo", "foobar", "foobarbaz", "bar", "xfoobar", ""});
-    auto sv   = cudf::strings_column_view(input);
-    auto prog = TypeParam::create(
-      cudf::experimental::regex_operation::REPLACE, "foo|foobar", {.replacement = "X"});
+    auto sv      = cudf::strings_column_view(input);
+    auto prog    = TypeParam::create_replace("foo|foobar", {.replacement = "X"});
     auto results = TypeParam::replace_re(sv, *prog, repl);
     cudf::test::strings_column_wrapper expected({"X", "Xbar", "Xbarbaz", "bar", "xXbar", ""});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
     // "cat" wins over "catch": "catch" becomes "Xch".
-    auto input = cudf::test::strings_column_wrapper({"cat", "catch", "catfish", "dog", ""});
-    auto sv    = cudf::strings_column_view(input);
-    auto prog  = TypeParam::create(
-      cudf::experimental::regex_operation::REPLACE, "cat|catch", {.replacement = "X"});
+    auto input   = cudf::test::strings_column_wrapper({"cat", "catch", "catfish", "dog", ""});
+    auto sv      = cudf::strings_column_view(input);
+    auto prog    = TypeParam::create_replace("cat|catch", {.replacement = "X"});
     auto results = TypeParam::replace_re(sv, *prog, repl);
     cudf::test::strings_column_wrapper expected({"X", "Xch", "Xfish", "dog", ""});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);

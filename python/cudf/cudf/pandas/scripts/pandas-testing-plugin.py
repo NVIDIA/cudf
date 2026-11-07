@@ -1064,7 +1064,6 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/methods/test_map.py::test_map_empty[<lambda>-expected2]": "TODO: Add a reason for failure",
     "tests/frame/methods/test_map.py::test_map_empty[round-expected0]": "TODO: Add a reason for failure",
     "tests/frame/methods/test_map.py::test_map_empty[round-expected2]": "TODO: Add a reason for failure",
-    "tests/frame/methods/test_map.py::test_map_na_ignore": "TODO: Add a reason for failure",
     "tests/frame/methods/test_map.py::test_map_str": "TODO: Add a reason for failure",
     "tests/frame/methods/test_matmul.py::TestMatMul::test_matmul": "TODO: Add a reason for failure",
     "tests/frame/methods/test_pop.py::TestDataFramePop::test_pop": "TODO: Add a reason for failure",

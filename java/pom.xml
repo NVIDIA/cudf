@@ -687,6 +687,7 @@
                                     <arg value="-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"/>
                                     <arg value="-DCUDF_JNI_LIBCUDF_STATIC=${CUDF_JNI_LIBCUDF_STATIC}"/>
                                     <arg value="-DCUDF_JNI_ENABLE_PROFILING=${CUDF_JNI_ENABLE_PROFILING}"/>
+                                    <arg value="-DBUILD_TESTS=ON"/>
                                     <arg value="-DBUILD_SHARED_LIBS=ON"/>
                                 </exec>
                                 <exec dir="${native.build.path}"
@@ -697,6 +698,11 @@
                                     <arg value="--parallel"/>
                                     <arg value="${parallel.level}"/>
                                 </exec>
+                                <!-- GPU-independent native validation; intentionally runs when
+                                     Maven Java tests are skipped. -->
+                                <exec dir="${native.build.path}"
+                                      failonerror="true"
+                                      executable="${native.build.path}/CUDA_ERROR_DIAGNOSTICS_TEST"/>
                                 <mkdir dir="${project.build.directory}/extra-resources"/>
                                 <exec executable="bash"
                                       output="${project.build.directory}/extra-resources/cudf-java-version-info.properties">

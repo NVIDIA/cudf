@@ -484,16 +484,18 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_s
     }
 
     // Columns without nulls do not need their null masks gathered
-    std::vector<column_copy_descriptor> fixed_width_copies;
-    for (auto const& col : fixed_width_input) {
+    auto fixed_width_copies = cudf::detail::make_pinned_vector_async<column_copy_descriptor>(
+      fixed_width_input.num_columns(), stream);
+    for (size_type i = 0; i < fixed_width_input.num_columns(); ++i) {
+      auto const& col = fixed_width_input.column(i);
       auto const mask_state =
         col.nullable() and not col.has_nulls() ? mask_state::ALL_VALID : mask_state::UNALLOCATED;
-      auto output     = make_fixed_width_column(col.type(), num_rows, mask_state, stream, mr);
-      auto const size = static_cast<size_type>(size_of(col.type()));
-      fixed_width_copies.push_back(
-        {static_cast<cuda::std::byte const*>(col.head()) + col.offset() * size,
-         output->mutable_view().head(),
-         size});
+      auto output           = make_fixed_width_column(col.type(), num_rows, mask_state, stream, mr);
+      auto const size       = static_cast<size_type>(size_of(col.type()));
+      fixed_width_copies[i] = {
+        static_cast<cuda::std::byte const*>(col.head()) + col.offset() * size,
+        output->mutable_view().head(),
+        size};
       fixed_width_output.push_back(std::move(output));
     }
 

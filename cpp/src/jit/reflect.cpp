@@ -199,16 +199,6 @@ transform_input_spec make_input_spec(column_view const& column, bool is_scalar)
   return result;
 }
 
-rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
-{
-  switch (type) {
-    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
-    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
-  }
-  CUDF_FAIL(std::format("Unrecognized LTO binary type {}", static_cast<int>(type)),
-            std::invalid_argument);
-}
-
 transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
                              std::span<transform_input_spec const> inputs,
                              std::span<transform_output_spec const> outputs,

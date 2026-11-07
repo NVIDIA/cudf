@@ -121,9 +121,11 @@ rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
   switch (type) {
     case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
     case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
+    default:
+      CUDF_FAIL(std::format("Unrecognized LTO binary type {}", static_cast<int>(type)),
+                std::invalid_argument);
   }
-  CUDF_FAIL(std::format("Unrecognized LTO binary type {}", static_cast<int>(type)),
-            std::invalid_argument);
 }
 
 }  // namespace jit

@@ -5,9 +5,9 @@
 
 #pragma once
 
-#include "error.hpp"
 #include "io/parquet/timestamp_utils.cuh"
 #include "io/utilities/block_utils.cuh"
+#include "io/utilities/kernel_error.hpp"
 #include "parquet_gpu.hpp"
 #include "rle_stream.cuh"
 

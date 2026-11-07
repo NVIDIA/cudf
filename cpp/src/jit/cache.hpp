@@ -4,6 +4,7 @@
  */
 
 #pragma once
+#include <cudf/udf.hpp>
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/stream>
@@ -83,6 +84,15 @@ struct [[nodiscard]] kernel : kernel_ref {
 
   kernel_ref get() const { return *this; }
 };
+
+
+/**
+ * @brief Converts an LTO binary type to the corresponding RTCX binary type
+ * @param type The LTO binary type to convert
+ * @return The corresponding RTCX binary type
+ */
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type);
+
 
 /**
  * @brief Gets a kernel from an embedded CUDA source file

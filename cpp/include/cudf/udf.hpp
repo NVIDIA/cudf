@@ -32,7 +32,8 @@ namespace CUDF_EXPORT cudf {
  */
 enum class lto_binary_type : uint8_t {
   LTO_IR = 0,  //< LTO-IR binary
-  FATBIN = 1   //< FATBIN binary
+  FATBIN = 1,  //< FATBIN binary
+  PTX    = 2   //< Null-terminated PTX binary
 };
 
 /**

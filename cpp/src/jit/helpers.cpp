@@ -5,18 +5,17 @@
 
 #include "helpers.hpp"
 
-#include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/utilities/type_dispatcher.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/iterator>
 
 #include <jit/cache.hpp>
 #include <rtcx/rtcx.hpp>
-#include <runtime/context.hpp>
 
 #include <algorithm>
 #include <format>
+#include <stdexcept>
 
 namespace cudf {
 namespace jit {
@@ -61,29 +60,6 @@ size_type get_projection_size(std::span<std::variant<column_view, scalar_column_
                            cuda::transform_iterator(inputs.end(), get_size));
 }
 
-std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> output_typenames,
-                                                 std::span<std::string const> input_typenames,
-                                                 bool has_user_data)
-{
-  std::map<uint32_t, std::string> params;
-  uint32_t index = 0;
-
-  if (has_user_data) {
-    params.emplace(index++, "void *");
-    params.emplace(index++, "cudf::size_type");
-  }
-
-  for (auto& name : output_typenames) {
-    params.emplace(index++, name + "*");
-  }
-
-  for (auto& name : input_typenames) {
-    params.emplace(index++, name);
-  }
-
-  return params;
-}
-
 kernel get_udf_kernel(std::string const& source_file,
                       std::string const& kernel_name,
                       std::string const& cuda_source,
@@ -108,11 +84,8 @@ kernel get_udf_kernel(std::string const& source_file,
   std::vector<rtcx::memory_fragment> fragments{
     {.data = kernel_fragment->view(), .type = rtcx::binary_type::LTO_IR, .name = nullptr}};
   for (auto const& fragment : link_fragments) {
-    fragments.push_back({.data = fragment.data,
-                         .type = fragment.type == lto_binary_type::LTO_IR
-                                   ? rtcx::binary_type::LTO_IR
-                                   : rtcx::binary_type::FATBIN,
-                         .name = nullptr});
+    fragments.push_back(
+      {.data = fragment.data, .type = as_rtcx_binary_type(fragment.type), .name = nullptr});
   }
   return get_lto_linked_kernel(source_file, {}, fragments);
 }

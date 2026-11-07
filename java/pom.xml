@@ -14,8 +14,7 @@
 
     <name>cudfjni</name>
     <description>
-        This project provides java bindings for cudf, to be able to process large amounts of data on a GPU.
-        This is still a work in progress so some APIs may change until the 1.0 release.
+        Java bindings for NVIDIA cuDF, a library for GPU-accelerated structured data processing.
     </description>
     <url>https://docs.nvidia.com/cudf/</url>
 

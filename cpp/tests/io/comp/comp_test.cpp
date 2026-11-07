@@ -13,12 +13,11 @@
 #include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
-
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -35,6 +34,12 @@ using cudf::io::detail::codec_status;
 namespace nvcomp = cudf::io::detail::nvcomp;
 
 enum class hw { CPU, GPU };
+
+template <typename T>
+concept has_gpu_impl = requires { &T::device_dispatch; };
+
+template <typename T>
+concept has_cpu_impl = requires { &T::host_dispatch; };
 
 /**
  * @brief Base test fixture for decompression
@@ -59,13 +64,13 @@ struct DecompressTest
     auto hw_type   = std::get<0>(GetParam());
     auto comp_type = std::get<1>(GetParam());
     if (hw_type == hw::GPU) {
-      if constexpr (has_gpu_impl<Decompressor>::value) {
+      if constexpr (has_gpu_impl<Decompressor>) {
         return DeviceDecompress(compressed, uncompressed_size);
       } else {
         CUDF_FAIL("Device decompression has not been implemented");
       }
     } else {
-      if constexpr (has_cpu_impl<Decompressor>::value) {
+      if constexpr (has_cpu_impl<Decompressor>) {
         return HostDecompress(comp_type, compressed, uncompressed_size);
       } else {
         CUDF_FAIL("Host decompression has not been implemented");
@@ -85,7 +90,8 @@ struct DecompressTest
                                               compressed.data(),
                                               compressed.data() + compressed.size()};
     }
-    rmm::device_uvector<uint8_t> dst{decompressed.size(), stream};
+    cuda::device_buffer<uint8_t> dst{
+      stream, cudf::get_current_device_resource_ref(), decompressed.size(), cuda::no_init};
 
     cudf::detail::hostdevice_vector<device_span<uint8_t const>> inf_in(
       1, stream, cudf::get_current_device_resource_ref());
@@ -118,18 +124,6 @@ struct DecompressTest
     return static_cast<Decompressor*>(this)->host_dispatch(
       comp_type, compressed, uncompressed_size);
   }
-
-  template <typename T, typename = void>
-  struct has_gpu_impl : std::false_type {};
-
-  template <typename T>
-  struct has_gpu_impl<T, std::void_t<decltype(&T::device_dispatch)>> : std::true_type {};
-
-  template <typename T, typename = void>
-  struct has_cpu_impl : std::false_type {};
-
-  template <typename T>
-  struct has_cpu_impl<T, std::void_t<decltype(&T::host_dispatch)>> : std::true_type {};
 };
 
 struct HostCompressTest : public cudf::test::BaseFixture,
@@ -480,10 +474,16 @@ void roundtrip_test(cudf::io::compression_type compression,
 
     auto const test_input = cudf::host_span<uint8_t const>{expected.data(), test_size};
 
-    auto d_comp = rmm::device_uvector<uint8_t>(
-      cudf::io::detail::max_compressed_size(compression, test_input.size()), stream, mr);
+    auto d_comp = cuda::device_buffer<uint8_t>(
+      stream,
+      mr,
+      cudf::io::detail::max_compressed_size(compression, test_input.size()),
+      cuda::no_init);
+    // Tracks the valid compressed bytes since device_buffer cannot be shrunk yet
+    // TODO: Remove this when https://github.com/NVIDIA/cccl/issues/12051 is resolved
+    device_span<uint8_t const> compressed = d_comp;
     {
-      auto const d_orig = cudf::detail::make_device_uvector_async(test_input, stream, mr);
+      auto const d_orig = cudf::detail::make_device_buffer_async(test_input, stream, mr);
       auto hd_srcs      = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(
         1, stream, cudf::get_current_device_resource_ref());
       hd_srcs[0] = d_orig;
@@ -504,14 +504,15 @@ void roundtrip_test(cudf::io::compression_type compression,
       });
       hd_stats.device_to_host(stream);
       ASSERT_EQ(hd_stats[0].status, codec_status::SUCCESS);
-      d_comp.resize(hd_stats[0].bytes_written, stream);
+      // TODO: Resize the buffer once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+      compressed = compressed.first(hd_stats[0].bytes_written);
     }
 
-    auto d_got = rmm::device_uvector<uint8_t>(test_input.size(), stream, mr);
+    auto d_got = cuda::device_buffer<uint8_t>(stream, mr, test_input.size(), cuda::no_init);
     {
       auto hd_srcs = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(
         1, stream, cudf::get_current_device_resource_ref());
-      hd_srcs[0] = d_comp;
+      hd_srcs[0] = compressed;
       hd_srcs.host_to_device_async(stream);
 
       auto hd_dsts = cudf::detail::hostdevice_vector<device_span<uint8_t>>(

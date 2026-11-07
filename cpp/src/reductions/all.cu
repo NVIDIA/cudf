@@ -8,11 +8,11 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/reduction/detail/reduction_functions.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/atomic>
 #include <cuda/iterator>
-#include <cuda/std/type_traits>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -42,11 +42,10 @@ struct all_fn {
     int32_t* d_result;
   };
 
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr)
-    requires(cuda::std::is_arithmetic_v<T>)
   {
     auto const d_dict = cudf::column_device_view::create(input, stream);
     auto const iter   = [&] {
@@ -67,7 +66,6 @@ struct all_fn {
   std::unique_ptr<scalar> operator()(column_view const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref)
-    requires(!cuda::std::is_arithmetic_v<T>)
   {
     CUDF_FAIL("Unexpected key type for dictionary in reduction all()");
   }

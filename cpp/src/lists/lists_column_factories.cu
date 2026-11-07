@@ -12,8 +12,6 @@
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/iterator>
 #include <cuda/stream>
 

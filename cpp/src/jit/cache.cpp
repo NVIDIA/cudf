@@ -56,6 +56,8 @@ void hash(XXH3_state_t* ctx, std::span<rtcx::memory_fragment const> memory_fragm
       XXH3_128bits_update(ctx, fragment.name, std::strlen(fragment.name));
       XXH3_128bits_update(ctx, "\0", 1);  // null terminator
     } else {
+      // The bytes are linked as the given type, so both identify an unnamed fragment.
+      XXH3_128bits_update(ctx, &fragment.type, sizeof(fragment.type));
       XXH3_128bits_update(ctx, fragment.data.data(), fragment.data.size());
       XXH3_128bits_update(ctx, "\0", 1);  // null terminator
     }
@@ -371,6 +373,19 @@ rtcx::blob compile_fragment(char const* name,
 }
 
 }  // namespace
+
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
+{
+  switch (type) {
+    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
+    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
+    default:
+      CUDF_FAIL(
+        std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
+        std::invalid_argument);
+  }
+}
 
 kernel get_kernel(std::string const& name,
                   std::string const& source_file_id,

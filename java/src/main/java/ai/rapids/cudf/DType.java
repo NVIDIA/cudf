@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 package ai.rapids.cudf;
@@ -8,6 +8,11 @@ import java.math.BigDecimal;
 import java.util.EnumSet;
 import java.util.Objects;
 
+/**
+ * The data type of a column or scalar, with a scale for decimal types.
+ * Non-decimal types are available as constants such as {@link #INT32}; use
+ * {@link #create(DTypeEnum, int)} to create decimal types.
+ */
 public final class DType {
 
   public static final int DECIMAL32_MAX_PRECISION = 9;

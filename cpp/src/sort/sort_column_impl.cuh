@@ -7,6 +7,7 @@
 
 #include "sort.hpp"
 #include "sort_radix.hpp"
+#include "string_sort_lrb.cuh"
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/indexalator.cuh>
@@ -255,7 +256,12 @@ struct column_sorted_order_fn {
                     rmm::device_async_resource_ref temp_mr)
   {
     if constexpr (std::is_same_v<T, string_view>) {
-      prefix_sorted_order<uint64_t>(input, indices, ascending, null_precedence, stream, temp_mr);
+      if (radix_lrb_string_sort::enabled()) {
+        radix_lrb_string_sort::sorted_order<method == sort_method::STABLE>(
+          input, indices, ascending, null_precedence, stream, temp_mr);
+      } else {
+        prefix_sorted_order<uint64_t>(input, indices, ascending, null_precedence, stream, temp_mr);
+      }
     } else {
       auto keys = column_device_view::create(input, stream, temp_mr);
       auto comp = simple_comparator<T>{*keys, input.has_nulls(), ascending, null_precedence};

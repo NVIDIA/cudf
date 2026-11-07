@@ -593,12 +593,20 @@ class GroupedWindow(Expr):
         _, tables = local_grouper.scan(requests, stream=df.stream)
 
         result_tables: list[plc.Table] = []
-        for tbl, policy in zip(tables, fill_policies, strict=True):
-            if policy is None:
-                result_tables.append(tbl)
-            else:
-                _, filled = local_grouper.replace_nulls(tbl, [policy], stream=df.stream)
-                result_tables.append(filled)
+        for tbl, policy, out_dtype in zip(
+            tables, fill_policies, out_dtypes, strict=True
+        ):
+            res_tbl = tbl
+            if policy is not None:
+                _, res_tbl = local_grouper.replace_nulls(
+                    tbl, [policy], stream=df.stream
+                )
+            res_col = res_tbl.columns()[0]
+            if res_col.type() != out_dtype.plc_type:
+                res_tbl = plc.Table(
+                    [plc.unary.cast(res_col, out_dtype.plc_type, stream=df.stream)]
+                )
+            result_tables.append(res_tbl)
         return out_names, out_dtypes, result_tables
 
     @_apply_unary_op.register

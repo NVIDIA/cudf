@@ -32,6 +32,7 @@ from cudf_polars.dsl.ir import (
 )
 from cudf_polars.dsl.to_ast import to_parquet_filter
 from cudf_polars.dsl.tracing import nvtx_annotate_cudf_polars
+from cudf_polars.dsl.utils.lake import read_lake_files
 from cudf_polars.streaming.base import (
     IOPartitionFlavor,
     IOPartitionPlan,
@@ -268,15 +269,15 @@ def hybrid_scan_eligible(
         and row_index is None
         and include_file_paths is None
         and predicate is not None
-        # TODO: Support reading by Iceberg field ID
-        and lake_options is None
+        # TODO: Support deletions by seeding the row mask of the hybrid reader
+        and (lake_options is None or not lake_options.has_deletions)
     )
 
 
-def _read_with_hybrid_scan(
-    schema: Schema,
+def _hybrid_scan_columns(
     paths: list[str],
-    with_columns: list[str] | None,
+    column_names: list[str] | None,
+    requested_columns: Sequence[str],
     plc_filter: plc_expr.Expression,
     row_group_indices: list[int],
     stream: Stream,
@@ -285,8 +286,13 @@ def _read_with_hybrid_scan(
     split_index: int = 0,
     total_splits: int = 1,
     stats_pruning: bool = True,
-) -> DataFrame:
-    """Two-pass parquet read via HybridScanReader for a row-group-aligned task."""
+) -> tuple[Sequence[plc.Column], list[plc.io.types.ColumnNameSpec]] | None:
+    """
+    Two-pass parquet read via HybridScanReader for a row-group-aligned task.
+
+    Returns the columns as the file stores them along with their names and
+    the names of their children, or ``None`` when every row group is pruned.
+    """
     assert len(paths) == 1, "hybrid scan only supports tasks with one physical file"
     with nvtx_annotate_cudf_polars(
         message="HybridScan", payload=(split_index + 1, total_splits)
@@ -295,8 +301,8 @@ def _read_with_hybrid_scan(
             [plc.io.types.FilepathSource(cached_info.path, cached_info.size)]
         )
         options = cached_info.default_reader_options()
-        if with_columns is not None:
-            options.set_column_names(with_columns)
+        if column_names is not None:
+            options.set_column_names(column_names)
         options.set_filter(plc_filter)
 
         reader = cached_info.hybrid_scan_reader(options)
@@ -322,18 +328,7 @@ def _read_with_hybrid_scan(
                     )
 
         if not row_group_indices:
-            col_names = with_columns if with_columns is not None else list(schema)
-            return DataFrame(
-                [
-                    Column(
-                        make_empty_column(schema[name], stream),
-                        dtype=schema[name],
-                        name=name,
-                    )
-                    for name in col_names
-                ],
-                stream=stream,
-            )
+            return None
 
         # TODO: Consider implementing page-index stats pruning. For split tasks, we
         # can reuse the same page index for all splits of the same file, so the
@@ -356,17 +351,10 @@ def _read_with_hybrid_scan(
             stream=stream,
         )
 
-        filter_names = filter_tbl_w_meta.column_names(include_children=False)
-        filter_df = DataFrame.from_table(
-            filter_tbl_w_meta.tbl,
-            filter_names,
-            [schema[n] for n in filter_names],
-            stream=stream,
-        )
+        columns: Sequence[plc.Column] = filter_tbl_w_meta.tbl.columns()
+        names = filter_tbl_w_meta.column_names(include_children=True)
 
-        requested_columns = with_columns if with_columns is not None else list(schema)
-        columns = filter_df.columns
-        if set(requested_columns) - set(filter_names):
+        if set(requested_columns) - {name for name, _ in names}:
             payload_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
                 source_info,
                 reader.payload_column_chunks_byte_ranges(row_group_indices, options),
@@ -381,16 +369,58 @@ def _read_with_hybrid_scan(
                 options,
                 stream=stream,
             )
-            payload_names = payload_tbl_w_meta.column_names(include_children=False)
-            payload_df = DataFrame.from_table(
-                payload_tbl_w_meta.tbl,
-                payload_names,
-                [schema[n] for n in payload_names],
-                stream=stream,
-            )
-            columns = [*columns, *payload_df.columns]
+            columns = [*columns, *payload_tbl_w_meta.tbl.columns()]
+            names = [*names, *payload_tbl_w_meta.column_names(include_children=True)]
+        return columns, names
 
-        return DataFrame(columns, stream=stream).select(list(schema.keys()))
+
+def _read_with_hybrid_scan(
+    schema: Schema,
+    paths: list[str],
+    with_columns: list[str] | None,
+    plc_filter: plc_expr.Expression,
+    row_group_indices: list[int],
+    stream: Stream,
+    cached_info: CachedParquetInfo,
+    *,
+    split_index: int = 0,
+    total_splits: int = 1,
+    stats_pruning: bool = True,
+) -> DataFrame:
+    """Two-pass parquet read via HybridScanReader for a row-group-aligned task."""
+    requested_columns = with_columns if with_columns is not None else list(schema)
+    result = _hybrid_scan_columns(
+        paths,
+        with_columns,
+        requested_columns,
+        plc_filter,
+        row_group_indices,
+        stream,
+        cached_info,
+        split_index=split_index,
+        total_splits=total_splits,
+        stats_pruning=stats_pruning,
+    )
+    if result is None:
+        return DataFrame(
+            [
+                Column(
+                    make_empty_column(schema[name], stream),
+                    dtype=schema[name],
+                    name=name,
+                )
+                for name in requested_columns
+            ],
+            stream=stream,
+        )
+    columns, names = result
+    top_level_names = [name for name, _ in names]
+    return DataFrame.from_table(
+        plc.Table(columns),
+        top_level_names,
+        [schema[name] for name in top_level_names],
+        stream=stream,
+    ).select(list(schema.keys()))
 
 
 class ParquetScanTaskBounds(NamedTuple):
@@ -755,6 +785,55 @@ class ParquetScanTask(ScanTask):
                 for name, dtype in base_scan.schema.items()
                 if name not in hive_names
             }
+            if lake_options is not None:
+                cached_info = task_parquet_info[0]
+                row_group_indices = bounds.row_groups[0]
+
+                def hybrid_read(
+                    column_names: list[str], plc_filter: plc_expr.Expression
+                ) -> (
+                    tuple[Sequence[plc.Column], list[plc.io.types.ColumnNameSpec]]
+                    | None
+                ):
+                    return _hybrid_scan_columns(
+                        paths,
+                        column_names,
+                        column_names,
+                        plc_filter,
+                        row_group_indices,
+                        stream,
+                        cached_info,
+                        split_index=split_index,
+                        total_splits=total_splits,
+                        stats_pruning=parquet_options._hybrid_scan_stats_pruning,
+                    )
+
+                df, _, _, exact = read_lake_files(
+                    paths,
+                    lake_options,
+                    file_schema,
+                    base_scan.with_columns,
+                    [cached_info],
+                    base_scan.predicate.value,
+                    hybrid_read=hybrid_read,
+                    stream=stream,
+                )
+                partition_values = (
+                    Scan._lake_partition_values(
+                        lake_options, file_schema, base_scan.with_columns
+                    )
+                    if lake_options.partition_values
+                    else None
+                )
+                for parts in (partition_values, hive_parts):
+                    if parts is not None:
+                        df = df.with_columns(
+                            parts.broadcast(df.num_rows, stream=stream), stream=stream
+                        )
+                return apply_predicate(
+                    df.select(list(base_scan.schema)),
+                    None if exact else base_scan.predicate,
+                )
             file_columns = (
                 None
                 if base_scan.with_columns is None

@@ -295,6 +295,27 @@ def _apply_masked_datetimelike_binary(
     builder.store_var(target, packed)
 
 
+def _emit_binary(
+    op: Callable, v1: mlir_ir.Value, v2: mlir_ir.Value
+) -> mlir_ir.Value:
+    """Emit the IR for ``op(v1, v2)`` on two scalar MLIR values, repairing the
+    operators whose default IR lowering does not match Python semantics.
+
+    ``operator.mod`` on raw IR values lowers to a C-style *truncated* remainder
+    (``arith.remsi``/``arith.remf``) whose sign follows the dividend, whereas
+    Python's ``%`` is *floored* -- its result takes the divisor's sign (e.g.
+    ``-1 % 2 == 1``, ``-7.0 % 2.0 == 1.0``). ``operator.floordiv`` already
+    lowers to true floor division, so we reconstruct the floored remainder via
+    the Python identity ``a % b == a - (a // b) * b``. This is exact for signed
+    integers, correct for floats, a no-op for unsigned operands (floor and
+    truncation coincide), and keeps the backend self-consistent so that
+    ``a == (a // b) * b + a % b`` holds by construction.
+    """
+    if op in (operator.mod, operator.imod):
+        return operator.sub(v1, operator.mul(operator.floordiv(v1, v2), v2))
+    return op(v1, v2)
+
+
 def _apply_masked_binary_op(
     builder: MLIRLower,
     target: Var,
@@ -339,7 +360,7 @@ def _apply_masked_binary_op(
     operand_ty = v1.type if is_cmp else target_value_mlir_ty
     v1 = convert(v1, operand_ty)
     v2 = convert(v2, operand_ty)
-    result_val = convert(op(v1, v2), target_value_mlir_ty)
+    result_val = convert(_emit_binary(op, v1, v2), target_value_mlir_ty)
     packed = _pack_masked(builder, target_type, result_val, result_valid)
     builder.store_var(target, packed)
 

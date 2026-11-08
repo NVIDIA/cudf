@@ -155,3 +155,35 @@ TEST(IoUtilitiesTest, FuturesWaitGuardWaitsForPendingFutures)
   pending.set_exception(std::make_exception_ptr(std::logic_error("pending")));
   EXPECT_THROW(collector.get(), std::runtime_error);
 }
+
+TEST(IoUtilitiesTest, FuturesWaitGuardDrainsMultipleFutureVectors)
+{
+  std::promise<std::size_t> p1;
+  std::promise<std::size_t> p2;
+  std::promise<std::unique_ptr<int>> p3;
+  std::promise<std::unique_ptr<int>> p4;
+
+  auto collector = std::async(std::launch::async, [&] {
+    std::vector<std::future<std::size_t>> futures1;
+    cudf::detail::futures_wait_guard guard1{futures1};
+    std::vector<std::future<std::unique_ptr<int>>> futures2;
+    cudf::detail::futures_wait_guard guard2{futures2};
+
+    futures1.push_back(p1.get_future());
+    futures1.push_back(p2.get_future());
+    futures2.push_back(p3.get_future());
+    futures2.push_back(p4.get_future());
+
+    // Throwing during processing should unwind through both guards
+    throw std::runtime_error("simulated failure");
+  });
+
+  EXPECT_EQ(collector.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+
+  p1.set_value(10);
+  p2.set_value(20);
+  p3.set_value(std::make_unique<int>(1));
+  p4.set_value(std::make_unique<int>(2));
+
+  EXPECT_THROW(collector.get(), std::runtime_error);
+}

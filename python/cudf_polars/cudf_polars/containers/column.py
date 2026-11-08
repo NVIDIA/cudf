@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         Slice,
     )
 
-__all__: list[str] = ["Column"]
+__all__: list[str] = ["Column", "with_mask_from"]
 
 
 # Float64 has 53-bit significand precision (52 fraction bits + 1 implicit leading bit),
@@ -624,37 +624,6 @@ class Column:
         """Return the number of Null values in the column."""
         return self.obj.null_count()
 
-    def apply_null_mask(self, target: plc.Column, stream: Stream) -> plc.Column:
-        """
-        Return ``target`` with the null mask of this column.
-
-        A null mask is read from its column's offset, so the mask buffer of
-        ``self.obj`` is only reused when ``target`` has the same offset.
-        Otherwise ``self`` is a slice and the mask of its rows is copied to a
-        new buffer starting at bit 0, which ``target`` must also start at.
-
-        Parameters
-        ----------
-        target
-            Column with the same number of rows as ``self``.
-        stream
-            CUDA stream used for device memory operations and kernel launches.
-            ``self.obj`` and ``target`` must be valid on this stream, and the
-            result will be valid on this stream.
-
-        Returns
-        -------
-        ``target`` with the nulls of ``self``.
-        """
-        if self.null_count == 0:
-            return target.with_mask(None, 0)
-        if target.offset() == self.obj.offset():
-            return target.with_mask(self.obj.null_mask(), self.null_count)
-        assert target.offset() == 0
-        return target.with_mask(
-            plc.null_mask.copy_bitmask(self.obj, stream=stream), self.null_count
-        )
-
     def slice(self, zlice: Slice | None, stream: Stream) -> Self:
         """
         Slice a column.
@@ -681,3 +650,39 @@ class Column:
         )
         (column,) = table.columns()
         return type(self)(column, name=self.name, dtype=self.dtype).sorted_like(self)
+
+
+def with_mask_from(target: plc.Column, source: Column, stream: Stream) -> plc.Column:
+    """
+    Return ``target`` with the null mask of ``source``.
+
+    A null mask is read from its column's offset, so the mask buffer of
+    ``source.obj`` is only reused when ``target`` has the same offset.
+    Otherwise ``source`` is a slice and the mask of its rows is copied to a
+    new buffer starting at bit 0, which ``target`` must also start at.
+    Unlike ``plc.Column.with_mask``, which takes a raw buffer, this reads the
+    offset from ``source``.
+
+    Parameters
+    ----------
+    target
+        Column with the same number of rows as ``source``.
+    source
+        Column whose nulls are copied onto ``target``.
+    stream
+        CUDA stream used for device memory operations and kernel launches.
+        ``source.obj`` and ``target`` must be valid on this stream, and the
+        result will be valid on this stream.
+
+    Returns
+    -------
+    ``target`` with the nulls of ``source``.
+    """
+    if source.null_count == 0:
+        return target.with_mask(None, 0)
+    if target.offset() == source.obj.offset():
+        return target.with_mask(source.obj.null_mask(), source.null_count)
+    assert target.offset() == 0
+    return target.with_mask(
+        plc.null_mask.copy_bitmask(source.obj, stream=stream), source.null_count
+    )

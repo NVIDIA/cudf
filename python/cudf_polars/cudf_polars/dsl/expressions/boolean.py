@@ -16,6 +16,7 @@ from polars.exceptions import ComputeError, InvalidOperationError
 import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataType
+from cudf_polars.containers.column import with_mask_from
 from cudf_polars.dsl.expressions.base import (
     Col,
     ExecutionContext,
@@ -375,7 +376,7 @@ class BooleanFunction(Expr):
                     values.size,
                     stream=df.stream,
                 )
-                return Column(values.apply_null_mask(base, df.stream), dtype=self.dtype)
+                return Column(with_mask_from(base, values, df.stream), dtype=self.dtype)
             to_search = [-float("inf"), float("inf")]
             if is_finite:
                 # NaN is neither finite not infinite
@@ -391,7 +392,7 @@ class BooleanFunction(Expr):
                     result, plc.unary.UnaryOperator.NOT, stream=df.stream
                 )
             return Column(
-                values.apply_null_mask(result, df.stream),
+                with_mask_from(result, values, df.stream),
                 dtype=self.dtype,
             )
         columns = [child.evaluate(df, context=context) for child in self.children]
@@ -460,7 +461,7 @@ class BooleanFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-            return Column(column.apply_null_mask(base, df.stream), dtype=self.dtype)
+            return Column(with_mask_from(base, column, df.stream), dtype=self.dtype)
         elif self.name is BooleanFunction.Name.IsFirstDistinct:
             (column,) = columns
             return self._distinct(
@@ -591,7 +592,7 @@ class BooleanFunction(Expr):
                 stream=df.stream,
             )
             if not nulls_equal:
-                out = needles.apply_null_mask(out, df.stream)
+                out = with_mask_from(out, needles, df.stream)
             return Column(out, dtype=self.dtype)
         elif self.name is BooleanFunction.Name.IsSorted:
             (column,) = columns

@@ -18,6 +18,7 @@ from polars.exceptions import InvalidOperationError
 import pylibcudf as plc
 
 from cudf_polars.containers import Column
+from cudf_polars.containers.column import with_mask_from
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
 from cudf_polars.dsl.utils.reshape import broadcast
@@ -495,7 +496,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                result = column.apply_null_mask(result, df.stream)
+                result = with_mask_from(result, column, df.stream)
                 return Column(result, dtype=self.dtype)
             else:
                 return Column(
@@ -597,7 +598,7 @@ class StringFunction(Expr):
                     stream=df.stream,
                 )
                 return Column(
-                    column.apply_null_mask(plc_column, df.stream), dtype=self.dtype
+                    with_mask_from(plc_column, column, df.stream), dtype=self.dtype
                 )
             else:
                 plc_column = plc.strings.findall.find_re(
@@ -992,7 +993,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                result = column.apply_null_mask(result, df.stream)
+                result = with_mask_from(result, column, df.stream)
                 return Column(result, self.dtype)
 
             if self.name is StringFunction.Name.Tail:

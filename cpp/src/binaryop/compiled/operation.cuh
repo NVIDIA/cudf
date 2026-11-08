@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/detail/integral_math.cuh>
+#include <cudf/detail/operators/arithmetic.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -193,15 +194,7 @@ struct PyMod {
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
     requires(cuda::std::floating_point<std::common_type_t<TypeLhs, TypeRhs>>)
   {
-    auto const x1 = static_cast<double>(x);
-    auto const y1 = static_cast<double>(y);
-    auto mod      = cuda::std::fmod(x1, y1);
-    if (mod != 0.0) {
-      if ((y1 < 0.0) != (mod < 0.0)) { mod += y1; }
-    } else {
-      mod = cuda::std::copysign(0.0, y1);
-    }
-    return mod;
+    return cudf::detail::ops::pymod(static_cast<double>(x), static_cast<double>(y));
   }
 
   template <cudf::concepts::duration TypeLhs, typename TypeRhs>

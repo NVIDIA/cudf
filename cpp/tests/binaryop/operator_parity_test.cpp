@@ -12,6 +12,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cmath>
 #include <limits>
 
 struct BinaryOperatorParityTest : public cudf::test::BaseFixture {};

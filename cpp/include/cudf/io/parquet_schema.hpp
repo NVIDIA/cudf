@@ -882,6 +882,11 @@ struct ColumnChunk {
   int64_t column_index_offset = 0;
   /// Size of ColumnChunk's ColumnIndex, in bytes
   int32_t column_index_length = 0;
+  /// Serialized `ColumnCryptoMetaData` struct body (without its stop byte), retained verbatim
+  /// rather than modeled; set when this column is encrypted
+  std::optional<std::vector<uint8_t>> crypto_metadata;
+  /// Encrypted column metadata for this chunk, retained verbatim
+  std::optional<std::vector<uint8_t>> encrypted_column_metadata;
 
   // Following fields are derived from other fields
 
@@ -955,6 +960,11 @@ struct FileMetaData {
   /// Sort order used for the min_value and max_value fields in the Statistics objects and the
   /// min_values and max_values fields in the ColumnIndex objects of each column in this file.
   std::optional<std::vector<ColumnOrder>> column_orders;
+  /// Serialized `EncryptionAlgorithm` union body (without its stop byte), retained verbatim rather
+  /// than modeled; set only by files with encrypted columns and a plaintext footer
+  std::optional<std::vector<uint8_t>> encryption_algorithm;
+  /// Retrieval metadata of the key used to sign a plaintext footer, retained verbatim
+  std::optional<std::vector<uint8_t>> footer_signing_key_metadata;
 };
 
 /**

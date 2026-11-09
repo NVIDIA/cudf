@@ -97,8 +97,7 @@ void compute_groupby(std::span<aggregation_request const> requests,
   // In case of no requests, only the distinct keys are needed and the helper builds them alone.
   if (requests.empty()) { return; }
 
-  auto const temp_mr             = mr.get_temporary_mr();
-  auto const temporary_resources = mr.as_temporary();
+  auto const temp_mr = mr.get_temporary_mr();
 
   // Determine which grouping outputs the requested aggregations need.
   auto const [values, agg_kinds, aggs, is_agg_intermediate, has_compound_aggs] =
@@ -134,32 +133,10 @@ void compute_groupby(std::span<aggregation_request const> requests,
   }
 
   if (has_compound_aggs) {
-    // Requested M2 results must be cached on the output resource before VARIANCE or STD asks
-    // for an intermediate M2, regardless of the order of requests on a shared values column.
+    // M2 and COUNT_VALID are already cached by the statistical state reduction.
     for (auto const& request : requests) {
       auto const finalizer = hash_compound_agg_finalizer(request.values, cache, stream, mr);
       for (auto const& agg : request.aggregations) {
-        if (agg->kind == aggregation::M2) {
-          cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
-        }
-      }
-    }
-    for (auto const& request : requests) {
-      auto const& agg_v = request.aggregations;
-      auto const& col   = request.values;
-
-      // The finalizers only combine the single-pass results with linear transformations such as
-      // addition/multiplication (e.g. for variance/stddev); they do not aggregate further.
-      auto const finalizer = hash_compound_agg_finalizer(col, cache, stream, mr);
-      for (auto&& agg : agg_v) {
-        if (agg->kind == aggregation::VARIANCE || agg->kind == aggregation::STD) {
-          // Explicit M2 outputs were finalized above. Any missing M2 is only an intermediate
-          // for this ordinary groupby; the shared finalizer also serves streaming groupby.
-          auto const m2_agg = make_m2_aggregation();
-          auto const m2_finalizer =
-            hash_compound_agg_finalizer(col, cache, stream, temporary_resources);
-          cudf::detail::aggregation_dispatcher(m2_agg->kind, m2_finalizer, *m2_agg);
-        }
         cudf::detail::aggregation_dispatcher(agg->kind, finalizer, *agg);
       }
     }

@@ -2370,6 +2370,15 @@ TEST_F(OrcWriterTest, LegacyCalendar)
   column_wrapper<cudf::timestamp_D, int32_t> dates(
     {-719528, -719162, -353920, -281237, -141438, -141427, 0, 19849, -141432},
     {true, true, true, true, true, true, true, true, false});
+  std::vector<int64_t> expected_ms{
+    -719528, -719162, -353920, -281237, -141438, -141427, 0, 19849, -141432};
+  for (auto& day : expected_ms) {
+    day *= 86'400'000;
+  }
+  column_wrapper<cudf::timestamp_ms, int64_t> expected_numpy(
+    expected_ms.begin(),
+    expected_ms.end(),
+    {true, true, true, true, true, true, true, true, false});
   struct_col nested{dates};
   cudf::test::lists_column_wrapper<cudf::timestamp_D, int32_t> lists{
     {-719528}, {}, {-353920}, {-281237}, {-141438}, {-141427}, {0}, {19849}, {}};
@@ -2398,6 +2407,10 @@ TEST_F(OrcWriterTest, LegacyCalendar)
       cudf::io::orc_reader_options::builder(source).use_np_dtypes(false).convert_dates_to_proleptic(
         true));
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(input, result.tbl->view());
+    auto numpy_result = cudf::io::read_orc(
+      cudf::io::orc_reader_options::builder(source).columns({"_col0"}).convert_dates_to_proleptic(
+        true));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_numpy, numpy_result.tbl->view().column(0));
     // Independent Julian epoch-day values, including astronomical year zero.
     column_wrapper<cudf::timestamp_D, int32_t> raw(
       {-719530, -719164, -353914, -281230, -141428, -141427, 0, 19849, 0},

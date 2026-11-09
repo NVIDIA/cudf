@@ -59,7 +59,6 @@
 #include <thrust/sort.h>
 #include <thrust/tabulate.h>
 #include <thrust/transform.h>
-#include <thrust/transform_reduce.h>
 
 #include <algorithm>
 #include <cstring>

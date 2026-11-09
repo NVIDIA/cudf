@@ -36,6 +36,7 @@
 #include <cub/device/device_select.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
@@ -44,6 +45,7 @@
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
+#include <thrust/copy.h>
 #include <thrust/count.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
@@ -382,6 +384,38 @@ struct typed_match_range_output {
   }
 };
 
+/// Number of run keys per segment of the sampled run index.
+constexpr size_type run_sample_stride = 32;
+
+/**
+ * @brief Searches the run keys for one probe row through a sampled two-level index.
+ *
+ * The search first runs over every `run_sample_stride`-th run key, which is small enough to stay
+ * cache resident, and then over the one segment of run keys that can contain the probe key.
+ * Run keys are strictly increasing, so the result equals a lower bound over all run keys.
+ */
+template <typename T>
+struct sampled_run_search {
+  T const* run_keys;                   ///< Key value of each build run
+  size_type num_runs;                  ///< Number of build key runs
+  T const* run_samples;                ///< Every `run_sample_stride`-th run key
+  size_type num_samples;               ///< Number of sampled run keys
+  typed_match_range_output<T> output;  ///< Stores the matching run range
+
+  __device__ void operator()(size_type idx) const
+  {
+    auto const key = output.probe_keys[idx];
+    auto const samples_end =
+      cuda::std::upper_bound(run_samples, run_samples + num_samples, key) - run_samples;
+    auto const segment =
+      cuda::std::max(static_cast<size_type>(samples_end) - 1, size_type{0}) * run_sample_stride;
+    auto const segment_end = cuda::std::min(segment + run_sample_stride, num_runs);
+    auto const run_idx =
+      cuda::std::lower_bound(run_keys + segment, run_keys + segment_end, key) - run_keys;
+    output(idx, static_cast<size_type>(run_idx));
+  }
+};
+
 template <typename T>
 void search_typed_match_ranges(column_view const& build,
                                column_view const& probe,
@@ -396,15 +430,26 @@ void search_typed_match_ranges(column_view const& build,
   auto run_keys       = cuda::device_buffer<T>(
     stream, cudf::get_current_device_resource_ref(), num_runs, cuda::no_init);
   thrust::gather(policy, run_rows.begin(), run_rows.end(), build.data<T>(), run_keys.begin());
-  auto const probe_keys = probe.data<T>();
-  thrust::lower_bound(
-    policy,
-    run_keys.begin(),
-    run_keys.end(),
-    probe_keys,
-    probe_keys + probe.size(),
-    cuda::tabulate_output_iterator(typed_match_range_output<T>{
-      run_keys.data(), probe_keys, num_runs, run_offsets.data(), match_starts, match_counts}));
+  auto const num_samples = cuda::ceil_div(num_runs, run_sample_stride);
+  auto run_samples       = cuda::device_buffer<T>(
+    stream, cudf::get_current_device_resource_ref(), num_samples, cuda::no_init);
+  thrust::copy_n(policy,
+                 cuda::strided_iterator{run_keys.begin(), run_sample_stride},
+                 num_samples,
+                 run_samples.begin());
+  thrust::for_each_n(policy,
+                     cuda::counting_iterator<size_type>{0},
+                     probe.size(),
+                     sampled_run_search<T>{run_keys.data(),
+                                           num_runs,
+                                           run_samples.data(),
+                                           num_samples,
+                                           typed_match_range_output<T>{run_keys.data(),
+                                                                       probe.data<T>(),
+                                                                       num_runs,
+                                                                       run_offsets.data(),
+                                                                       match_starts,
+                                                                       match_counts}});
 }
 
 /**

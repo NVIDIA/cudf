@@ -244,7 +244,7 @@ std::unique_ptr<table> sort(table_view const& input);
 
 libcudf allocates all device memory via RMM memory resources (MR) or CUDA MRs. Resource refs
 provide access to either type. Allocating APIs accept `cudf::memory_resources`, which carries
-separate output and temporary resource refs. See the
+separate output and temporary `cuda::mr::device_resource_ref`s. See the
 [RMM documentation](https://github.com/rapidsai/rmm/blob/main/README.md) for details.
 
 ### Current Device Memory Resource
@@ -259,8 +259,15 @@ Detail APIs do not default resource parameters.
 
 Memory resources are passed via resource ref parameters. A resource ref is a memory resource wrapper
 that enables consumers to specify properties of resources that they expect. These are defined
-in the `cuda::mr` namespace of libcu++, but RMM provides some convenience aliases in
-`rmm/resource_ref.hpp`.
+in the `cuda::mr` namespace of libcu++.
+
+libcudf uses `cuda::mr::device_resource_ref`, a non-owning reference to a memory resource that
+provides stream-ordered allocation of device-accessible memory. It is the same type as
+`rmm::device_async_resource_ref`, so either name can be passed where the other is expected. New
+libcudf code should prefer `cuda::mr::device_resource_ref`. Note that `rmm::device_resource_ref` is a
+different type that refers to a resource with only synchronous allocation.
+
+RMM also provides convenience aliases in `rmm/resource_ref.hpp`:
  - `rmm::device_resource_ref` accepts a memory resource that provides synchronous allocation
     of device-accessible memory.
  - `rmm::device_async_resource_ref` accepts a memory resource that provides stream-ordered allocation
@@ -280,10 +287,11 @@ for more information.
 ### `cudf::memory_resources`
 
 `cudf::memory_resources` is a cheap, non-owning value containing an output resource ref and a
-temporary resource ref. One-resource construction uses the supplied resource for output and captures
-the current cuDF resource for temporaries. Two-resource construction uses both supplied refs without
-consulting global resource state. Objects that own allocated memory reify the selected resource ref
-into an owning `cuda::mr::any_resource`, retaining the resource needed to deallocate that memory.
+temporary resource ref, both of type `cuda::mr::device_resource_ref`. One-resource construction uses
+the supplied resource for output and captures the current cuDF resource for temporaries.
+Two-resource construction uses both supplied refs without consulting global resource state. Objects
+that own allocated memory reify the selected resource ref into an owning `cuda::mr::any_resource`,
+retaining the resource needed to deallocate that memory.
 
 ## cudf::column
 

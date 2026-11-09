@@ -95,42 +95,43 @@ auto column_view_with_common_nulls(column_view const& column_0,
   auto [new_nullmask, null_count] = cudf::bitmask_and(
     table_view{{column_0, column_1}}, stream, cudf::get_current_device_resource_ref());
   if (null_count == 0) { return std::make_tuple(std::move(new_nullmask), column_0, column_1); }
-  auto const nullmask = static_cast<cudf::bitmask_type const*>(new_nullmask.data());
   // The new null mask starts at bit 0, so a sliced column is viewed from its first row with no
   // offset. The view must keep pointing into the input's memory because the result cache keys on
   // it.
-  auto const data_from_first_row = [](column_view const& col) {
-    return static_cast<char const*>(col.head()) + col.offset() * cudf::size_of(col.type());
-  };
-  auto column_view_with_new_nullmask = [&](column_view const& col) {
-    if (null_count == col.null_count()) { return col; }
-    if (col.offset() == 0) {
-      return column_view(col.type(),
-                         col.size(),
-                         col.head(),
-                         nullmask,
-                         null_count,
-                         0,
-                         std::vector(col.child_begin(), col.child_end()));
-    }
-    if (col.type().id() == type_id::DICTIONARY32) {
-      auto const dictionary = dictionary_column_view{col};
-      auto const indices    = dictionary.get_indices_annotated();
+  auto column_view_with_new_nullmask =
+    [](column_view const& col, bitmask_type const* nullmask, size_type null_count) {
+      if (null_count == col.null_count()) { return col; }
+      auto const data_from_first_row = [](column_view const& c) {
+        return static_cast<char const*>(c.head()) + c.offset() * cudf::size_of(c.type());
+      };
+      if (col.offset() == 0) {
+        return column_view(col.type(),
+                           col.size(),
+                           col.head(),
+                           nullmask,
+                           null_count,
+                           0,
+                           std::vector(col.child_begin(), col.child_end()));
+      }
+      if (col.type().id() == type_id::DICTIONARY32) {
+        auto const dictionary = dictionary_column_view{col};
+        auto const indices    = dictionary.get_indices_annotated();
+        return column_view(
+          col.type(),
+          col.size(),
+          nullptr,
+          nullmask,
+          null_count,
+          0,
+          {column_view(indices.type(), col.size(), data_from_first_row(indices), nullptr, 0),
+           dictionary.keys()});
+      }
       return column_view(
-        col.type(),
-        col.size(),
-        nullptr,
-        nullmask,
-        null_count,
-        0,
-        {column_view(indices.type(), col.size(), data_from_first_row(indices), nullptr, 0),
-         dictionary.keys()});
-    }
-    return column_view(
-      col.type(), col.size(), data_from_first_row(col), nullmask, null_count, 0, {});
-  };
-  auto new_column_0 = column_view_with_new_nullmask(column_0);
-  auto new_column_1 = column_view_with_new_nullmask(column_1);
+        col.type(), col.size(), data_from_first_row(col), nullmask, null_count, 0, {});
+    };
+  auto const nullmask = static_cast<bitmask_type const*>(new_nullmask.data());
+  auto new_column_0   = column_view_with_new_nullmask(column_0, nullmask, null_count);
+  auto new_column_1   = column_view_with_new_nullmask(column_1, nullmask, null_count);
   return std::make_tuple(std::move(new_nullmask), new_column_0, new_column_1);
 }
 

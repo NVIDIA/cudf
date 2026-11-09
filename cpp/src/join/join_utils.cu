@@ -109,6 +109,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
                               rmm::device_async_resource_ref mr,
                               std::optional<size_type> unmatched_right_count)
 {
+  cudf::memory_resources mrs{mr};
   auto [left_out, right_out] = std::move(indices);
   CUDF_EXPECTS(left_out->size() == right_out->size(),
                "left/right index vectors must have equal size",
@@ -175,7 +176,8 @@ VectorPair finalize_full_join(VectorPair&& indices,
                           cuda::counting_iterator<size_type>{right_table_num_rows},
                           out_iter,
                           unmatched_flag{match_flags},
-                          stream);
+                          stream,
+                          mrs.as_temporary());
 
   auto const comp_size = cuda::std::distance(out_iter, new_end);
   left_out->resize(match_total + comp_size, stream);

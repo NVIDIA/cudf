@@ -991,7 +991,7 @@ class IntervalDtype(_BaseDtype):
 
     def __init__(
         self,
-        subtype: None | Dtype = None,
+        subtype: Dtype | None = None,
         closed: Literal["left", "right", "neither", "both", None] = None,
     ) -> None:
         if closed not in {"left", "right", "neither", "both", None}:

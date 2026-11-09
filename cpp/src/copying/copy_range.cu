@@ -184,7 +184,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   auto indices_column = std::make_unique<cudf::column>(
     new_indices.type(),
     new_indices.size(),
-    std::move(*(target_indices->release().data.release())),
+    std::move(*(target_indices->release().data)),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0);
 
@@ -194,7 +194,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   // create column with keys_column and indices_column
   return make_dictionary_column(std::move(keys_column),
                                 std::move(indices_column),
-                                std::move(*(target_contents.null_mask.release())),
+                                std::move(*(target_contents.null_mask)),
                                 null_count);
 }
 

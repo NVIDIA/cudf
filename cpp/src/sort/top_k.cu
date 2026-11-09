@@ -19,7 +19,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_topk.cuh>
 #include <cuda/buffer>

@@ -65,13 +65,8 @@ __device__ cuda::std::pair<int, int> page_bounds(
   int const max_depth = s->setup.col.max_nesting_depth;
   int const max_def   = s->nesting.nesting_info[max_depth - 1].max_def_level;
 
-  auto const pp = &s->setup.page;
-  // Clamp to decoded level count; for chunked reads we may have decoded fewer values than
-  // num_input_values (skip_rows/num_rows), and the level buffers are only that large.
-  int const actual_num_values =
-    (pp->num_decoded_level_values > 0)
-      ? cuda::std::min(pp->num_input_values, pp->num_decoded_level_values)
-      : pp->num_input_values;
+  auto const pp               = &s->setup.page;
+  int const actual_num_values = num_values_with_decoded_levels(*pp, s->setup.col);
 
   // can skip all this if we know there are no nulls
   if (max_def == 0 && !is_bounds_pg) {
@@ -1025,13 +1020,15 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
                                      cuda::device_buffer<uint8_t>& temp_string_buf,
                                      cuda::stream_ref stream)
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // check for needed temp space for DELTA_BYTE_ARRAY
   auto const need_sizes =
     cudf::detail::any_of(pages.device_begin(),
                          pages.device_end(),
                          cuda::proclaim_return_type<bool>(
                            [] __device__(auto const& page) { return page.temp_string_size != 0; }),
-                         stream);
+                         stream,
+                         mr.as_temporary());
 
   if (need_sizes) {
     // sum up all of the temp_string_sizes
@@ -1042,27 +1039,27 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
                                                            page_sizes,
                                                            int64_t{0},
                                                            cuda::std::plus<int64_t>{},
-                                                           stream);
+                                                           stream,
+                                                           mr.as_temporary());
 
     // now do an exclusive scan over the temp_string_sizes to get offsets for each
     // page's chunk of the temp buffer
     cuda::device_buffer<int64_t> page_string_offsets(
-      stream, cudf::get_current_device_resource_ref(), pages.size(), cuda::no_init);
-    thrust::transform_exclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      pages.device_begin(),
-      pages.device_end(),
-      page_string_offsets.begin(),
-      page_sizes,
-      0L,
-      cuda::std::plus<int64_t>{});
+      stream, mr.get_temporary_mr(), pages.size(), cuda::no_init);
+    thrust::transform_exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                     pages.device_begin(),
+                                     pages.device_end(),
+                                     page_string_offsets.begin(),
+                                     page_sizes,
+                                     0L,
+                                     cuda::std::plus<int64_t>{});
 
     // allocate the temp space
     temp_string_buf = cuda::device_buffer<uint8_t>(
       stream, temp_string_buf.memory_resource(), total_size, cuda::no_init);
 
     // now use the offsets array to set each page's temp_string_buf pointers
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       pages.device_begin(),
                       pages.device_end(),
                       page_string_offsets.begin(),

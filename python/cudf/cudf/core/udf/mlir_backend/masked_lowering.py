@@ -23,12 +23,14 @@ from numba_cuda_mlir.lowering_utilities import (
     int_of,
     true,
     try_extract_constant,
+    unverified_convert,
 )
 from numba_cuda_mlir.models import PrimitiveModel, register_model
 from numba_cuda_mlir.numba_cuda import typing as nb_typing
 from numba_cuda_mlir.numba_cuda.core import ir as numba_ir
 from numba_cuda_mlir.numba_cuda.types.misc import unliteral
 
+from cudf.core.missing import NA
 from cudf.core.udf._ops import (
     arith_ops,
     bitwise_ops,
@@ -41,6 +43,24 @@ from cudf.core.udf.mlir_backend.masked_typing import (
     NAType,
     na_type,
 )
+
+
+@unverified_convert.register(type(NA))
+def _convert_na_sentinel(value, target_type, *, signed=None):
+    """Defer conversion of the ``cudf.NA`` sentinel (a pandas ``NAType``).
+
+    Loading the ``cudf.NA`` global in a UDF (``getattr(cudf, "NA")``) makes
+    numba-cuda-mlir store the raw Python ``NA`` object and convert it to the
+    var's MLIR type (``none``, since ``NAType`` has an opaque data model);
+    without a handler this raises ``NotImplementedError`` and aborts
+    compilation (e.g. ``if x is cudf.NA``). ``NA`` carries no payload and only
+    ever feeds an ``is``/``is not`` comparison (which reads the Masked validity
+    bit) or an ``NA -> Masked`` cast (which ignores the payload), so we defer
+    exactly like numba-cuda-mlir's own ``opaque_data_model_convert`` and return
+    the value unchanged; it is resolved/eliminated later.
+    """
+    return value
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -275,6 +295,27 @@ def _apply_masked_datetimelike_binary(
     builder.store_var(target, packed)
 
 
+def _emit_binary(
+    op: Callable, v1: mlir_ir.Value, v2: mlir_ir.Value
+) -> mlir_ir.Value:
+    """Emit the IR for ``op(v1, v2)`` on two scalar MLIR values, repairing the
+    operators whose default IR lowering does not match Python semantics.
+
+    ``operator.mod`` on raw IR values lowers to a C-style *truncated* remainder
+    (``arith.remsi``/``arith.remf``) whose sign follows the dividend, whereas
+    Python's ``%`` is *floored* -- its result takes the divisor's sign (e.g.
+    ``-1 % 2 == 1``, ``-7.0 % 2.0 == 1.0``). ``operator.floordiv`` already
+    lowers to true floor division, so we reconstruct the floored remainder via
+    the Python identity ``a % b == a - (a // b) * b``. This is exact for signed
+    integers, correct for floats, a no-op for unsigned operands (floor and
+    truncation coincide), and keeps the backend self-consistent so that
+    ``a == (a // b) * b + a % b`` holds by construction.
+    """
+    if op in (operator.mod, operator.imod):
+        return operator.sub(v1, operator.mul(operator.floordiv(v1, v2), v2))
+    return op(v1, v2)
+
+
 def _apply_masked_binary_op(
     builder: MLIRLower,
     target: Var,
@@ -319,7 +360,7 @@ def _apply_masked_binary_op(
     operand_ty = v1.type if is_cmp else target_value_mlir_ty
     v1 = convert(v1, operand_ty)
     v2 = convert(v2, operand_ty)
-    result_val = convert(op(v1, v2), target_value_mlir_ty)
+    result_val = convert(_emit_binary(op, v1, v2), target_value_mlir_ty)
     packed = _pack_masked(builder, target_type, result_val, result_valid)
     builder.store_var(target, packed)
 
@@ -484,6 +525,15 @@ def _make_lower_masked_unary(op: Callable) -> Callable:
         m_val, m_valid = _extract_masked_value_valid(m, st.body[0], st.body[1])
         m_val = convert(m_val, builder.get_mlir_type(operand_inner_ty))
 
+        if op is abs and isinstance(operand_inner_ty, types.Boolean):
+            # abs(bool) is just the boolean's integer value (0 or 1).
+            # numba-cuda-mlir's scalar abs builder has no boolean overload, so
+            # handle it here directly as a widening cast to the result type.
+            result_val = convert(m_val, builder.get_mlir_type(result_inner_ty))
+            packed = _pack_masked(builder, target_type, result_val, m_valid)
+            builder.store_var(target, packed)
+            return
+
         sig = result_inner_ty(operand_inner_ty)
         cg = builder.get_registered_builder(op, sig)
         if cg is None:
@@ -492,15 +542,17 @@ def _make_lower_masked_unary(op: Callable) -> Callable:
                 f"{getattr(op, '__name__', op)!r} on {operand_inner_ty}; "
                 f"signature {sig}"
             )
-        # The same operand var can feed multiple unary calls in one
-        # expression (e.g. ``sin(x) + lgamma(x)``); suffix the temp var
-        # name by op so typemap keys stay unique.
+        # Derive the temp var names from the unique result ``target`` (each op
+        # call has its own SSA result), not the operand, so the same op applied
+        # to the same operand more than once in a single expression
+        # (e.g. ``floor(x) + 1 if x - floor(x) >= 0.5 else floor(x)``) does not
+        # produce colliding typemap keys.
         op_tag = getattr(op, "__name__", "op")
         op_var = _make_temp_var(
-            builder, args[0], f"{op_tag}_in", operand_inner_ty
+            builder, target, f"{op_tag}_in", operand_inner_ty
         )
         out_var = _make_temp_var(
-            builder, args[0], f"{op_tag}_out", result_inner_ty
+            builder, target, f"{op_tag}_out", result_inner_ty
         )
         builder.store_var(op_var, m_val)
         cg(builder, out_var, [op_var], [])
@@ -611,15 +663,35 @@ def _make_lower_masked_numeric_cast() -> Callable:
 
 def _const_mlir_for_membership(
     py_const: int | float | bool, mlir_ty: mlir_ir.Type
-) -> mlir_ir.Value:
+) -> mlir_ir.Value | None:
     """Materialize a Python numeric constant as an MLIR value of ``mlir_ty`` for
-    comparison against a masked payload in a membership test.
+    comparison against a masked payload in a membership test, or ``None`` if the
+    constant can never compare equal to a payload of that type.
+
+    The constant is materialized to match the *payload* MLIR type, not the
+    Python literal's type: ``x in (1, 2, 3)`` where ``x`` is a float must build
+    float constants, because ``arith.constant(f64, value=<int>)`` is a malformed
+    ``llvm.mlir.constant`` ("expected integer type").
+
+    For an integer payload, a constant that is not an exactly-representable
+    integer value returns ``None`` rather than being truncated: ``x in (1.5,)``
+    with integer ``x`` is always ``False`` (Python semantics), and ``x in (2,)``
+    with a bool (``i1``) payload must not truncate ``2`` to ``0``.
     """
-    if isinstance(py_const, float):
-        return float_of(py_const, mlir_ty)
-    if isinstance(py_const, bool):
-        return int_of(int(py_const), mlir_ty)
-    return int_of(py_const, mlir_ty)
+    if isinstance(mlir_ty, mlir_ir.IntegerType):
+        fval = float(py_const)
+        if not fval.is_integer():
+            return None
+        ival = int(fval)
+        width = mlir_ty.width
+        if width == 1:
+            if ival not in (0, 1):
+                return None
+        elif not -(1 << (width - 1)) <= ival <= (1 << width) - 1:
+            # outside both the signed and unsigned ranges of this width
+            return None
+        return int_of(ival, mlir_ty)
+    return float_of(float(py_const), mlir_ty)
 
 
 def _lower_masked_literal_tuple_contains(
@@ -647,6 +719,11 @@ def _lower_masked_literal_tuple_contains(
     result = false()
     for const_val in constant_values:
         c = _const_mlir_for_membership(const_val, m_val.type)
+        if c is None:
+            # Constant can never equal a payload of this type (e.g. a
+            # non-integral float against an integer payload); contributes
+            # nothing to the OR of equalities.
+            continue
         m_v, c_v = coerce_numpy_scalars_for_binary_op(m_val, c)
         result = arith.ori(result, equal(m_v, c_v))
 

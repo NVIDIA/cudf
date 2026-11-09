@@ -3,6 +3,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import cudf
 from cudf.testing import assert_eq
@@ -50,10 +51,17 @@ def test_dataset_timeseries():
     assert len(gdf) == 20
 
 
-def test_dataset_timeseries_empty_range():
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ("2020-01-03", "2020-01-01"),
+        (pd.Timestamp("2020-01-01"), pd.Timestamp("2020-01-01")),
+    ],
+)
+def test_dataset_timeseries_empty_range(start, end):
     gdf = cudf.datasets.timeseries(
-        start="2020-01-03",
-        end="2020-01-01",
+        start=start,
+        end=end,
         freq="D",
         dtypes={"value": float},
         nulls_frequency=0.5,
@@ -64,17 +72,20 @@ def test_dataset_timeseries_empty_range():
     assert gdf.index.name == "timestamp"
 
 
-def test_dataset_timeseries_exclusive_end_null_mask():
+@pytest.mark.parametrize("nulls_frequency", [0.5, 1])
+def test_dataset_timeseries_exclusive_end_null_mask(nulls_frequency):
     gdf = cudf.datasets.timeseries(
         start="2020-01-01",
         end=pd.Timestamp("2020-01-03"),
         freq="D",
         dtypes={"value": float, "count": int},
-        nulls_frequency=0.5,
+        nulls_frequency=nulls_frequency,
         seed=1,
     )
     assert len(gdf) == 2
     assert gdf.index.name == "timestamp"
+    if nulls_frequency == 1:
+        assert gdf.isna().all().all()
 
 
 def test_make_bool():

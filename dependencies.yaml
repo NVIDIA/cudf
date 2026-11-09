@@ -6,7 +6,7 @@ files:
   all:
     output: conda
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       arch: [x86_64, aarch64]
     includes:
       - build_base
@@ -18,6 +18,7 @@ files:
       - cuda_version
       - depends_on_cupy
       - depends_on_cuda_bindings
+      - depends_on_cuda_bindings_build
       - depends_on_dask_cuda
       - depends_on_kvikio
       - depends_on_libkvikio
@@ -140,11 +141,6 @@ files:
     output: none
     includes:
       - depends_on_pytorch
-  build_cudf_polars_quent:
-    output: none
-    includes:
-      - py_version
-      - build_cudf_polars_quent
   build_java:
     # Toolchain for building static libcudf from source and packaging the cuDF
     # Java JAR. `depends_on_libcudf` is excluded because the Java build links
@@ -193,6 +189,19 @@ files:
       - develop
       - iwyu
       - py_version
+  test_cpp_debug:
+    output: none
+    includes:
+      - build_all
+      - build_base
+      - build_cpp
+      - cuda
+      - cuda_version
+      - depends_on_libkvikio
+      - depends_on_libnvcomp
+      - depends_on_librmm
+      - depends_on_rapids_logger
+      - test_cpp
   docs:
     output: none
     includes:
@@ -334,6 +343,7 @@ files:
     includes:
       - build_base
       - build_python_common
+      - depends_on_cuda_bindings_build
       - depends_on_libcudf
       - depends_on_librmm
       - depends_on_rmm
@@ -720,7 +730,7 @@ files:
   test_cudf_pandas_compat:
     output: none
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       pandas_compat_version: ["3.0"]
     includes:
       - test_cudf_pandas_compat
@@ -730,6 +740,10 @@ files:
       polars_compat_version: ["2.0", "2.1"]
     includes:
       - test_cudf_polars_compat
+  test_cudf_polars_quent:
+    output: none
+    includes:
+      - depends_on_cudf_polars_quent
 channels:
   - rapidsai-nightly
   - rapidsai
@@ -882,6 +896,10 @@ dependencies:
               cuda: "13.3"
             packages:
               - cuda-version=13.3
+          - matrix:
+              cuda: "13.4"
+            packages:
+              - cuda-version=13.4
       - output_types: [requirements, constraints]
         matrices:
           # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
@@ -943,6 +961,11 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit==13.3.*
+          - matrix:
+              cuda: "13.4"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.4.*
   cuda:
     common:
       - output_types: [conda]
@@ -980,7 +1003,7 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit[nvrtc]==13.*
-              - &nvjitlink_cu13 nvidia-nvjitlink>=13.3,<14
+              - &nvjitlink_cu13 nvidia-nvjitlink>=13.4,<14
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (just as a source of documentation, as this populates pyproject.toml in source control)
           - matrix:
@@ -1091,6 +1114,23 @@ dependencies:
           - matrix:
             packages:
               - cuda-bindings>=13.0.2,<14.0
+  # https://github.com/NVIDIA/cuda-python/blob/main/cuda_bindings_13/docs/source/support.rst
+  # The Cython layer of cuda.bindings must be built against CTK headers of the
+  # same or newer major.minor version, so cap the version at what the CUDA 13.4
+  # headers support. The runtime requirement (depends_on_cuda_bindings) is
+  # intentionally looser.
+  depends_on_cuda_bindings_build:
+    specific:
+      - output_types: [conda, requirements, pyproject]
+        matrices:
+          - matrix:
+              cuda: "12.*"
+            packages:
+              - cuda-bindings>=12.9.3,<13.0
+          # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
+          - matrix:
+            packages:
+              - cuda-bindings>=13.0.2,<13.5
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1324,12 +1364,6 @@ dependencies:
           # added lower bound pinning to get pytest-subtests for free
           - pytest>=9
           - tpchgen-cli>=3.0.0
-  build_cudf_polars_quent:
-    common:
-      - output_types: conda
-        packages:
-          - maturin>=1.14,<2
-          - rust=1.97
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1889,11 +1923,16 @@ dependencies:
       - output_types: conda
         packages:
           - cudf-polars==26.12.*,>=0.0.0a0
+  depends_on_cudf_polars_quent:
+    common:
+      - output_types: conda
+        packages:
+          - cudf-polars-quent==26.12.*,>=0.0.0a0
   depends_on_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - narwhals==2.24.0
+          - narwhals==2.28.0
   test_cudf_pandas_compat:
     specific:
       - output_types: [requirements, constraints]

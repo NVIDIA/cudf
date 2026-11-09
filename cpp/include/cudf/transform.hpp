@@ -8,15 +8,21 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/scalar_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
+#include <cuda/stream>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -29,6 +35,9 @@ namespace CUDF_EXPORT cudf {
 
 /**
  * @addtogroup transformation_transform
+ *
+ * See @ref udfs for the device modules accepted by JIT transforms.
+ *
  * @{
  */
 
@@ -157,11 +166,13 @@ struct transform_program {
    *
    * @param table A table whose schema is used to lower the expression and retrieve its kernel
    * @param expressions The AST expressions to lower and construct the program from
+   * @param fragments Device modules defining the called functions; linked together
    * @param stream CUDA stream used for device memory operations during construction
    * @param mr Device memory resource used for device memory allocations during construction
    */
   transform_program(table_view const& table,
                     std::span<std::reference_wrapper<ast::expression const> const> expressions,
+                    cudf::lto_fragments fragments     = {},
                     cuda::stream_ref stream           = cudf::get_default_stream(),
                     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -231,6 +242,8 @@ struct transform_program {
  * Computes:
  * `(outputs[i]...) =  UDF(inputs[i]...)`.
  *
+ * PTX UDFs are linked as complete modules. The function must follow the CUDF UDF ABI.
+ *
  * For both null-aware and non-null-aware UDFs, output values have the following initialization:
  * - Fixed-width outputs have uninitialized values.
  * - Mutable string outputs (`cuda::std::span<char>`, used with preallocated string offsets) contain
@@ -284,14 +297,6 @@ std::unique_ptr<table> transform(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief The type of LTO Binary
- */
-enum class lto_binary_type : uint8_t {
-  LTO_IR,  //< LTO-IR binary
-  FATBIN   //< FATBIN binary
-};
-
-/**
  * @brief Creates a new table by applying a transform function against every
  * element of the input columns.
  *
@@ -312,8 +317,9 @@ enum class lto_binary_type : uint8_t {
  * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
  * the input and pre-allocated output columns.
  *
- * @param udf           The LTO-IR fragment containing the transform function to apply. The UDF must
- * be named `transform` and follow the CUDF UDF ABI
+ * @param udf           The LTO-IR, FATBIN, or PTX fragment containing the transform function to
+ * apply. The UDF must follow the CUDF UDF ABI and be named `transform`. For PTX, the first function
+ * and references to it are renamed to `transform` before linking. PTX input must be null-terminated
  * @param binary_type   The type of the LTO binary provided in `udf`
  * @param is_null_aware Signifies the UDF will receive row inputs as optional values
  * @param user_data     User-defined device data to pass to the UDF
@@ -394,6 +400,7 @@ std::unique_ptr<column> compute_column(
  *
  * @param table The table used for expression evaluation
  * @param expr The root of the expression tree
+ * @param fragments Device modules defining the called functions; linked together
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource
  * @return Output column
@@ -401,6 +408,7 @@ std::unique_ptr<column> compute_column(
 std::unique_ptr<column> compute_column_jit(
   table_view const& table,
   ast::expression const& expr,
+  cudf::lto_fragments fragments     = {},
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -422,6 +430,7 @@ std::unique_ptr<column> compute_column_jit(
  *
  * @param table The table used for expression evaluation
  * @param expressions Non-empty collection of expression-tree roots, one per output column
+ * @param fragments Device modules defining the called functions; linked together
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource
  * @return Table containing one output column per expression, in the same order as `expressions`
@@ -429,6 +438,7 @@ std::unique_ptr<column> compute_column_jit(
 std::unique_ptr<table> compute_table_jit(
   table_view const& table,
   std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  cudf::lto_fragments fragments     = {},
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

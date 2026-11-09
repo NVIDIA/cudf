@@ -178,7 +178,21 @@ __device__ int compute_url_component_sizes(int32_t* protocol_size,
   return 0;
 }
 
-// Copies the six parsed URL components into their preallocated string buffers.
+/**
+ * @brief Copies the six parsed URL components into their preallocated string buffers.
+ *
+ * Each output buffer must have the byte length computed by `compute_url_component_sizes`
+ * for the same input. If no valid URL is found, the output buffers are left untouched.
+ *
+ * @param protocol Preallocated output buffer for the protocol
+ * @param host Preallocated output buffer for the host
+ * @param port Preallocated output buffer for the port
+ * @param path Preallocated output buffer for the path
+ * @param query Preallocated output buffer for the query
+ * @param fragment Preallocated output buffer for the fragment
+ * @param input String containing the URL to parse
+ * @return 0, including when no valid URL is found
+ */
 __device__ int write_url_components(cudf::mutable_string_view* protocol,
                                     cudf::mutable_string_view* host,
                                     cudf::mutable_string_view* port,

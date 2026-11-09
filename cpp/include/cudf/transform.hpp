@@ -239,8 +239,8 @@ struct transform_program {
  *
  * For both null-aware and non-null-aware UDFs, output values have the following initialization:
  * - Fixed-width outputs have uninitialized values.
- * - Mutable string outputs (`cuda::std::span<char>`, used with preallocated string offsets) contain
- *   a valid data pointer and size, but the character data is uninitialized.
+ * - Mutable string outputs (`cudf::mutable_string_view`, used with preallocated string offsets)
+ *   contain a valid data pointer and byte count, but the character data is uninitialized.
  * - String-view outputs (`cudf::string_view`) have uninitialized values.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)

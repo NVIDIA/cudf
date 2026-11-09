@@ -109,6 +109,7 @@ compute_row_frequencies(table_view const& input,
                         cuda::stream_ref stream,
                         rmm::device_async_resource_ref mr)
 {
+  cudf::memory_resources mrs{mr};
   auto const has_nested_columns = cudf::detail::has_nested_columns(input);
 
   // Nested types are not tested, thus we just throw exception if we see such input for now.
@@ -193,7 +194,8 @@ compute_row_frequencies(table_view const& input,
 
   // Reduction results above are either group sizes of equal rows, or `0`.
   // The final output is non-zero group sizes only.
-  cudf::detail::copy_if_async(input_it, input_it + num_rows, output_it, is_not_zero{}, stream);
+  cudf::detail::copy_if_async(
+    input_it, input_it + num_rows, output_it, is_not_zero{}, stream, mrs.as_temporary());
 
   return {std::move(distinct_indices), std::move(distinct_counts)};
 }

@@ -209,8 +209,11 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
         node.op == plc.binaryop.BinaryOperator.BITWISE_XOR
         and c1.dtype.id() == plc.TypeId.BOOL8
     ):
-        # libcudf's AST evaluation rejects XOR of booleans.
-        raise NotImplementedError("AST conversion does not support boolean XOR")
+        # libcudf's AST rejects boolean BITWISE_XOR. Boolean NOT_EQUAL has the
+        # same truth table and null propagation.
+        ast_op = plc_expr.ASTOperator.NOT_EQUAL
+    else:
+        ast_op = BINOP_TO_ASTOP[node.op]
     if c1.dtype != c2.dtype:
         if isinstance(c1, expr.Literal):  # pragma: no cover
             c1 = c1.astype(c2.dtype)
@@ -229,7 +232,7 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
                 "BinOp with mismatching dtypes"
             )  # pragma: no cover
     children = (c1, c2)
-    return plc_expr.Operation(BINOP_TO_ASTOP[node.op], *map(self, children))
+    return plc_expr.Operation(ast_op, *map(self, children))
 
 
 @_to_ast.register

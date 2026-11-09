@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/ast/expressions.hpp>
@@ -2433,3 +2434,5 @@ INSTANTIATE_TEST_SUITE_P(JoinKinds,
                          ::testing::Values(cudf::join_kind::INNER_JOIN,
                                            cudf::join_kind::LEFT_JOIN,
                                            cudf::join_kind::FULL_JOIN));
+
+CUDF_TEST_PROGRAM_MAIN()

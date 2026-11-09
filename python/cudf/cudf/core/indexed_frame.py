@@ -3544,7 +3544,7 @@ class IndexedFrame(Frame):
         *,
         axis: Axis | None = None,
         inplace: bool = False,
-        limit: None | int = None,
+        limit: int | None = None,
         limit_area: Literal["inside", "outside", None] = None,
     ) -> Self | None:
         """
@@ -3568,7 +3568,7 @@ class IndexedFrame(Frame):
         *,
         axis: Axis | None = None,
         inplace: bool = False,
-        limit: None | int = None,
+        limit: int | None = None,
         limit_area: Literal["inside", "outside", None] = None,
     ) -> Self | None:
         """

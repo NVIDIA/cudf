@@ -32,7 +32,7 @@ namespace detail {
 std::unique_ptr<table> tile(table_view const& in,
                             size_type count,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cudf::memory_resources mr)
 {
   CUDF_EXPECTS(count >= 0, "Count cannot be negative");
 
@@ -56,7 +56,7 @@ std::unique_ptr<table> tile(table_view const& in,
 std::unique_ptr<table> tile(table_view const& in,
                             size_type count,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::tile(in, count, stream, mr);

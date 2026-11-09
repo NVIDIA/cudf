@@ -5,6 +5,7 @@
 set -euo pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 rapids-logger "Download wheels"
 
@@ -16,18 +17,17 @@ CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name 
 CUDF_POLARS_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-polars cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
+rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
 
 rapids-logger "Install libcudf, pylibcudf and cudf_polars"
 
 # notes:
 #
-#   * echo to expand wildcard before adding `[test]` requires for pip
+#   * echo to expand wildcard before adding `[test]` requires for the installer
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
-    -v \
+rapids-uv-pip install \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
@@ -45,21 +45,17 @@ rapids-logger "Install polars test requirements"
 sed -i '/^polars-cloud$/d' polars/py-polars/requirements-dev.txt
 # Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
 sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
-# Polars 2.0 tests use a connection API removed in DuckDB 2.0.
-# TODO: Remove after this is resolved upstream.
-sed -i 's/^duckdb$/duckdb<2/' polars/py-polars/requirements-ci.txt
 
 # notes:
 #
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
-    -v \
-    --prefer-binary \
+rapids-uv-pip install \
     --constraint "${PIP_CONSTRAINT}" \
     -r polars/py-polars/requirements-dev.txt \
-    -r polars/py-polars/requirements-ci.txt
+    -r polars/py-polars/requirements-ci.txt \
+    "polars-iceberg>=0.1.0,<1.0.0"
 
 # shellcheck disable=SC2317
 function set_exitcode()

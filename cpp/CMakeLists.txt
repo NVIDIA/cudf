@@ -467,11 +467,6 @@ rtcx_embed_includes(
 )
 
 rtcx_embed_includes(
-  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/binaryop/jit DEST_DIRECTORY
-  cudf/cpp/src/binaryop/jit INCLUDE_DIRECTORIES cudf/cpp/src
-)
-
-rtcx_embed_includes(
   cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/join/jit DEST_DIRECTORY
   cudf/cpp/src/join/jit INCLUDE_DIRECTORIES cudf/cpp/src
 )
@@ -513,7 +508,7 @@ function(precompile_fixed_width_kernel_fragments)
     )
     set(VARIANT_NAME transform_kernel_${FILE_INDEX})
     set(INSTANCE
-        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
     )
     add_fragment(
       cudf_fragments
@@ -548,7 +543,7 @@ function(precompile_fixed_width_kernel_fragments)
       )
       set(VARIANT_NAME transform_kernel_${FILE_INDEX})
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, ${TYPE}, false, 0>, cudf::jit::column_accessor<1ULL, cudf::column_device_view_core, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::mutable_column_device_view_core, ${TYPE}, false, 0>>>"
+          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
       )
       add_fragment(
         cudf_fragments
@@ -580,18 +575,7 @@ function(precompile_string_kernel_fragments)
   list(APPEND CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES uint8_t uint16_t uint32_t uint64_t
        cuda::std::span<char>
   )
-  list(
-    APPEND
-    CUDF_PRECOMPILE_STRING_OUTPUT_COLUMN_TYPES
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::mutable_column_device_view_core
-    cudf::jit::mutable_strings_column_device_view
-  )
-  foreach(OUTPUT_TYPE OUTPUT_COLUMN_TYPE IN ZIP_LISTS CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES
-                      CUDF_PRECOMPILE_STRING_OUTPUT_COLUMN_TYPES
-  )
+  foreach(OUTPUT_TYPE IN LISTS CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES)
     # Pre-compile for up to 8 output columns
     foreach(OUTPUT_INDICES IN ITEMS "0" "0;1" "0;1;2" "0;1;2;3" "0;1;2;3;4" "0;1;2;3;4;5"
                                     "0;1;2;3;4;5;6" "0;1;2;3;4;5;6;7"
@@ -606,17 +590,15 @@ function(precompile_string_kernel_fragments)
       set(OUTPUT_ACCESSORS "")
       set(OUTPUT_POINTERS "")
       foreach(OUTPUT_INDEX IN LISTS OUTPUT_INDICES)
-        list(
-          APPEND
-          OUTPUT_ACCESSORS
-          "cudf::jit::column_accessor<${OUTPUT_INDEX}ULL, ${OUTPUT_COLUMN_TYPE}, ${OUTPUT_TYPE}, false, 0>"
+        list(APPEND OUTPUT_ACCESSORS
+             "cudf::jit::column_accessor<${OUTPUT_INDEX}, ${OUTPUT_TYPE}, false, 0>"
         )
         list(APPEND OUTPUT_POINTERS "${OUTPUT_TYPE} *")
       endforeach()
       list(JOIN OUTPUT_ACCESSORS " ," OUTPUT_ACCESSORS_STR)
       list(JOIN OUTPUT_POINTERS " ," OUTPUT_POINTERS_STR)
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0ULL, cudf::column_device_view_core, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
+          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
       )
       add_fragment(
         cudf_fragments
@@ -734,6 +716,8 @@ add_library(
   src/filling/repeat.cu
   src/filling/sequence.cu
   src/groupby/common/group_struct_minmax_scan.cu
+  src/groupby/common/groupby_helper.cu
+  src/groupby/common/groupby_helper_nested.cu
   src/groupby/common/m2_var_std.cu
   src/groupby/common/null_mask.cu
   src/groupby/common/utils.cpp
@@ -742,50 +726,37 @@ add_library(
   src/groupby/hash/compute_single_pass_aggs.cpp
   src/groupby/hash/compute_single_pass_aggs.cu
   src/groupby/hash/extract_single_pass_aggs.cpp
+  src/groupby/hash/group_bitwise.cu
+  src/groupby/hash/group_collect.cu
+  src/groupby/hash/group_correlation.cu
+  src/groupby/hash/group_count_scan.cu
+  src/groupby/hash/group_histogram.cu
   src/groupby/hash/group_keys.cu
-  src/groupby/hash/groupby.cu
+  src/groupby/hash/group_max_scan.cu
+  src/groupby/hash/group_merge_lists.cu
+  src/groupby/hash/group_merge_m2.cu
+  src/groupby/hash/group_min_scan.cu
+  src/groupby/hash/group_nth_element.cu
+  src/groupby/hash/group_nunique.cu
+  src/groupby/hash/group_product_scan.cu
+  src/groupby/hash/group_quantiles.cu
+  src/groupby/hash/group_rank_scan.cu
+  src/groupby/hash/group_replace_nulls.cu
+  src/groupby/hash/group_sum_scan.cu
+  src/groupby/hash/group_topk.cu
+  src/groupby/hash/groupby.cpp
   src/groupby/hash/hash_compound_agg_finalizer.cu
+  src/groupby/hash/host_udf_aggregation.cpp
   src/groupby/hash/output_utils.cu
+  src/groupby/hash/scan.cpp
   src/groupby/hash/single_pass_argminmax.cu
+  src/groupby/hash/single_pass_argminmax_nested.cu
   src/groupby/hash/single_pass_fused_minmax_sum.cu
+  src/groupby/hash/single_pass_m2.cu
   src/groupby/hash/single_pass_minmax.cu
   src/groupby/hash/single_pass_product.cu
   src/groupby/hash/single_pass_sum_overflow.cu
   src/groupby/hash/single_pass_sums.cu
-  src/groupby/sort/aggregate.cpp
-  src/groupby/sort/group_argmax.cu
-  src/groupby/sort/group_argmin.cu
-  src/groupby/sort/group_argminmax_nested.cu
-  src/groupby/sort/group_argminmax_primitives.cu
-  src/groupby/sort/group_bitwise.cu
-  src/groupby/sort/group_collect.cu
-  src/groupby/sort/group_correlation.cu
-  src/groupby/sort/group_count.cu
-  src/groupby/sort/group_count_scan.cu
-  src/groupby/sort/group_histogram.cu
-  src/groupby/sort/group_m2.cu
-  src/groupby/sort/group_max.cu
-  src/groupby/sort/group_max_scan.cu
-  src/groupby/sort/group_merge_lists.cu
-  src/groupby/sort/group_merge_m2.cu
-  src/groupby/sort/group_min.cu
-  src/groupby/sort/group_min_scan.cu
-  src/groupby/sort/group_nth_element.cu
-  src/groupby/sort/group_nunique.cu
-  src/groupby/sort/group_product.cu
-  src/groupby/sort/group_product_scan.cu
-  src/groupby/sort/group_quantiles.cu
-  src/groupby/sort/group_rank_scan.cu
-  src/groupby/sort/group_replace_nulls.cu
-  src/groupby/sort/group_std.cu
-  src/groupby/sort/group_sum.cu
-  src/groupby/sort/group_sum_overflow.cu
-  src/groupby/sort/group_sum_scan.cu
-  src/groupby/sort/group_topk.cu
-  src/groupby/sort/host_udf_aggregation.cpp
-  src/groupby/sort/scan.cpp
-  src/groupby/sort/sort_helper.cu
-  src/groupby/sort/sort_helper_nested.cu
   src/groupby/streaming_groupby.cpp
   src/groupby/streaming_groupby/aggregate.cu
   src/groupby/streaming_groupby/impl.cu
@@ -865,21 +836,21 @@ add_library(
   src/io/parquet/compact_protocol_reader.cpp
   src/io/parquet/compact_protocol_writer.cpp
   src/io/parquet/decode_preprocess.cu
-  src/io/parquet/experimental/dictionary_page_filter.cu
   src/io/parquet/experimental/deletion_vectors.cu
   src/io/parquet/experimental/deletion_vectors_helpers.cu
   src/io/parquet/experimental/hybrid_scan.cpp
-  src/io/parquet/experimental/hybrid_scan_chunking.cu
-  src/io/parquet/experimental/hybrid_scan_helpers.cpp
-  src/io/parquet/experimental/hybrid_scan_impl.cpp
   src/io/parquet/experimental/hybrid_scan_multifile.cpp
-  src/io/parquet/experimental/hybrid_scan_preprocess.cu
-  src/io/parquet/experimental/page_index_filter.cu
-  src/io/parquet/experimental/page_index_filter_utils.cu
   src/io/parquet/experimental/parquet_footer.cpp
   src/io/parquet/experimental/variant_extract.cu
   src/io/parquet/experimental/variant_path.cpp
   src/io/parquet/expression_transform_helpers.cpp
+  src/io/parquet/hybrid_scan/dictionary_page_filter.cu
+  src/io/parquet/hybrid_scan/hybrid_scan_chunking.cu
+  src/io/parquet/hybrid_scan/hybrid_scan_helpers.cpp
+  src/io/parquet/hybrid_scan/hybrid_scan_impl.cpp
+  src/io/parquet/hybrid_scan/hybrid_scan_preprocess.cu
+  src/io/parquet/hybrid_scan/page_index_filter.cu
+  src/io/parquet/hybrid_scan/page_index_filter_utils.cu
   src/io/parquet/io_utils/parquet_io_utils.cpp
   src/io/parquet/page_data.cu
   src/io/parquet/chunk_dict.cu
@@ -922,6 +893,7 @@ add_library(
   src/jit/cache.cpp
   src/jit/helpers.cpp
   src/jit/parser.cpp
+  src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
   src/join/conditional_join.cu
@@ -963,6 +935,7 @@ add_library(
   src/join/hash_join/partitioned_join_retrieve.cu
   src/join/hash_join/partitioned_left_join.cu
   src/join/join.cu
+  src/join/join_match_context.cpp
   src/join/join_utils.cu
   src/join/key_remapping.cu
   src/join/mark_join.cu
@@ -1103,7 +1076,6 @@ add_library(
   src/stream_compaction/distinct_helpers_nested_nan_unequal_ordered.cu
   src/stream_compaction/drop_nans.cu
   src/stream_compaction/drop_nulls.cu
-  src/stream_compaction/filter/filter.cu
   src/stream_compaction/stable_distinct.cu
   src/stream_compaction/unique.cu
   src/strings/attributes.cu
@@ -1587,7 +1559,7 @@ if(CUDF_BUILD_TESTUTIL)
   add_library(cudftestutil_objects OBJECT)
   target_link_libraries(
     cudftestutil_objects
-    PUBLIC cudf::cudftestutil GTest::gmock GTest::gmock_main GTest::gtest GTest::gtest_main
+    PUBLIC cudf::cudftestutil GTest::gmock GTest::gtest
     PRIVATE cudf::cudftestutil_impl
   )
   add_library(cudf::cudftestutil_objects ALIAS cudftestutil_objects)

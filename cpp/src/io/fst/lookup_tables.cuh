@@ -847,7 +847,7 @@ class Dfa {
       TransitionTableInitT const& transition_table_init,
       TranslationTableInitT const& translation_table_init,
       cuda::stream_ref stream)
-    : init_data{single_item, stream}
+    : init_data{single_item, stream, cudf::get_current_device_resource_ref()}
   {
     *init_data.host_ptr() = {sgid_lut_init, transition_table_init, translation_table_init};
     init_data.host_to_device_async(stream);

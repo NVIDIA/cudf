@@ -16,7 +16,6 @@
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 
-#include <jit/column_device_view_wrappers.cuh>
 #include <jit/transform_kernel.cuh>
 
 #pragma nv_hdrstop  // The above headers are used by the kernel below and need to be included before

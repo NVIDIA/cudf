@@ -582,7 +582,7 @@ struct rle_stream {
 
       if (chunk_runs == 0) { break; }
 
-      int const per = cudf::util::div_rounding_up_safe(chunk_total, num_warps);
+      int const per = cudf::detail::div_rounding_up_safe(chunk_total, num_warps);
       int const lo  = warp_id * per;
       int const hi  = min(lo + per, chunk_total);
       if (lo < hi) {

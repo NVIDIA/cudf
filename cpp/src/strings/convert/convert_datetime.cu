@@ -10,6 +10,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/convert/convert_datetime.hpp>
 #include <cudf/strings/detail/converters.hpp>
@@ -17,6 +18,7 @@
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -26,6 +28,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/optional>
@@ -97,7 +100,7 @@ using specifier_map = std::map<char, int8_t>;
 
 struct format_compiler {
   std::string_view const format;
-  rmm::device_uvector<format_item> d_items;
+  cuda::device_buffer<format_item> d_items;
 
   // clang-format off
   // The specifiers are documented here (not all are supported):
@@ -111,7 +114,7 @@ struct format_compiler {
   format_compiler(std::string_view fmt,
                   cuda::stream_ref stream,
                   specifier_map extra_specifiers = {})
-    : format(fmt), d_items(0, stream)
+    : format(fmt), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
   {
     specifiers.insert(extra_specifiers.begin(), extra_specifiers.end());
     auto items  = cudf::detail::make_empty_host_vector<format_item>(format.length(), stream);
@@ -155,7 +158,7 @@ struct format_compiler {
 
     // copy format_items to device memory
     d_items =
-      cudf::detail::make_device_uvector(items, stream, cudf::get_current_device_resource_ref());
+      cudf::detail::make_device_buffer(items, stream, cudf::get_current_device_resource_ref());
   }
 
   device_span<format_item const> format_items() { return device_span<format_item const>(d_items); }
@@ -391,12 +394,11 @@ struct parse_datetime {
  * @brief Type-dispatch operator to convert timestamp strings to native fixed-width-type
  */
 struct dispatch_to_timestamps_fn {
-  template <typename T>
+  template <cudf::concepts::timestamp T>
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
                   cuda::stream_ref stream) const
-    requires(cudf::is_timestamp<T>())
   {
     format_compiler compiler(format, stream);
     parse_datetime<T> pfn{d_strings, compiler.format_items(), compiler.subsecond_precision()};
@@ -411,7 +413,6 @@ struct dispatch_to_timestamps_fn {
                   std::string_view,
                   mutable_column_view&,
                   cuda::stream_ref) const
-    requires(not cudf::is_timestamp<T>())
   {
     CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
   }
@@ -1089,13 +1090,12 @@ struct datetime_formatter_fn {
 //
 using strings_children = std::pair<std::unique_ptr<cudf::column>, rmm::device_uvector<char>>;
 struct dispatch_from_timestamps_fn {
-  template <typename T>
+  template <cudf::concepts::timestamp T>
   strings_children operator()(column_device_view const& d_timestamps,
                               column_device_view const& d_format_names,
                               device_span<format_item const> d_format_items,
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref mr) const
-    requires(cudf::is_timestamp<T>())
   {
     return make_strings_children(
       datetime_formatter_fn<T>{d_timestamps, d_format_names, d_format_items},
@@ -1106,7 +1106,7 @@ struct dispatch_from_timestamps_fn {
 
   template <typename T, typename... Args>
   strings_children operator()(Args&&...) const
-    requires(not cudf::is_timestamp<T>())
+    requires(not cudf::concepts::timestamp<T>)
   {
     CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
   }

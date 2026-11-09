@@ -4,7 +4,7 @@
  */
 
 #include "../compact_protocol_reader.hpp"
-#include "hybrid_scan_impl.hpp"
+#include "io/parquet/hybrid_scan/hybrid_scan_impl.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
@@ -48,10 +48,10 @@ std::optional<int64_t> dictionary_page_length(std::span<uint8_t const> page_byte
   return page_length;
 }
 
-hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
+hybrid_scan_metadata::hybrid_scan_metadata(std::span<uint8_t const> footer_bytes,
                                            parquet_reader_options const& options)
-  : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
-      std::vector<cudf::host_span<uint8_t const>>{footer_bytes},
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+      std::vector<std::span<uint8_t const>>{footer_bytes},
       options.is_enabled_use_arrow_schema(),
       options.is_enabled_allow_mismatched_pq_schemas())}
 {
@@ -59,8 +59,19 @@ hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<uint8_t const> footer
 
 hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData const& parquet_metadata,
                                            parquet_reader_options const& options)
-  : _metadata{std::make_shared<detail::aggregate_reader_metadata>(
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
       std::vector<FileMetaData>{parquet_metadata},
+      options.is_enabled_use_arrow_schema(),
+      options.is_enabled_allow_mismatched_pq_schemas())}
+{
+}
+
+hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData&& parquet_metadata,
+                                           parquet_reader_options const& options)
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+      // Move iterators avoid the copy an initializer list would make
+      std::vector<FileMetaData>(std::make_move_iterator(&parquet_metadata),
+                                std::make_move_iterator(&parquet_metadata + 1)),
       options.is_enabled_use_arrow_schema(),
       options.is_enabled_allow_mismatched_pq_schemas())}
 {
@@ -68,22 +79,38 @@ hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData const& parquet_metadata,
 
 hybrid_scan_metadata::~hybrid_scan_metadata() = default;
 
-hybrid_scan_reader::hybrid_scan_reader(cudf::host_span<uint8_t const> footer_bytes,
+FileMetaData const& hybrid_scan_metadata::parquet_metadata() const
+{
+  return _metadata->parquet_metadata(0);
+}
+
+hybrid_scan_reader::hybrid_scan_reader(std::span<uint8_t const> footer_bytes,
                                        parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
-      std::vector<cudf::host_span<uint8_t const>>{footer_bytes}, options)}
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
+      std::vector<std::span<uint8_t const>>{footer_bytes}, options)}
 {
 }
 
 hybrid_scan_reader::hybrid_scan_reader(FileMetaData const& parquet_metadata,
                                        parquet_reader_options const& options)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
       std::vector<FileMetaData>{parquet_metadata}, options)}
 {
 }
 
+hybrid_scan_reader::hybrid_scan_reader(FileMetaData&& parquet_metadata,
+                                       parquet_reader_options const& options)
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
+      // Move iterators avoid the copy an initializer list would make
+      std::vector<FileMetaData>(std::make_move_iterator(&parquet_metadata),
+                                std::make_move_iterator(&parquet_metadata + 1)),
+      options)}
+{
+}
+
 hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata metadata)
-  : _impl{std::make_unique<detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
+  : _impl{
+      std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
 {
 }
 
@@ -99,10 +126,10 @@ hybrid_scan_reader::~hybrid_scan_reader() = default;
   return _impl->parquet_metadatas().front();
 }
 
-void hybrid_scan_reader::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes) const
+void hybrid_scan_reader::setup_page_index(std::span<uint8_t const> page_index_bytes) const
 {
   CUDF_FUNC_RANGE();
-  return _impl->setup_page_indexes(std::vector<cudf::host_span<uint8_t const>>{page_index_bytes});
+  return _impl->setup_page_indexes(std::vector<std::span<uint8_t const>>{page_index_bytes});
 }
 
 std::vector<cudf::size_type> hybrid_scan_reader::all_row_groups(
@@ -234,9 +261,7 @@ std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_bloom_fi
 }
 
 std::unique_ptr<cudf::column> hybrid_scan_reader::build_all_true_row_mask(
-  std::span<size_type const> row_group_indices,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::span<size_type const> row_group_indices, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -251,7 +276,7 @@ std::unique_ptr<cudf::column> hybrid_scan_reader::build_row_mask_with_page_index
   std::span<size_type const> row_group_indices,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -272,7 +297,9 @@ hybrid_scan_reader::filter_column_chunks_byte_ranges(std::span<size_type const> 
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->filter_column_chunks_byte_ranges(input_row_group_indices, options).first;
+  return _impl
+    ->column_chunks_byte_ranges<read_columns_mode::FILTER_COLUMNS>(input_row_group_indices, options)
+    .first;
 }
 
 table_with_metadata hybrid_scan_reader::materialize_filter_columns(
@@ -282,7 +309,7 @@ table_with_metadata hybrid_scan_reader::materialize_filter_columns(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -290,7 +317,7 @@ table_with_metadata hybrid_scan_reader::materialize_filter_columns(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->materialize_filter_columns(
+  return _impl->materialize_table<read_columns_mode::FILTER_COLUMNS>(
     input_row_group_indices, column_chunk_data, row_mask, mask_data_pages, options, stream, mr);
 }
 
@@ -303,7 +330,26 @@ hybrid_scan_reader::payload_column_chunks_byte_ranges(std::span<size_type const>
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->payload_column_chunks_byte_ranges(input_row_group_indices, options).first;
+  return _impl
+    ->column_chunks_byte_ranges<read_columns_mode::PAYLOAD_COLUMNS>(input_row_group_indices,
+                                                                    options)
+    .first;
+}
+
+std::vector<byte_range_info> hybrid_scan_reader::payload_pages_byte_ranges(
+  std::span<size_type const> row_group_indices,
+  cudf::column_view const& row_mask,
+  parquet_reader_options const& options,
+  cuda::stream_ref stream)
+{
+  CUDF_FUNC_RANGE();
+
+  // Temporary vector with row group indices from the first source
+  auto const input_row_group_indices =
+    std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
+
+  return _impl->sparse_payload_pages_byte_ranges(input_row_group_indices, row_mask, options, stream)
+    .first;
 }
 
 table_with_metadata hybrid_scan_reader::materialize_payload_columns(
@@ -313,7 +359,7 @@ table_with_metadata hybrid_scan_reader::materialize_payload_columns(
   use_data_page_mask mask_data_pages,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -321,7 +367,7 @@ table_with_metadata hybrid_scan_reader::materialize_payload_columns(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->materialize_payload_columns(
+  return _impl->materialize_table<read_columns_mode::PAYLOAD_COLUMNS>(
     input_row_group_indices, column_chunk_data, row_mask, mask_data_pages, options, stream, mr);
 }
 
@@ -333,7 +379,9 @@ std::vector<byte_range_info> hybrid_scan_reader::all_column_chunks_byte_ranges(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->all_column_chunks_byte_ranges(input_row_group_indices, options).first;
+  return _impl
+    ->column_chunks_byte_ranges<read_columns_mode::ALL_COLUMNS>(input_row_group_indices, options)
+    .first;
 }
 
 table_with_metadata hybrid_scan_reader::materialize_all_columns(
@@ -341,7 +389,7 @@ table_with_metadata hybrid_scan_reader::materialize_all_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -349,8 +397,13 @@ table_with_metadata hybrid_scan_reader::materialize_all_columns(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->materialize_all_columns(
-    input_row_group_indices, column_chunk_data, options, stream, mr);
+  return _impl->materialize_table<read_columns_mode::ALL_COLUMNS>(input_row_group_indices,
+                                                                  column_chunk_data,
+                                                                  cudf::column_view{},
+                                                                  use_data_page_mask::NO,
+                                                                  options,
+                                                                  stream,
+                                                                  mr);
 }
 
 void hybrid_scan_reader::setup_chunking_for_filter_columns(
@@ -362,7 +415,7 @@ void hybrid_scan_reader::setup_chunking_for_filter_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -370,15 +423,16 @@ void hybrid_scan_reader::setup_chunking_for_filter_columns(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->setup_chunking_for_filter_columns(chunk_read_limit,
-                                                  pass_read_limit,
-                                                  input_row_group_indices,
-                                                  row_mask,
-                                                  mask_data_pages,
-                                                  column_chunk_data,
-                                                  options,
-                                                  stream,
-                                                  mr);
+  _impl->setup_chunked_table_materialization<read_columns_mode::FILTER_COLUMNS>(
+    chunk_read_limit,
+    pass_read_limit,
+    input_row_group_indices,
+    column_chunk_data,
+    row_mask,
+    mask_data_pages,
+    options,
+    stream,
+    mr);
 }
 
 table_with_metadata hybrid_scan_reader::materialize_filter_columns_chunk(
@@ -386,7 +440,7 @@ table_with_metadata hybrid_scan_reader::materialize_filter_columns_chunk(
 {
   CUDF_FUNC_RANGE();
 
-  return _impl->materialize_filter_columns_chunk(row_mask);
+  return _impl->materialize_table_chunk<read_columns_mode::FILTER_COLUMNS>(row_mask);
 }
 
 void hybrid_scan_reader::setup_chunking_for_payload_columns(
@@ -398,7 +452,7 @@ void hybrid_scan_reader::setup_chunking_for_payload_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -406,15 +460,42 @@ void hybrid_scan_reader::setup_chunking_for_payload_columns(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->setup_chunking_for_payload_columns(chunk_read_limit,
-                                                   pass_read_limit,
-                                                   input_row_group_indices,
-                                                   row_mask,
-                                                   mask_data_pages,
-                                                   column_chunk_data,
-                                                   options,
-                                                   stream,
-                                                   mr);
+  _impl->setup_chunked_table_materialization<read_columns_mode::PAYLOAD_COLUMNS>(
+    chunk_read_limit,
+    pass_read_limit,
+    input_row_group_indices,
+    column_chunk_data,
+    row_mask,
+    mask_data_pages,
+    options,
+    stream,
+    mr);
+}
+
+void hybrid_scan_reader::setup_chunking_for_payload_pages(
+  std::size_t chunk_read_limit,
+  std::size_t pass_read_limit,
+  std::span<size_type const> row_group_indices,
+  cudf::column_view const& row_mask,
+  std::span<cudf::device_span<uint8_t const> const> page_data,
+  parquet_reader_options const& options,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+
+  // Temporary vector with row group indices from the first source
+  auto const input_row_group_indices =
+    std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
+
+  _impl->setup_chunked_sparse_payload_materialization(chunk_read_limit,
+                                                      pass_read_limit,
+                                                      input_row_group_indices,
+                                                      page_data,
+                                                      row_mask,
+                                                      options,
+                                                      stream,
+                                                      mr);
 }
 
 table_with_metadata hybrid_scan_reader::materialize_payload_columns_chunk(
@@ -422,7 +503,7 @@ table_with_metadata hybrid_scan_reader::materialize_payload_columns_chunk(
 {
   CUDF_FUNC_RANGE();
 
-  return _impl->materialize_payload_columns_chunk(row_mask);
+  return _impl->materialize_table_chunk<read_columns_mode::PAYLOAD_COLUMNS>(row_mask);
 }
 
 void hybrid_scan_reader::setup_chunking_for_all_columns(
@@ -432,7 +513,7 @@ void hybrid_scan_reader::setup_chunking_for_all_columns(
   std::span<cudf::device_span<uint8_t const> const> column_chunk_data,
   parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -440,20 +521,23 @@ void hybrid_scan_reader::setup_chunking_for_all_columns(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->setup_chunking_for_all_columns(chunk_read_limit,
-                                               pass_read_limit,
-                                               input_row_group_indices,
-                                               column_chunk_data,
-                                               options,
-                                               stream,
-                                               mr);
+  _impl->setup_chunked_table_materialization<read_columns_mode::ALL_COLUMNS>(
+    chunk_read_limit,
+    pass_read_limit,
+    input_row_group_indices,
+    column_chunk_data,
+    cudf::column_view{},
+    use_data_page_mask::NO,
+    options,
+    stream,
+    mr);
 }
 
 table_with_metadata hybrid_scan_reader::materialize_all_columns_chunk()
 {
   CUDF_FUNC_RANGE();
 
-  return _impl->materialize_all_columns_chunk();
+  return _impl->materialize_table_chunk<read_columns_mode::ALL_COLUMNS>(cudf::column_view{});
 }
 
 std::vector<std::vector<cudf::size_type>> hybrid_scan_reader::construct_row_group_passes(

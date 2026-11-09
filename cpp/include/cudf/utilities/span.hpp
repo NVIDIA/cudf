@@ -79,6 +79,7 @@ struct host_span {
 
   static constexpr std::size_t extent = span_type::extent;  ///< The extent of the span
 
+  /// @brief Construct an empty host span
   constexpr host_span() noexcept {}  // required to compile on centos
 
   /**

@@ -377,12 +377,24 @@ class option_context(ContextDecorator):
             )
 
         self.ops = tuple(zip(args[::2], args[1::2], strict=True))
-        self.undo = tuple((pat, get_option(pat)) for pat, _ in self.ops)
+        # Validate names eagerly so cudf.pandas can fall back on unknown options.
+        for pat, _ in self.ops:
+            get_option(pat)
+        self.undo: list[tuple[tuple[str, Any], ...]] = []
 
     def __enter__(self) -> None:
-        for pat, val in self.ops:
-            set_option(pat, val)
+        undo = tuple((pat, get_option(pat)) for pat, _ in self.ops)
+        applied = []
+        try:
+            for (pat, val), (_, old_val) in zip(self.ops, undo, strict=True):
+                set_option(pat, val)
+                applied.append((pat, old_val))
+        except BaseException:
+            for pat, old_val in reversed(applied):
+                set_option(pat, old_val)
+            raise
+        self.undo.append(undo)
 
     def __exit__(self, *args) -> None:
-        for pat, val in self.undo:
+        for pat, val in self.undo.pop():
             set_option(pat, val)

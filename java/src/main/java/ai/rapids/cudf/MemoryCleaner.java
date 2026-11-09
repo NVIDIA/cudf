@@ -382,12 +382,21 @@ public final class MemoryCleaner {
     all.put(cleaner.id, new CleanerWeakReference(reader, cleaner, collected, true));
   }
 
+  static void register(HybridScanMetadata metadata, Cleaner cleaner) {
+    // Host memory only, so not an RMM blocker.
+    all.put(cleaner.id, new CleanerWeakReference(metadata, cleaner, collected, false));
+  }
+
   static void register(HashJoin hashJoin, Cleaner cleaner) {
     all.put(cleaner.id, new CleanerWeakReference(hashJoin, cleaner, collected, true));
   }
 
   static void register(DistinctHashJoin hashJoin, Cleaner cleaner) {
     all.put(cleaner.id, new CleanerWeakReference(hashJoin, cleaner, collected, true));
+  }
+
+  static void register(FilteredJoin filteredJoin, Cleaner cleaner) {
+    all.put(cleaner.id, new CleanerWeakReference(filteredJoin, cleaner, collected, true));
   }
 
   static void register(KeyRemapping keyRemapping, Cleaner cleaner) {

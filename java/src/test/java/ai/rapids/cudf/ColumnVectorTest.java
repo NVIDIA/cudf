@@ -56,19 +56,19 @@ public class ColumnVectorTest extends CudfTestBase {
   // ```py
   //
   // from numba import cuda, int32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
   // @cuda.jit(device=True)
   // def op(a):
-  //         return a * a - a
+  //         return int32(a * a - a)
   //
   // # Define argument types for the function
   // arg_types = (int32, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 0))
   //
   //
   // # Print the PTX code
@@ -89,8 +89,8 @@ public class ColumnVectorTest extends CudfTestBase {
       "// Based on NVVM 7.0.1\n" +
       "//\n" +
       "\n" +
-      ".version 9.1\n" +
-      ".target sm_86\n" +
+      ".version 6.3\n" +
+      ".target sm_70\n" +
       ".address_size 64\n" +
       "\n" +
       "	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEi\n" +
@@ -111,7 +111,7 @@ public class ColumnVectorTest extends CudfTestBase {
       "	cvt.s64.s32 	%rd2, %r1;\n" +
       "	mul.wide.s32 	%rd3, %r1, %r1;\n" +
       "	sub.s64 	%rd4, %rd3, %rd2;\n" +
-      "	st.u64 	[%rd1], %rd4;\n" +
+      "	st.u32 	[%rd1], %rd4;\n" +
       "	mov.u32 	%r2, 0;\n" +
       "	st.param.b32 	[func_retval0+0], %r2;\n" +
       "	ret;\n" +

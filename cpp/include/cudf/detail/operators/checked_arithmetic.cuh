@@ -29,7 +29,7 @@ namespace ops {
  * @param b Right operand.
  * @return `errc::ARITHMETIC_OVERFLOW` on overflow, else the result.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ cuda::std::expected<A, errc> add_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -38,7 +38,7 @@ __device__ cuda::std::expected<A, errc> add_overflow(A a, B b)
   return r;
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> add_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -69,7 +69,7 @@ __device__ cuda::std::expected<numeric::decimal<A>, errc> add_overflow(numeric::
  * @param b Right operand.
  * @return `errc::ARITHMETIC_OVERFLOW` on overflow, else the result.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ cuda::std::expected<A, errc> sub_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -78,7 +78,7 @@ __device__ cuda::std::expected<A, errc> sub_overflow(A a, B b)
   return r;
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> sub_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -109,7 +109,7 @@ __device__ cuda::std::expected<numeric::decimal<A>, errc> sub_overflow(numeric::
  * @param b Right operand.
  * @return `errc::ARITHMETIC_OVERFLOW` on overflow, else the result.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ cuda::std::expected<A, errc> mul_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -118,7 +118,7 @@ __device__ cuda::std::expected<A, errc> mul_overflow(A a, B b)
   return r;
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> mul_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -148,7 +148,7 @@ __device__ cuda::std::expected<numeric::decimal<A>, errc> mul_overflow(numeric::
  * @return `errc::DIVISION_BY_ZERO` on zero divisor, `errc::ARITHMETIC_OVERFLOW` on overflow, else
  * `errc::SUCCESS`.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ cuda::std::expected<A, errc> div_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -158,7 +158,7 @@ __device__ cuda::std::expected<A, errc> div_overflow(A a, B b)
   return r;
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> div_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -189,7 +189,7 @@ __device__ cuda::std::expected<numeric::decimal<A>, errc> div_overflow(numeric::
  * @param b Divisor.
  * @return `errc::DIVISION_BY_ZERO` on zero divisor, else the result.
  */
-template <signed_integer A, signed_integer B>
+template <cuda::std::signed_integral A, cuda::std::signed_integral B>
 __device__ cuda::std::expected<A, errc> mod_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -209,7 +209,7 @@ __device__ cuda::std::expected<A, errc> mod_overflow(A a, B b)
   return a % b;
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> mod_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
@@ -238,7 +238,7 @@ __device__ cuda::std::expected<numeric::decimal<A>, errc> mod_overflow(numeric::
  * @param a Input value.
  * @return `errc::ARITHMETIC_OVERFLOW` on overflow, else the result.
  */
-template <signed_integer T>
+template <cuda::std::signed_integral T>
 __device__ cuda::std::expected<T, errc> abs_overflow(T a)
 {
   if (a == cuda::std::numeric_limits<T>::min()) {
@@ -253,7 +253,7 @@ __device__ cuda::std::expected<T, errc> abs_overflow(T a)
   return a;
 }
 
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ cuda::std::expected<T, errc> abs_overflow(T a)
 {
   return cuda::std::fabs(a);
@@ -276,7 +276,7 @@ __device__ cuda::std::expected<numeric::decimal<R>, errc> abs_overflow(numeric::
  * @param a Input value.
  * @return `errc::ARITHMETIC_OVERFLOW` on overflow, else the result.
  */
-template <signed_integer T>
+template <cuda::std::signed_integral T>
 __device__ cuda::std::expected<T, errc> neg_overflow(T a)
 {
   if (a == cuda::std::numeric_limits<T>::min()) {
@@ -292,7 +292,7 @@ __device__ cuda::std::expected<T, errc> neg_overflow(T a)
   return a;
 }
 
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ cuda::std::expected<T, errc> neg_overflow(T a)
 {
   return -a;

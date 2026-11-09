@@ -10,7 +10,9 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/contiguous_split.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
@@ -24,7 +26,8 @@ void chunked_pack(cudf::table_view const& src_table, std::vector<cudf::size_type
 {
   auto const mr     = cudf::get_current_device_resource_ref();
   auto const stream = cudf::get_default_stream();
-  auto user_buffer  = rmm::device_uvector<std::uint8_t>(100L * 1024 * 1024, stream, mr);
+  auto user_buffer =
+    cuda::device_buffer<std::uint8_t>(stream, mr, 100L * 1024 * 1024, cuda::no_init);
   auto chunked_pack = cudf::chunked_pack::create(src_table, user_buffer.size());
   while (chunked_pack->has_next()) {
     (void)chunked_pack->next(user_buffer);

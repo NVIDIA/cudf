@@ -208,14 +208,14 @@ chunked_sparse_hybrid_scan_multifile(
     reader.payload_pages_byte_ranges(row_groups, row_mask->view(), options, stream);
   auto payload_page_data = fetch_multisource_device_data(inputs, payload_page_ranges, stream, mr);
 
-  reader.setup_chunking_for_payload_columns(chunk_read_limit,
-                                            pass_read_limit,
-                                            row_groups,
-                                            row_mask->view(),
-                                            payload_page_data.flat_spans,
-                                            options,
-                                            stream,
-                                            mr);
+  reader.setup_chunking_for_payload_pages(chunk_read_limit,
+                                          pass_read_limit,
+                                          row_groups,
+                                          row_mask->view(),
+                                          payload_page_data.flat_spans,
+                                          options,
+                                          stream,
+                                          mr);
   while (reader.has_next_table_chunk()) {
     payload_tables.push_back(reader.materialize_payload_columns_chunk(row_mask->view()).tbl);
   }

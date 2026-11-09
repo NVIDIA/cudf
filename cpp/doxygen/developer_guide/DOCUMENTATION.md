@@ -29,7 +29,7 @@ Doxygen recognizes and parses block comments and performs specialized output for
 There are almost 200 commands (also called tags in this document) that doxygen recognizes in comment blocks.
 This document provides guidance on which commands/tags to use and how to use them in the libcudf C++ source code.
 
-The doxygen process can be customized using options in the [Doxyfile](../Doxyfile).
+The doxygen process can be customized using options in the [Doxyfile](https://github.com/NVIDIA/cudf/blob/main/cpp/doxygen/Doxyfile).
 
 Here are some of the custom options in the Doxyfile for libcudf.
 | Option | Setting | Description |
@@ -179,7 +179,7 @@ Also include any limits on parameter values and if any default values are declar
 Don't forget to specify how nulls are handled or produced.
 Also, try to include a short [example](#inline-examples) if possible.
 
-### @brief
+### \@brief
 
 The [\@brief](https://www.doxygen.nl/manual/commands.html#cmdbrief) text should be a short, one line description.
 Doxygen does not provide much space to show this text in the output pages.
@@ -243,7 +243,7 @@ Include the name of the exception without backtick marks so doxygen can add refe
 
 Using \@throws is also acceptable but VS Code and other tools only do syntax highlighting on \@throw.
 
-#### @tparam
+#### \@tparam
 
 Add a [\@tparam](https://www.doxygen.nl/manual/commands.html#cmdtparam) comment line for each template parameter declared by this function.
 The name of the parameter specified after the doxygen tag must match exactly to the template parameter name.
@@ -256,7 +256,7 @@ The name of the parameter specified after the doxygen tag must match exactly to 
 The definition should detail the requirements of the parameter.
 For example, if the template is for a functor or predicate, then describe the expected input types and output.
 
-#### @param
+#### \@param
 
 Add a [\@param](https://www.doxygen.nl/manual/commands.html#cmdparam) comment line for each function parameter passed to this function.
 The name of the parameter specified after the doxygen tag must match the function's parameter name.
@@ -271,7 +271,7 @@ Also include append `[in]`, `[out]` or `[in,out]` to the `@param` if it is not c
 It is also recommended to vertically aligning the 3 columns of text if possible to make it easier to read in a source code editor.
 Finally, the description is normally like a title and only needs a period if it is a sentence.
 
-#### @return
+#### \@return
 
 Add a single [\@return](https://www.doxygen.nl/manual/commands.html#cmdreturn) comment line at the end of the comment block if the function returns an object or value.
 Include a brief description of what is returned.
@@ -369,12 +369,12 @@ The doxygen output includes a _Modules_ page that organizes items into groups sp
 These commands can group common functions across header files, source files, and even namespaces.
 Groups can also be nested by defining new groups within existing groups.
 
-For libcudf, all the group hierarchy is defined in the [doxygen_groups.h](../../include/doxygen_groups.h) header file.
-The [doxygen_groups.h](../../include/doxygen_groups.h) file does not need to be included in any other source file, because the definitions in this file are used only by the doxygen tool to generate groups in the _Modules_ page.
+For libcudf, all the group hierarchy is defined in the [doxygen_groups.h](https://github.com/NVIDIA/cudf/blob/main/cpp/include/doxygen_groups.h) header file.
+The [doxygen_groups.h](https://github.com/NVIDIA/cudf/blob/main/cpp/include/doxygen_groups.h) file does not need to be included in any other source file, because the definitions in this file are used only by the doxygen tool to generate groups in the _Modules_ page.
 Modify this file only to add or update groups.
 The existing groups have been carefully structured and named, so new groups should be added thoughtfully.
 
-When creating a new API, specify its group using the [\@ingroup](https://www.doxygen.nl/manual/commands.html#cmdingroup) tag and the group reference id from the [doxygen_groups.h](../../include/doxygen_groups.h) file.
+When creating a new API, specify its group using the [\@ingroup](https://www.doxygen.nl/manual/commands.html#cmdingroup) tag and the group reference id from the [doxygen_groups.h](https://github.com/NVIDIA/cudf/blob/main/cpp/include/doxygen_groups.h) file.
 
     namespace CUDF_EXPORT cudf {
 
@@ -417,7 +417,7 @@ So include the `@addtogroup` and `@{ ... @}` between the namespace declaration b
 Summary of groups tags
 | Tag/Command | Where to use |
 | ----------- | ------------ |
-| `@defgroup` | For use only in [doxygen_groups.h](../../include/doxygen_groups.h) and should include the group's title. |
+| `@defgroup` | For use only in [doxygen_groups.h](https://github.com/NVIDIA/cudf/blob/main/cpp/include/doxygen_groups.h) and should include the group's title. |
 | `@ingroup` | Use inside individual doxygen block comments for declaration statements in a header file. |
 | `@addtogroup` | Use instead of `@ingroup` for multiple declarations in the same file within a namespace declaration. Do not specify a group title. |
 | `@{ ... @}` |  Use only with `@addtogroup`. |

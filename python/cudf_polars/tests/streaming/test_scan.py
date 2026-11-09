@@ -23,6 +23,7 @@ from cudf_polars.dsl.utils.io import (
     attach_cached_parquet_metadata,
     prefetch_parquet_file_metadata_for_ir,
 )
+from cudf_polars.dsl.utils.per_path import PerPathValues
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.io import resolve_max_concurrent_io_tasks
 from cudf_polars.streaming.base import (
@@ -97,6 +98,21 @@ def test_parallel_scan(
     make_partitioned_source(df, tmp_path, fmt, n_files=3)
     q = scan_fn(tmp_path)
     assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+def test_parquet_scan_filter_over_fallback_preserves_scan_plan(
+    tmp_path: Path,
+    df: pl.DataFrame,
+    spmd_engine_factory: Callable[[StreamingOptions], StreamingEngine],
+) -> None:
+    path = tmp_path / "data.parquet"
+    df.write_parquet(path)
+    engine = spmd_engine_factory(
+        StreamingOptions(target_partition_size=1_000, fallback_mode="warn")
+    )
+    q = pl.scan_parquet(path).filter(pl.col("x") == pl.col("x").max().over("y"))
+    with pytest.warns(UserWarning, match=r"over\(\.\.\.\) inside filter"):
+        assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
 @pytest.mark.parametrize(
@@ -410,13 +426,14 @@ def _make_parquet_scan(
     paths: list[str],
     parquet_options: ParquetOptions | None = None,
     *,
+    schema: dict[str, DataType] | None = None,
     skip_rows: int = 0,
     n_rows: int = -1,
     row_index: tuple[str, int] | None = None,
 ) -> Scan:
     parquet_options = parquet_options or ParquetOptions()
     return Scan(
-        {"x": DataType(pl.Int64())},
+        schema or {"x": DataType(pl.Int64())},
         "parquet",
         {},
         None,
@@ -428,7 +445,7 @@ def _make_parquet_scan(
         None,
         None,
         parquet_options,
-        None,
+        cached_parquet_info=None,
     )
 
 
@@ -459,7 +476,7 @@ def _make_csv_scan(paths: list[str]) -> Scan:
         None,
         None,
         ParquetOptions(),
-        None,
+        cached_parquet_info=None,
     )
 
 
@@ -513,6 +530,27 @@ def test_expand_scan_for_rank_fused_and_single_read(
         assert scan.split_index == 0
         assert scan.total_splits == 1
         assert scan.paths == expected_paths
+
+
+def test_expand_scan_for_rank_matches_ordered_partition_ownership() -> None:
+    paths = [f"f{i}" for i in range(6)]
+    expected_by_rank = [
+        [["f0"], ["f1"]],
+        [["f2"]],
+        [["f3"], ["f4"]],
+        [["f5"]],
+    ]
+
+    for rank, expected_path_groups in enumerate(expected_by_rank):
+        streaming_scan = expand_scan_for_rank(
+            _make_parquet_scan(paths),
+            IOPartitionPlan(1, IOPartitionFlavor.SINGLE_FILE),
+            partition_count=len(paths),
+            rank=rank,
+            nranks=len(expected_by_rank),
+            parquet_options=ParquetOptions(),
+        )
+        assert [task.paths for task in streaming_scan.tasks] == expected_path_groups
 
 
 @pytest.mark.parametrize(
@@ -735,8 +773,28 @@ def test_scan_path_mismatch_raises() -> None:
             scan.include_file_paths,
             scan.predicate,
             scan.parquet_options,
+            scan.hive_parts,
             [],
+            None,
             context=ctx,
+        )
+
+
+def test_hive_parts_path_mismatch_raises() -> None:
+    # Note: This isn't reachable by polars' public API.
+    scan = _make_parquet_scan(["a.parquet", "b.parquet"])
+
+    with pytest.raises(
+        AssertionError,
+        match=r"Expected 2 rows of hive partition values, got 1",
+    ):
+        ParquetScanTask(
+            scan,
+            scan.paths,
+            0,
+            1,
+            scan.parquet_options,
+            PerPathValues(pl.DataFrame({"part": [1]})),
         )
 
 
@@ -754,6 +812,8 @@ def test_parquet_split_task_fetches_missing_metadata(tmp_path: Path) -> None:
         0,
         2,
         scan.parquet_options,
+        scan.hive_parts,
+        scan.lake_options,
         context=IRExecutionContext(),
     )
 
@@ -874,6 +934,7 @@ def test_streaming_scan_identity_equality() -> None:
         0,
         2,
         base.parquet_options,
+        PerPathValues(pl.DataFrame({"part": [1]})),
     )
     split_same = ParquetScanTask(
         base,
@@ -881,6 +942,7 @@ def test_streaming_scan_identity_equality() -> None:
         0,
         2,
         base.parquet_options,
+        PerPathValues(pl.DataFrame({"part": [1]})),
     )
     split_diff = ParquetScanTask(
         base,
@@ -888,15 +950,27 @@ def test_streaming_scan_identity_equality() -> None:
         1,
         2,
         base.parquet_options,
+        PerPathValues(pl.DataFrame({"part": [1]})),
+    )
+    split_other_part = ParquetScanTask(
+        base,
+        base.paths,
+        0,
+        2,
+        base.parquet_options,
+        PerPathValues(pl.DataFrame({"part": [2]})),
     )
 
     a = StreamingScan([split], base)
     b = StreamingScan([split_same], base)
     c = StreamingScan([split_diff], base)
+    d = StreamingScan([split_other_part], base)
 
     assert a == b
     assert hash(a) == hash(b)
     assert a != c
+    assert a != d
+    assert hash(a) != hash(d)
 
 
 def test_cached_parquet_info_excluded_from_identity() -> None:
@@ -917,7 +991,7 @@ def test_cached_parquet_info_excluded_from_identity() -> None:
         None,
         None,
         base.parquet_options,
-        info,
+        cached_parquet_info=info,
     )
     assert scan_without == scan_with
     assert hash(scan_without) == hash(scan_with)
@@ -987,3 +1061,117 @@ def test_scan_partition_plan_nearest(
     plan = scan_partition_plan(scan, FooStats(scan, file_size), _make_config(10))
     assert plan.factor == expected_factor
     assert plan.flavor == expected_flavor
+
+
+@pytest.fixture
+def hive_root(tmp_path: Path) -> Path:
+    """Hive dataset with several row groups per file, to allow file splitting."""
+    root = tmp_path / "hive"
+    pl.DataFrame(
+        {
+            "x": range(600),
+            "part": [0] * 150 + [1] * 200 + [2] * 250,
+        }
+    ).write_parquet(root, partition_by=["part"], row_group_size=25)
+    return root
+
+
+@pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
+@pytest.mark.parametrize("use_hybrid_scan", [True, False])
+@pytest.mark.parametrize(
+    "query",
+    [
+        lambda lf: lf,
+        lambda lf: lf.select("part"),
+        lambda lf: lf.filter(pl.col("x") > 400),
+        lambda lf: lf.filter(pl.col("x") > 400).select("part"),
+        lambda lf: lf.filter((pl.col("x") > 400) & (pl.col("part") == 2)),
+        lambda lf: lf.filter(pl.col("part") == 2),
+    ],
+)
+def test_hive_partitioned_streaming_scan(
+    hive_root: Path,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+    target_partition_size: int,
+    query,
+    *,
+    use_hybrid_scan: bool,
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=target_partition_size,
+            parquet_options={"use_hybrid_scan": use_hybrid_scan},
+        ),
+    )
+    q = query(pl.scan_parquet(hive_root, hive_partitioning=True))
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_hive_partitioned_split_tasks_slice_partitions(
+    hive_root: Path, streaming_engine: StreamingEngine
+) -> None:
+    q = pl.scan_parquet(hive_root, hive_partitioning=True)
+    scan = cast("Scan", Translator(q._ldf.visit(), streaming_engine).translate_ir())
+    assert scan.hive_parts is not None
+
+    streaming = expand_scan_for_rank(
+        scan,
+        IOPartitionPlan(2, IOPartitionFlavor.SPLIT_FILES),
+        2 * len(scan.paths),
+        rank=0,
+        nranks=1,
+        parquet_options=ParquetOptions(),
+    )
+    # Both splits of a file see that file's partition values, and nothing else.
+    hive_parts = []
+    for task in streaming.tasks:
+        assert isinstance(task, ParquetScanTask)
+        assert task.hive_parts is not None
+        assert task.hive_parts.is_uniform
+        hive_parts.append(task.hive_parts)
+    assert [parts.df.rows() for parts in hive_parts] == [
+        [(0,)],
+        [(0,)],
+        [(1,)],
+        [(1,)],
+        [(2,)],
+        [(2,)],
+    ]
+
+
+def test_hive_partitioned_fused_tasks_slice_partitions(
+    hive_root: Path, streaming_engine: StreamingEngine
+) -> None:
+    q = pl.scan_parquet(hive_root, hive_partitioning=True)
+    scan = cast("Scan", Translator(q._ldf.visit(), streaming_engine).translate_ir())
+
+    streaming = expand_scan_for_rank(
+        scan,
+        IOPartitionPlan(2, IOPartitionFlavor.FUSED_FILES),
+        2,
+        rank=0,
+        nranks=1,
+        parquet_options=ParquetOptions(),
+    )
+    hive_parts = []
+    for task in streaming.tasks:
+        assert isinstance(task, ParquetScanTask)
+        assert task.hive_parts is not None
+        hive_parts.append(task.hive_parts)
+    assert [parts.df.rows() for parts in hive_parts] == [[(0,), (1,)], [(2,)]]
+
+
+@pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
+def test_hive_only_projection_with_prefetched_metadata(
+    hive_root: Path,
+    streaming_engine_factory: Callable[..., StreamingEngine],
+    target_partition_size: int,
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=target_partition_size,
+            parquet_options={"prefetch_file_metadata": True},
+        ),
+    )
+    q = pl.scan_parquet(hive_root, hive_partitioning=True).select("part")
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)

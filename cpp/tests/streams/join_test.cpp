@@ -86,6 +86,18 @@ TEST_F(JoinTest, SortMergeInnerJoin)
   obj.inner_join(table0, cudf::test::get_default_stream());
 }
 
+TEST_F(JoinTest, HashJoinPartitionedJoin)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::hash_join obj(table1, cudf::null_equality::EQUAL, stream);
+  auto context = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(obj.left_join_match_context(table0, stream)),
+    1,
+    table0.num_rows()};
+  std::ignore = context.left_table_context->output_size(stream);
+  std::ignore = obj.partitioned_left_join(context, stream);
+}
+
 TEST_F(JoinTest, LeftJoin)
 {
   cudf::left_join(table0, table1, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
@@ -186,6 +198,43 @@ TEST_F(JoinTest, LeftJoinWithPostFilter)
                               cudf::join_kind::LEFT_JOIN,
                               std::nullopt,
                               cudf::test::get_default_stream());
+}
+
+TEST_F(JoinTest, FullJoinWithPostFilter)
+{
+  auto const stream        = cudf::test::get_default_stream();
+  auto maps                = cudf::full_join(table0, table1, cudf::null_equality::EQUAL, stream);
+  auto const left_indices  = cudf::device_span<cudf::size_type const>{*maps.first};
+  auto const right_indices = cudf::device_span<cudf::size_type const>{*maps.second};
+  // Equal keys cannot satisfy GREATER, so both unmatched-side materialization paths run.
+  auto const predicate =
+    cudf::ast::operation{cudf::ast::ast_operator::GREATER, col_ref_left_0, col_ref_right_0};
+  auto [size, counts] = cudf::filter_join_indices_output_size(conditional0,
+                                                              conditional1,
+                                                              left_indices,
+                                                              right_indices,
+                                                              predicate,
+                                                              cudf::join_kind::FULL_JOIN,
+                                                              stream);
+  auto result         = cudf::filter_join_indices(conditional0,
+                                          conditional1,
+                                          left_indices,
+                                          right_indices,
+                                          predicate,
+                                          cudf::join_kind::FULL_JOIN,
+                                          size,
+                                          stream);
+  auto jit_result     = cudf::filter_join_indices_jit(conditional0,
+                                                  conditional1,
+                                                  left_indices,
+                                                  right_indices,
+                                                  predicate,
+                                                  cudf::join_kind::FULL_JOIN,
+                                                      {},
+                                                  stream);
+  EXPECT_EQ(size, table0.num_rows() + table1.num_rows());
+  EXPECT_EQ(result.first->size(), table0.num_rows() + table1.num_rows());
+  EXPECT_EQ(jit_result.first->size(), result.first->size());
 }
 
 TEST_F(JoinTest, MixedFullJoin)

@@ -7,6 +7,7 @@
 #include "join_common_utils.hpp"
 
 #include <cudf/detail/algorithms/copy_if.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
@@ -24,6 +25,7 @@
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
+#include <thrust/reduce.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
 #include <thrust/uninitialized_fill.h>
@@ -93,7 +95,7 @@ struct unmatched_flag {
 struct to_no_match_pair {
   __device__ cuda::std::tuple<size_type, size_type> operator()(size_type idx) const noexcept
   {
-    return cuda::std::make_tuple(cudf::JoinNoMatch, idx);
+    return cuda::std::make_tuple(size_type{cudf::JoinNoMatch}, idx);
   }
 };
 
@@ -107,6 +109,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
                               rmm::device_async_resource_ref mr,
                               std::optional<size_type> unmatched_right_count)
 {
+  cudf::memory_resources mrs{mr};
   auto [left_out, right_out] = std::move(indices);
   CUDF_EXPECTS(left_out->size() == right_out->size(),
                "left/right index vectors must have equal size",
@@ -149,7 +152,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
   // Hash joins mark right rows as part of retrieval and pass those flags here, eliminating an
   // output-sized scatter. Other join implementations use this fallback to derive the same flags
   // from their materialized right indices.
-  auto computed_matches = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto computed_matches = cudf::detail::make_zeroed_device_buffer_async<size_type>(
     right_matches ? 0 : right_table_num_rows, stream, cudf::get_current_device_resource_ref());
   if (!right_matches) {
     thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -173,7 +176,8 @@ VectorPair finalize_full_join(VectorPair&& indices,
                           cuda::counting_iterator<size_type>{right_table_num_rows},
                           out_iter,
                           unmatched_flag{match_flags},
-                          stream);
+                          stream,
+                          mrs.as_temporary());
 
   auto const comp_size = cuda::std::distance(out_iter, new_end);
   left_out->resize(match_total + comp_size, stream);
@@ -246,4 +250,13 @@ VectorPair finalize_full_join(
 }
 
 }  // namespace detail
+
+std::size_t join_match_context::output_size(cuda::stream_ref stream) const
+{
+  auto const counts = match_counts();
+  return thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                        counts.begin(),
+                        counts.end(),
+                        std::size_t{0});
+}
 }  // namespace cudf

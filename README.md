@@ -18,18 +18,30 @@ data structures and fundamental algorithms for tabular data.
 * [cudf-polars](https://docs.nvidia.com/cudf/latest/cudf_polars/): A Python library providing a GPU engine for [Polars](https://pola.rs/)
 * [dask-cudf](https://docs.nvidia.com/dask-cudf/latest/): A Python library providing a GPU backend for [Dask](https://www.dask.org/) DataFrames
 
-Notable projects that use cuDF include:
+Examples of projects that use cuDF:
 
-* [Spark RAPIDS](https://github.com/NVIDIA/spark-rapids): A GPU accelerator plugin for [Apache Spark](https://spark.apache.org/)
-* [Velox-cuDF](https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md): A [Velox](https://velox-lib.io/)
-extension module to execute Velox plans on the GPU
+* [NVIDIA cuDF plugin for Apache Spark](https://github.com/NVIDIA/cudf-spark): A GPU accelerator plugin for [Apache Spark](https://spark.apache.org/)
+* [cuML](https://docs.nvidia.com/cuml/latest/) (NVIDIA): cuDF DataFrame inputs and outputs for GPU machine-learning workflows.
+* [cuGraph](https://docs.nvidia.com/cugraph/latest/) (NVIDIA): cuDF edge-list inputs for GPU graph construction and analytics.
+* [NeMo Curator](https://docs.nvidia.com/nemo/curator/latest/reference/infra/gpu-processing) (NVIDIA): cuDF-backed GPU processing for text curation and deduplication.
+* [Velox-cuDF](https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md): An experimental [Velox](https://velox-lib.io/) extension that executes supported query operators on GPUs using libcudf.
+* [Polars](https://docs.pola.rs/user-guide/gpu-support/): A cuDF-backed GPU engine for supported Lazy API queries (open beta).
 * [Sirius](https://www.sirius-db.com/): A GPU-native SQL engine providing extensions for libraries like [DuckDB](https://duckdb.org/)
+* [Starburst Torin](https://docs.starburst.io/latest/admin/gpu-acceleration.html): GPU execution for Starburst Enterprise SQL using cuDF.
+* [Presto GPU](https://github.com/prestodb/prestorials/tree/main/docker-compose-native/cpu-and-gpu): Experimental GPU-accelerated Presto query processing through Velox and cuDF, with public evaluation notebooks.
+* [TornadoVM](https://github.com/beehive-lab/TornadoVM): A GPU programming framework for Java that JIT-compiles Java to CUDA and runs [libcudf operations](https://github.com/beehive-lab/TornadoVM/tree/develop/tornado-native-libs/tornado-cudf) as tasks alongside those kernels; used as a GPU engine for [Apache Flink](https://flink.apache.org/)
+* HoloViz: [Datashader](https://datashader.org/user_guide/Performance.html), [HoloViews](https://holoviews.org/reference_manual/holoviews.core.data.cudf.html) and [hvPlot](https://hvplot.holoviz.org/en/docs/latest/) provide cuDF-backed aggregation, data exploration and plotting interfaces.
+* [PyGraphistry](https://pygraphistry.readthedocs.io/en/latest/gfql/engines.html): cuDF-backed graph queries and exploration through GFQL.
+* [Ray Data](https://docs.ray.io/en/latest/data/api/doc/ray.data.Dataset.map_batches.html): Experimental cuDF batch support for GPU transforms in distributed data pipelines.
+* [XGBoost](https://xgboost.readthedocs.io/en/stable/python/data_input.html): Native cuDF DataFrame and Series inputs for supported gradient-boosting workflows.
+
+This list is not exhaustive. If your project uses cuDF, you're welcome to [submit a pull request](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md) with a project link, a short description of the integration, and public documentation or an example.
 
 ## Installation
 
 ### System Requirements
 
-Operating System, GPU driver, and supported CUDA version information can be found at the [RAPIDS Installation Guide](https://docs.nvidia.com/datascience/install/#system-req)
+Operating System, GPU driver, and supported CUDA version information can be found at the [system requirements](https://docs.nvidia.com/datascience/install/#system-req)
 
 ### pip
 
@@ -134,7 +146,7 @@ lf.drop_nulls().group_by(["A", "B"]).mean().collect(engine="gpu")
 
 For bug reports or feature requests, please [file an issue](https://github.com/NVIDIA/cudf/issues/new/choose) on the GitHub issue tracker.
 
-For questions or discussion about cuDF and GPU data processing, feel free to post in the [RAPIDS Slack](https://rapids.ai/slack-invite) workspace.
+For questions or discussion about cuDF and GPU data processing, feel free to post in the [community Slack](https://rapids.ai/slack-invite) workspace.
 
 ## Contributing
 

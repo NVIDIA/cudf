@@ -13,11 +13,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/stream>
-#include <thrust/scan.h>
 
 namespace cudf {
 namespace detail {

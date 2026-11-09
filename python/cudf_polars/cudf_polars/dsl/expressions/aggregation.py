@@ -19,7 +19,7 @@ import pylibcudf as plc
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136
+from cudf_polars.utils.sorting import nulls_at_start
 
 if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
@@ -156,6 +156,9 @@ class Agg(Expr):
                 raise NotImplementedError("Median with temporal data types")
             req = plc.aggregation.median()
         elif name == "n_unique":
+            if children[0].dtype.plc_type.id() == plc.TypeId.EMPTY:
+                # libcudf cannot reduce a column of the (EMPTY) Null dtype.
+                raise NotImplementedError("n_unique of a Null dtype column")
             # TODO: datatype of result
             req = plc.aggregation.nunique(
                 null_handling=plc.types.NullPolicy.EXCLUDE
@@ -169,6 +172,10 @@ class Agg(Expr):
         elif name == "mean":
             req = plc.aggregation.mean()
         elif name == "sum":
+            if context == ExecutionContext.FRAME and plc.traits.is_duration(
+                dtype.plc_type
+            ):
+                raise NotImplementedError("Sum reduction of duration data type")
             req = plc.aggregation.sum()
         elif name == "product":
             req = plc.aggregation.product()
@@ -183,6 +190,10 @@ class Agg(Expr):
                 null_handling=plc.types.NullPolicy.EXCLUDE
                 if not options
                 else plc.types.NullPolicy.INCLUDE
+            )
+        elif name == "corr":
+            req = plc.aggregation.correlation(
+                plc.aggregation.CorrelationType.PEARSON, 1
             )
         elif name == "m2":  # pragma: no cover; doesn't have a direct polars equivalent
             req = plc.aggregation.m2()
@@ -207,16 +218,6 @@ class Agg(Expr):
             raise NotImplementedError(
                 f"Unreachable, {name=} is incorrectly listed in _SUPPORTED"
             )  # pragma: no cover
-        if (
-            POLARS_VERSION_LT_136
-            and context == ExecutionContext.FRAME
-            and req is not None
-            and not plc.aggregation.is_valid_aggregation(dtype.plc_type, req)
-        ):  # pragma: no cover; polars may raise ahead of time
-            # TODO: Check which cases polars raises vs returns all-NULL column.
-            # For the all-NULL column cases, we could build it using Column.all_null_like
-            # at evaluation time.
-            raise NotImplementedError(f"Invalid aggregation {req} with dtype {dtype}")
         self.request = req
         op = getattr(self, f"_{name}", None)
         if op is None:
@@ -259,6 +260,7 @@ class Agg(Expr):
             "sum",
             "product",
             "count",
+            "corr",
             "std",
             "var",
             "quantile",
@@ -327,15 +329,16 @@ class Agg(Expr):
     def _sum(self, column: Column, stream: Stream) -> Column:
         if column.size == 0 or column.null_count == column.size:
             dtype = self.dtype.plc_type
+            empty_sum: Decimal | int | None
+            if self.options:
+                empty_sum = None
+            elif plc.traits.is_fixed_point(dtype):
+                empty_sum = Decimal(0).scaleb(dtype.scale())
+            else:
+                empty_sum = 0
             return Column(
                 plc.Column.from_scalar(
-                    plc.Scalar.from_py(
-                        Decimal(0).scaleb(dtype.scale())
-                        if plc.traits.is_fixed_point(dtype)
-                        else 0,
-                        dtype,
-                        stream=stream,
-                    ),
+                    plc.Scalar.from_py(empty_sum, dtype, stream=stream),
                     1,
                     stream=stream,
                 ),
@@ -374,6 +377,10 @@ class Agg(Expr):
             )
         if nan_count > 0:
             column = column.mask_nans(stream=stream)
+        if column.is_sorted == plc.types.Sorted.YES and column.null_count < column.size:
+            return self._sorted_non_null_end(
+                column, first=column.order == plc.types.Order.ASCENDING, stream=stream
+            )
         return self._reduce(column, request=plc.aggregation.min(), stream=stream)
 
     def _max(self, column: Column, *, propagate_nans: bool, stream: Stream) -> Column:
@@ -392,7 +399,24 @@ class Agg(Expr):
             )
         if nan_count > 0:
             column = column.mask_nans(stream=stream)
+        if column.is_sorted == plc.types.Sorted.YES and column.null_count < column.size:
+            return self._sorted_non_null_end(
+                column, first=column.order == plc.types.Order.DESCENDING, stream=stream
+            )
         return self._reduce(column, request=plc.aggregation.max(), stream=stream)
+
+    def _sorted_non_null_end(
+        self, column: Column, *, first: bool, stream: Stream
+    ) -> Column:
+        start = column.null_count if nulls_at_start(column) else 0
+        index = start if first else start + column.size - column.null_count - 1
+        return Column(
+            plc.copying.slice(column.obj, [index, index + 1], stream=stream)[0].copy(
+                stream=stream
+            ),
+            name=column.name,
+            dtype=self.dtype,
+        )
 
     def _first(self, column: Column, stream: Stream) -> Column:
         if column.size == 0:
@@ -569,13 +593,13 @@ class Skew(Expr):
         """
         eps = sys.float_info.epsilon
         is_zero = m2 <= (eps * mean) * (eps * mean)
-        if is_zero:
+        try:
+            denom = m2**1.5
+        except OverflowError:
+            denom = math.inf
+        if is_zero or denom == 0.0:
             biased = math.nan
         else:
-            try:
-                denom = m2**1.5
-            except OverflowError:
-                denom = math.inf
             biased = m3 / denom
         if bias:
             return biased
@@ -687,7 +711,8 @@ class Kurtosis(Expr):
         """
         eps = sys.float_info.epsilon
         is_zero = m2 <= (eps * mean) * (eps * mean)
-        biased = math.nan if is_zero else m4 / (m2 * m2)
+        denom = m2 * m2
+        biased = math.nan if is_zero or denom == 0.0 else m4 / denom
         if bias:
             out = biased
         else:

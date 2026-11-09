@@ -200,27 +200,31 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
 /**
  * @brief Launches kernel for decoding row-column data
  *
+ * Quoted string fields are unescaped in place in `data` when doublequote is enabled, so the
+ * staged string entries can reference the final string bytes directly.
+ *
+ * @tparam OffsetT Offset type of the `string_offset_pair` entries staged for string columns
+ *
  * @param[in] options Options that control individual field data conversion
- * @param[in] data The row-column data
+ * @param[in,out] data The row-column data
  * @param[in] column_flags Flags that control individual column parsing
  * @param[in] row_offsets List of row data start positions (offsets)
  * @param[in] dtypes List of dtype corresponding to each column
- * @param[out] columns Device memory output of column data
+ * @param[out] columns Device memory output of column data; string columns receive
+ *                     `string_offset_pair<OffsetT>` arrays
  * @param[out] valids Device memory output of column valids bitmap data
  * @param[out] valid_counts Device memory output of the number of valid fields in each column
- * @param[out] is_quoted Per-column boolean arrays indicating which rows were quoted fields
- *                          (nullptr entries mean the column doesn't need quote tracking)
  * @param[in] stream CUDA stream to use
  */
+template <typename OffsetT>
 void decode_row_column_data(cudf::io::parse_options_view const& options,
-                            device_span<char const> data,
+                            device_span<char> data,
                             device_span<column_parse::flags const> column_flags,
                             device_span<uint64_t const> row_offsets,
                             device_span<cudf::data_type const> dtypes,
                             device_span<void* const> columns,
                             device_span<cudf::bitmask_type* const> valids,
                             device_span<size_type> valid_counts,
-                            device_span<bool* const> is_quoted,
                             cuda::stream_ref stream);
 
 }  // namespace gpu

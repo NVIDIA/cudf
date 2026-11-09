@@ -38,7 +38,7 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
                                                    schema_info.children.back(),
                                                    stream),
                                0,
-                               rmm::device_buffer{0, stream});
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream));
     }
     case MAP: {
       schema_info.children.emplace_back("offsets");
@@ -57,16 +57,17 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
                                                     stream));
         children_schema[idx].name = get_map_child_col_name(idx);
       }
-      return make_lists_column(0,
-                               make_empty_column(type_id::INT32),
-                               make_structs_column(0,
-                                                   std::move(child_columns),
-                                                   0,
-                                                   rmm::device_buffer{0, stream},
-                                                   stream,
-                                                   cudf::get_current_device_resource_ref()),
-                               0,
-                               rmm::device_buffer{0, stream});
+      return make_lists_column(
+        0,
+        make_empty_column(type_id::INT32),
+        make_structs_column(0,
+                            std::move(child_columns),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream),
+                            stream,
+                            cudf::get_current_device_resource_ref()),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream));
     }
 
     case STRUCT: {
@@ -84,7 +85,7 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
       return make_structs_column(0,
                                  std::move(child_columns),
                                  0,
-                                 rmm::device_buffer{0, stream},
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream),
                                  stream,
                                  cudf::get_current_device_resource_ref());
     }

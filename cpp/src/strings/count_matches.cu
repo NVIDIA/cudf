@@ -4,7 +4,7 @@
  */
 
 #include "strings/count_matches.hpp"
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column_device_view.cuh>
@@ -69,15 +69,27 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
   // Glushkov's engine always requires the begin/end positional check; the Thompson
   // engine can skip it (cheaper) when an empty match is not possible for this pattern.
   if constexpr (std::is_same_v<ProgDevice, gkprog_device>) {
-    launch_transform_kernel(
-      count_fn<positional::BEGIN_END>{d_strings}, d_prog, d_results, strings_count, stream);
+    launch_transform_kernel(count_fn<positional::BEGIN_END>{d_strings},
+                            d_prog,
+                            d_results,
+                            strings_count,
+                            stream,
+                            cudf::get_current_device_resource_ref());
   } else {
     if (d_prog.is_empty_match_possible()) {
-      launch_transform_kernel(
-        count_fn<positional::BEGIN_END>{d_strings}, d_prog, d_results, strings_count, stream);
+      launch_transform_kernel(count_fn<positional::BEGIN_END>{d_strings},
+                              d_prog,
+                              d_results,
+                              strings_count,
+                              stream,
+                              cudf::get_current_device_resource_ref());
     } else {
-      launch_transform_kernel(
-        count_fn<positional::END_ONLY>{d_strings}, d_prog, d_results, strings_count, stream);
+      launch_transform_kernel(count_fn<positional::END_ONLY>{d_strings},
+                              d_prog,
+                              d_results,
+                              strings_count,
+                              stream,
+                              cudf::get_current_device_resource_ref());
     }
   }
 

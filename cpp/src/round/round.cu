@@ -13,6 +13,7 @@
 #include <cudf/round.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -20,6 +21,8 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/std/concepts>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
@@ -77,16 +80,14 @@ constexpr inline auto is_supported_round_type()
 template <typename T>
 struct half_up_zero {
   T n;  // unused in the decimal_places = 0 case
-  template <typename U = T>
+  template <cuda::std::floating_point U = T>
   __device__ U operator()(U e)
-    requires(cudf::is_floating_point<U>())
   {
     return generic_round(e);
   }
 
-  template <typename U = T>
+  template <cuda::std::integral U = T>
   __device__ U operator()(U)
-    requires(cuda::std::is_integral_v<U>)
   {
     assert(false);  // Should never get here. Just for compilation
     return U{};
@@ -96,18 +97,16 @@ struct half_up_zero {
 template <typename T>
 struct half_up_positive {
   T n;
-  template <typename U = T>
+  template <cuda::std::floating_point U = T>
   __device__ U operator()(U e)
-    requires(cudf::is_floating_point<U>())
   {
     T integer_part;
     T const fractional_part = generic_modf(e, &integer_part);
     return integer_part + generic_round(fractional_part * n) / n;
   }
 
-  template <typename U = T>
+  template <cuda::std::integral U = T>
   __device__ U operator()(U)
-    requires(cuda::std::is_integral_v<U>)
   {
     assert(false);  // Should never get here. Just for compilation
     return U{};
@@ -117,16 +116,14 @@ struct half_up_positive {
 template <typename T>
 struct half_up_negative {
   T n;
-  template <typename U = T>
+  template <cuda::std::floating_point U = T>
   __device__ U operator()(U e)
-    requires(cudf::is_floating_point<U>())
   {
     return generic_round(e / n) * n;
   }
 
-  template <typename U = T>
+  template <cuda::std::integral U = T>
   __device__ U operator()(U e)
-    requires(cuda::std::is_integral_v<U>)
   {
     auto const down = (e / n) * n;  // result from rounding down
     return down + generic_sign(e) * (generic_abs(e - down) >= n / 2 ? n : 0);
@@ -136,16 +133,14 @@ struct half_up_negative {
 template <typename T>
 struct half_even_zero {
   T n;  // unused in the decimal_places = 0 case
-  template <typename U = T>
+  template <cuda::std::floating_point U = T>
   __device__ U operator()(U e)
-    requires(cudf::is_floating_point<U>())
   {
     return generic_round_half_even(e);
   }
 
-  template <typename U = T>
+  template <cuda::std::integral U = T>
   __device__ U operator()(U)
-    requires(cuda::std::is_integral_v<U>)
   {
     assert(false);  // Should never get here. Just for compilation
     return U{};
@@ -155,18 +150,16 @@ struct half_even_zero {
 template <typename T>
 struct half_even_positive {
   T n;
-  template <typename U = T>
+  template <cuda::std::floating_point U = T>
   __device__ U operator()(U e)
-    requires(cudf::is_floating_point<U>())
   {
     T integer_part;
     T const fractional_part = generic_modf(e, &integer_part);
     return integer_part + generic_round_half_even(fractional_part * n) / n;
   }
 
-  template <typename U = T>
+  template <cuda::std::integral U = T>
   __device__ U operator()(U)
-    requires(cuda::std::is_integral_v<U>)
   {
     assert(false);  // Should never get here. Just for compilation
     return U{};
@@ -176,16 +169,14 @@ struct half_even_positive {
 template <typename T>
 struct half_even_negative {
   T n;
-  template <typename U = T>
+  template <cuda::std::floating_point U = T>
   __device__ U operator()(U e)
-    requires(cudf::is_floating_point<U>())
   {
     return generic_round_half_even(e / n) * n;
   }
 
-  template <typename U = T>
+  template <cuda::std::integral U = T>
   __device__ U operator()(U e)
-    requires(cuda::std::is_integral_v<U>)
   {
     auto const down_over_n = e / n;            // use this to determine HALF_EVEN case
     auto const down        = down_over_n * n;  // result from rounding down
@@ -213,11 +204,10 @@ std::unique_ptr<column> round_with(column_view const& input,
                                    int32_t decimal_places,
                                    cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
-  requires(not cudf::is_fixed_point<T>())
 {
   using Functor = RoundFunctor<T>;
 
-  if (decimal_places >= 0 && std::is_integral_v<T>)
+  if (decimal_places >= 0 && cuda::std::is_integral_v<T>)
     return std::make_unique<cudf::column>(input, stream, mr);
 
   auto result = cudf::make_fixed_width_column(input.type(),
@@ -241,12 +231,11 @@ std::unique_ptr<column> round_with(column_view const& input,
   return result;
 }
 
-template <typename T, template <typename> typename RoundFunctor>
+template <cudf::concepts::fixed_point T, template <typename> typename RoundFunctor>
 std::unique_ptr<column> round_with(column_view const& input,
                                    int32_t decimal_places,
                                    cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)
-  requires(cudf::is_fixed_point<T>())
 {
   using namespace numeric;
   using Type                   = device_storage_type_t<T>;

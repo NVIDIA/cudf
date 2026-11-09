@@ -11,6 +11,8 @@
 #include <cudf/rolling.hpp>
 #include <cudf/scalar/scalar.hpp>
 
+#include <cuda/std/type_traits>
+
 namespace {
 // Helper functions to construct rolling window operators.
 auto count_valid()
@@ -164,7 +166,8 @@ TYPED_TEST(TypedRollingEmptyInputTest, EmptyFixedWidthInputs)
   {
     auto aggs = agg_vector_t{};
     aggs.emplace_back(sum());
-    using expected_type = std::conditional_t<std::is_integral_v<InputType>, int64_t, InputType>;
+    using expected_type =
+      std::conditional_t<cuda::std::is_integral_v<InputType>, int64_t, InputType>;
     if constexpr (cudf::is_timestamp<InputType>()) {
       EXPECT_THROW(
         rolling_output_type_matches(empty_input, aggs, cudf::type_to_id<expected_type>()),

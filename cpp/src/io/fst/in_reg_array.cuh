@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -7,7 +7,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/types.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/util_type.cuh>
 
 #include <cstdint>
 
@@ -43,7 +43,7 @@ class MultiFragmentInRegArray {
 
   // The total number of fragments required to store all the items
   static constexpr uint32_t FRAGMENTS_PER_ITEM =
-    cudf::util::div_rounding_up_safe(MIN_BITS_PER_ITEM, BITS_PER_FRAG_ITEM);
+    cudf::detail::div_rounding_up_safe(MIN_BITS_PER_ITEM, BITS_PER_FRAG_ITEM);
 
   //------------------------------------------------------------------------------
   // HELPER FUNCTIONS

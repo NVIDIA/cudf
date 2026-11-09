@@ -8,6 +8,7 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/combine.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -45,6 +46,85 @@ TEST_F(JoinStringsTest, Join)
     cudf::test::strings_column_wrapper expected{"eee+bb+___+zzzz++aaa+ééé"};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
+}
+
+TEST_F(JoinStringsTest, JoinWithNulls)
+{
+  auto const sep   = cudf::string_scalar("|");
+  auto const narep = cudf::string_scalar("-");
+  {
+    auto input = cudf::test::strings_column_wrapper({"x", ""}, {true, false});
+    auto view  = cudf::strings_column_view(input);
+
+    auto results = cudf::strings::join_strings(view, sep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x"}));
+    results = cudf::strings::join_strings(view, cudf::string_scalar("<>"));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x"}));
+    results = cudf::strings::join_strings(view, sep, narep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x|-"}));
+  }
+  {
+    auto input = cudf::test::strings_column_wrapper({"x", "y", ""}, {true, true, false});
+    auto view  = cudf::strings_column_view(input);
+
+    auto results = cudf::strings::join_strings(view, sep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x|y"}));
+    results = cudf::strings::join_strings(view, sep, narep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x|y|-"}));
+  }
+  {
+    auto input = cudf::test::strings_column_wrapper({"x", "", ""}, {true, false, false});
+    auto view  = cudf::strings_column_view(input);
+
+    auto results = cudf::strings::join_strings(view, sep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x"}));
+    results = cudf::strings::join_strings(view, sep, narep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x|-|-"}));
+  }
+  {
+    auto input = cudf::test::strings_column_wrapper({"", "", "z"}, {false, false, true});
+    auto view  = cudf::strings_column_view(input);
+
+    auto results = cudf::strings::join_strings(view, sep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"z"}));
+    results = cudf::strings::join_strings(view, sep, narep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"-|-|z"}));
+  }
+  {
+    auto input =
+      cudf::test::strings_column_wrapper({"", "x", "", "z", ""}, {false, true, false, true, false});
+    auto view = cudf::strings_column_view(input);
+
+    auto results = cudf::strings::join_strings(view, sep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x|z"}));
+    results = cudf::strings::join_strings(view, sep, narep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"-|x|-|z|-"}));
+  }
+  {
+    auto input =
+      cudf::test::strings_column_wrapper({"w", "x", "", "y", "z"}, {true, true, false, true, true});
+    auto sliced = cudf::slice(input, {1, 3}).front();
+    auto view   = cudf::strings_column_view(sliced);
+
+    auto results = cudf::strings::join_strings(view, sep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x"}));
+    results = cudf::strings::join_strings(view, sep, narep);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({"x|-"}));
+  }
+}
+
+TEST_F(JoinStringsTest, JoinLongStringsWithNulls)
+{
+  // long strings exercise the string-gather code path
+  std::string data(200, '0');
+  auto input =
+    cudf::test::strings_column_wrapper({data, data, data, data}, {true, false, true, false});
+
+  auto results =
+    cudf::strings::join_strings(cudf::strings_column_view(input), cudf::string_scalar("+"));
+
+  auto expected_data = data + "+" + data;
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, cudf::test::strings_column_wrapper({expected_data}));
 }
 
 TEST_F(JoinStringsTest, JoinLongStrings)

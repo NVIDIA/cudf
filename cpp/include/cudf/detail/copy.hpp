@@ -163,15 +163,13 @@ std::unique_ptr<column> segmented_shift(column_view const& segmented_values,
 
 /**
  * @copydoc cudf::allocate_like(column_view const&, size_type, mask_allocation_policy,
- * rmm::device_async_resource_ref)
- *
- * @param[in] stream CUDA stream used for device memory operations and kernel launches.
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> allocate_like(column_view const& input,
                                       size_type size,
                                       mask_allocation_policy mask_alloc,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::copy_if_else( column_view const&, column_view const&,

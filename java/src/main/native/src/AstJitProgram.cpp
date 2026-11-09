@@ -42,7 +42,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_AstJitProgram_create(JNIEnv* env
 
     auto const* table = reinterpret_cast<cudf::table_view const*>(j_table);
     auto const stream = cudf::get_default_stream();
-    auto program      = std::make_unique<cudf::transform_program>(*table, expressions, stream);
+    auto program =
+      std::make_unique<cudf::transform_program>(*table, expressions, cudf::lto_fragments{}, stream);
     // Construction inputs may be released by a thread with a different default stream.
     if (has_literals) { stream.sync(); }
     return reinterpret_cast<jlong>(program.release());
@@ -72,7 +73,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ast_AstJitProgram_destroy(JNIEnv* env
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::transform_program*>(j_program);
+    cudf::jni::safe_delete<cudf::transform_program>(j_program);
   }
   JNI_CATCH(env, );
 }

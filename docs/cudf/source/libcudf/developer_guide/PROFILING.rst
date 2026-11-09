@@ -4,5 +4,5 @@
 Profiling libcudf
 =================
 
-.. flatdoxygenpage:: md_doxygen_developer_guide_PROFILING
+.. flatdoxygenpage:: md_doxygen_2developer__guide_2PROFILING
    :project: libcudf

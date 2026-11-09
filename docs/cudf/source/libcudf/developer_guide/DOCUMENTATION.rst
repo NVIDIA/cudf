@@ -4,5 +4,5 @@
 libcudf C++ Documentation Guide
 ===============================
 
-.. flatdoxygenpage:: md_doxygen_developer_guide_DOCUMENTATION
+.. flatdoxygenpage:: md_doxygen_2developer__guide_2DOCUMENTATION
    :project: libcudf

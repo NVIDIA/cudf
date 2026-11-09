@@ -1466,8 +1466,9 @@ def test_hybrid_scan_page_index_stats_all_null_page(
         pytest.param(2.5, ASTOperator.LESS, 0.5, [], id="nan_max_min_prunes"),
         pytest.param(1.0, ASTOperator.EQUAL, 1.0, [0], id="nan_min_equal"),
         pytest.param(1.0, ASTOperator.LESS, 2.0, [0], id="nan_min_less"),
+        # Float `>` never prunes: row group 0 holds a NaN its stats leave out
         pytest.param(
-            1.0, ASTOperator.GREATER, 5.0, [1], id="nan_min_max_prunes"
+            1.0, ASTOperator.GREATER, 5.0, [0, 1], id="nan_min_greater"
         ),
     ],
 )
@@ -1507,3 +1508,80 @@ def test_hybrid_scan_filter_row_groups_with_nan_stats(
         reader.all_row_groups(simple_parquet_options), simple_parquet_options
     )
     assert filtered == expected_row_groups
+
+
+# pyarrow leaves NaNs out of the stats, so row group 0 holding [1.0, NaN, 2.5]
+# has min 1.0 and max 2.5 while row group 1 holds [10.0, 20.0, 30.0]
+_NAN = float("nan")
+
+
+@pytest.mark.parametrize(
+    "op, value, expected_row_groups",
+    [
+        pytest.param(ASTOperator.LESS, 5.0, [0], id="less_prunes"),
+        pytest.param(ASTOperator.LESS_EQUAL, 5.0, [0], id="less_equal_prunes"),
+        pytest.param(ASTOperator.EQUAL, 20.0, [1], id="equal_prunes"),
+        # A NaN is greater than 5.0 under a total ordering
+        pytest.param(ASTOperator.GREATER, 5.0, [0, 1], id="greater"),
+        pytest.param(
+            ASTOperator.GREATER_EQUAL, 5.0, [0, 1], id="greater_equal"
+        ),
+        pytest.param(ASTOperator.NOT_EQUAL, 20.0, [0, 1], id="not_equal"),
+        # Comparisons against a NaN literal depend on the NaN ordering
+        pytest.param(ASTOperator.EQUAL, _NAN, [0, 1], id="equal_nan"),
+        pytest.param(ASTOperator.LESS, _NAN, [0, 1], id="less_nan"),
+        pytest.param(ASTOperator.GREATER, _NAN, [0, 1], id="greater_nan"),
+    ],
+)
+def test_hybrid_scan_filter_row_groups_with_nan_rows_outside_stats(
+    op: ASTOperator,
+    value: float,
+    expected_row_groups: list[int],
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+) -> None:
+    """Stats must not prune row groups whose NaN rows a comparison may match."""
+    table = pa.table(
+        {"a": pa.array([1.0, _NAN, 2.5, 10.0, 20.0, 30.0], pa.float64())}
+    )
+    footer = extract_parquet_footer(write_hybrid_scan_parquet_bytes(table, 3))
+    simple_parquet_options.set_filter(
+        Operation(
+            op,
+            ColumnNameReference("a"),
+            Literal(plc.Scalar.from_arrow(pa.scalar(value, pa.float64()))),
+        )
+    )
+    reader = HybridScanReader(footer, simple_parquet_options)
+    filtered = reader.filter_row_groups_with_stats(
+        reader.all_row_groups(simple_parquet_options), simple_parquet_options
+    )
+    assert filtered == expected_row_groups
+
+
+def test_hybrid_scan_dictionary_page_filter_nan_literal(
+    simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+) -> None:
+    """Dictionary pages must not prune a comparison against a NaN literal."""
+    table = pa.table(
+        {"a": pa.array([1.0, _NAN, 2.5, 10.0, 20.0, 30.0], pa.float64())}
+    )
+    parquet_bytes = write_hybrid_scan_parquet_bytes(table, 3)
+    reader = HybridScanReader(
+        extract_parquet_footer(parquet_bytes), simple_parquet_options
+    )
+    a = ColumnNameReference("a")
+
+    def prune(value: float) -> list[int]:
+        literal = Literal(
+            plc.Scalar.from_arrow(pa.scalar(value, pa.float64()))
+        )
+        return _filter_row_groups_with_dictionary_pages(
+            reader,
+            simple_parquet_options,
+            parquet_bytes,
+            Operation(ASTOperator.EQUAL, a, literal),
+        )
+
+    # A non-NaN literal still prunes, a NaN literal does not
+    assert prune(20.0) == [1]
+    assert prune(_NAN) == [0, 1]

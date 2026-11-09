@@ -380,8 +380,16 @@ class stats_columns_collector final : public parquet_expression_simplifier {
  */
 class stats_expression_converter final : public parquet_expression_simplifier {
  public:
+  /**
+   * @brief Converts `expr` into a statistics expression
+   *
+   * @param expr Filter expression to convert
+   * @param output_dtypes Output data types of the table columns
+   * @param stream CUDA stream used to inspect literal values
+   */
   stats_expression_converter(ast::expression const& expr,
-                             std::span<cudf::data_type const> output_dtypes);
+                             std::span<cudf::data_type const> output_dtypes,
+                             cuda::stream_ref stream);
 
   /**
    * @brief Returns the AST to apply on column chunk statistics
@@ -437,6 +445,7 @@ class stats_expression_converter final : public parquet_expression_simplifier {
   [[nodiscard]] ast::expression const& push_non_null_guard(size_type col_index,
                                                            ast::expression const& stats_expr);
 
+  cuda::stream_ref _stream;
   simplified_expression_opt _stats_expr;
 };
 

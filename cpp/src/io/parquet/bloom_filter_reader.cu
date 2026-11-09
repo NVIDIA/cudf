@@ -347,10 +347,12 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
   bloom_filter_expression_converter(ast::expression const& expr,
                                     std::span<cudf::data_type const> output_dtypes,
                                     std::span<std::vector<ast::literal*> const> equality_literals,
-                                    std::span<std::vector<ast::ast_operator> const> operators)
+                                    std::span<std::vector<ast::ast_operator> const> operators,
+                                    cuda::stream_ref stream)
     : parquet_expression_simplifier{output_dtypes},
       _equality_literals{equality_literals},
-      _operators{operators}
+      _operators{operators},
+      _stream{stream}
   {
     // Compute and store columns literals offsets
     _col_literals_offsets.reserve(static_cast<cudf::size_type>(_output_dtypes.size()) + 1);
@@ -405,6 +407,10 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
     // Unsupported comparisons and those in discarded OR branches were not collected
     if (literal_iter == literal_indices.end()) { return std::nullopt; }
 
+    // Whether `col == NaN` matches NaN rows depends on the AST's NaN ordering, so a NaN literal
+    // cannot prune regardless of what the bloom filter holds
+    if (is_nan_literal(literal, _stream)) { return std::nullopt; }
+
     auto const col_literal_offset =
       _col_literals_offsets[col_idx] + static_cast<cudf::size_type>(*literal_iter);
     auto const& value = _tree.push(ast::column_reference{col_literal_offset});
@@ -415,6 +421,7 @@ class bloom_filter_expression_converter final : public parquet_expression_simpli
   std::vector<cudf::size_type> _col_literals_offsets;
   std::span<std::vector<ast::literal*> const> _equality_literals;
   std::span<std::vector<ast::ast_operator> const> _operators;
+  cuda::stream_ref _stream;
   simplified_expression_opt _bloom_filter_expr;
 };
 
@@ -570,7 +577,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   // Convert AST to BloomfilterAST expression with reference to bloom filter membership
   // in above `bloom_filter_membership_table`
   bloom_filter_expression_converter bloom_filter_expr_converter{
-    filter.get(), output_dtypes, literals, operators};
+    filter.get(), output_dtypes, literals, operators, stream};
 
   // Return early if bloom filters cannot prune any row groups using the filter
   auto const bloom_filter_expr = bloom_filter_expr_converter.get_bloom_filter_expr();

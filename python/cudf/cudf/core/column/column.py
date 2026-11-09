@@ -727,7 +727,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         return self.plc_column.size()
 
     @cached_property
-    def data(self) -> None | Buffer:
+    def data(self) -> Buffer | None:
         """Get data buffer from pylibcudf column."""
         return cast("Buffer | None", self.plc_column.data())
 
@@ -779,7 +779,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         )
 
     @cached_property
-    def mask(self) -> None | Buffer:
+    def mask(self) -> Buffer | None:
         """Get mask buffer from pylibcudf column."""
         return cast("Buffer | None", self.plc_column.null_mask())
 
@@ -852,7 +852,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
 
     def _mimic_inplace(
         self, other_col: Self, inplace: bool = False
-    ) -> None | Self:
+    ) -> Self | None:
         """
         Given another column, update the attributes of this column to mimic an
         inplace operation. This does not modify the memory of Buffers, but

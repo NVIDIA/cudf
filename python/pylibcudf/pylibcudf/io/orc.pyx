@@ -179,17 +179,27 @@ cdef class OrcColumnStatistics:
                 self.column_stats["sum"] = None
         elif date_stats := get_if[date_statistics](&type_specific_stats):
             if date_stats.minimum.has_value():
-                self.column_stats["minimum"] = datetime.datetime.fromtimestamp(
-                    datetime.timedelta(date_stats.minimum.value()).total_seconds(),
-                    datetime.timezone.utc,
-                )
+                try:
+                    self.column_stats["minimum"] = datetime.datetime.fromtimestamp(
+                        datetime.timedelta(date_stats.minimum.value()).total_seconds(),
+                        datetime.timezone.utc,
+                    )
+                except (ValueError, OverflowError):
+                    # DATE spans more years than Python datetime. Omit an
+                    # unrepresentable bound so filtering remains conservative.
+                    pass
             else:
                 self.column_stats["minimum"] = None
             if date_stats.maximum.has_value():
-                self.column_stats["maximum"] = datetime.datetime.fromtimestamp(
-                    datetime.timedelta(date_stats.maximum.value()).total_seconds(),
-                    datetime.timezone.utc,
-                )
+                try:
+                    self.column_stats["maximum"] = datetime.datetime.fromtimestamp(
+                        datetime.timedelta(date_stats.maximum.value()).total_seconds(),
+                        datetime.timezone.utc,
+                    )
+                except (ValueError, OverflowError):
+                    # DATE spans more years than Python datetime. Omit an
+                    # unrepresentable bound so filtering remains conservative.
+                    pass
             else:
                 self.column_stats["maximum"] = None
         elif bin_stats := get_if[binary_statistics](&type_specific_stats):

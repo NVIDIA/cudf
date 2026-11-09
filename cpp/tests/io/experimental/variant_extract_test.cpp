@@ -27,6 +27,7 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -1444,13 +1445,26 @@ TEST_F(GetVariantFieldsTest, WideAndDeepTrieUsesGlobalScratch)
 
 namespace {
 
+// Kinds of rows in the large mixed input: a null row, an empty value blob, `{k00: row}`, and
+// `{k00: row, k01: {k02: -row}}`
+enum class row_kind { NULL_ROW, EMPTY_ROW, ONE_KEY, TWO_KEYS };
+
+[[nodiscard]] row_kind kind_of(cudf::size_type row)
+{
+  constexpr std::array kinds{row_kind::NULL_ROW,
+                             row_kind::EMPTY_ROW,
+                             row_kind::ONE_KEY,
+                             row_kind::TWO_KEYS,
+                             row_kind::TWO_KEYS};
+  return kinds[row % kinds.size()];
+}
+
 // Checks the batched outputs against values derived on the host, over enough rows that the walk,
 // the valid-row count and the fused copy all span many blocks and bitmask words. The row count is
 // not a multiple of 32, and it exceeds both one counting block's share of a mask and the thread
-// count of the capped global-scratch grid. Rows cycle through: null, an empty value blob,
-// `{k00: row}`, and twice `{k00: row, k01: {k02: -row}}`. Every path in `chain` extends
-// `$.k01.k02`, which holds an INT32, so none of them resolves. The paths are listed out of trie
-// order, so outputs are not in slot order.
+// count of the capped global-scratch grid. Every path in `chain` extends `$.k01.k02`, which holds
+// an INT32, so none of them resolves. The paths are listed out of trie order, so outputs are not
+// in slot order.
 void expect_large_mixed_input(std::vector<std::string> const& chain)
 {
   constexpr cudf::size_type num_rows = 100'003;
@@ -1461,11 +1475,11 @@ void expect_large_mixed_input(std::vector<std::string> const& chain)
   std::vector<bool> row_valid(num_rows, true);
   for (cudf::size_type row = 0; row < num_rows; ++row) {
     auto const k00 = enc_int32(row);
-    switch (row % 5) {
-      case 0: row_valid[row] = false; break;
-      case 1: break;
-      case 2: val_rows[row] = build_single_field_object(/*fid=*/0, k00); break;
-      default: {
+    switch (kind_of(row)) {
+      case row_kind::NULL_ROW: row_valid[row] = false; break;
+      case row_kind::EMPTY_ROW: break;
+      case row_kind::ONE_KEY: val_rows[row] = build_single_field_object(/*fid=*/0, k00); break;
+      case row_kind::TWO_KEYS: {
         auto const k01 = build_single_field_object(/*fid=*/2, enc_int32(-row));
         auto& out      = val_rows[row];
         out            = {make_variant_object_header(),
@@ -1483,8 +1497,20 @@ void expect_large_mixed_input(std::vector<std::string> const& chain)
   auto const col =
     wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(num_rows, meta), val_rows, row_valid);
 
+  constexpr std::size_t k02_path = 1;
+  constexpr std::size_t k00_path = 2;
   std::vector<std::string> paths{"$.k01.k03", "$.k01.k02", "k00"};
   paths.insert(paths.end(), chain.begin(), chain.end());
+
+  // The value `path_idx` locates in a row of `kind`, if any
+  auto const expected_value =
+    [](std::size_t path_idx, row_kind kind, cudf::size_type row) -> std::optional<int32_t> {
+    if (path_idx == k00_path && (kind == row_kind::ONE_KEY || kind == row_kind::TWO_KEYS)) {
+      return row;
+    }
+    if (path_idx == k02_path && kind == row_kind::TWO_KEYS) { return -row; }
+    return std::nullopt;
+  };
   std::vector<std::string_view> const path_views(paths.begin(), paths.end());
   status_buffers status{paths.size(), num_rows};
   auto const got =
@@ -1496,14 +1522,15 @@ void expect_large_mixed_input(std::vector<std::string> const& chain)
     std::vector<bool> valid(num_rows);
     std::vector<uint8_t> statuses(num_rows);
     for (cudf::size_type row = 0; row < num_rows; ++row) {
-      auto const kind = row % 5;
-      auto const hit  = path_idx == 2 ? kind >= 2 : path_idx == 1 && kind >= 3;
-      values[row]     = path_idx == 2 ? row : -row;
-      valid[row]      = hit;
-      statuses[row]   = kind == 0   ? ST_ROW_NULL
-                        : kind == 1 ? ST_MALFORMED
-                        : hit       ? ST_SUCCESS
-                                    : ST_MISSING;
+      auto const kind  = kind_of(row);
+      auto const value = expected_value(path_idx, kind, row);
+      values[row]      = value.value_or(0);
+      valid[row]       = value.has_value();
+      switch (kind) {
+        case row_kind::NULL_ROW: statuses[row] = ST_ROW_NULL; break;
+        case row_kind::EMPTY_ROW: statuses[row] = ST_MALFORMED; break;
+        default: statuses[row] = value.has_value() ? ST_SUCCESS : ST_MISSING;
+      }
     }
     auto const got_column = got->get_column(static_cast<cudf::size_type>(path_idx)).view();
     EXPECT_EQ(got_column.null_count(), std::count(valid.begin(), valid.end(), false));

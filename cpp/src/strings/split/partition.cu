@@ -19,7 +19,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/for_each.h>

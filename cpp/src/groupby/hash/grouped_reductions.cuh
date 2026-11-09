@@ -19,7 +19,7 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/array>
 #include <cuda/std/cstdint>
 #include <cuda/std/type_traits>

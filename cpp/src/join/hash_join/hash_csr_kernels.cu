@@ -13,7 +13,9 @@
 
 #include <cooperative_groups.h>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
+#include <cuda/std/algorithm.upper_bound.h>
 
 namespace cudf::detail {
 namespace {

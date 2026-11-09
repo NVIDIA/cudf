@@ -10,6 +10,8 @@
 #include <cudf/types.hpp>
 
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/type_traits>
 
 namespace cudf {

@@ -11,7 +11,7 @@
 
 #include <cudf/detail/utilities/cuda.cuh>
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.lower_bound.h>
 
 namespace cudf::io::parquet::detail {
 

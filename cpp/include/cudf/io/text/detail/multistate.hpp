@@ -9,6 +9,7 @@
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
 
 #include <cstdint>
 

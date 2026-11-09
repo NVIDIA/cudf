@@ -29,7 +29,7 @@
 
 #include <cuda/atomic>
 #include <cuda/buffer>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/remove.h>

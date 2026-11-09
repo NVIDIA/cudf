@@ -20,7 +20,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 #include <thrust/scan.h>

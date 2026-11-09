@@ -61,7 +61,7 @@ from cudf.core.indexed_frame import (
 from cudf.core.mixins import NoNewAttributesMixin
 from cudf.core.resample import SeriesResampler
 from cudf.core.single_column_frame import SingleColumnFrame
-from cudf.core.udf.scalar_function import SeriesApplyKernel
+from cudf.core.udf.mlir_backend.scalar_function import SeriesApplyKernel
 from cudf.utils import docutils
 from cudf.utils.docutils import copy_docstring
 from cudf.utils.dtypes import (

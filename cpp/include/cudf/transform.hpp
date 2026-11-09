@@ -9,15 +9,20 @@
 #include <cudf/column/scalar_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/udf.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
+#include <cuda/stream>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -237,6 +242,8 @@ struct transform_program {
  * Computes:
  * `(outputs[i]...) =  UDF(inputs[i]...)`.
  *
+ * PTX UDFs are linked as complete modules. The function must follow the CUDF UDF ABI.
+ *
  * For both null-aware and non-null-aware UDFs, output values have the following initialization:
  * - Fixed-width outputs have uninitialized values.
  * - Mutable string outputs (`cuda::std::span<char>`, used with preallocated string offsets) contain
@@ -310,8 +317,9 @@ std::unique_ptr<table> transform(
  * The size of the resulting column is the `row_size` if provided, otherwise it is inferred from
  * the input and pre-allocated output columns.
  *
- * @param udf           The LTO-IR fragment containing the transform function to apply. The UDF must
- * be named `transform` and follow the CUDF UDF ABI
+ * @param udf           The LTO-IR, FATBIN, or PTX fragment containing the transform function to
+ * apply. The UDF must follow the CUDF UDF ABI and be named `transform`. For PTX, the first function
+ * and references to it are renamed to `transform` before linking. PTX input must be null-terminated
  * @param binary_type   The type of the LTO binary provided in `udf`
  * @param is_null_aware Signifies the UDF will receive row inputs as optional values
  * @param user_data     User-defined device data to pass to the UDF

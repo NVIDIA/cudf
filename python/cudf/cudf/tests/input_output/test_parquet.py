@@ -3303,9 +3303,11 @@ def test_parquet_bss_round_trip(tmp_path):
         row_group_size_rows=rows_per_rowgroup,
     )
 
-    # now read back in with pyarrow to test it was written properly by cudf
+    # now read back in with pyarrow to test it was written properly by cudf.
+    # Drop the pandas metadata that cudf writes, which would convert the
+    # nullable 8- and 16-bit columns to nullable pandas types, unlike padf2.
     padf2 = pq.read_table(padf_fname)
-    padf3 = pq.read_table(cdf_fname)
+    padf3 = pq.read_table(cdf_fname).replace_schema_metadata()
     assert_eq(padf2, padf3)
     assert_eq(padf2.schema[0].type, padf3.schema[0].type)
 

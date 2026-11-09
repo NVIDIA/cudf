@@ -356,10 +356,7 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       if (is_valid && dtypes[actual_col].id() == cudf::type_id::STRING &&
           options.detect_whitespace_after_quotes && not options.detect_whitespace_around_quotes &&
           not options.keepquotes && *field_start == options.quotechar) {
-        auto quote_end = field_end;
-        while (quote_end > field_start && is_whitespace(*(quote_end - 1))) {
-          --quote_end;
-        }
+        auto const quote_end = trim_whitespaces(field_start, field_end).second;
         if (quote_end - field_start >= 2 && *(quote_end - 1) == options.quotechar &&
             quote_end != field_end) {
           field_end = quote_end;

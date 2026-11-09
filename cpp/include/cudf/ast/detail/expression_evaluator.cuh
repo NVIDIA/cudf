@@ -374,7 +374,6 @@ struct expression_evaluator {
     detail::device_data_reference const& output,
     cudf::size_type const output_row_index,
     ast_operator const op,
-    int32_t target_scale,
     IntermediateDataType<has_nulls>* thread_intermediate_storage) const
   {
     auto const typed_input =
@@ -385,7 +384,6 @@ struct expression_evaluator {
                             output_row_index,
                             typed_input,
                             output,
-                            target_scale,
                             thread_intermediate_storage);
   }
 
@@ -398,7 +396,6 @@ struct expression_evaluator {
     detail::device_data_reference const& output,
     cudf::size_type const output_row_index,
     ast_operator const op,
-    int32_t target_scale,
     IntermediateDataType<has_nulls>* thread_intermediate_storage) const
   {
     CUDF_UNREACHABLE("Unsupported type in operator().");
@@ -507,9 +504,8 @@ struct expression_evaluator {
     for (cudf::size_type operator_index = 0; operator_index < plan.operators.size();
          ++operator_index) {
       // Execute operator
-      auto const op           = plan.operators[operator_index];
-      auto const target_scale = plan.operator_target_scales[operator_index];
-      auto const arity        = plan.operator_arities[operator_index];
+      auto const op    = plan.operators[operator_index];
+      auto const arity = plan.operator_arities[operator_index];
       if (arity == 1) {
         // Unary operator
         auto const& input =
@@ -527,7 +523,6 @@ struct expression_evaluator {
                           output,
                           output_row_index,
                           op,
-                          target_scale,
                           thread_intermediate_storage);
         } else {
           type_dispatcher<dispatch_void_if_complex>(input.data_type,
@@ -538,7 +533,6 @@ struct expression_evaluator {
                                                     output,
                                                     output_row_index,
                                                     op,
-                                                    target_scale,
                                                     thread_intermediate_storage);
         }
       } else if (arity == 2) {
@@ -709,23 +703,27 @@ struct expression_evaluator {
      * @param output Output data reference.
      */
     template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>
-      requires(detail::is_valid_unary_op<detail::operator_functor<op>,
-                                         possibly_null_value_t<Input, has_nulls>>)
+      requires((op == ast_operator::RESCALE &&
+                requires(detail::operator_functor<op> f,
+                         possibly_null_value_t<Input, has_nulls> v) { f(v, int32_t{}); }) ||
+               (op != ast_operator::RESCALE &&
+                detail::is_valid_unary_op<detail::operator_functor<op>,
+                                          possibly_null_value_t<Input, has_nulls>>))
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       cudf::size_type const output_row_index,
       possibly_null_value_t<Input, has_nulls> const& input,
       detail::device_data_reference const& output,
-      int32_t target_scale,
       IntermediateDataType<has_nulls>* thread_intermediate_storage) const
     {
       if constexpr (op == ast_operator::RESCALE) {
         using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input, int32_t>;
-        this->template resolve_output<Out>(output_object,
-                                           output,
-                                           output_row_index,
-                                           thread_intermediate_storage,
-                                           detail::operator_functor<op>{}(input, target_scale));
+        this->template resolve_output<Out>(
+          output_object,
+          output,
+          output_row_index,
+          thread_intermediate_storage,
+          detail::operator_functor<op>{}(input, output.data_type.scale()));
       } else {
         using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input>;
         this->template resolve_output<Out>(output_object,
@@ -742,7 +740,6 @@ struct expression_evaluator {
       cudf::size_type const output_row_index,
       possibly_null_value_t<Input, has_nulls> const& input,
       detail::device_data_reference const& output,
-      int32_t target_scale,
       IntermediateDataType<has_nulls>* thread_intermediate_storage) const
     {
       CUDF_UNREACHABLE("Invalid unary dispatch operator for the provided input.");

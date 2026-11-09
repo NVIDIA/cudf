@@ -95,8 +95,8 @@ enum class ast_operator : int32_t {
   CAST_TO_FLOAT32,     ///< Cast value to float
   CAST_TO_DECIMAL32,   ///< Cast a decimal value to decimal32, preserving its scale
   CAST_TO_DECIMAL64,   ///< Cast a decimal value to decimal64, preserving its scale
-  CAST_TO_DECIMAL128,  ///< Cast a decimal value to decimal128, preserving its scale
-  RESCALE              ///< Rescale a fixed-point value to operation target scale
+  CAST_TO_DECIMAL128,  ///< Cast a decimal value to decimal128, preserving its scale (JIT only)
+  RESCALE              ///< Rescale a fixed-point value to the target scale (truncates toward zero)
 };
 
 /** @} */  // end of group

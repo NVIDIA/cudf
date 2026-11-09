@@ -278,6 +278,7 @@ cudf::data_type ast_operator_return_type(ast_operator op,
     CUDF_EXPECTS(operand_types.size() == 1 && cudf::is_fixed_point(operand_types.front()),
                  "RESCALE requires one fixed-point operand.",
                  cudf::data_type_error);
+    // This is the input scale; callers must apply the operation's target scale.
     return operand_types.front();
   }
   cudf::data_type result{cudf::type_id::EMPTY};

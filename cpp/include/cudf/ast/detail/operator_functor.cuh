@@ -97,13 +97,6 @@ struct operator_invoker<ast_operator::RESCALE> {
   static constexpr auto arity = 1;
 
   template <typename T>
-  __device__ static inline T eval(T a)
-    requires(cudf::is_fixed_point<T>())
-  {
-    return a;
-  }
-
-  template <typename T>
   __device__ static inline auto eval(T a, int32_t target_scale)
     -> decltype(cudf::detail::ops::rescale(a, target_scale))
   {

@@ -1680,9 +1680,12 @@ TYPED_TEST(TransformTest, OperatorParityNumericCasts)
 {
   using Executor = TypeParam;
 
-  auto input = column_wrapper<int32_t>{{0, 1, 2, 3}, {1, 0, 1, 1}};
-  auto table = cudf::table_view{{input}};
-  auto ref   = cudf::ast::column_reference{0};
+  auto integers = column_wrapper<int32_t>{{0, 1, 2, 3}, {1, 0, 1, 1}};
+  auto floats   = column_wrapper<float>{{0.0f, 1.0f, 2.75f, 3.5f}, {1, 0, 1, 1}};
+  auto bools    = column_wrapper<bool>{{false, true, true, false}, {1, 0, 1, 1}};
+  auto decimals = cudf::test::fixed_point_column_wrapper<int32_t>(
+    {0, 100, 275, 350}, {1, 0, 1, 1}, numeric::scale_type{-2});
+  auto ref = cudf::ast::column_reference{0};
 
   constexpr auto casts =
     std::array{std::pair{cudf::ast::ast_operator::CAST_TO_BOOL8, cudf::type_id::BOOL8},
@@ -1697,44 +1700,68 @@ TYPED_TEST(TransformTest, OperatorParityNumericCasts)
                std::pair{cudf::ast::ast_operator::CAST_TO_FLOAT32, cudf::type_id::FLOAT32},
                std::pair{cudf::ast::ast_operator::CAST_TO_FLOAT64, cudf::type_id::FLOAT64}};
 
-  for (auto const& [op, type_id] : casts) {
-    auto expression = cudf::ast::operation{op, ref};
-    auto expected   = cudf::cast(input, cudf::data_type{type_id});
-    auto result     = Executor::compute_column(table, expression);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view(), verbosity);
+  for (auto const& input : {cudf::column_view{integers},
+                            cudf::column_view{floats},
+                            cudf::column_view{bools},
+                            cudf::column_view{decimals}}) {
+    auto table = cudf::table_view{{input}};
+    for (auto const& [op, type_id] : casts) {
+      auto expression = cudf::ast::operation{op, ref};
+      auto expected   = cudf::cast(input, cudf::data_type{type_id});
+      auto result     = Executor::compute_column(table, expression);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view(), verbosity);
+    }
   }
 }
 
 TYPED_TEST(TransformTest, OperatorParityDecimalCastsAndRescale)
 {
   using Executor = TypeParam;
+  constexpr auto casts =
+    std::array{std::pair{cudf::ast::ast_operator::CAST_TO_DECIMAL32, cudf::type_id::DECIMAL32},
+               std::pair{cudf::ast::ast_operator::CAST_TO_DECIMAL64, cudf::type_id::DECIMAL64},
+               std::pair{cudf::ast::ast_operator::CAST_TO_DECIMAL128, cudf::type_id::DECIMAL128}};
+  auto ref = cudf::ast::column_reference{0};
 
-  auto input = cudf::test::fixed_point_column_wrapper<int32_t>(
-    {120, -450, 780}, {1, 0, 1}, numeric::scale_type{-2});
-  auto table = cudf::table_view{{input}};
-  auto ref   = cudf::ast::column_reference{0};
+  for (bool const nullable : {false, true}) {
+    auto input = nullable ? cudf::test::fixed_point_column_wrapper<int32_t>(
+                              {127, -459, 780}, {1, 1, 0}, numeric::scale_type{-2})
+                          : cudf::test::fixed_point_column_wrapper<int32_t>(
+                              {127, -459, 780}, numeric::scale_type{-2});
+    auto table = cudf::table_view{{input}};
+    for (auto const& [op, type_id] : casts) {
+      auto expression = cudf::ast::operation{op, ref};
+      auto equal = cudf::ast::operation{cudf::ast::ast_operator::EQUAL, expression, expression};
+      if constexpr (std::is_same_v<Executor, executor_ast>) {
+        if (type_id == cudf::type_id::DECIMAL128) {
+          EXPECT_THROW(Executor::compute_column(table, expression), cudf::data_type_error);
+          EXPECT_THROW(Executor::compute_column(table, equal), cudf::data_type_error);
+          continue;
+        }
+      }
+      auto expected = cudf::cast(input, cudf::data_type{type_id, -2});
+      auto result   = Executor::compute_column(table, expression);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view(), verbosity);
+    }
 
-  auto cast64 = cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_DECIMAL64, ref};
-  auto expected64 =
-    cudf::cast(input, cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}});
-  auto result64 = Executor::compute_column(table, cast64);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected64->view(), result64->view(), verbosity);
+    for (auto const scale :
+         {numeric::scale_type{-3}, numeric::scale_type{-1}, numeric::scale_type{1}}) {
+      auto rescale = cudf::ast::operation{cudf::ast::ast_operator::RESCALE, ref, scale};
+      EXPECT_EQ(rescale.get_target_scale(), scale);
+      auto expected =
+        cudf::cast(input, cudf::data_type{cudf::type_id::DECIMAL32, static_cast<int32_t>(scale)});
+      auto result = Executor::compute_column(table, rescale);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view(), verbosity);
 
-  auto rescale = cudf::ast::operation{cudf::ast::ast_operator::RESCALE, ref, -3};
-  EXPECT_EQ(rescale.get_target_scale(), -3);
-  auto rescale_expected = cudf::test::fixed_point_column_wrapper<int32_t>(
-    {1200, -4500, 7800}, {1, 0, 1}, numeric::scale_type{-3});
-  auto rescale_result = Executor::compute_column(table, rescale);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(rescale_expected, rescale_result->view(), verbosity);
-
-  auto cast128 = cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_DECIMAL128, ref};
-  if constexpr (std::is_same_v<Executor, executor_ast>) {
-    EXPECT_THROW(Executor::compute_column(table, cast128), cudf::data_type_error);
-  } else {
-    auto expected128 =
-      cudf::cast(input, cudf::data_type{cudf::type_id::DECIMAL128, numeric::scale_type{-2}});
-    auto result128 = Executor::compute_column(table, cast128);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected128->view(), result128->view(), verbosity);
+      // Compare the intermediate rescale against materialized values at the target scale.
+      auto comparison_table = cudf::table_view{{input, expected->view()}};
+      auto expected_ref     = cudf::ast::column_reference{1};
+      auto equal = cudf::ast::operation{cudf::ast::ast_operator::EQUAL, rescale, expected_ref};
+      auto equal_expected = nullable ? column_wrapper<bool>{{true, true, true}, {1, 1, 0}}
+                                     : column_wrapper<bool>{true, true, true};
+      auto equal_result   = Executor::compute_column(comparison_table, equal);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(equal_expected, equal_result->view(), verbosity);
+    }
   }
 }
 
@@ -1743,7 +1770,11 @@ TEST_F(TransformProgramTest, RescaleMetadataValidation)
   auto ref = cudf::ast::column_reference{0};
   EXPECT_THROW((cudf::ast::operation{cudf::ast::ast_operator::RESCALE, ref}),
                std::invalid_argument);
-  EXPECT_THROW((cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_INT32, ref, -2}),
+  EXPECT_THROW(
+    (cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_INT32, ref, numeric::scale_type{-2}}),
+    std::invalid_argument);
+  EXPECT_THROW((cudf::ast::operation{
+                 cudf::ast::ast_operator::CAST_TO_DECIMAL32, ref, numeric::scale_type{-2}}),
                std::invalid_argument);
 }
 

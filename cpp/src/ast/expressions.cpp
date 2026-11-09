@@ -36,7 +36,7 @@ operation::operation(ast_operator op, expression const& input)
     op != ast_operator::RESCALE, "RESCALE requires target scale metadata.", std::invalid_argument);
 }
 
-operation::operation(ast_operator op, expression const& input, int32_t target_scale)
+operation::operation(ast_operator op, expression const& input, numeric::scale_type target_scale)
   : op{op}, operands{input}, target_scale{target_scale}
 {
   CUDF_EXPECTS(op == ast_operator::RESCALE,

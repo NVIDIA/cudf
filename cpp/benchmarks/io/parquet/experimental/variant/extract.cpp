@@ -693,20 +693,22 @@ NVBENCH_BENCH(bench_variant_extract_fields)
   .add_int64_axis("hit_rate", {20, 80})
   .add_string_axis("sorted", {"true", "false"});
 
-// Compares extracting many fields in one batched call against looping the single-field API, with
-// and without a prefix shared by all the requested paths. Type is fixed to int32_t; both APIs
-// decode, so the two sides of the comparison are end-to-end equivalent.
+// Compares extracting many fields in one batched call against looping the single-field API. Every
+// path has `nesting_depth` "a" steps around its own leaf key, of which the first `prefix_depth` are
+// shared by all the paths, so each path does the same work whatever the prefix length. Type is
+// fixed to int32_t; both APIs decode, so the two sides of the comparison are end-to-end equivalent.
 // Every field holds a real leaf, so no path hits a filler value and skips its cast and copy
 static void bench_variant_extract_multi_field(nvbench::state& state)
 {
   auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
-  auto const num_rows      = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const num_fields    = static_cast<int>(state.get_int64("num_fields"));
-  auto const hit_rate      = static_cast<int>(state.get_int64("hit_rate"));
-  bool const shared_prefix = state.get_string("prefix") == "shared";
-  bool const batched       = state.get_string("api") == "batched";
+  auto const num_rows         = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_fields       = static_cast<int>(state.get_int64("num_fields"));
+  auto const hit_rate         = static_cast<int>(state.get_int64("hit_rate"));
+  auto const prefix_depth     = static_cast<int>(state.get_int64("prefix_depth"));
+  constexpr int nesting_depth = 4;
+  bool const batched          = state.get_string("api") == "batched";
 
   // Dictionary: the shared parent key "a", the leaf keys f00..f{N-1}, and "z" for miss rows, in
   // sorted order. Field ids are dictionary indices, so "a" is 0 and leaf `i` is `i + 1`
@@ -717,15 +719,21 @@ static void bench_variant_extract_multi_field(nvbench::state& state)
   keys.emplace_back("z");
   auto const meta_blob = build_metadata(keys);
 
+  // Row layout: `prefix_depth` nested "a" objects around the leaf-key object, whose every field
+  // holds the int32 under the remaining `nesting_depth - prefix_depth` nested "a" objects
   auto const leaf = build_leaf_value(bench_variant_type::INT32);
+  auto branch     = leaf;
+  for (int level = prefix_depth; level < nesting_depth; ++level) {
+    branch = build_object({{uint8_t{0}, branch}});
+  }
   std::vector<object_field> leaf_fields;
   for (int i = 0; i < num_fields; ++i) {
-    leaf_fields.emplace_back(static_cast<uint8_t>(i + 1), leaf);
+    leaf_fields.emplace_back(static_cast<uint8_t>(i + 1), branch);
   }
-  // Shared-prefix layout nests every leaf under "a"; the disjoint layout puts them at the top
-  // level
-  auto const leaf_object = build_object(leaf_fields);
-  auto hit_val           = shared_prefix ? build_object({{uint8_t{0}, leaf_object}}) : leaf_object;
+  auto hit_val = build_object(leaf_fields);
+  for (int level = 0; level < prefix_depth; ++level) {
+    hit_val = build_object({{uint8_t{0}, hit_val}});
+  }
   // Miss rows hold an object keyed on "z" alone, so every path fails at its first step
   auto miss_val = build_object({{static_cast<uint8_t>(num_fields + 1), leaf}});
   pad_to_equal_size(hit_val, miss_val);
@@ -737,8 +745,16 @@ static void bench_variant_extract_multi_field(nvbench::state& state)
 
   std::vector<std::string> path_strings;
   path_strings.reserve(num_fields);
+  auto const a_steps = [](int count) {
+    std::string steps;
+    for (int i = 0; i < count; ++i) {
+      steps += ".a";
+    }
+    return steps;
+  };
   for (int i = 0; i < num_fields; ++i) {
-    path_strings.push_back((shared_prefix ? "$.a." : "$.") + field_key(i));
+    path_strings.push_back("$" + a_steps(prefix_depth) + "." + field_key(i) +
+                           a_steps(nesting_depth - prefix_depth));
   }
   std::vector<std::string_view> const paths(path_strings.begin(), path_strings.end());
   auto const target_type = cudf::data_type{cudf::type_id::INT32};
@@ -770,7 +786,7 @@ static void bench_variant_extract_multi_field(nvbench::state& state)
 NVBENCH_BENCH(bench_variant_extract_multi_field)
   .set_name("bench_variant_extract_multi_field")
   .add_int64_axis("num_rows", {32768, 262144, 1048576})
-  .add_int64_axis("num_fields", {1, 4, 16, 64, 128})
-  .add_string_axis("prefix", {"shared", "disjoint"})
+  .add_int64_axis("num_fields", {1, 4, 16, 64})
+  .add_int64_axis("prefix_depth", {0, 2, 4})
   .add_string_axis("api", {"batched", "looped"})
   .add_int64_axis("hit_rate", {80});

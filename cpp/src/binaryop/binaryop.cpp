@@ -22,30 +22,34 @@
  */
 
 #include "compiled/binary_ops.hpp"
-#include "jit/cache.hpp"
-#include "jit/helpers.hpp"
-#include "jit/parser.hpp"
-#include "jit/util.hpp"
 
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/binaryop.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/replace.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
-#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/std/optional>
 #include <cuda/stream>
 
 #include <transform/checked_arithmetic.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 
 namespace cudf {
 namespace binops {
@@ -148,45 +152,6 @@ bool is_same_scale_necessary(binary_operator op)
   return op != binary_operator::MUL && op != binary_operator::DIV &&
          op != binary_operator::MUL_OVERFLOW && op != binary_operator::DIV_OVERFLOW;
 }
-
-namespace jit {
-void binary_operation(mutable_column_view& out,
-                      column_view const& lhs,
-                      column_view const& rhs,
-                      std::string const& ptx,
-                      cuda::stream_ref stream)
-{
-  std::string const output_type_name = cudf::type_to_name(out.type());
-
-  std::string cuda_source =
-    cudf::jit::parse_single_function_ptx(ptx,
-                                         "GENERIC_BINARY_OP",
-                                         {
-                                           {0, output_type_name + " *"},
-                                           {1, cudf::type_to_name(lhs.type())},
-                                           {2, cudf::type_to_name(rhs.type())},
-                                         });
-
-  std::string kernel_reflection = rtcx::reflect_template("cudf::binops::jit::binary_op_kernel",
-                                                         output_type_name,
-                                                         cudf::type_to_name(lhs.type()),
-                                                         cudf::type_to_name(rhs.type()),
-                                                         "cudf::binops::jit::UserDefinedOp");
-
-  auto kernel = cudf::jit::get_udf_kernel(
-    "cudf/cpp/src/binaryop/jit/kernel.cu", kernel_reflection, cuda_source, {});
-  auto cfg = kernel.max_occupancy_config(0, 0);
-
-  kernel.launch_with({cfg.min_grid_size},
-                     {cfg.block_size},
-                     0,
-                     stream,
-                     static_cast<size_type>(out.size()),
-                     cudf::jit::get_data_ptr(out),
-                     cudf::jit::get_data_ptr(lhs),
-                     cudf::jit::get_data_ptr(rhs));
-}
-}  // namespace jit
 
 // Compiled Binary operation
 namespace compiled {
@@ -409,17 +374,25 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
 
   CUDF_EXPECTS((lhs.size() == rhs.size()), "Column sizes don't match");
 
-  auto [new_mask, null_count] = cudf::detail::bitmask_and(table_view({lhs, rhs}), stream, mr);
-  auto out =
-    make_fixed_width_column(output_type, lhs.size(), std::move(new_mask), null_count, stream, mr);
+  if (lhs.is_empty()) { return make_empty_column(output_type); }
 
-  // Check for 0 sized data
-  if (lhs.is_empty() or rhs.is_empty()) return out;
+  std::array<transform_input, 2> inputs{lhs, rhs};
+  std::array<transform_output, 1> outputs{transform_output{.type = output_type}};
 
-  auto out_view = out->mutable_view();
-  binops::jit::binary_operation(out_view, lhs, rhs, ptx, stream);
-  out->set_null_count(cudf::detail::null_count(out_view.null_mask(), 0, out->size(), stream));
-  return out;
+  auto result =
+    cudf::transform_lto(std::span{reinterpret_cast<uint8_t const*>(ptx.data()), ptx.size()},
+                        lto_binary_type::PTX,
+                        null_aware::NO,
+                        std::nullopt,
+                        inputs,
+                        outputs,
+                        {},
+                        std::nullopt,
+                        stream,
+                        mr.get_output_mr());
+
+  auto columns = result->release();
+  return std::move(columns.front());
 }
 }  // namespace detail
 

@@ -126,9 +126,9 @@ Uses device-1, and the given memory resource. Note that the memory
 resource provided _must_ be valid for allocations on the specified
 device, no checking is performed.
 
-For debugging purposes, we can also pass undocumented keyword
-arguments, at the moment, `raise_on_fail` is also supported, which
-raises, rather than falling back, during translation:
+For debugging purposes, we can also pass `raise_on_fail` (see
+{doc}`options`), which raises, rather than falling back, during
+translation:
 
 ```python
 result = q.collect(engine=pl.GPUEngine(raise_on_fail=True))
@@ -245,15 +245,11 @@ into the `dsl` namespace via `expr.py`. They inherit
 from `Expr`.
 
 Expressions are evaluated by implementing a `do_evaluate` method that
-takes a `DataFrame` as context (this provides columns) along with an
-`ExecutionContext` parameter (indicating what context we're evaluating
-this expression in, currently unused) and a `mapping` from
-expressions to evaluated `Column`s. This approach enables a simple form of
-expression rewriting during evaluation of expressions that is used in
-evaluation of, for example, groupby-aggregations. To perform the
-evaluation, one should use the base class (generic) `evaluate` method
-which handles the boilerplate for looking up in the substitution
-`mapping`.
+takes a `DataFrame` as context (this provides columns) along with a
+keyword-only `context` parameter, an `ExecutionContext` indicating what
+context we're evaluating this expression in (for example `FRAME` or
+`GROUPBY`). To perform the evaluation, one should use the base class
+(generic) `evaluate` method rather than calling `do_evaluate` directly.
 
 To simplify state tracking, all columns should be considered immutable
 on construction. This matches the "functional" description coming from
@@ -508,12 +504,16 @@ that's downstream of both the original `stream` and `stream_b`.
 
 ```python
 from cudf_polars.containers import Column
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.cuda_stream import get_cuda_stream, get_joined_cuda_stream
 
 stream_b = Stream()
-col = Column(plc.Column.from_arrow(pa.array([1, 2, 3]), stream=stream_b), dtype=pl.Int64(), name="c")
+col = Column(
+    plc.Column.from_arrow(pa.array([1, 2, 3]), stream=stream_b),
+    dtype=DataType(pl.Int64()),
+    name="c",
+)
 
-new_stream = get_joined_cuda_stream(upstreams=(stream, stream_b))
+new_stream = get_joined_cuda_stream(get_cuda_stream, upstreams=(stream, stream_b))
 df2 = df.with_columns([col], stream=new_stream)
 ```
 

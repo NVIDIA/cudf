@@ -16,7 +16,7 @@ from cudf_polars.utils import cucascade
 
 
 class FakeScanCache:
-    """Stands in for `cucascade.cudf.ScanCache`."""
+    """Stands in for `cudf_polars_cucascade.ScanCache`."""
 
     def __init__(self):
         self.opened = []
@@ -65,12 +65,35 @@ def test_disabled_is_a_no_op(disabled):
     assert cucascade._cache is None
 
 
-def test_missing_glue_is_reported(disabled, monkeypatch):
-    monkeypatch.delitem(sys.modules, "cucascade", raising=False)
-    monkeypatch.delitem(sys.modules, "cucascade.cudf", raising=False)
+def test_missing_extension_is_reported_with_how_to_build_it(disabled, monkeypatch):
+    monkeypatch.delitem(sys.modules, "cudf_polars_cucascade", raising=False)
     monkeypatch.setattr(sys, "path", [])
-    with pytest.raises(RuntimeError, match="cucascade"):
+    with pytest.raises(RuntimeError, match="cudf_polars_cucascade") as excinfo:
         cucascade.configure_cucascade(1 << 30)
+    assert "pip install" in str(excinfo.value)
+    assert "python/cudf_polars/cucascade" in str(excinfo.value)
+
+
+def test_extension_built_against_another_libcudf_is_refused(disabled, monkeypatch):
+    running = cucascade._installed_cudf_version()
+    if running is None:
+        pytest.skip("the installed libcudf version is not known")
+    stale = types.ModuleType("cudf_polars_cucascade")
+    stale.built_against_cudf_version = (running[0], running[1] + 1, 0)
+    monkeypatch.setitem(sys.modules, "cudf_polars_cucascade", stale)
+    with pytest.raises(RuntimeError, match="rebuild"):
+        cucascade.configure_cucascade(1 << 30)
+    assert cucascade._cache is None
+
+
+def test_extension_built_against_this_libcudf_is_accepted(monkeypatch):
+    running = cucascade._installed_cudf_version()
+    if running is None:
+        pytest.skip("the installed libcudf version is not known")
+    current = types.ModuleType("cudf_polars_cucascade")
+    current.built_against_cudf_version = (running[0], running[1], 0)
+    monkeypatch.setitem(sys.modules, "cudf_polars_cucascade", current)
+    assert cucascade._load_extension() is current
 
 
 def test_wrap_sources_opens_every_remote_path(glue):

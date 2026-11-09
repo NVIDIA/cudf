@@ -9,14 +9,16 @@ read through cuCascade's REST backend and its host-memory cache, so a column rea
 one query is served from host memory by the next. With it unset, every function here
 is a no-op and the standard read path is used.
 
-The ``cucascade`` package (cuCascade's pylibcudf bindings) must be importable, and
-``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY`` (and, if used,
-``AWS_SESSION_TOKEN``) must be set.
+The ``cudf_polars_cucascade`` extension (``python/cudf_polars/cucascade``) must be built
+and installed, and ``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY`` (and, if used,
+``AWS_SESSION_TOKEN``) must be set. The extension is built from source, against the libcudf of
+the environment it runs in, because it subclasses libcudf and pylibcudf types.
 """
 
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import os
 import threading
 import types
@@ -36,10 +38,46 @@ __all__ = [
 ]
 
 _MAX_OPEN_THREADS = 32
+_EXTENSION = "cudf_polars_cucascade"
 
 _lock = threading.Lock()
 _cache: Any = None
 _registered: set[str] = set()
+
+
+def _installed_cudf_version() -> tuple[int, int] | None:
+    """The (major, minor) of the libcudf in use, from the installed pylibcudf, or None."""
+    for distribution in ("pylibcudf", "libcudf"):
+        try:
+            major, minor = importlib.metadata.version(distribution).split(".")[:2]
+            return int(major), int(minor)
+        except (importlib.metadata.PackageNotFoundError, ValueError):
+            continue
+    return None
+
+
+def _load_extension() -> types.ModuleType:
+    """Import the extension and check it was built against the libcudf that is in use."""
+    try:
+        module = importlib.import_module(_EXTENSION)
+    except ImportError as err:
+        raise RuntimeError(
+            f"cucascade_cache_bytes is set but the {_EXTENSION} extension cannot be "
+            "imported. It is built from source, against the libcudf of the environment it "
+            "runs in. From the root of the cudf repository, run\n\n"
+            "    pip install --no-build-isolation --no-deps ./python/cudf_polars/cucascade\n\n"
+            "See python/cudf_polars/cucascade/README.md."
+        ) from err
+    built = tuple(module.built_against_cudf_version[:2])
+    running = _installed_cudf_version()
+    if running is not None and built != running:
+        raise RuntimeError(
+            f"{_EXTENSION} was built against libcudf {built[0]}.{built[1]}, but libcudf "
+            f"{running[0]}.{running[1]} is installed. It subclasses libcudf types, so it only "
+            "works with the libcudf it was built against: rebuild it with the command in "
+            "python/cudf_polars/cucascade/README.md."
+        )
+    return module
 
 
 def configure_cucascade(cache_bytes: int) -> None:
@@ -62,13 +100,7 @@ def configure_cucascade(cache_bytes: int) -> None:
     with _lock:
         if _cache is not None:
             return
-        try:
-            module = importlib.import_module("cucascade.cudf")
-        except ImportError as err:
-            raise RuntimeError(
-                "cucascade_cache_bytes is set but the `cucascade` package "
-                "cannot be imported."
-            ) from err
+        module = _load_extension()
         region = (
             os.environ.get("AWS_DEFAULT_REGION")
             or os.environ.get("AWS_REGION")

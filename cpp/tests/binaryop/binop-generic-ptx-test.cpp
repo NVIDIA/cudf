@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -25,6 +25,13 @@
 #include <tests/binaryop/binop-fixture.hpp>
 
 #include <cudf/binaryop.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <string>
+
+// Exercise the deprecated PTX API until its removal.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
 struct BinaryOperationGenericPTXTest : public BinaryOperationTest {};
 
@@ -41,7 +48,7 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_FP32_FP32_FP32)
 // Based on LLVM 3.4svn
 //
 
-.version 6.4
+.version 6.3
 .target sm_70
 .address_size 64
 
@@ -100,7 +107,7 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT32)
 // Based on LLVM 3.4svn
 //
 
-.version 6.4
+.version 6.3
 .target sm_70
 .address_size 64
 
@@ -206,3 +213,27 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT64)
 
   ASSERT_BINOP<TypeOut, TypeLhs, TypeRhs>(*out, lhs, rhs, CADD);
 }
+
+TEST_F(BinaryOperationGenericPTXTest, PropagatesErrorStatus)
+{
+  std::string const ptx = R"ptx(
+.version 6.3
+.target sm_70
+.address_size 64
+.visible .func (.param .b32 status) original(
+  .param .b64 output, .param .b32 lhs, .param .b32 rhs)
+{
+  {
+    .reg .b32 %status;
+    mov.u32 %status, 2;
+    st.param.b32 [status], %status;
+  }
+  ret;
+}
+)ptx";
+  cudf::test::fixed_width_column_wrapper<int32_t> input{1, 2, 3};
+  EXPECT_THROW(cudf::binary_operation(input, input, ptx, cudf::data_type{cudf::type_id::INT32}),
+               cudf::evaluation_error);
+}
+
+#pragma GCC diagnostic pop

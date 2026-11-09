@@ -967,7 +967,7 @@ constexpr std::size_t max_global_scratch_bytes = std::size_t{32} * 1024 * 1024;
 // Dynamic shared memory up to this size needs no opt-in on any supported architecture
 constexpr std::size_t max_shared_trie_bytes = std::size_t{48} * 1024;
 
-// Pairs per batched copy, which bounds its temporary memory to about 24 bytes per pair
+// Pairs per batched copy call, which caps its temporary memory at about 96 MiB (24 B per pair)
 constexpr std::size_t max_pairs_per_copy = std::size_t{1} << 22;
 
 // Index of `row` of path `path` in the per-path outputs, which are stored one path after another

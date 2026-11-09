@@ -143,7 +143,7 @@ namespace io::parquet::experimental {
  *
  * Equivalent to calling `get_variant_field` once per path, but paths that share a prefix resolve
  * that prefix once per row instead of once per path, and all paths are located by a single kernel
- * and copied by a single pass.
+ * and copied together.
  *
  * Temporary memory grows as 8 bytes per (path, row) pair while the paths are located, and as 4
  * bytes per pair, alongside the outputs, while they are copied. Extracting many paths from a large

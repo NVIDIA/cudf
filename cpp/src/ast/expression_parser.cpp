@@ -5,8 +5,10 @@
 #include <cudf/ast/detail/expression_parser.hpp>
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -108,14 +110,13 @@ void expression_parser::move_to_device(cuda::stream_ref stream, cudf::memory_res
                          });
 
   auto const buffer_size = buffer_offsets.empty() ? 0 : (buffer_offsets.back() + sizes.back());
-  auto host_data_buffer  = std::vector<std::byte>(buffer_size);
+  auto host_data_buffer  = cudf::detail::make_pinned_vector_async<std::byte>(buffer_size, stream);
 
   for (unsigned int i = 0; i < data_pointers.size(); ++i) {
     std::memcpy(host_data_buffer.data() + buffer_offsets[i], data_pointers[i], sizes[i]);
   }
 
-  _device_data_buffer =
-    cuda::device_buffer<std::byte>(stream, mr.get_output_mr(), host_data_buffer);
+  _device_data_buffer = cudf::detail::make_device_buffer_async(host_data_buffer, stream, mr);
   cudf::detail::sync_stream(stream);
 
   // Create device pointers to components of plan

@@ -11,8 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from rmm.pylibrmm.stream import DEFAULT_STREAM
-
 import pylibcudf as plc
 
 EXAMPLE_PATH = (
@@ -78,7 +76,7 @@ def test_benchmark_file(
         ignore_case=ignore_case,
         repeats=2,
         plc=plc,
-        stream=DEFAULT_STREAM,
+        stream=plc.utils.CUDF_DEFAULT_STREAM,
     )
 
     assert result.bytes == path.stat().st_size
@@ -90,7 +88,8 @@ def test_benchmark_file(
 
 def test_configure_gds(monkeypatch):
     """Configure KvikIO compatibility mode for the requested I/O path."""
-    monkeypatch.delenv("KVIKIO_COMPAT_MODE", raising=False)
+    # Register the original value so configure_gds's direct writes are undone.
+    monkeypatch.setenv("KVIKIO_COMPAT_MODE", "ON")
 
     regex_search.configure_gds(False)
     assert regex_search.os.environ["KVIKIO_COMPAT_MODE"] == "ON"

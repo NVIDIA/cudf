@@ -353,3 +353,42 @@ def test_ratio_of_decimals_against_a_literal_that_float64_rounds(
         (pl.col("w") / pl.col("v")) == pl.lit(Decimal("90071992547409.93"))
     )
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("compare", [pl.Expr.eq, pl.Expr.ne, pl.Expr.lt, pl.Expr.gt])
+def test_ratios_of_decimals_that_are_ties(engine: pl.GPUEngine, compare):
+    # a / b is exactly 0.125, 0.375, -0.125 and -0.375, which are halfway
+    # between two decimals with two places. They round to the even neighbour:
+    # 0.12, 0.38, -0.12 and -0.38, not away from zero.
+    left = pl.LazyFrame(
+        {
+            "k": [1, 2, 3, 4, 5, 6],
+            "a": _decimals(["1", "3", "-1", "-3", "5", "-5"], 2, 15),
+            "b": _decimals(["8"] * 6, 2, 15),
+        }
+    )
+    right = pl.LazyFrame(
+        {
+            "k": [1, 2, 3, 4, 5, 6],
+            "w": _decimals(["12", "38", "-12", "-38", "62", "-63"], 2, 15),
+            "v": _decimals(["100"] * 6, 2, 15),
+        }
+    )
+    q = left.join(right, on="k", how="inner").filter(
+        compare(pl.col("a") / pl.col("b"), pl.col("w") / pl.col("v"))
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_ratios_of_decimals_with_a_scale_too_large_for_float64(
+    engine: pl.GPUEngine, decimal_ratios
+):
+    # 10**23 is not exact in Float64, so the comparison is not rewritten.
+    # Whether the AST can still evaluate it is not what is tested.
+    left, right = decimal_ratios
+    left = left.with_columns(pl.col("a", "b").cast(pl.Decimal(38, 23)))
+    right = right.with_columns(pl.col("w", "y").cast(pl.Decimal(38, 23)))
+    q = left.join(right, on="k", how="inner").filter(
+        (pl.col("w") / pl.col("y")) > pl.col("a") / pl.col("b")
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

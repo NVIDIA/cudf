@@ -104,7 +104,7 @@ inline __device__ void bitpack_mini_block(
   __syncwarp();
 
   // Copy scratch data to final destination.
-  auto const available_bytes = util::div_rounding_up_safe(count * nbits, 8U);
+  auto const available_bytes = cudf::detail::div_rounding_up_safe(count * nbits, 8U);
   auto const scratch_bytes   = reinterpret_cast<uint8_t const*>(scratch);
 
   for (uint32_t i = lane_id; i < available_bytes; i += warp_size) {

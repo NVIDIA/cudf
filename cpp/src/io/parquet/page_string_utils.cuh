@@ -10,6 +10,7 @@
 #include <cudf/strings/detail/gather.cuh>
 
 #include <cuda/atomic>
+#include <cuda/cmath>
 #include <cuda/std/bit>
 
 namespace cudf::io::parquet::detail {
@@ -138,30 +139,25 @@ inline __device__ void compute_initial_large_strings_offset(auto const* const st
   }
 }
 
-template <int value>
-CUDF_HOST_DEVICE constexpr int log2_int()
-{
-  static_assert((value >= 1) && ((value & (value - 1)) == 0), "Only works for powers of 2!");
-  return 31 - cuda::std::countl_zero(static_cast<uint32_t>(value));
-}
-
 template <int block_size>
 __device__ inline int calc_threads_per_string_log2(int avg_string_length)  // returns log2(M)
 {
+  static_assert(cuda::is_power_of_two(block_size), "block_size must be a power of two");
+
   // From testing, performance is best when copying an average of B = 4 bytes at once.
   // So #-threads-per-string M = avg_string_length / 4
   // Help the compiler make the code fast by keeping everything a power of 2
   // For avg length < 4/8/16/..., length power-of-2 = 2/3/4/.../. Divide by 4: 0/1/...
 
   // avg - 1: Don't want extra thread at powers of 2 (e.g. 32 (0b100000 -> 0b11111 -> 5)
-  int const avg_log2     = 32 - __clz(avg_string_length - 1);
+  int const avg_log2     = cuda::std::bit_width(static_cast<uint32_t>(avg_string_length - 1));
   int const threads_log2 = avg_log2 - 2;  // Target 4 bytes / thread at once (log2(4) = 2)
 
   // This is the target (log2) for M, but we need to clamp its range
   // First clamp #-strings-at-once (N) btw 1 (all threads (T)) & 32 (cache miss if larger)
   // So, clamp #-threads-per-string M = T / N between: T (all) & T/32 (cache miss)
   // So, clamp log2(#-threads-per-string) between log2(T) & log2(T) - 5 (min 1)
-  static constexpr int block_size_log2  = log2_int<block_size>();  // 7 for block_size = 128
+  static constexpr int block_size_log2  = cuda::ilog2(block_size);  // 7 for block_size = 128
   static constexpr int min_threads_log2 = cuda::std::max(block_size_log2 - 5, 1);
 
   // Clamp log2(M) (between 2 and 7 for block_size = 128)

@@ -41,6 +41,8 @@ _BINOPS = [
     pl.Expr.mod,
 ]
 
+_COMPARISONS = _BINOPS[:8]
+
 # Preserve the complete promotion matrix for both SPMD configurations. Other
 # backends exercise every operator and nullability path with pairs covering
 # each dtype in both operand positions, without duplicating the full matrix.
@@ -106,7 +108,7 @@ def test_numeric_binop(engine: pl.GPUEngine, df, binop, ltype, rtype):
 
     q = df.select(binop(left, right))
 
-    if _promotes_to_int128(ltype, rtype):
+    if _promotes_to_int128(ltype, rtype) and binop not in _COMPARISONS:
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)
@@ -302,3 +304,192 @@ def test_fused_arithmetic(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [10, 20, 30], "c": [5, 5, 5]})
     q = df.select(expr)
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "left_dtype,right_dtype,fallback",
+    [
+        # Both fit in Decimal(38, 4) after rescaling.
+        (pl.Decimal(10, 2), pl.Decimal(38, 4), False),
+        # No Decimal(38, s) holds both operands; polars 2.1 compares exactly,
+        # libcudf would wrap when rescaling.
+        (pl.Decimal(38, 2), pl.Decimal(38, 12), True),
+        (pl.Decimal(38, 12), pl.Decimal(38, 2), True),
+    ],
+)
+def test_decimal_comparison_mixed_scale_overflow(
+    engine: pl.GPUEngine, left_dtype, right_dtype, fallback
+):
+    big = "9" * (left_dtype.precision - left_dtype.scale) + "." + "9" * left_dtype.scale
+    left = pl.DataFrame({"a": ["-2.5", "1", big, None]}).cast(left_dtype)
+    right = pl.DataFrame({"b": ["1", "-1.5", "0.5", "3"]}).cast(right_dtype)
+    q = (
+        pl.concat([left, right], how="horizontal")
+        .lazy()
+        .select(gt=pl.col("a") > pl.col("b"), eq=pl.col("a") == pl.col("b"))
+    )
+    if fallback:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
+    else:
+        assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Decimal(15, 2), pl.Decimal(38, 2)])
+@pytest.mark.parametrize("literal", [0, 24, -6, 10_000])
+def test_decimal_comparison_with_integer_literal(engine: pl.GPUEngine, dtype, literal):
+    # polars types an integer literal as Decimal(38, 0), but its value needs
+    # far fewer digits than that, so rescaling it cannot overflow.
+    biggest = "9" * (dtype.precision - dtype.scale) + "." + "9" * dtype.scale
+    df = pl.DataFrame({"a": ["-2.5", "0", "24", str(literal), biggest, None]}).cast(
+        dtype
+    )
+    a = pl.col("a")
+    q = df.lazy().select(
+        lt=a < literal,
+        le=a <= literal,
+        gt=a > literal,
+        ge=a >= literal,
+        eq=a == literal,
+        ne=a != literal,
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_of_expression_with_integer_literal(
+    engine: pl.GPUEngine,
+):
+    df = pl.DataFrame({"a": ["1.50", "2.25", "3.00"]}).cast(pl.Decimal(7, 2)).lazy()
+    q = df.select(gt=(pl.col("a") * 2).sum() > 0, lt=pl.col("a") * 2 < 5)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_comparison_with_literal_that_may_overflow(engine: pl.GPUEngine):
+    # The literal has a finer scale than the column, so rescaling the column
+    # to the literal's scale needs 36 + 3 digits.
+    df = pl.DataFrame({"a": ["1.00", "2.00"]}).cast(pl.Decimal(38, 2)).lazy()
+    q = df.select(gt=pl.col("a") > pl.lit(Decimal("1.005")))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_decimal_comparison_with_literal_of_maximum_precision(engine: pl.GPUEngine):
+    # Neither operand needs rescaling, so a literal of 38 digits is supported.
+    df = pl.DataFrame({"a": ["1", "9" * 38]}).cast(pl.Decimal(38, 0)).lazy()
+    q = df.select(lt=pl.col("a") < pl.lit(Decimal("9" * 38)))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("literal", [Decimal("27.5"), 27.5])
+def test_decimal_comparison_with_fractional_literal(engine: pl.GPUEngine, literal):
+    df = pl.DataFrame({"a": ["1.00", "27.50", "30.00", None]}).cast(pl.Decimal(15, 2))
+    q = df.lazy().select(lt=pl.col("a") < literal, ge=pl.col("a") >= literal)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Int64, pl.UInt64])
+@pytest.mark.parametrize("exponent", [2, pl.col("e")], ids=["literal", "column"])
+def test_integer_pow_is_exact_above_2_53(engine: pl.GPUEngine, dtype, exponent):
+    # A double holds only the integers up to 2**53, so squaring 100_000_001 in
+    # double rounds the result to 10_000_000_200_000_000.
+    df = pl.LazyFrame(
+        {"a": [100_000_001, 3_000_000_019, 2, 0, None, 7], "e": [2, 2, 62, 5, 2, 0]},
+        schema={"a": dtype, "e": dtype},
+    )
+    q = df.select(pl.col("a").pow(exponent))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_pow_with_a_float_exponent_stays_floating_point(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, 2, 3, 4]}, schema={"a": pl.Int64})
+    q = df.select(pl.col("a").pow(2.0))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+# TODO: Remove these xfails once libcudf's comparison operators order NaN the
+# way Polars does. https://github.com/NVIDIA/cudf/issues/18930
+NAN_ORDERING_XFAIL = pytest.mark.xfail(
+    reason="libcudf compares NaN with IEEE 754 semantics, but Polars orders NaN "
+    "above all other values and considers it equal to itself"
+)
+
+
+@pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
+@pytest.mark.parametrize(
+    "op",
+    [
+        pl.Expr.eq,
+        pl.Expr.eq_missing,
+        pl.Expr.ne,
+        pl.Expr.ne_missing,
+        pl.Expr.lt,
+        pl.Expr.le,
+        pl.Expr.gt,
+        pl.Expr.ge,
+    ],
+    ids=lambda op: op.__name__,
+)
+@pytest.mark.parametrize("other", [1.0, float("nan"), pl.col("b")], ids=str)
+def test_float_comparison_orders_nan_above_everything(
+    request, engine: pl.GPUEngine, dtype, op, other
+):
+    # Equality against a non-NaN scalar is the same under both semantics.
+    if not (
+        isinstance(other, float)
+        and other == 1.0
+        and op.__name__ in {"eq", "eq_missing", "ne", "ne_missing"}
+    ):
+        request.applymarker(NAN_ORDERING_XFAIL)
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "a": [nan, 0.0, 1.0, 2.0, None, nan, 1.0],
+            "b": [nan, nan, 1.0, 0.0, 1.0, None, None],
+        },
+        schema={"a": dtype, "b": dtype},
+    )
+    right = other if isinstance(other, pl.Expr) else pl.lit(other, dtype=dtype)
+    q = df.select(op(pl.col("a"), right).alias("r"), op(right, pl.col("a")).alias("s"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        pl.Expr.gt,
+        pl.Expr.ge,
+        pl.Expr.eq,
+        pl.Expr.eq_missing,
+        pl.Expr.ne,
+        pl.Expr.ne_missing,
+    ],
+)
+@pytest.mark.parametrize("other", [1.0, float("nan")], ids=str)
+def test_parquet_filter_on_float_keeps_nan(
+    request, engine: pl.GPUEngine, tmp_path, op, other
+):
+    # Equality against a non-NaN scalar, and NaN > NaN, are the same under both
+    # semantics.
+    if not (
+        (other == 1.0 and op.__name__ in {"eq", "eq_missing", "ne", "ne_missing"})
+        or (other != other and op.__name__ == "gt")
+    ):
+        request.applymarker(NAN_ORDERING_XFAIL)
+    nan = float("nan")
+    pl.DataFrame({"a": [nan, 0.0, 1.0, None]}).write_parquet(tmp_path / "a.parquet")
+    pl.DataFrame({"a": [nan]}).write_parquet(tmp_path / "b.parquet")
+    q = pl.scan_parquet([tmp_path / "a.parquet", tmp_path / "b.parquet"]).filter(
+        op(pl.col("a"), other)
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@NAN_ORDERING_XFAIL
+@pytest.mark.parametrize("op", [pl.Expr.gt, pl.Expr.ge, pl.Expr.lt, pl.Expr.le])
+@pytest.mark.skip_on_streaming_engine(
+    "ConditionalJoin not supported for multiple partitions"
+)
+def test_conditional_join_on_float_comparison_with_nan(engine: pl.GPUEngine, op):
+    nan = float("nan")
+    left = pl.LazyFrame({"a": [nan, 0.0, 1.0, 2.0, None]})
+    right = pl.LazyFrame({"b": [1.0, nan, 5.0, None]})
+    q = left.join_where(right, op(pl.col("a"), pl.col("b")))
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

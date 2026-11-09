@@ -30,7 +30,7 @@ using sum_overflow_wraps_t =
  * outside [MIN, MAX], where W is the bit width of `DeviceType`. The exact total is
  * `wraps * 2^W + sum`, and a final `wraps == 0` means the true sum fits in `DeviceType`.
  */
-template <typename DeviceType, typename Wraps>
+template <typename DeviceType, typename Wraps = cudf::size_type>
 struct sum_overflow_result {
   DeviceType sum;
   Wraps wraps;
@@ -40,7 +40,7 @@ struct sum_overflow_result {
 };
 
 /// @brief Associative combine: wrap the sums and track the net carry direction.
-template <typename DeviceType, typename Wraps>
+template <typename DeviceType, typename Wraps = cudf::size_type>
 struct overflow_sum_op {
   __device__ sum_overflow_result<DeviceType, Wraps> operator()(
     sum_overflow_result<DeviceType, Wraps> const& lhs,
@@ -53,7 +53,7 @@ struct overflow_sum_op {
 };
 
 /// @brief Maps a value to a zero-wrap accumulator.
-template <typename DeviceType, typename Wraps>
+template <typename DeviceType, typename Wraps = cudf::size_type>
 struct to_sum_overflow {
   __device__ sum_overflow_result<DeviceType, Wraps> operator()(DeviceType value) const
   {
@@ -62,7 +62,7 @@ struct to_sum_overflow {
 };
 
 /// @brief Maps a row index to an accumulator, treating nulls as a zero contribution.
-template <typename DeviceType, typename Wraps>
+template <typename DeviceType, typename Wraps = cudf::size_type>
 struct null_aware_to_sum_overflow {
   cudf::column_device_view dcol;
 

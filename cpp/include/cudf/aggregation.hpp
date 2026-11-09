@@ -240,8 +240,8 @@ std::unique_ptr<Base> make_sum_aggregation();
  * Null rows are skipped. A groupby group with no valid rows produces a null row. A reduction with
  * no valid rows produces a null `sum` with `overflow` false or 0.
  *
- * Supported by groupby (hash and sort based) and by reductions. Not supported by streaming groupby,
- * scans, or segmented reductions.
+ * Supported by groupby and by reductions. Not supported by streaming groupby, scans, or segmented
+ * reductions.
  *
  * @param output Type of the `overflow` child
  * @return A SUM_OVERFLOW aggregation object

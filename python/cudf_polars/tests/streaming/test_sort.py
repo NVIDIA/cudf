@@ -545,3 +545,89 @@ def test_sort_by_renamed_join_column(streaming_engine_factory):
         "ORDER BY df2.text"
     )
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.fixture
+def force_external_sort(monkeypatch):
+    """Make every partition exceed the run budget and every merge exceed the fan-in."""
+    from cudf_polars.streaming.actor_graph.collectives import external_sort
+
+    monkeypatch.setattr(
+        external_sort, "batch_bytes_for", lambda target_partition_size: 1
+    )
+    monkeypatch.setattr(external_sort, "DEFAULT_MERGE_FANIN", 2)
+
+
+@pytest.fixture
+def engine_large_external(streaming_engine_factory):
+    return streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=2_100,
+            fallback_mode="raise",
+            raise_on_fail=True,
+            sort_strategy="external",
+        ),
+    )
+
+
+@pytest.mark.parametrize("large_df,by,stable", list(large_frames()))
+@pytest.mark.parametrize(
+    "nulls_last,descending", [(False, False), (True, True), (False, True)]
+)
+def test_large_sort_external(
+    large_df,
+    by,
+    engine_large_external,
+    stable,
+    nulls_last,
+    descending,
+    force_external_sort,
+):
+    # Same queries as test_large_sort under sort_strategy="external", with every
+    # owned partition sorted via runs on disk and a multi-pass k-way merge
+    # (fan-in 2).
+    q = large_df.sort(
+        by, nulls_last=nulls_last, descending=descending, maintain_order=stable
+    )
+    assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+@pytest.mark.parametrize("large_df,by,stable", list(large_frames()))
+def test_large_sort_external_in_memory_fast_path(
+    large_df, by, engine_large_external, stable
+):
+    # sort_strategy="external" with the default budget: partitions fit, so the
+    # streaming insertion is exercised but no runs are written.
+    q = large_df.sort(by, maintain_order=stable)
+    assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_sort_external_with_nulls(
+    engine_large_external, force_external_sort, descending, nulls_last
+):
+    # Null keys must merge correctly across run pages in both null orders.
+    n = 4_201
+    df = pl.LazyFrame(
+        {
+            "k": [None if i % 7 == 0 else (i * 31) % 97 for i in range(n)],
+            "idx": list(range(n)),
+        }
+    )
+    q = df.sort("k", "idx", descending=descending, nulls_last=nulls_last)
+    assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+def test_sort_external_tie_heavy_stable(engine_large_external, force_external_sort):
+    # Few distinct keys, so ties span many pages; maintain_order must hold.
+    n = 4_201
+    df = pl.LazyFrame({"k": [i % 3 for i in range(n)], "v": list(range(n))})
+    q = df.sort("k", maintain_order=True)
+    assert_gpu_result_equal(q, engine=engine_large_external)
+
+
+def test_sort_external_empty(engine_large_external, force_external_sort):
+    df = pl.LazyFrame({"k": list(range(4_201)), "v": list(range(4_201))})
+    q = df.filter(pl.col("k") < 0).sort("k")
+    assert_gpu_result_equal(q, engine=engine_large_external)

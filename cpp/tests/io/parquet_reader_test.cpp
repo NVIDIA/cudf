@@ -20,6 +20,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
@@ -39,6 +40,7 @@
 #include <limits>
 #include <locale>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -89,6 +91,117 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
   auto const result = cudf::io::read_parquet(read_options);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+}
+
+// The offsets of a PLAIN BYTE_ARRAY page come from a pre-pass that parses the length prefixes
+// speculatively, all lanes of a warp at once, and falls back to one lane where the speculation
+// cannot be verified or where the strings are long. One row group per shape, written without a
+// dictionary in pages of at most 5,000 rows, read back whole and in crops that start and end
+// inside pages.
+TEST_F(ParquetReaderTest, PlainStringOffsetsParsePaths)
+{
+  constexpr cudf::size_type rows_per_group = 20'000;
+  constexpr cudf::size_type num_groups     = 6;
+  constexpr cudf::size_type num_rows       = rows_per_group * num_groups;
+  auto const hex8                          = [](uint32_t value) {
+    std::string out(8, '0');
+    for (auto it = out.rbegin(); it != out.rend(); ++it, value >>= 4) {
+      *it = "0123456789abcdef"[value & 0xf];
+    }
+    return out;
+  };
+
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    // 1. 32-character hex strings: pages of 5,000 entries, 11 windows each, parsed in parallel.
+    strings.push_back(hex8(i) + hex8(i * 2'654'435'761u) + hex8(~i) + hex8(i * 40'503u));
+  }
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    // 2. Zero bytes inside the strings look like length prefixes, so the speculation is expected
+    //    to fail to verify and the windows to be parsed by one lane; the test checks the result.
+    auto entry = std::string("bin\0\0", 5) + std::to_string(i);
+    entry.push_back('\0');
+    strings.push_back(std::move(entry));
+  }
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    // 3. Empty strings among short ones: a zero-length entry is a run of zero bytes.
+    strings.push_back(i % 3 == 0 ? std::string{} : std::to_string(i));
+  }
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    // 4. Strings of some 300 characters: a mean length above the speculation threshold, parsed
+    //    by one lane from the page.
+    strings.push_back(std::string(300, static_cast<char>('a' + i % 26)) + std::to_string(i));
+  }
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    // 5. Strings above 64 KiB, which the candidate scan never picks, among short ones.
+    strings.push_back(i % 5'000 == 0 ? std::string(70'000, static_cast<char>('x' + i / 5'000))
+                                     : std::to_string(i));
+  }
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    // 6. One- and two-character strings: the densest prefixes.
+    strings.push_back(i % 4 == 0 ? std::string(1, static_cast<char>('!' + i % 90))
+                                 : std::string{static_cast<char>('!' + (i / 90) % 90),
+                                               static_cast<char>('!' + i % 90)});
+  }
+
+  // The same strings with every third one null: the nulls count among the page's values, so the
+  // mean length that picks the parse is computed over them too.
+  auto const valid =
+    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 3 != 1; });
+  // Lists of the strings, two per row, parsed through the list page path.
+  std::vector<cudf::size_type> list_offsets(num_rows / 2 + 1);
+  std::iota(list_offsets.begin(), list_offsets.end(), 0);
+  std::transform(
+    list_offsets.begin(), list_offsets.end(), list_offsets.begin(), [](auto o) { return 2 * o; });
+  cudf::test::strings_column_wrapper const plain(strings.begin(), strings.end());
+  cudf::test::strings_column_wrapper const nullable(strings.begin(), strings.end(), valid);
+  cudf::test::strings_column_wrapper list_children(strings.begin(), strings.end());
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(list_offsets.begin(),
+                                                                  list_offsets.end());
+  auto const lists =
+    cudf::make_lists_column(num_rows / 2,
+                            offsets.release(),
+                            list_children.release(),
+                            0,
+                            cudf::create_null_mask(num_rows / 2, cudf::mask_state::UNALLOCATED));
+
+  auto const filepath = temp_env->get_temp_filepath("PlainStringOffsetsParsePaths.parquet");
+  // One row group per shape of the flat columns; the lists column is written separately, since
+  // its rows hold two strings each. Fragments of 1,000 rows let the page limits split the groups.
+  std::vector<std::tuple<std::string, cudf::table_view, cudf::size_type>> const inputs{
+    {"flat", cudf::table_view{{plain, nullable}}, rows_per_group},
+    {"lists", cudf::table_view{std::vector<cudf::column_view>{lists->view()}}, rows_per_group / 2}};
+  for (auto const& [name, input, group_rows] : inputs) {
+    auto const path    = filepath + "." + name;
+    auto const options = cudf::io::parquet_writer_options::builder(cudf::io::sink_info{path}, input)
+                           .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+                           .compression(cudf::io::compression_type::NONE)
+                           .row_group_size_rows(group_rows)
+                           .max_page_size_rows(5'000)
+                           .max_page_fragment_size(1'000)
+                           .build();
+    cudf::io::write_parquet(options);
+
+    auto const num_input_rows = input.num_rows();
+    // Whole, the first rows, a crop inside the hex group, one across the binary and empty
+    // groups, and the tail of the last group.
+    for (auto const [first, count] : {std::pair{0, num_input_rows},
+                                      std::pair{0, 1},
+                                      std::pair{1, group_rows / 2},
+                                      std::pair{group_rows + group_rows / 2, group_rows},
+                                      std::pair{num_input_rows - 7, 7}}) {
+      SCOPED_TRACE(name + " rows " + std::to_string(first) + " + " + std::to_string(count));
+      auto const read_options =
+        cudf::io::parquet_reader_options::builder(cudf::io::source_info{path})
+          .skip_rows(first)
+          .num_rows(count)
+          .build();
+      auto const result   = cudf::io::read_parquet(read_options);
+      auto const expected = cudf::slice(input, {first, first + count});
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected.front(), result.tbl->view());
+    }
+  }
 }
 
 // TODO: delete this test once the nz map is on by default.
@@ -6294,44 +6407,67 @@ TEST_F(ParquetReaderTest, InvalidFooterMagic)
 
 TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
 {
-  // A PLAIN BYTE_ARRAY length that overruns the page must fail loudly instead of
-  // silently decoding the corrupt tail as empty strings.
-  auto const col = cudf::test::strings_column_wrapper{
-    "unique_string_aaa", "unique_string_bbb", "unique_string_ccc", "unique_string_ddd"};
-  auto const expected = table_view{{col}};
+  // A PLAIN BYTE_ARRAY length that is negative or overruns the page must fail loudly instead of
+  // silently decoding the corrupt tail as empty strings, whichever lane meets it: in a page of
+  // four short strings, inside the slice of the lane that starts at the cursor; in a page of
+  // short strings, where the entry lies in a later window and slice than the cursor's; and in
+  // one of long strings, which one lane parses.
+  struct shape {
+    cudf::size_type count;
+    cudf::size_type length;
+    cudf::size_type target;
+  };
+  for (auto const& [count, length, target] :
+       {shape{4, 17, 2}, shape{20'000, 16, 15'000}, shape{2'000, 300, 1'000}}) {
+    std::vector<std::string> values(count);
+    for (cudf::size_type v = 0; v < count; ++v) {
+      auto const prefix = std::to_string(v);
+      values[v]         = prefix + std::string(length - prefix.size(), 'x');
+    }
+    auto const col      = cudf::test::strings_column_wrapper(values.begin(), values.end());
+    auto const expected = table_view{{col}};
 
-  std::vector<char> buffer;
-  cudf::io::parquet_writer_options out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
-      .compression(cudf::io::compression_type::NONE)
-      .dictionary_policy(cudf::io::dictionary_policy::NEVER);
-  cudf::io::write_parquet(out_opts);
+    std::vector<char> buffer;
+    cudf::io::parquet_writer_options out_opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .compression(cudf::io::compression_type::NONE)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER);
+    cudf::io::write_parquet(out_opts);
 
-  // PLAIN BYTE_ARRAY layout is [4-byte little-endian length][string bytes]... So the 4 bytes
-  // immediately preceding a known string value are that value's length prefix. Locate the third
-  // string's bytes, then step back sizeof(int32_t) to land on its length prefix.
-  std::string const target = "unique_string_ccc";
-  auto const it = std::search(buffer.begin(), buffer.end(), target.begin(), target.end());
-  ASSERT_NE(it, buffer.end());
-  auto const length_pos = static_cast<size_t>(std::distance(buffer.begin(), it) - sizeof(int32_t));
+    // PLAIN BYTE_ARRAY layout is [4-byte little-endian length][string bytes]... So the 4 bytes
+    // immediately preceding a known string value are that value's length prefix. Locate the target
+    // string's bytes, then step back sizeof(int32_t) to land on its length prefix.
+    auto const& target_value = values[target];
+    auto const it =
+      std::search(buffer.begin(), buffer.end(), target_value.begin(), target_value.end());
+    ASSERT_NE(it, buffer.end());
+    auto const length_pos =
+      static_cast<size_t>(std::distance(buffer.begin(), it) - sizeof(int32_t));
 
-  // Sanity check that we found the length prefix: it should hold the real string length.
-  int32_t orig_len{};
-  std::memcpy(&orig_len, buffer.data() + length_pos, sizeof(orig_len));
-  ASSERT_EQ(orig_len, static_cast<int32_t>(target.size()));
+    // Sanity check that we found the length prefix: it should hold the real string length.
+    int32_t orig_len{};
+    std::memcpy(&orig_len, buffer.data() + length_pos, sizeof(orig_len));
+    ASSERT_EQ(orig_len, static_cast<int32_t>(target_value.size()));
 
-  // Overwrite the length prefix with a value that runs past the end of the page. This mimics the
-  // real-world corruption where a stray byte shifts the length window, producing a bogus length.
-  // The offset preprocessor detects `string_offset + len > dict_size` and must raise
-  // decode_error::STRING_DATA_OVERRUN rather than truncating and back-filling empty strings.
-  int32_t const bad_len = 1'000'000;
-  std::memcpy(buffer.data() + length_pos, &bad_len, sizeof(bad_len));
-
-  auto const read_opts = cudf::io::parquet_reader_options::builder(
-                           cudf::io::source_info{cudf::host_span<std::byte const>{
-                             reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
-                           .build();
-  EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
+    // Overwrite the length prefix with a value that runs past the end of the page, or is negative.
+    // This mimics the real-world corruption where a stray byte shifts the length window, producing
+    // a bogus length. The offset preprocessor must raise decode_error::STRING_DATA_OVERRUN rather
+    // than truncating and back-filling empty strings.
+    for (int32_t const bad_len : {1'000'000,
+                                  -1,
+                                  std::numeric_limits<int32_t>::min(),
+                                  std::numeric_limits<int32_t>::max()}) {
+      SCOPED_TRACE(std::to_string(length) + "-byte strings, length " + std::to_string(bad_len));
+      auto corrupt = buffer;
+      std::memcpy(corrupt.data() + length_pos, &bad_len, sizeof(bad_len));
+      auto const read_opts =
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<std::byte const>{
+            reinterpret_cast<std::byte const*>(corrupt.data()), corrupt.size()}})
+          .build();
+      EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
+    }
+  }
 }
 
 TEST_F(ParquetReaderTest, DecimalTypeOption)

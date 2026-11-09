@@ -6,6 +6,7 @@
 #include "cuda/std/__utility/cmp.h"
 #include "error.hpp"
 #include "io/utilities/block_utils.cuh"
+#include "length_prefix_parse.cuh"
 #include "parquet_gpu.hpp"
 
 #include <cudf/detail/utilities/cuda.cuh>
@@ -32,11 +33,7 @@ auto constexpr decode_page_headers_block_size     = 4 * cudf::detail::warp_size;
 auto constexpr count_page_headers_block_size      = 4 * cudf::detail::warp_size;
 auto constexpr build_string_dict_index_block_size = 2 * cudf::detail::warp_size;
 
-// Shared-memory window size in bytes for parsing BYTE_ARRAY string dictionaries.
-// Default value chosen for best balance between memory usage, occupancy and performance.
-constexpr int32_t string_dict_index_window_size = 4096;
-
-// Maximum dictionary entries parsed per batch by each warp.
+// Maximum dictionary entries parsed per batch by each warp when one lane parses.
 constexpr int32_t dictionary_batch_size = 64;
 
 namespace cg = cooperative_groups;
@@ -869,8 +866,8 @@ struct decode_from_page_data_fn {
 /**
  * @brief Shared state for parsing one chunk's BYTE_ARRAY dictionary.
  *
- * One lane parses length prefixes and stages entry metadata; the warp
- * uses that metadata to write string descriptors.
+ * The warp parses a window speculatively, every lane its own slice; where that cannot be
+ * verified, one lane parses length prefixes and stages entry metadata for the warp to write.
  */
 struct parser_state {
   int32_t cursor;        ///< Page-relative byte offset of the next length prefix.
@@ -882,6 +879,8 @@ struct parser_state {
   cuda::std::array<int32_t, dictionary_batch_size>
     offsets;  ///< Page-relative character-data offsets.
   cuda::std::array<int32_t, dictionary_batch_size> lengths;  ///< String lengths in bytes.
+  cuda::std::array<int32_t, cudf::detail::warp_size>
+    slice_starts;  ///< Window offset of each slice's first length prefix in the speculative parse.
 };
 
 // Subset of ColumnChunkDesc fields used by this kernel
@@ -897,9 +896,11 @@ struct dictionary_metadata {
  *
  * Each warp handles one chunk using its own shared metadata, parser state, and window.
  *
- * For BYTE_ARRAY dictionaries, the warp loads a shared-memory window with aligned vector loads,
- * one lane follows the variable-length prefixes, and the warp writes a batch of string
- * pointer/length descriptors. Descriptor pointers refer to the original page data.
+ * For BYTE_ARRAY dictionaries, the warp loads a shared-memory window with aligned vector loads
+ * and parses it speculatively, every lane its own slice (see speculative_parse_window); on success
+ * the lanes write their descriptors directly. Where the speculation cannot be verified, and for
+ * dictionaries of long entries, one lane follows the variable-length prefixes and the warp writes
+ * a batch of descriptors. Descriptor pointers refer to the original page data.
  *
  * For FIXED_LEN_BYTE_ARRAY dictionaries, lanes compute entry offsets independently and write
  * descriptors directly to the chunk's str_dict_index array.
@@ -914,16 +915,14 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
                                        kernel_error::pointer error_code)
 {
   constexpr int32_t warp_size           = cudf::detail::warp_size;
-  constexpr int32_t load_size           = sizeof(int4);
   constexpr int32_t num_warps_per_block = build_string_dict_index_block_size / warp_size;
-
-  static_assert(string_dict_index_window_size % load_size == 0);
 
   __shared__ cuda::std::array<dictionary_metadata, num_warps_per_block> dict_metadata;
   __shared__ cuda::std::array<parser_state, num_warps_per_block> states;
-  __shared__ __align__(16)
-    cuda::std::array<cuda::std::array<uint8_t, string_dict_index_window_size>, num_warps_per_block>
-      windows;
+  __shared__ __align__(16) cuda::std::array<
+    cuda::std::array<uint8_t, length_prefix_window_size + length_prefix_window_pad>,
+    num_warps_per_block>
+    windows;
 
   auto const warp     = cg::tiled_partition<warp_size>(cg::this_thread_block());
   auto const lane     = warp.thread_rank();
@@ -987,32 +986,23 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
     return;
   }
 
+  // Dictionaries of long entries hold too few of them per slice for the speculative parse
+  bool const speculate =
+    num_entries > 0 and dict_size <= static_cast<int64_t>(num_entries) *
+                                       (4 + length_prefix_max_mean_length_for_speculation);
+  auto const* window_words = reinterpret_cast<uint32_t const*>(window.data());
+
   while (state.parsed < num_entries) {
     int32_t const cursor     = state.cursor;
     bool const refill_window = cursor > state.window_start + state.window_bytes - 4;
     warp.sync();
 
     if (refill_window) {
-      // Align both the page address and the shared destination for int4 copies. The first
-      // virtual window can start before the page; pad those bytes instead of reading them.
-      int32_t const start =
-        cursor - static_cast<int32_t>(reinterpret_cast<uintptr_t>(dict + cursor) % load_size);
-      int32_t const this_iteration_bytes =
-        static_cast<int32_t>(min(static_cast<int64_t>(string_dict_index_window_size),
-                                 static_cast<int64_t>(dict_size) - start));
-      for (int32_t i = lane * load_size; i < this_iteration_bytes; i += warp_size * load_size) {
-        // Source is the offset of the current iteration from the start of the dictionary.
-        int64_t const source = static_cast<int64_t>(start) + i;
-        if (source >= 0 and source + load_size <= dict_size and
-            i + load_size <= this_iteration_bytes) {
-          reinterpret_cast<int4*>(window.data())[i / load_size] =
-            *reinterpret_cast<int4 const*>(dict + source);
-        } else {  // Byte-wise copy for the page tail; zero-pad bytes before the page start
-          for (int32_t j = 0; j < load_size and i + j < this_iteration_bytes; ++j) {
-            window[i + j] = source + j >= 0 ? dict[source + j] : 0;
-          }
-        }
-      }
+      // The first window can start before the page; the loader zero-pads those bytes.
+      int32_t const start                = length_prefix_window_start(dict, cursor);
+      int32_t const this_iteration_bytes = static_cast<int32_t>(min(
+        static_cast<int64_t>(length_prefix_window_size), static_cast<int64_t>(dict_size) - start));
+      load_length_prefix_window(warp, dict, dict_size, start, this_iteration_bytes, window.data());
       // Finish all window copies before publishing its new bounds.
       warp.sync();
       cg::invoke_one(warp, [&] {
@@ -1022,16 +1012,52 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
       warp.sync();
     }
 
-    int32_t const first = state.parsed;
+    int32_t const first         = state.parsed;
+    int32_t const window_start  = state.window_start;
+    int32_t const window_bytes  = state.window_bytes;
+    int32_t const cursor_offset = cursor - window_start;
+
+    // All lanes parse the window at once when its first prefix is readable. Only right after a
+    // refill: a window whose speculation failed is finished by the single lane rather than
+    // re-scanned before each of its batches.
+    if (speculate and refill_window and cursor_offset + 4 <= window_bytes and
+        dict_size - cursor >= 4) {
+      window_chain chain;
+      if (speculative_parse_window(warp,
+                                   window_words,
+                                   window_start,
+                                   window_bytes,
+                                   dict_size,
+                                   cursor_offset,
+                                   state.slice_starts.data(),
+                                   chain)) {
+        int32_t const emit = min(chain.total, num_entries - first);
+        int32_t offset     = chain.start;
+        for (int32_t k = 0; k < chain.count and chain.preceding + k < emit; ++k) {
+          int32_t const length                           = read_length_prefix(window_words, offset);
+          ck.str_dict_index[first + chain.preceding + k] = {
+            reinterpret_cast<char const*>(dict + window_start + offset + 4), length};
+          offset += 4 + length;
+        }
+        // Finish reading the window before the parser state moves on.
+        warp.sync();
+        cg::invoke_one(warp, [&] {
+          state.parsed = first + emit;
+          // Only read when the window is exhausted, i.e. when every entry was emitted
+          state.cursor = window_start + chain.chain_end;
+        });
+        warp.sync();
+        continue;
+      }
+    }
 
     // One lane computes the offsets and lengths for the batch
     cg::invoke_one(warp, [&] {
       // Window bounds stay fixed while parsing the batch. Keep them in registers.
-      int32_t const window_start = state.window_start;
-      int32_t const window_end   = window_start + state.window_bytes - 4;
-      int32_t cur                = state.cursor;
-      int32_t count              = 0;
-      int32_t const max_count    = min(dictionary_batch_size, num_entries - first);
+      int32_t const window_end = window_start + window_bytes - 4;
+      int32_t cur              = state.cursor;
+      int32_t count            = 0;
+      int32_t const max_count  = min(dictionary_batch_size, num_entries - first);
       while (count < max_count) {
         // Check if the dictionary is too small to fit the next 4 bytes
         if (dict_size - cur < 4) {

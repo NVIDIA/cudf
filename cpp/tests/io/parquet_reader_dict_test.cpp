@@ -16,6 +16,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/encode.hpp>
+#include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/reduction/distinct_count.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -23,11 +24,15 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <rmm/device_buffer.hpp>
 
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <random>
@@ -608,4 +613,161 @@ TEST_F(ParquetReaderDictTest, NullRowGroupDictTranscode)
 
   auto const decoded = cudf::dictionary::decode(dict_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
+}
+
+// The reader indexes every dictionary page (entry pointer and length) with a kernel that parses
+// the page speculatively, all lanes at once, and falls back to one lane where the speculation
+// cannot be verified or where the entries are long. One row group per dictionary shape, each read
+// back through the regular decode, which looks entries up in the index, and through the
+// dictionary transcode, which copies them. Every value repeats, because the writer drops a
+// dictionary that would not be smaller than the plain encoding, whatever the policy.
+TEST_F(ParquetReaderDictTest, StringDictionaryIndexParsePaths)
+{
+  constexpr cudf::size_type rows_per_group = 20'000;
+  constexpr cudf::size_type num_groups     = 6;
+  std::mt19937 engine(seed);
+  auto const hex8 = [](uint32_t value) {
+    std::string out(8, '0');
+    for (auto it = out.rbegin(); it != out.rend(); ++it, value >>= 4) {
+      *it = "0123456789abcdef"[value & 0xf];
+    }
+    return out;
+  };
+
+  std::vector<std::string> strings;
+  strings.reserve(num_groups * rows_per_group);
+  // 1. 10,000 distinct 32-character hex strings, each twice: a dictionary of some twenty
+  //    windows, parsed in parallel.
+  std::vector<std::string> hex_values(rows_per_group / 2);
+  for (auto& value : hex_values) {
+    value = hex8(engine()) + hex8(engine()) + hex8(engine()) + hex8(engine());
+  }
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    strings.push_back(hex_values[i % hex_values.size()]);
+  }
+  // 2. Zero bytes inside the entries look like length prefixes, so the speculation is expected
+  //    to fail to verify and the windows to be parsed by one lane; the test checks the result.
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    auto entry = std::string("bin\0\0", 5) + std::to_string(i % 4'000);
+    entry.push_back('\0');
+    strings.push_back(std::move(entry));
+  }
+  // 3. An empty string among short ones: a zero-length entry is a run of zero bytes.
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    strings.push_back(i % 3 == 0 ? std::string{} : std::to_string(i % 5'000));
+  }
+  // 4. 2,000 distinct strings of some 300 characters: a mean length above the speculation
+  //    threshold, parsed by one lane.
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    auto const value = i % 2'000;
+    strings.push_back(std::string(300, static_cast<char>('a' + value % 26)) +
+                      std::to_string(value));
+  }
+  // 5. Strings above 64 KiB, which the candidate scan never picks, among short ones.
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    strings.push_back(i % 5'000 == 0 ? std::string(70'000, static_cast<char>('x' + i / 5'000))
+                                     : std::to_string(i % 3'000));
+  }
+  // 6. Two-character strings: the densest prefixes.
+  for (cudf::size_type i = 0; i < rows_per_group; ++i) {
+    auto const value = i % 8'100;
+    strings.push_back({static_cast<char>('!' + value / 90), static_cast<char>('!' + value % 90)});
+  }
+
+  auto const input_col = cudf::test::strings_column_wrapper(strings.begin(), strings.end());
+  auto const input_tbl = cudf::table_view{{input_col}};
+  auto const filepath  = temp_env->get_temp_filepath("StringDictionaryIndexParsePaths.parquet");
+  auto const options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input_tbl)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .compression(cudf::io::compression_type::NONE)
+      .row_group_size_rows(rows_per_group)
+      .max_page_fragment_size(rows_per_group)
+      .build();
+  cudf::io::write_parquet(options);
+
+  // Every row group has to carry a dictionary, or the kernel never sees it.
+  {
+    auto const source = cudf::io::datasource::create(filepath);
+    cudf::io::parquet::FileMetaData file_metadata;
+    read_footer(source, &file_metadata);
+    ASSERT_EQ(file_metadata.row_groups.size(), num_groups);
+    for (auto const& row_group : file_metadata.row_groups) {
+      auto const& encodings = row_group.columns.front().meta_data.encodings;
+      EXPECT_TRUE(std::any_of(encodings.begin(), encodings.end(), [](auto const encoding) {
+        return encoding == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+               encoding == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+      }));
+    }
+  }
+
+  auto const read_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+  ASSERT_EQ(read_table->num_columns(), 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, read_table->view().column(0));
+
+  auto const dict_table = read_parquet_as_dict(filepath).tbl;
+  auto const dict_col   = dict_table->view().column(0);
+  ASSERT_EQ(dict_col.type().id(), cudf::type_id::DICTIONARY32);
+  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(dict_col));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input_col, decoded->view());
+}
+
+// A dictionary entry whose length is negative or runs past the page fails the read, whichever
+// lane meets it: in a dictionary of short entries, where the entry lies in a later window and
+// slice than the cursor's, and in one of long entries, which one lane parses.
+TEST_F(ParquetReaderDictTest, CorruptDictionaryLengthThrows)
+{
+  struct shape {
+    cudf::size_type distinct;
+    cudf::size_type length;
+    cudf::size_type target;
+  };
+  for (auto const& [distinct, length, target] : {shape{2'000, 16, 1'500}, shape{200, 300, 100}}) {
+    std::vector<std::string> values(distinct);
+    for (cudf::size_type v = 0; v < distinct; ++v) {
+      auto const prefix = std::to_string(v);
+      values[v]         = prefix + std::string(length - prefix.size(), 'x');
+    }
+    std::vector<std::string> rows(10 * distinct);
+    for (cudf::size_type i = 0; i < static_cast<cudf::size_type>(rows.size()); ++i) {
+      rows[i] = values[i % distinct];
+    }
+    auto const col = cudf::test::strings_column_wrapper(rows.begin(), rows.end());
+
+    std::vector<char> buffer;
+    cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer},
+                                                                      cudf::table_view{{col}})
+                              .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+                              .compression(cudf::io::compression_type::NONE)
+                              .build());
+
+    // The dictionary page holds [4-byte little-endian length][bytes] per entry and precedes the
+    // data pages, which hold indices, so the first occurrence of a value is its dictionary entry
+    // and the 4 bytes before it are its length prefix.
+    auto const& target_value = values[target];
+    auto const it =
+      std::search(buffer.begin(), buffer.end(), target_value.begin(), target_value.end());
+    ASSERT_NE(it, buffer.end());
+    auto const length_pos =
+      static_cast<size_t>(std::distance(buffer.begin(), it)) - sizeof(int32_t);
+    int32_t original_length{};
+    std::memcpy(&original_length, buffer.data() + length_pos, sizeof(original_length));
+    ASSERT_EQ(original_length, static_cast<int32_t>(target_value.size()));
+
+    for (int32_t const bad_length : {1'000'000, std::numeric_limits<int32_t>::min()}) {
+      auto corrupt = buffer;
+      std::memcpy(corrupt.data() + length_pos, &bad_length, sizeof(bad_length));
+      auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(corrupt.data()), corrupt.size()}};
+      EXPECT_THROW(
+        cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source).build()),
+        cudf::logic_error);
+      EXPECT_THROW(
+        cudf::io::read_parquet(
+          cudf::io::parquet_reader_options::builder(source).output_dict_columns(true).build()),
+        cudf::logic_error);
+    }
+  }
 }

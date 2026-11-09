@@ -18,7 +18,10 @@ function(find_and_configure_cucascade)
   CPMAddPackage(
     NAME cuCascade
     VERSION 0.1.0
-    GIT_REPOSITORY https://github.com/NVIDIA/cuCascade.git
+    # While NVIDIA/cuCascade#231 is open its commits are on a fork, which a plain clone can fetch
+    # (a clone of NVIDIA/cuCascade does not include pull request refs). Once it is merged, use
+    # https://github.com/NVIDIA/cuCascade.git and the merge commit.
+    GIT_REPOSITORY https://github.com/Matt711/cuCascade.git
     GIT_TAG 4b0cec3c87bc5b6ad2583ffc9f30436f9beac907
     GIT_SHALLOW FALSE
     OPTIONS "CUCASCADE_BUILD_TESTS OFF"

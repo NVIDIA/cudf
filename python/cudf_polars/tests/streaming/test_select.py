@@ -251,6 +251,19 @@ def test_select_mean_with_decimals(engine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("agg", [None, "sum"])
+def test_select_len_over_literal(engine, agg):
+    q = pl.LazyFrame({"a": [1, 2, 3, 4, 5]}).select(pl.len().over(pl.lit(1)))
+    if agg is not None:
+        q = q.select(pl.col("len").sum())
+    with warns_on_spmd(
+        engine,
+        UserWarning,
+        match="This selection is not supported for multiple partitions",
+    ):
+        assert_gpu_result_equal(q, engine=engine)
+
+
 def test_select_with_len(streaming_engine_factory):
     engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=3, fallback_mode="warn"),

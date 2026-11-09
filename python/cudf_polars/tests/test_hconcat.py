@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import DataFrameScan, Empty, HConcat, IRExecutionContext
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.utils.versions import POLARS_VERSION_LT_139
 
 
 def test_hconcat(engine: pl.GPUEngine):
@@ -29,11 +29,10 @@ def test_hconcat_different_heights(engine: pl.GPUEngine):
 
     right = pl.LazyFrame({"b": [[1], [2]], "c": ["a", "bcde"]})
 
-    q = pl.concat([left, right], how="horizontal")
+    q = pl.concat([left, right], how="horizontal_extend")
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(POLARS_VERSION_LT_139, reason="strict keyword added in polars 1.39")
 def test_hconcat_strict_different_heights():
     left = pl.LazyFrame({"a": [1, 2, 3]})
     right = pl.LazyFrame({"b": [4, 5]})
@@ -57,7 +56,7 @@ def test_hconcat_should_broadcast():
 
     schema = {"a": DataType(pl.Int64()), "b": DataType(pl.Float64())}
     node = HConcat(schema, True, False, False, child1, child2)  # noqa: FBT003
-    result = node.evaluate(cache={}, timer=None, context=context)
+    result = node.evaluate(cache={}, context=context)
 
     polars_result = result.to_polars()
     assert polars_result.shape == (3, 2)
@@ -72,3 +71,18 @@ def test_empty_init():
     assert node.schema is schema
     assert node.children == ()
     assert node._non_child_args == (schema,)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.Int64(),
+        pl.String(),
+        pl.List(pl.Int64()),
+        pl.Struct({"a": pl.Int32(), "b": pl.String()}),
+    ],
+)
+def test_empty_evaluate(dtype):
+    schema = {"a": DataType(dtype)}
+    result = Empty(schema).evaluate(cache={}, context=IRExecutionContext())
+    assert_frame_equal(result.to_polars(), pl.DataFrame(schema={"a": dtype}))

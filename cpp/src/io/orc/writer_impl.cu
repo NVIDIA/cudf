@@ -21,6 +21,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -32,7 +33,6 @@
 
 #include <rmm/aligned.hpp>
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
@@ -729,8 +729,10 @@ std::vector<std::vector<rowgroup_rows>> calculate_aligned_rowgroup_bounds(
     device_2dspan<cudf::size_type>{d_pd_set_counts_data, orc_table.num_columns()};
   reduce_pushdown_masks(orc_table.d_columns, segmentation.rowgroups, d_pd_set_counts, stream);
 
-  auto aligned_rgs = hostdevice_2dvector<rowgroup_rows>(
-    segmentation.num_rowgroups(), orc_table.num_columns(), stream);
+  auto aligned_rgs = hostdevice_2dvector<rowgroup_rows>(segmentation.num_rowgroups(),
+                                                        orc_table.num_columns(),
+                                                        stream,
+                                                        cudf::get_current_device_resource_ref());
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(aligned_rgs.base_device_ptr(),
                                            segmentation.rowgroups.base_device_ptr(),
                                            aligned_rgs.count() * sizeof(rowgroup_rows),
@@ -910,7 +912,8 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
                "alignment");
 
   auto const num_columns = orc_table.num_columns();
-  hostdevice_2dvector<encoder_chunk> chunks(num_columns, segmentation.num_rowgroups(), stream);
+  hostdevice_2dvector<encoder_chunk> chunks(
+    num_columns, segmentation.num_rowgroups(), stream, cudf::get_current_device_resource_ref());
 
   auto const aligned_rowgroups = calculate_aligned_rowgroup_bounds(orc_table, segmentation, stream);
 
@@ -991,7 +994,7 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
   }
 
   hostdevice_2dvector<encoder_chunk_streams> chunk_streams(
-    num_columns, segmentation.num_rowgroups(), stream);
+    num_columns, segmentation.num_rowgroups(), stream, cudf::get_current_device_resource_ref());
 
   // Compute per-rowgroup stream lengths and per-(stripe, strm_id) extent sizes, along with
   // whether an extent size may exceed what the encoder ends up writing.
@@ -1325,6 +1328,7 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
   cudf::detail::hostdevice_vector<statistics_merge_group>& stats_merge_groups,
   device_span<statistics_chunk const> stat_chunks,
   int num_stat_blobs,
+  bool write_legacy_timestamp_bounds,
   cuda::stream_ref stream)
 {
   // figure out the buffer size needed for protobuf format
@@ -1340,12 +1344,13 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
     return max_blobs_element.front();
   }();
 
-  cudf::detail::hostdevice_vector<uint8_t> blobs(max_blobs.start_chunk + max_blobs.num_chunks,
-                                                 stream);
+  cudf::detail::hostdevice_vector<uint8_t> blobs(
+    max_blobs.start_chunk + max_blobs.num_chunks, stream, cudf::get_current_device_resource_ref());
   orc_encode_statistics(blobs.device_ptr(),
                         stats_merge_groups.device_ptr(),
                         stat_chunks.data(),
                         num_stat_blobs,
+                        write_legacy_timestamp_bounds,
                         stream);
   stats_merge_groups.device_to_host_async(stream);
   blobs.device_to_host(stream);
@@ -1373,15 +1378,19 @@ cudf::detail::hostdevice_vector<uint8_t> allocate_and_encode_blobs(
 /**
  * @brief Returns column statistics in an intermediate format.
  *
+ * Timestamp statistics are gathered from the writer's wall clock rather than the input instants.
+ *
  * @param stats_freq Frequency of statistics to be included in the output file
  * @param orc_table Table information to be written
  * @param segmentation stripe and rowgroup ranges
+ * @param timezone Timezone the file is written in
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The statistic information
  */
 intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
                                                orc_table_view const& orc_table,
                                                file_segmentation const& segmentation,
+                                               writer_timezone const& timezone,
                                                cuda::stream_ref stream)
 {
   auto const num_rowgroup_blobs     = segmentation.rowgroups.count();
@@ -1391,20 +1400,32 @@ intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
     return intermediate_statistics{orc_table, stream};
   }
 
-  cudf::detail::hostdevice_vector<stats_column_desc> stat_desc(orc_table.num_columns(), stream);
-  cudf::detail::hostdevice_vector<statistics_merge_group> rowgroup_merge(num_rowgroup_blobs,
-                                                                         stream);
-  cudf::detail::hostdevice_vector<statistics_merge_group> stripe_merge(num_stripe_blobs, stream);
+  cudf::detail::hostdevice_vector<stats_column_desc> stat_desc(
+    orc_table.num_columns(), stream, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<statistics_merge_group> rowgroup_merge(
+    num_rowgroup_blobs, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<statistics_merge_group> stripe_merge(
+    num_stripe_blobs, stream, cudf::get_current_device_resource_ref());
   std::vector<statistics_dtype> col_stats_dtypes;
   std::vector<data_type> col_types;
   auto rowgroup_stat_merge = rowgroup_merge.host_ptr();
   auto stripe_stat_merge   = stripe_merge.host_ptr();
+
+  // Empty when writing UTC, which leaves the input instants on the wall clock already
+  auto const transitions  = timezone.ut_offsets(stream);
+  auto const d_ut_offsets = timezone.is_utc(stream)
+                              ? ut_offset_table{}
+                              : ut_offset_table{transitions.column(0).data<timestamp_s>(),
+                                                transitions.column(1).data<duration_s>(),
+                                                transitions.num_rows()};
 
   for (auto const& column : orc_table.columns) {
     stats_column_desc* desc = &stat_desc[column.index()];
     desc->stats_dtype       = kind_to_stats_type(column.orc_kind());
     desc->num_rows          = column.size();
     desc->num_values        = column.size();
+    // Only timestamp statistics read the offsets, but every descriptor is set, to leave none unset
+    desc->ut_offsets = d_ut_offsets;
     if (desc->stats_dtype == dtype_timestamp64) {
       // Timestamp statistics are in milliseconds
       switch (column.scale()) {
@@ -1478,8 +1499,8 @@ intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
   auto rowgroup_blobs = [&]() -> std::vector<col_stats_blob> {
     if (not is_granularity_rowgroup) { return {}; }
 
-    cudf::detail::hostdevice_vector<uint8_t> blobs =
-      allocate_and_encode_blobs(rowgroup_merge, rowgroup_chunks, num_rowgroup_blobs, stream);
+    cudf::detail::hostdevice_vector<uint8_t> blobs = allocate_and_encode_blobs(
+      rowgroup_merge, rowgroup_chunks, num_rowgroup_blobs, timezone.is_utc(stream), stream);
 
     std::vector<col_stats_blob> rowgroup_blobs(num_rowgroup_blobs);
     for (size_t i = 0; i < num_rowgroup_blobs; i++) {
@@ -1502,13 +1523,17 @@ intermediate_statistics gather_statistic_blobs(statistics_freq const stats_freq,
  *
  * @param footer ORC footer containing stripe and type information
  * @param per_chunk_stats Persisted per-chunk statistics from `gather_statistic_blobs`
+ * @param timezone Timezone the file is written in
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @return The encoded statistic blobs
  */
 encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
                                                  persisted_statistics& per_chunk_stats,
+                                                 writer_timezone const& timezone,
                                                  cuda::stream_ref stream)
 {
+  auto const write_legacy_timestamp_bounds = timezone.is_utc(stream);
+
   auto stripe_size_iter = cuda::transform_iterator(per_chunk_stats.stripe_stat_merge.begin(),
                                                    [](auto const& s) { return s.size(); });
 
@@ -1525,7 +1550,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
 
     // Create empty file stats and merge groups
     auto h_stat_chunks = cudf::detail::make_host_vector<statistics_chunk>(num_file_blobs, stream);
-    cudf::detail::hostdevice_vector<statistics_merge_group> stats_merge(num_file_blobs, stream);
+    cudf::detail::hostdevice_vector<statistics_merge_group> stats_merge(
+      num_file_blobs, stream, cudf::get_current_device_resource_ref());
     // Fill in stats_merge and stat_chunks on the host
     for (auto i = 0u; i < num_file_blobs; ++i) {
       stats_merge[i].col_dtype   = per_chunk_stats.col_types[i];
@@ -1539,8 +1565,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
     stats_merge.host_to_device_async(stream);
 
     // Encode and return
-    cudf::detail::hostdevice_vector<uint8_t> hd_file_blobs =
-      allocate_and_encode_blobs(stats_merge, d_stat_chunks, num_file_blobs, stream);
+    cudf::detail::hostdevice_vector<uint8_t> hd_file_blobs = allocate_and_encode_blobs(
+      stats_merge, d_stat_chunks, num_file_blobs, write_legacy_timestamp_bounds, stream);
 
     // Copy blobs to host (actual size)
     std::vector<col_stats_blob> file_blobs(num_file_blobs);
@@ -1557,7 +1583,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
   // merge the stripe persisted data and add file data
   cuda::device_buffer<statistics_chunk> stat_chunks(
     stream, cudf::get_current_device_resource_ref(), num_blobs, cuda::no_init);
-  cudf::detail::hostdevice_vector<statistics_merge_group> stats_merge(num_blobs, stream);
+  cudf::detail::hostdevice_vector<statistics_merge_group> stats_merge(
+    num_blobs, stream, cudf::get_current_device_resource_ref());
 
   // we need to merge the stat arrays from the persisted data.
   // this needs to be done carefully because each array can contain
@@ -1591,8 +1618,12 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
   auto const d_srcs = cudf::detail::make_device_buffer_async(h_srcs, stream, mr);
   auto const d_dsts = cudf::detail::make_device_buffer_async(h_dsts, stream, mr);
   auto const d_lens = cudf::detail::make_device_buffer_async(h_lens, stream, mr);
-  cudf::detail::batched_memcpy_async(
-    d_srcs.begin(), d_dsts.begin(), d_lens.begin(), d_srcs.size(), stream);
+  cudf::detail::batched_memcpy_async(d_srcs.begin(),
+                                     d_dsts.begin(),
+                                     d_lens.begin(),
+                                     d_srcs.size(),
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
 
   auto file_stats_merge =
     cudf::detail::make_host_vector<statistics_merge_group>(num_file_blobs, stream);
@@ -1614,8 +1645,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
   detail::merge_group_statistics<detail::io_file_format::ORC>(
     file_stat_chunks, stat_chunks.data(), d_file_stats_merge, num_file_blobs, stream);
 
-  cudf::detail::hostdevice_vector<uint8_t> blobs =
-    allocate_and_encode_blobs(stats_merge, stat_chunks, num_blobs, stream);
+  cudf::detail::hostdevice_vector<uint8_t> blobs = allocate_and_encode_blobs(
+    stats_merge, stat_chunks, num_blobs, write_legacy_timestamp_bounds, stream);
 
   auto stripe_stat_merge = stats_merge.host_ptr();
 
@@ -2103,7 +2134,7 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
   auto const num_rowgroups = cuda::ceil_div<size_t, size_t>(orc_table.num_rows(), rowgroup_size);
 
   hostdevice_2dvector<rowgroup_rows> rowgroup_bounds(
-    num_rowgroups, orc_table.num_columns(), stream);
+    num_rowgroups, orc_table.num_columns(), stream, cudf::get_current_device_resource_ref());
   thrust::for_each_n(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<size_t>{0},
@@ -2337,8 +2368,10 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
     hash_maps_storage_offsets[str_column.str_index()].emplace_back(total_map_storage_size);
   }
 
-  hostdevice_2dvector<stripe_dictionary> stripe_dicts(
-    orc_table.num_string_columns(), segmentation.num_stripes(), stream);
+  hostdevice_2dvector<stripe_dictionary> stripe_dicts(orc_table.num_string_columns(),
+                                                      segmentation.num_stripes(),
+                                                      stream,
+                                                      cudf::get_current_device_resource_ref());
   if (stripe_dicts.count() == 0) return {std::move(stripe_dicts), {}, {}};
 
   // Create a single bulk storage to use for all sub-dictionaries
@@ -2470,8 +2503,8 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
         string_rows_less{orc_table.d_columns, sd.column_idx});
 
       // Create the inverse permutation - i.e. the mapping from the original order to the sorted
-      auto order_copy = cudf::detail::make_device_uvector_async<uint32_t>(
-        sd.data_order, current_stream, cudf::get_current_device_resource_ref());
+      auto order_copy = cuda::device_buffer<uint32_t>(
+        current_stream, cudf::get_current_device_resource_ref(), sd.data_order);
       thrust::scatter(
         rmm::exec_policy_nosync(current_stream, cudf::get_current_device_resource_ref()),
         cuda::counting_iterator<uint32_t>{0},
@@ -2591,7 +2624,7 @@ auto convert_table_to_orc_data(table_view const& input,
   size_type const num_index_streams = (orc_table.num_columns() + 1);
   auto const num_data_streams       = streams.size() - num_index_streams;
   hostdevice_2dvector<stripe_stream> strm_descs(
-    segmentation.num_stripes(), num_data_streams, stream);
+    segmentation.num_stripes(), num_data_streams, stream, cudf::get_current_device_resource_ref());
   auto stripes = gather_stripes(num_index_streams,
                                 segmentation,
                                 host_2dspan<extent_info const>{extents, streams.size()},
@@ -2645,7 +2678,8 @@ auto convert_table_to_orc_data(table_view const& input,
   // Compress the data streams
   cuda::device_buffer<uint8_t> compressed_data(
     stream, cudf::get_current_device_resource_ref(), compressed_bfr_size, cuda::no_init);
-  cudf::detail::hostdevice_vector<codec_exec_result> comp_results(num_compressed_blocks, stream);
+  cudf::detail::hostdevice_vector<codec_exec_result> comp_results(
+    num_compressed_blocks, stream, cudf::get_current_device_resource_ref());
   std::optional<writer_compression_statistics> compression_stats;
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                comp_results.d_begin(),
@@ -2689,7 +2723,8 @@ auto convert_table_to_orc_data(table_view const& input,
 
   auto bounce_buffer = cudf::detail::make_pinned_vector_async<uint8_t>(max_out_stream_size, stream);
 
-  auto intermediate_stats = gather_statistic_blobs(stats_freq, orc_table, segmentation, stream);
+  auto intermediate_stats =
+    gather_statistic_blobs(stats_freq, orc_table, segmentation, timezone, stream);
 
   return std::tuple{std::move(enc_data),
                     std::move(segmentation),
@@ -2714,6 +2749,21 @@ duration_s writer_timezone::compute_base_epoch(std::string_view timezone)
   CUDF_EXPECTS(not timezone.empty(), "Writer timezone cannot be empty");
 
   return base_epoch_in_timezone(timezone);
+}
+
+table_view writer_timezone::ut_offsets(cuda::stream_ref stream) const
+{
+  if (transitions == nullptr) {
+    transitions = cudf::detail::make_timezone_transition_table(
+      {}, name, stream, cudf::get_current_device_resource_ref());
+  }
+
+  return transitions->view();
+}
+
+bool writer_timezone::is_utc(cuda::stream_ref stream) const
+{
+  return ut_offsets(stream).num_rows() == 0;
 }
 
 writer_timezone::writer_timezone(std::string timezone)
@@ -2884,6 +2934,7 @@ void writer::impl::write_orc_data_to_sink(encoded_data const& enc_data,
 
   // Write stripes
   std::vector<std::future<void>> write_tasks;
+  cudf::detail::futures_wait_guard write_tasks_guard{write_tasks};
   for (size_t stripe_id = 0; stripe_id < stripes.size(); ++stripe_id) {
     auto& stripe = stripes[stripe_id];
 
@@ -3017,7 +3068,7 @@ void writer::impl::close()
 
   std::optional<encoded_footer_statistics> statistics;
   if (_stats_freq != statistics_freq::STATISTICS_NONE) {
-    statistics = finish_statistic_blobs(_footer, _persisted_stripe_statistics, _stream);
+    statistics = finish_statistic_blobs(_footer, _persisted_stripe_statistics, _timezone, _stream);
   }
 
   // Output may be partially written from here on.

@@ -14,6 +14,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/buffer>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 #include <dlpack/dlpack.h>
@@ -87,7 +88,7 @@ struct data_type_to_DLDataType_impl {
     uint16_t const lanes{1};
     if (std::is_floating_point_v<T>) {
       return DLDataType{kDLFloat, bits, lanes};
-    } else if (std::is_signed_v<T>) {
+    } else if (cuda::std::is_signed_v<T>) {
       return DLDataType{kDLInt, bits, lanes};
     } else {
       return DLDataType{kDLUInt, bits, lanes};

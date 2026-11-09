@@ -10,6 +10,8 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
+
 #include <optional>
 
 namespace cudf::io::detail {
@@ -53,9 +55,9 @@ constexpr double default_host_device_compression_cost_ratio = 64;
 }
 
 struct sorted_codec_parameters {
-  rmm::device_uvector<device_span<uint8_t const>> inputs;
-  rmm::device_uvector<device_span<uint8_t>> outputs;
-  rmm::device_uvector<std::size_t> order;  // mapping from sorted position to original position
+  cuda::device_buffer<device_span<uint8_t const>> inputs;
+  cuda::device_buffer<device_span<uint8_t>> outputs;
+  cuda::device_buffer<std::size_t> order;  // mapping from sorted position to original position
 };
 
 /**

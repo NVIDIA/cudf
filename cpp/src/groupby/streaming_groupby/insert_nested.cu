@@ -7,8 +7,7 @@
 
 namespace cudf::groupby {
 
-template streaming_groupby::impl::batch_insert_result
-streaming_groupby::impl::probe_and_insert_impl<true>(table_view const& batch_keys,
-                                                     cuda::stream_ref stream);
+template cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl<true>(
+  table_view const& batch_keys, bool use_partials, cuda::stream_ref stream);
 
 }  // namespace cudf::groupby

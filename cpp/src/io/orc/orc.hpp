@@ -14,6 +14,7 @@
 
 #include <cuda/std/concepts>
 #include <cuda/std/optional>
+#include <cuda/std/type_traits>
 
 #include <algorithm>
 #include <concepts>
@@ -179,14 +180,14 @@ int inline constexpr encode_field_number(int field_number, ProtofType field_type
 
 template <typename base_t>
 int static constexpr encode_field_number_base(int field_number) noexcept
-  requires(!std::is_arithmetic_v<base_t> and !std::is_enum_v<base_t>)
+  requires(!cuda::std::is_arithmetic_v<base_t> and !std::is_enum_v<base_t>)
 {
   return encode_field_number(field_number, ProtofType::FIXEDLEN);
 }
 
 template <typename base_t>
 int static constexpr encode_field_number_base(int field_number) noexcept
-  requires(std::is_integral_v<base_t> or std::is_enum_v<base_t>)
+  requires(cuda::std::is_integral_v<base_t> or std::is_enum_v<base_t>)
 {
   return encode_field_number(field_number, ProtofType::VARINT);
 }
@@ -447,7 +448,7 @@ inline uint32_t protobuf_reader::get<uint32_t>()
 template <typename T>
 auto decode_zigzag(T u)
 {
-  using signed_t = std::make_signed_t<T>;
+  using signed_t = cuda::std::make_signed_t<T>;
   return static_cast<signed_t>((u >> 1u) ^ -static_cast<signed_t>(u & 1));
 }
 

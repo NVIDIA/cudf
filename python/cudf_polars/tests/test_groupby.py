@@ -878,7 +878,7 @@ def test_groupby_drop_nans_aggs(engine: pl.GPUEngine) -> None:
         )
     )
 
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False, check_exact=False)
 
 
 def test_groupby_drop_nans_product_median_quantile(

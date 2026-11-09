@@ -383,7 +383,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
     num_rows,
     std::make_unique<cudf::column>(
       std::move(row_string_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0),
-    std::move(chars_data.release()[0]),
+    std::move(*chars_data),
     0,
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
@@ -546,7 +546,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
     num_lists,
     std::make_unique<cudf::column>(
       std::move(row_string_offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0),
-    std::move(chars_data.release()[0]),
+    std::move(*chars_data),
     lists_strings.null_count(),
     cudf::detail::copy_bitmask(lists_strings.parent(), stream, mr));
 }

@@ -216,6 +216,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     field_start = cudf::io::gpu::skip_leading_delimiter_run(field_start, row_end, opts);
     if (field_start >= row_end) break;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, opts);
+    // Trailing whitespace before the record terminator does not start another field
+    if (opts.multi_delimiter and next_delimiter == field_start) { break; }
 
     // Checking if this is a column that the user wants --- user can filter columns
     if (column_flags[col] & column_parse::inferred) {
@@ -315,6 +317,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       }
       actual_col++;
     }
+    // Row offsets can span skipped comments or blank lines. Only a delimiter
+    // starts another field; a record terminator must leave missing fields null.
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, opts)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     col++;
@@ -372,6 +378,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     if (field_start >= row_end) break;
     next_field          = field_start;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, options);
+    // Trailing whitespace before the record terminator does not start another field
+    if (options.multi_delimiter and next_delimiter == field_start) { break; }
 
     if (column_flags[col] & column_parse::enabled) {
       // Check for NA values in the same way as type inference
@@ -452,6 +460,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       }
       ++actual_col;
     }
+    // Row offsets can span skipped comments or blank lines. Only a delimiter
+    // starts another field; a record terminator must leave missing fields null.
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, options)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     ++col;

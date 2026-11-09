@@ -285,10 +285,14 @@ class StringFunction(Expr):
                     "for empty strings"
                 )
         elif self.name is StringFunction.Name.Slice:
-            if not all(
-                isinstance(child, Literal) and not isinstance(child.value, float)
-                for child in self.children[1:]
-            ):
+            offsets = [
+                child for child in self.children[1:] if isinstance(child, Literal)
+            ]
+            if len(offsets) != len(self.children) - 1:
+                raise NotImplementedError(
+                    "Slice only supports literal start and stop values"
+                )
+            if any(isinstance(child.value, float) for child in offsets):
                 raise NotImplementedError(
                     "Slice does not support float literal start and stop values"
                 )

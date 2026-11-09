@@ -295,6 +295,71 @@ def test_scan_lake_predicate(
     assert_gpu_result_equal(q.filter(predicate).sort("a"), engine=engine)
 
 
+@pytest.fixture
+def column_mapped_iceberg(iceberg_catalog: SqlCatalog) -> str:
+    # Mirrors the upstream polars test
+    # test_scan_iceberg_parquet_prefilter_with_column_mapping: the files are
+    # written under the original schema, then the columns are promoted, dropped,
+    # renamed and reordered so the field IDs no longer match the file names.
+    tbl = iceberg_catalog.create_table(
+        "ns.column_mapped",
+        schema=pyiceberg.schema.Schema(
+            NestedField(1, "column_1", StringType(), required=False),
+            NestedField(2, "column_2", IntegerType(), required=False),
+            NestedField(3, "column_3", StringType(), required=False),
+        ),
+    )
+    df = pl.DataFrame(
+        {
+            "column_1": ["A", "B", "C", "D", "E", "F"],
+            "column_2": pl.Series([1, 2, 3, 4, 5, 6], dtype=pl.Int32),
+            "column_3": ["P", "Q", "R", "S", "T", "U"],
+        }
+    )
+    df.slice(0, 3).write_iceberg(tbl, mode="append")
+    df.slice(3).write_iceberg(tbl, mode="append")
+
+    with tbl.update_schema() as update:
+        update.update_column("column_2", LongType())
+    with tbl.update_schema() as update:
+        update.delete_column("column_1")
+    with tbl.update_schema() as update:
+        update.rename_column("column_3", "column_1")
+    with tbl.update_schema() as update:
+        update.rename_column("column_2", "column_3")
+    with tbl.update_schema() as update:
+        update.move_first("column_1")
+    tbl.refresh()
+    return tbl.metadata_location
+
+
+@pytest.mark.parametrize("use_pyiceberg_filter", [True, False])
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        pl.col("column_3") == 5,
+        pl.col("column_1").is_in(["P", "T"]),
+        (pl.col("column_3") > 4) & (pl.col("column_1") != "U"),
+    ],
+)
+def test_scan_iceberg_column_mapping_filter(
+    engine: pl.GPUEngine,
+    column_mapped_iceberg: str,
+    predicate: pl.Expr,
+    *,
+    use_pyiceberg_filter: bool,
+) -> None:
+    # Predicates that reference columns whose names changed since the files
+    # were written must be evaluated against the renamed (field ID mapped)
+    # columns, both with and without pyiceberg pruning files first.
+    q = pl.scan_iceberg(
+        column_mapped_iceberg,
+        reader_override="native",
+        use_pyiceberg_filter=use_pyiceberg_filter,
+    ).filter(predicate)
+    assert_gpu_result_equal(q.sort("column_3"), engine=engine)
+
+
 @pytest.mark.parametrize(
     "query",
     [
@@ -354,10 +419,49 @@ def test_scan_lake_predicate_pushdown(
     )
 
 
-def test_scan_iceberg_partition_predicate_without_file_columns(
-    engine: pl.GPUEngine, partitioned_iceberg: str
+def test_scan_lake_hive_partition_predicate_on_column_missing_from_files(
+    engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
-    q = pl.scan_iceberg(partitioned_iceberg).filter(pl.col("part") != "w")
+    # The predicate keeps a filter on the scan, but the only column it uses is
+    # missing from every file. No column is read from the files, yet each row
+    # still needs the hive value of the file it comes from.
+    paths = []
+    for index, values in enumerate(([1, 2], [3, 4, 5])):
+        path = tmp_path / f"part={index}" / "data.parquet"
+        pl.DataFrame({"a": values}).write_parquet(path, mkdir=True)
+        paths.append(str(path))
+
+    def no_deletions(requested: pl.DataFrame) -> pl.DataFrame:
+        return pl.DataFrame(
+            {"selection_vector": [None] * requested.height},
+            schema={"selection_vector": pl.List(pl.Boolean)},
+        )
+
+    q = pl.scan_parquet(
+        paths,
+        schema={"a": pl.Int64, "b": pl.Int64},
+        missing_columns="insert",
+        extra_columns="ignore",
+        cast_options=pl.ScanCastOptions._default_iceberg(),
+        hive_partitioning=True,
+        hive_schema={"part": pl.Int64},
+        _deletion_files=("delta-deletion-vector", no_deletions),
+    )
+    assert_gpu_result_equal(
+        q.filter(pl.col("b").is_null()).select("part"),
+        engine=engine,
+        check_row_order=False,
+    )
+
+
+@pytest.mark.parametrize("table", ["partitioned_iceberg", "partitioned_delta"])
+def test_scan_lake_partition_predicate_without_file_columns(
+    request: pytest.FixtureRequest, engine: pl.GPUEngine, table: str
+) -> None:
+    # No column is read from the files, but the filter still has to know which
+    # file each row comes from to pick its partition value.
+    scan = pl.scan_iceberg if table.endswith("iceberg") else pl.scan_delta
+    q = scan(request.getfixturevalue(table)).filter(pl.col("part") != "w")
     assert_gpu_result_equal(q.select("part"), engine=engine, check_row_order=False)
 
 
@@ -669,6 +773,105 @@ def test_scan_iceberg_nested_unsupported(
         pl.exceptions.ComputeError, match=f"NotImplementedError: {re.escape(match)}"
     ):
         q.collect(engine=in_memory_engine)
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [pl.col("f") > 50, (pl.col("f") == 1.0) | (pl.col("i") == 3)],
+    ids=["gt", "eq_or"],
+)
+@pytest.mark.skipif(POLARS_VERSION_LT_21, reason="Bug in polars 2.0.0")
+def test_scan_iceberg_identity_partition_added_then_removed(
+    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, predicate: pl.Expr
+) -> None:
+    # Polars reports a null partition value for the files written before the
+    # identity partition field was added or after it was removed. Those files
+    # hold the column, so it must be read from them.
+    tbl = iceberg_catalog.create_table(
+        "ns.partition_spec_evolved",
+        schema=pyiceberg.schema.Schema(
+            NestedField(1, "f", DoubleType(), required=False),
+            NestedField(2, "i", LongType(), required=False),
+        ),
+    )
+    tbl.append(pl.DataFrame({"f": [1.0], "i": [1]}).to_arrow())
+    with tbl.update_spec() as update:
+        update.add_identity("f")
+    tbl.append(pl.DataFrame({"f": [100.0], "i": [2]}).to_arrow())
+    with tbl.update_spec() as update:
+        update.remove_field("f")
+    tbl.append(pl.DataFrame({"f": [200.0], "i": [3]}).to_arrow())
+    q = pl.scan_iceberg(tbl).filter(predicate)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("filter_", [False, True])
+def test_scan_iceberg_partition_value_for_file_missing_column(
+    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, *, filter_: bool
+) -> None:
+    tbl = iceberg_catalog.create_table(
+        "ns.partition_value_missing_column",
+        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
+    )
+    pl.DataFrame({"a": [1]}).write_iceberg(tbl, mode="append")
+    (without_d,) = (task.file.file_path for task in tbl.scan().plan_files())
+    with tbl.update_schema() as update:
+        update.add_column("d", LongType())
+    pl.DataFrame({"a": [2], "d": [20]}).write_iceberg(tbl, mode="append")
+    (with_d,) = (
+        task.file.file_path
+        for task in tbl.scan().plan_files()
+        if task.file.file_path != without_d
+    )
+    # The null value makes the column read from the files. The file that lacks
+    # it takes its partition value.
+    q = _scan_iceberg_files(
+        tbl,
+        [without_d, with_d],
+        _default_values=(
+            "iceberg",
+            ({2: pl.Series([5, None], dtype=pl.Int64)}, {}),
+        ),
+    )
+    if filter_:
+        q = q.filter(pl.col("a") > 0)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("initial_default", [None, 7])
+@pytest.mark.skipif(POLARS_VERSION_LT_21, reason="Bug in polars 2.0.0")
+def test_scan_iceberg_partition_values_shorter_than_paths(
+    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, initial_default: int | None
+) -> None:
+    # Polars gives no partition value for the trailing files. They take the
+    # initial default, or null when there is none.
+    tbl = iceberg_catalog.create_table(
+        "ns.partition_values_short",
+        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
+    )
+    paths = []
+    for value in (1, 2, 3):
+        pl.DataFrame({"a": [value]}).write_iceberg(tbl, mode="append")
+        (path,) = (
+            task.file.file_path
+            for task in tbl.scan().plan_files()
+            if task.file.file_path not in paths
+        )
+        paths.append(path)
+    with tbl.update_schema() as update:
+        update.add_column("d", LongType())
+    initial_defaults = (
+        {} if initial_default is None else {2: pl.Series([initial_default])}
+    )
+    q = _scan_iceberg_files(
+        tbl,
+        paths,
+        _default_values=(
+            "iceberg",
+            ({2: pl.Series([5], dtype=pl.Int64)}, initial_defaults),
+        ),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
 def _partition_error_scan(
@@ -1067,6 +1270,32 @@ def test_scan_iceberg_deletion_vector_file_uri(
         tbl,
         paths,
         _deletion_files=("iceberg", ({}, dict.fromkeys((0, 1), f"file://{puffin}"))),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize("scheme", ["file://", "file:"])
+def test_scan_iceberg_position_delete_file_uri(
+    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, tmp_path: Path, scheme: str
+) -> None:
+    tbl = iceberg_catalog.create_table(
+        "ns.deleted",
+        schema=pyiceberg.schema.Schema(NestedField(1, "a", LongType(), required=False)),
+    )
+    for index in range(2):
+        pl.DataFrame({"a": [4 * index + i for i in range(4)]}).write_iceberg(
+            tbl, mode="append"
+        )
+    paths = [task.file.file_path for task in tbl.scan().plan_files()]
+    position_deletes = {}
+    for index, positions in {0: [0, 3], 1: [1]}.items():
+        delete_file = tmp_path / "deletes" / f"{index}.parquet"
+        pl.LazyFrame({"file_path": [paths[index]] * len(positions)}).with_columns(
+            pos=pl.Series(positions, dtype=pl.Int64)
+        ).sink_parquet(delete_file, mkdir=True)
+        position_deletes[index] = [f"{scheme}{delete_file}"]
+    q = _scan_iceberg_files(
+        tbl, paths, _deletion_files=("iceberg", (position_deletes, {}))
     )
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 

@@ -371,6 +371,42 @@ def test_mode(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+@pytest.mark.parametrize(
+    "n_values, n_nulls",
+    [(5, 2), (0, 3), (1, 0), (0, 0)],
+    ids=["values_and_nulls", "all_nulls", "one_row", "empty"],
+)
+@pytest.mark.parametrize("dtype", ["int", "float"])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_mode_sorted(
+    engine: pl.GPUEngine,
+    *,
+    n_values: int,
+    n_nulls: int,
+    dtype: str,
+    descending: bool,
+    nulls_last: bool,
+) -> None:
+    if dtype == "float":
+        nan = float("nan")
+        ascending_values = [1.0, 2.0, 2.0, nan, nan]
+        polars_dtype: pl.DataType = pl.Float64()
+    else:
+        ascending_values = [1, 2, 2, 3, 3]
+        polars_dtype = pl.Int64()
+    values = ascending_values[:n_values]
+    if descending:
+        values.reverse()
+    nulls = [None] * n_nulls
+    df = pl.LazyFrame(
+        {"a": values + nulls if nulls_last else nulls + values},
+        schema={"a": polars_dtype},
+    )
+    q = df.select(pl.col("a").set_sorted(descending=descending).mode())
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 def test_mode_maintain_order_unsupported(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"a": [1, 2, 2, None, 3, 1]})
     q = df.select(pl.col("a").mode(maintain_order=True))
@@ -711,6 +747,42 @@ def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
     df = pl.LazyFrame({"a": [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]})
     q = df.select(expr)
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("set_sorted", [False, True])
+@pytest.mark.parametrize("drop_nulls", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize(
+    "data,dtype",
+    [
+        ([3, 1, 2, 1, None, 3, None, 2, 2], pl.Int64),
+        ([1.0, float("nan"), 2.0, float("nan"), None, 1.0, -0.0, 0.0], pl.Float64),
+        (["b", "a", None, "b", "c"], pl.String),
+        ([None, None], pl.Int64),
+        ([7], pl.Int64),
+        ([], pl.Int64),
+    ],
+)
+def test_n_unique_sorted(
+    engine: pl.GPUEngine,
+    data,
+    dtype,
+    descending: bool,  # noqa: FBT001
+    nulls_last: bool,  # noqa: FBT001
+    drop_nulls: bool,  # noqa: FBT001
+    set_sorted: bool,  # noqa: FBT001
+) -> None:
+    values = pl.Series(data, dtype=dtype).sort(
+        descending=descending, nulls_last=nulls_last
+    )
+    col = pl.col("a")
+    if set_sorted:
+        col = col.set_sorted(descending=descending)
+    if drop_nulls:
+        col = col.drop_nulls()
+    q = pl.LazyFrame({"a": values}).select(col.n_unique())
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_n_unique_null_dtype_unsupported(engine: pl.GPUEngine) -> None:

@@ -59,6 +59,7 @@ def df():
         pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
         [pl.col("a") * 2, pl.col("b") + pl.col("a")],
         pl.col("d").not_(),
+        pl.col("d") ^ (pl.col("b") > 2),
     ],
 )
 def test_compute_column(expr, df):
@@ -97,9 +98,7 @@ def test_compute_column(expr, df):
     assert_frame_equal(expect, got)
 
 
-def test_boolean_xor_is_not_converted_to_ast():
-    # libcudf's AST evaluation rejects XOR of booleans, so it must stay out of
-    # a pushed-down filter.
+def test_boolean_xor_is_converted_to_ast():
     stream = get_cuda_stream()
     q = pl.LazyFrame({"a": [True, False], "b": [True, True]}).select(
         pl.col("a") ^ pl.col("b")
@@ -112,7 +111,7 @@ def test_boolean_xor_is_not_converted_to_ast():
         table_ref=plc.expressions.TableReference.LEFT,
         name_to_index={"a": 0, "b": 1},
     )
-    assert to_ast(with_colrefs, stream=stream) is None
+    assert to_ast(with_colrefs, stream=stream) is not None
     # Integer XOR is still supported.
     q = pl.LazyFrame({"a": [1, 2], "b": [3, 3]}).select(pl.col("a") ^ pl.col("b"))
     ir = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()

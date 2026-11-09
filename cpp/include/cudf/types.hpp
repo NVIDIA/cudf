@@ -127,6 +127,23 @@ enum class nan_equality /*unspecified*/ {
 };
 
 /**
+ * @brief Enum to select how floating-point NaN values compare with other values
+ *
+ * - `DEFAULT`: the libcudf default, currently `IEEE754`. The default may change in a future
+ *   release, so request `IEEE754` or `ETL` explicitly to rely on either behavior.
+ * - `IEEE754`: comparison predicates follow IEEE 754. A NaN is unordered: it is not equal to any
+ *   value, including another NaN, and every ordered comparison with a NaN is false.
+ * - `ETL`: the convention of ETL engines such as Spark, Polars, and PostgreSQL. All NaNs are equal
+ *   to each other, regardless of sign or payload, and a NaN is greater than every other value,
+ *   including positive infinity. This matches how libcudf already orders NaNs when sorting.
+ */
+enum class nan_semantics : uint8_t {
+  DEFAULT,  ///< The libcudf default, currently IEEE754
+  IEEE754,  ///< NaN is unordered and unequal to every value (IEEE 754 comparison predicates)
+  ETL       ///< NaNs are equal to each other and greater than every other value
+};
+
+/**
  * @brief Enum to consider two nulls as equal or unequal
  */
 enum class null_equality : bool {

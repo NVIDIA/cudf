@@ -7,7 +7,7 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 from pylibcudf.column import Column
 from pylibcudf.scalar import Scalar
-from pylibcudf.types import DataType
+from pylibcudf.types import DataType, NanSemantics
 from pylibcudf.utils import CudaStreamLike
 
 class BinaryOperator(IntEnum):
@@ -57,6 +57,7 @@ def binary_operation(
     rhs: Column | Scalar,
     op: BinaryOperator,
     output_type: DataType,
+    semantics: NanSemantics = NanSemantics.DEFAULT,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...

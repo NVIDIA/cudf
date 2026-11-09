@@ -440,6 +440,7 @@ std::
                     cuda::std::identity{});
   // inbuf keeps `num_deletions` stale bytes at the tail; the returned offsets and lengths bound
   // the normalized data.
+  // TODO: Resize again once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
 
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          inbuf_lengths.begin(),

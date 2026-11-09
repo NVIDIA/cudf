@@ -145,9 +145,9 @@ namespace io::parquet::experimental {
  * that prefix once per row instead of once per path, and all paths are located by a single kernel
  * and copied by a single pass.
  *
- * Besides the outputs, temporary memory grows as 8 bytes per (path, row) pair, so extracting many
- * paths from a large column can be split into several calls over subsets of the paths to bound
- * peak memory.
+ * Temporary memory grows as 8 bytes per (path, row) pair while the paths are located, and as 4
+ * bytes per pair, alongside the outputs, while they are copied. Extracting many paths from a large
+ * column can be split into several calls over subsets of the paths to bound peak memory.
  *
  * @param variant_column Struct column (VARIANT materialization)
  * @param paths JSONPath-like path strings (see `get_variant_field` for syntax); duplicate and

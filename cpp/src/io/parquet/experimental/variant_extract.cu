@@ -967,6 +967,9 @@ constexpr std::size_t max_global_scratch_bytes = std::size_t{32} * 1024 * 1024;
 // Dynamic shared memory up to this size needs no opt-in on any supported architecture
 constexpr std::size_t max_shared_trie_bytes = std::size_t{48} * 1024;
 
+// Pairs per batched copy, which bounds its temporary memory to about 24 bytes per pair
+constexpr std::size_t max_pairs_per_copy = std::size_t{1} << 22;
+
 // Index of `row` of path `path` in the per-path outputs, which are stored one path after another
 CUDF_HOST_DEVICE constexpr int64_t flat_index(size_type path, size_type row, size_type num_rows)
 {
@@ -1377,7 +1380,6 @@ void validate_cast_type(data_type desired_type)
 template <typename Index>
 void copy_located_values(cudf::lists_column_device_view const& values,
                          device_span<size_type const> d_src_offsets,
-                         device_span<size_type const> d_sizes,
                          device_span<size_type* const> d_offsets,
                          device_span<uint8_t* const> d_out,
                          size_type num_rows,
@@ -1399,8 +1401,21 @@ void copy_located_values(cudf::lists_column_device_view const& values,
         auto const path = i / rows;
         return d_dst[path] + d_off[path][i - path * static_cast<Index>(rows)];
       }));
-  cudf::detail::batched_memcpy_async(
-    src_iter, dst_iter, d_sizes.begin(), d_sizes.size(), stream, mr);
+  auto const size_iter = cuda::make_transform_iterator(
+    cuda::counting_iterator<Index>{0},
+    cuda::proclaim_return_type<size_type>([d_off = d_offsets.data(), rows] __device__(Index i) {
+      auto const path    = i / rows;
+      auto const* offset = d_off[path] + (i - path * static_cast<Index>(rows));
+      return offset[1] - offset[0];
+    }));
+  // The copy reserves temporary memory for every pair it is given, so pairs are copied in chunks
+  auto const num_pairs = d_src_offsets.size();
+  for (std::size_t first = 0; first < num_pairs; first += max_pairs_per_copy) {
+    auto const count = std::min(max_pairs_per_copy, num_pairs - first);
+    auto const shift = static_cast<Index>(first);
+    cudf::detail::batched_memcpy_async(
+      src_iter + shift, dst_iter + shift, size_iter + shift, count, stream, mr);
+  }
 }
 
 struct cast_variant_fn {
@@ -1811,6 +1826,8 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   }
 
   count_valid_rows(d_null_masks, num_rows, d_valid_counts, stream);
+  // The copy reads the sizes back from the offsets, so they are freed before the outputs grow
+  d_sizes.destroy();
 
   auto const path_counts  = cudf::detail::make_pinned_vector(d_path_counts, stream);
   auto const byte_totals  = host_span<int64_t const>{path_counts}.first(num_paths);
@@ -1843,7 +1860,6 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
     if (num_outputs <= std::numeric_limits<size_type>::max()) {
       copy_located_values<size_type>(val_lists_device_view,
                                      d_src_offsets,
-                                     d_sizes,
                                      d_offsets,
                                      d_out,
                                      num_rows,
@@ -1852,7 +1868,6 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
     } else {
       copy_located_values<int64_t>(val_lists_device_view,
                                    d_src_offsets,
-                                   d_sizes,
                                    d_offsets,
                                    d_out,
                                    num_rows,

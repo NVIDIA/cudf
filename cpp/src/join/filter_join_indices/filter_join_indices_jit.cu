@@ -3,49 +3,55 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "cudf/utilities/memory_resource.hpp"
 #include "join/filter_join_indices/filter_join_indices_jit_kernel.cuh"
 #include "join/filter_join_indices/full_join.hpp"
-#include "join/jit/filter_join_kernel.cuh"
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/device_scalar.hpp>
-#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/cuda.cuh>
-#include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/errc.hpp>
 #include <cudf/join/join.hpp>
-#include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuco/static_set.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/functional>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 
 #include <jit/cache.hpp>
 #include <jit/helpers.hpp>
 #include <jit/parser.hpp>
+#include <jit/reflect.hpp>
 #include <jit/row_ir.hpp>
+#include <rtcx/rtcx.hpp>
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <format>
 #include <memory>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
 #include <utility>
+#include <variant>
+#include <vector>
 
 namespace cudf {
 namespace detail {
@@ -56,39 +62,22 @@ std::vector<std::string> build_join_filter_template_params(
   std::span<transform_input const> inputs,
   std::span<std::optional<int32_t>> table_sources,
   bool has_user_data,
-  bool is_null_aware)
+  bool is_null_aware,
+  udf_source_type source_type)
 {
-  std::vector<std::string> template_params;
-  template_params.emplace_back(rtcx::reflect(has_user_data));
-  template_params.emplace_back(rtcx::reflect(is_null_aware));
-
-  std::vector<std::string> accessors;
-
+  std::vector<int32_t> input_table_sources;
+  std::vector<int32_t> input_table_indices;
   for (size_t i = 0; i < inputs.size(); ++i) {
-    auto const& input = inputs[i];
-    if (auto* col = std::get_if<column_view>(&input)) {
-      accessors.emplace_back(rtcx::reflect_template("cudf::jit::column_accessor",
-                                                    rtcx::reflect(i),
-                                                    "cudf::column_device_view_core",
-                                                    cudf::type_to_name(col->type()),
-                                                    rtcx::reflect(false),
-                                                    rtcx::reflect(table_sources[i].value())));
-    } else {
-      auto& scalar = std::get<scalar_column_view>(input);
-      accessors.emplace_back(rtcx::reflect_template(
-        "cudf::jit::column_accessor",
-        rtcx::reflect(i),
-        "cudf::column_device_view_core",
-        cudf::type_to_name(scalar.as_column_view().type()),
-        rtcx::reflect(true),
-        rtcx::reflect(0)  // scalars don't belong to a table, so just use 0 as placeholder
-        ));
-    }
+    input_table_sources.push_back(table_sources[i].value_or(0));
+    input_table_indices.push_back(static_cast<int32_t>(i));
   }
 
-  template_params.push_back(rtcx::reflect_template("cudf::jit::type_list", accessors));
-
-  return template_params;
+  auto reflection = cudf::jit::reflect(source_type,
+                                       cudf::jit::make_input_specs(inputs),
+                                       std::span<transform_output_spec const>{},
+                                       input_table_sources,
+                                       input_table_indices);
+  return {rtcx::reflect(has_user_data), rtcx::reflect(is_null_aware), reflection.input_accessors};
 }
 
 // Build the JIT kernel for join filtering
@@ -101,30 +90,32 @@ kernel build_join_filter_kernel(std::string const& predicate_code,
 {
   CUDF_FUNC_RANGE();
 
-  std::vector<std::string> ptx_output_types{"bool"};
-  std::vector<std::string> ptx_input_types;
+  // Build template parameters and kernel name.
+  auto template_args =
+    build_join_filter_template_params(inputs,
+                                      table_sources,
+                                      has_user_data,
+                                      is_null_aware,
+                                      is_ptx ? udf_source_type::PTX : udf_source_type::CUDA);
+  auto kernel_name = rtcx::reflect_template("cudf::join::jit::filter_join_kernel", template_args);
 
-  for (auto const& input : inputs) {
-    if (auto* col = std::get_if<column_view>(&input)) {
-      ptx_input_types.push_back(cudf::type_to_name(col->type()));
-    } else {
-      auto& scalar = std::get<scalar_column_view>(input);
-      ptx_input_types.push_back(cudf::type_to_name(scalar.type()));
-    }
+  if (is_ptx) {
+    auto const outputs = std::array{transform_output_spec{.type = type_id::BOOL8}};
+    auto signature     = cudf::jit::reflect_udf_signature(
+      is_null_aware, has_user_data, cudf::jit::make_input_specs(inputs), outputs, true);
+    auto fragment = cudf::jit::get_udf_kernel_fragment(
+      "cudf/cpp/src/join/jit/filter_join_kernel.cu", kernel_name, signature);
+    auto ptx                          = cudf::jit::parse_single_function_ptx(predicate_code);
+    rtcx::memory_fragment fragments[] = {
+      {.data = fragment->view(), .type = rtcx::binary_type::LTO_IR, .name = kernel_name.c_str()},
+      {.data = {reinterpret_cast<uint8_t const*>(ptx.c_str()), ptx.size() + 1},
+       .type = rtcx::binary_type::PTX,
+       .name = nullptr}};
+    return get_lto_linked_kernel("cudf/cpp/src/join/jit/filter_join_kernel.cu", {}, fragments);
   }
 
-  // Parse predicate code
-  auto const cuda_source =
-    is_ptx ? cudf::jit::parse_single_function_ptx(
-               predicate_code,
-               "GENERIC_JOIN_FILTER_OP",
-               cudf::jit::build_ptx_params(ptx_output_types, ptx_input_types, has_user_data))
-           : cudf::jit::parse_single_function_cuda(predicate_code, "GENERIC_JOIN_FILTER_OP");
-
-  // Build template parameters and kernel name
-  auto template_args =
-    build_join_filter_template_params(inputs, table_sources, has_user_data, is_null_aware);
-  auto kernel_name = rtcx::reflect_template("cudf::join::jit::filter_join_kernel", template_args);
+  auto cuda_source =
+    cudf::jit::parse_single_function_cuda(predicate_code, "GENERIC_JOIN_FILTER_OP");
 
   // Get compiled kernel
   return cudf::jit::get_udf_kernel(
@@ -198,6 +189,7 @@ apply_join_semantics(cudf::table_view const& left,
                      cuda::stream_ref stream,
                      cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto make_empty_result = [&]() {
     return std::pair{
       std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
@@ -222,7 +214,8 @@ apply_join_semantics(cudf::table_view const& left,
       cudf::detail::count_if(cuda::counting_iterator<size_type>{0},
                              cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
                              valid_predicate,
-                             stream);
+                             stream,
+                             mrs.as_temporary());
 
     if (num_valid == 0) { return make_empty_result(); }
 
@@ -239,7 +232,8 @@ apply_join_semantics(cudf::table_view const& left,
       cuda::counting_iterator<size_type>{0},
       output_iter,
       [valid_predicate] __device__(size_type idx) -> bool { return valid_predicate(idx); },
-      stream);
+      stream,
+      mrs.as_temporary());
 
     return std::pair{std::move(filtered_left_indices), std::move(filtered_right_indices)};
 
@@ -279,7 +273,8 @@ apply_join_semantics(cudf::table_view const& left,
       cuda::counting_iterator<size_type>{0},
       cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
       [predicate_results_ptr] __device__(size_type i) -> bool { return predicate_results_ptr[i]; },
-      stream);
+      stream,
+      mrs.as_temporary());
     auto const output_size = num_valid + num_invalid;
     if (output_size == 0) { return make_empty_result(); }
 
@@ -298,7 +293,8 @@ apply_join_semantics(cudf::table_view const& left,
                             cuda::counting_iterator<std::size_t>{0},
                             output_iter,
                             valid_predicate,
-                            stream);
+                            stream,
+                            mrs.as_temporary());
     }
     if (num_invalid > 0) {
       auto filter_passing_indices_ref = filter_passing_indices.ref(cuco::contains);
@@ -310,7 +306,8 @@ apply_join_semantics(cudf::table_view const& left,
                             cuda::counting_iterator{static_cast<std::size_t>(left.num_rows())},
                             filtered_left_indices->begin() + num_valid,
                             is_unmatched_idx,
-                            stream);
+                            stream,
+                            mrs.as_temporary());
 
       cub::DeviceTransform::Fill(
         filtered_right_indices->begin() + num_valid, num_invalid, JoinNoMatch, stream.get());
@@ -497,7 +494,8 @@ filter_join_indices_jit(cudf::table_view const& left,
     build_join_filter_template_params(filter_result.inputs,
                                       filter_result.input_table_sources,
                                       filter_result.user_data.has_value(),
-                                      filter_result.is_null_aware == null_aware::YES);
+                                      filter_result.is_null_aware == null_aware::YES,
+                                      udf_source_type::CUDA);
 
   // The generated code is compiled as it is, linked with the LTO callees it calls.
   auto const cuda_source = cudf::jit::define_operation(

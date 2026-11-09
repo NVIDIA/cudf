@@ -37,15 +37,16 @@ size_type compute_group_offsets(table_view const& keys,
                                 device_span<size_type> group_offsets,
                                 cuda::stream_ref stream)
 {
-  auto const size        = keys.num_rows();
-  auto const temp_mr     = cudf::get_current_device_resource_ref();
-  auto const comparator  = cudf::detail::row::equality::self_comparator{keys, stream, temp_mr};
-  auto const d_key_equal = comparator.equal_to<HasNested>(
+  auto const size           = keys.num_rows();
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr        = mr.get_temporary_mr();
+  auto const comparator     = cudf::detail::row::equality::self_comparator{keys, stream, temp_mr};
+  auto const d_key_equal    = comparator.equal_to<HasNested>(
     cudf::nullate::DYNAMIC{cudf::has_nested_nulls(keys)}, null_equality::EQUAL);
   // Using a temporary buffer for intermediate transform results from the iterator containing
   // the comparator speeds up compile-time significantly without much degradation in
   // runtime performance over using the comparator directly in thrust::unique_copy.
-  auto result    = cuda::device_buffer<bool>(stream, temp_mr, size, cuda::no_init);
+  auto result    = cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), size, cuda::no_init);
   auto const itr = cuda::counting_iterator<size_type>{0};
   thrust::transform(
     rmm::exec_policy_nosync(stream, temp_mr),
@@ -53,7 +54,8 @@ size_type compute_group_offsets(table_view const& keys,
     itr + size,
     result.begin(),
     [d_key_equal] __device__(size_type row) { return row == 0 || !d_key_equal(row, row - 1); });
-  return compact_group_offsets(result.data(), size, group_offsets.data(), stream, temp_mr);
+  return compact_group_offsets(
+    result.data(), size, group_offsets.data(), stream, mr.as_temporary());
 }
 
 }  // namespace cudf::groupby::detail

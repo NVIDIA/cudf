@@ -90,11 +90,11 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
     if constexpr (is_null_aware) {
       // Null-aware path: pass optional<T> inputs, get optional<bool> result
       cuda::std::optional<bool> result{false};
-      auto row_error = Accessors::map([&]<typename... A>() {
+      auto row_error       = Accessors::map([&]<typename... A>() {
         return execute_predicate_op<has_user_data>(
           user_data, i, &result, A::nullable_element(columns, indices[A::table_index][i])...);
       });
-      thread_error = cuda::std::max(thread_error, row_error);
+      thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result.has_value() && result.value();
     } else {
       // Non-null-aware path: if any input is null, predicate is false
@@ -104,12 +104,12 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
         predicate_results[i] = false;
         continue;
       }
-      bool result = false;
-      auto row_error = Accessors::map([&]<typename... A>() {
+      bool result          = false;
+      auto row_error       = Accessors::map([&]<typename... A>() {
         return execute_predicate_op<has_user_data>(
           user_data, i, &result, A::element(columns, indices[A::table_index][i])...);
       });
-      thread_error = cuda::std::max(thread_error, row_error);
+      thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result;
     }
   }

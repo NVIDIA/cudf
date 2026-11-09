@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import enum
 import importlib
 import importlib.util
 import json
 import os
 import pprint
+import re
 import shlex
 import sys
 import textwrap
@@ -22,7 +24,8 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import mean
-from typing import TYPE_CHECKING, Any, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import nvtx
 
@@ -89,7 +92,7 @@ except ImportError:
     CUDF_POLARS_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.quent import QuentConfig
@@ -149,6 +152,13 @@ def get_validation_options(run_options: RunOptions) -> dict[str, Any]:
         **POLARS_VALIDATION_OPTIONS,
         "abs_tol": run_options.validation_abs_tol,
     }
+
+
+class QueryMode(enum.Enum):
+    """How benchmark queries are defined."""
+
+    DATAFRAME = "dataframe"
+    SQL = "sql"
 
 
 _STREAMING_FRONTENDS = frozenset({"dask", "ray", "spmd"})
@@ -579,6 +589,8 @@ class RunConfig:
     scale_factor: int | float
     suffix: str
     qualification: bool = False
+    query_mode: QueryMode = QueryMode.DATAFRAME
+    sql_directory: Path | None = None
 
     # Execution mode
     frontend: Literal["dask", "duckdb", "in-memory", "polars-cpu", "ray", "spmd"]
@@ -732,6 +744,8 @@ class RunConfig:
             scale_factor=scale_factor,
             suffix=args.suffix if args.suffix is not None else ".parquet",
             qualification=args.qualification,
+            query_mode=args.query_mode,
+            sql_directory=args.sql_directory,
             frontend=args.frontend,
             iterations=args.iterations,
             sleep_between_iterations=args.sleep_between_iterations,
@@ -782,6 +796,12 @@ class RunConfig:
             "scale_factor": self.scale_factor,
             "suffix": self.suffix,
             "qualification": self.qualification,
+            "query_mode": self.query_mode.value,
+            "sql_directory": (
+                str(self.sql_directory.resolve())
+                if self.sql_directory is not None
+                else None
+            ),
             "frontend": self.frontend,
             "iterations": self.iterations,
             "io_mode": self.io_mode,
@@ -926,12 +946,9 @@ def is_remote_path(path: os.PathLike | str) -> bool:
 
 
 def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:
-    """Drop the Linux page cache for all files under `path`."""
+    """Drop the Linux page cache for all local files under `path`."""
     if is_remote_path(path):
-        raise ValueError(
-            f"--io-mode cold cannot drop the page cache for the remote dataset {path!r}; "
-            "use --io-mode lukewarm or point --path at a local copy."
-        )
+        return
     try:
         import kvikio
     except ImportError as err:
@@ -1005,7 +1022,7 @@ def execute_query(
 def validate_result(
     result: pl.DataFrame,
     expected: pl.DataFrame,
-    sort_by: list[tuple[str, bool]],
+    sort_by: list[tuple[str, bool]] | None,
     limit: int | None = None,
     sort_keys: list[tuple[pl.Expr, bool]] | None = None,
     **kwargs: Any,
@@ -1044,9 +1061,10 @@ class QueryResult:
     ----------
     frame: pl.LazyFrame
         The result of the query.
-    sort_by: list[tuple[str, bool]]
+    sort_by: list[tuple[str, bool]] | None
         The columns that the query sorts by. Each tuple contains (column_name, descending_flag).
-        Used for the ties/limit boundary logic in validation.
+        Used for the ties/limit boundary logic in validation. ``None`` means the sort
+        order is unknown, and validation compares rows in the order they were returned.
     sort_keys: list[tuple[pl.Expr, bool]] | None
         Optional Polars expressions for the sortedness check. Use this when the query
         sorts by a conditional expression (e.g. ``CASE WHEN lochierarchy = 0 THEN i_category END``)
@@ -1059,10 +1077,98 @@ class QueryResult:
     """
 
     frame: pl.LazyFrame
-    sort_by: list[tuple[str, bool]]
+    sort_by: list[tuple[str, bool]] | None
     limit: int | None = None
     nulls_last: bool = True
     sort_keys: list[tuple[pl.Expr, bool]] | None = None
+
+
+_QUERY_ATTRIBUTE = re.compile(r"q\d+")
+
+
+def _sql_query_path(directory: Path, q_id: int) -> Path:
+    """Return the SQL file path for a query, preferring the zero-padded name."""
+    padded = directory / f"q{q_id:02d}.sql"
+    if padded.exists():
+        return padded
+    return directory / f"q{q_id}.sql"
+
+
+@dataclasses.dataclass(frozen=True)
+class SQLQueryFiles:
+    """
+    SQL text for benchmark queries, read from one file per query.
+
+    Parameters
+    ----------
+    name
+        The query set name, ``"pdsh"`` or ``"pdsds"``.
+    directory
+        Directory containing ``qNN.sql`` (zero-padded) or ``qN.sql`` files.
+    """
+
+    name: str
+    directory: Path
+
+    def path(self, q_id: int) -> Path:
+        """Return the SQL file path for a query, preferring the zero-padded name."""
+        return _sql_query_path(self.directory, q_id)
+
+    def __getattr__(self, attr: str) -> Callable[[RunConfig], str]:
+        """Query lookup."""
+        if _QUERY_ATTRIBUTE.fullmatch(attr) is None:
+            raise AttributeError(attr)
+        path = self.path(int(attr[1:]))
+
+        def query(run_config: RunConfig) -> str:
+            return path.read_text(encoding="utf-8")
+
+        return query
+
+
+class SQLQueries:
+    """
+    Benchmark queries read from SQL files and run with ``polars.SQLContext``.
+
+    Parameters
+    ----------
+    name
+        The query set name, ``"pdsh"`` or ``"pdsds"``. Selects the tables to register.
+    sql_directory
+        Directory containing one SQL file per query.
+    """
+
+    EXPECTED_CASTS: ClassVar[Mapping[int, list[pl.Expr]]] = MappingProxyType({})
+    EXPECTED_CASTS_DECIMAL: ClassVar[Mapping[int, list[pl.Expr]]] = MappingProxyType({})
+    EXPECTED_CASTS_TIMESTAMP: ClassVar[Mapping[int, list[pl.Expr]]] = MappingProxyType(
+        {}
+    )
+
+    def __init__(self, name: str, sql_directory: Path) -> None:
+        self.name = name
+        self.duckdb_queries = SQLQueryFiles(name=name, directory=sql_directory)
+
+    def __call__(self) -> SQLQueries:
+        """Return this instance, matching the ``benchmark()`` calls made on query classes."""
+        return self
+
+    def __getattr__(self, attr: str) -> Callable[[RunConfig], QueryResult]:
+        """Query lookup."""
+        if _QUERY_ATTRIBUTE.fullmatch(attr) is None:
+            raise AttributeError(attr)
+        get_sql = getattr(self.duckdb_queries, attr)
+        table_names = PDSDS_TABLE_NAMES if self.name == "pdsds" else PDSH_TABLE_NAMES
+
+        def query(run_config: RunConfig) -> QueryResult:
+            context = pl.SQLContext(
+                {
+                    table: get_data(run_config.dataset_path, table, run_config.suffix)
+                    for table in table_names
+                }
+            )
+            return QueryResult(frame=context.execute(get_sql(run_config)), sort_by=None)
+
+        return query
 
 
 def _collect_statistics(engine: pl.GPUEngine | None) -> dict[str, Any] | None:
@@ -2117,6 +2223,29 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
     )
     _add_dataset_args(parser)
     parser.add_argument(
+        "--query-mode",
+        dest="query_mode",
+        default=QueryMode.DATAFRAME,
+        type=QueryMode,
+        choices=tuple(QueryMode),
+        metavar="{" + ",".join(mode.value for mode in QueryMode) + "}",
+        help=textwrap.dedent("""\
+            How queries are defined:
+                - dataframe : Polars LazyFrame queries built into the benchmark (default)
+                - sql       : SQL files from --sql-directory, run with polars.SQLContext
+            In sql mode, --validate-against duckdb does not align result dtypes or
+            column names, so validation may fail on schema differences alone."""),
+    )
+    parser.add_argument(
+        "--sql-directory",
+        dest="sql_directory",
+        type=Path,
+        default=None,
+        help=textwrap.dedent("""\
+            Local directory with one SQL file per query, named qNN.sql (e.g. q01.sql)
+            or qN.sql (e.g. q1.sql). Required with --query-mode sql."""),
+    )
+    parser.add_argument(
         "--frontend",
         required=True,
         type=str,
@@ -2337,6 +2466,30 @@ def parse_args(
             "--blocksize is not supported with --frontend; "
             "use --target-partition-size instead."
         )
+    if parsed_args.query_mode is QueryMode.SQL and parsed_args.sql_directory is None:
+        parser.error("--query-mode sql requires --sql-directory.")
+    if (
+        parsed_args.query_mode is QueryMode.DATAFRAME
+        and parsed_args.sql_directory is not None
+    ):
+        parser.error("--sql-directory is only supported with --query-mode sql.")
+    if parsed_args.query_mode is QueryMode.SQL and parsed_args.qualification:
+        parser.error("--qualification is not supported with --query-mode sql.")
+    if parsed_args.sql_directory is not None and not parsed_args.sql_directory.is_dir():
+        parser.error(
+            f"--sql-directory {parsed_args.sql_directory} is not a local directory."
+        )
+    if parsed_args.sql_directory is not None:
+        missing = tuple(
+            f"q{q_id:02d}.sql or q{q_id}.sql"
+            for q_id in parsed_args.query
+            if not _sql_query_path(parsed_args.sql_directory, q_id).exists()
+        )
+        if missing:
+            parser.error(
+                f"--sql-directory {parsed_args.sql_directory} has no SQL file for "
+                f"the requested queries: {', '.join(missing)}."
+            )
 
     if (
         parsed_args.suffix
@@ -2350,6 +2503,8 @@ def parse_args(
 
 def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
     """Run the queries using the given benchmark and frontend."""
+    if args.query_mode is QueryMode.SQL:
+        benchmark = SQLQueries(benchmark.name, args.sql_directory)
     vars(args).update({"query_set": benchmark.name})
     run_config = RunConfig.from_args(args)
 

@@ -233,26 +233,24 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::dictionary32>(
   auto [keys_view, owned_cols] =
     get_column(&keys_schema_view, input->dictionary, keys_type, true, stream, mr);
 
-  auto const dict_indices_type = [&schema]() -> data_type {
-    // cudf dictionary requires a signed type for the indices
-    switch (schema->storage_type) {
-      case NANOARROW_TYPE_INT8: return data_type(type_id::INT8);
-      case NANOARROW_TYPE_INT16: return data_type(type_id::INT16);
-      case NANOARROW_TYPE_INT32: return data_type(type_id::INT32);
-      case NANOARROW_TYPE_INT64: return data_type(type_id::INT64);
-      default: CUDF_FAIL("Unsupported type_id for dictionary indices", cudf::data_type_error);
-    }
-  }();
+  auto const indices_types =
+    get_dictionary_indices_types(schema->storage_type, input->dictionary->length);
 
   size_type const num_rows   = input->length;
   size_type const offset     = input->offset;
   size_type const null_count = input->null_count;
-  column_view indices_view   = column_view{dict_indices_type,
+  column_view indices_view   = column_view{indices_types.storage,
                                          offset + num_rows,
                                          input->buffers[fixed_width_data_buffer_idx],
                                          nullptr,
                                          0,
                                          0};
+  // Widen the full [0, offset + num_rows) range since the parent offset applies to the indices
+  if (indices_types.storage != indices_types.output) {
+    auto widened = cudf::detail::cast(indices_view, indices_types.output, stream, mr);
+    indices_view = widened->view();
+    owned_cols.emplace_back(std::move(widened));
+  }
 
   return std::make_tuple<column_view, owned_columns_t>(
     {type,

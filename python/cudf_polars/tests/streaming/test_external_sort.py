@@ -178,8 +178,8 @@ def test_external_sort_uses_and_cleans_disk_spill_dir(
     seen: list[MemoryType] = []
     original = es.RunWriter.__init__
 
-    def spy(self, context, page_rows):
-        original(self, context, page_rows)
+    def spy(self, context, page_bytes):
+        original(self, context, page_bytes)
         seen.append(self._mem_type)
 
     with pytest.MonkeyPatch.context() as m:

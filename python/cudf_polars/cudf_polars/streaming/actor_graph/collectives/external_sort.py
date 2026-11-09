@@ -174,10 +174,10 @@ class Run:
 class RunWriter:
     """Write sorted tables as pages of a run."""
 
-    def __init__(self, context: Context, page_rows: int) -> None:
+    def __init__(self, context: Context, page_bytes: int) -> None:
         self._context = context
         self._mem_type = run_memory_type(context.br())
-        self._page_rows = max(1, page_rows)
+        self._page_bytes = page_bytes
         self._run = Run()
 
     async def write(
@@ -188,7 +188,11 @@ class RunWriter:
         if nrows == 0:
             return
         br = self._context.br()
-        splits = list(range(self._page_rows, nrows, self._page_rows))
+        # Size pages from the rows actually being written, so wide or narrow
+        # batches both land near the byte target.
+        bytes_per_row = max(1, table_nbytes(table) // nrows)
+        page_rows = max(_MIN_PAGE_ROWS, self._page_bytes // bytes_per_row)
+        splits = list(range(page_rows, nrows, page_rows))
         pages = plc.copying.split(table, splits, stream=stream) if splits else [table]
         for page in pages:
             chunk = TableChunk.from_pylibcudf_table(
@@ -459,25 +463,21 @@ async def sort_partition(
     # Run pages live outside device memory (on disk with a spill directory)
     # and are released with the runs, also when an exception unwinds.
     fanin = DEFAULT_MERGE_FANIN
+
     # Phase A: sorted runs.
     runs: list[Run] = []
-    page_rows: int | None = None
+    # A page is 1/(2*fanin) of the budget so that `fanin` pages plus the
+    # merge output fit within one batch budget.
+    page_bytes = max(1, batch_bytes // (2 * fanin))
     batch: list[PackedData] = []
     batch_nbytes = 0
 
     async def flush() -> None:
-        nonlocal batch, batch_nbytes, page_rows
+        nonlocal batch, batch_nbytes
         if not batch:
             return
         table = await _unpack_and_merge(context, batch, order_keys, stream)
-        if page_rows is None:
-            # A page is 1/(2*fanin) of the budget so that `fanin` pages
-            # plus the merge output fit within one batch budget.
-            bytes_per_row = max(1, batch_nbytes // max(1, table.num_rows()))
-            page_rows = max(
-                _MIN_PAGE_ROWS, (batch_bytes // (2 * fanin)) // bytes_per_row
-            )
-        writer = RunWriter(context, page_rows)
+        writer = RunWriter(context, page_bytes)
         await writer.write(table, stream, ir_context)
         del table
         runs.append(writer.finish())
@@ -495,7 +495,7 @@ async def sort_partition(
     while len(runs) > fanin:
         next_runs: list[Run] = []
         for start in range(0, len(runs), fanin):
-            writer = RunWriter(context, page_rows or 1)
+            writer = RunWriter(context, page_bytes)
 
             async def to_run(
                 table: plc.Table, s: Stream, w: RunWriter = writer

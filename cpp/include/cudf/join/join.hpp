@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 /**
@@ -522,8 +523,8 @@ filter_join_indices_output_size(
  * For both null-aware and non-null-aware predicates, the output value is uninitialized and must
  * be set on every execution path.
  * The remaining parameters correspond to columns in the left table followed by the right table.
- * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors. PTX UDFs
- * do not support returning errors.
+ * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors.
+ * PTX modules functions must return `cudf::errc` as a 32-bit integer status.
  *
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.

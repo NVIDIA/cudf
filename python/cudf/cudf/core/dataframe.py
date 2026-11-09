@@ -27,10 +27,10 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, Self, assert_never
 
 import cupy
-import numba
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+from numba_cuda_mlir import cuda
 from nvtx import annotate
 from pandas.io.formats import console
 from pandas.io.formats.printing import pprint_thing
@@ -102,7 +102,7 @@ from cudf.core.mixins import GetAttrGetItemMixin
 from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import DataFrameResampler
 from cudf.core.series import Series
-from cudf.core.udf.row_function import DataFrameApplyKernel
+from cudf.core.udf.mlir_backend.row_function import DataFrameApplyKernel
 from cudf.errors import MixedTypeError
 from cudf.options import get_option
 from cudf.utils import docutils, ioutils, queryutils
@@ -5738,7 +5738,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
         if na_action == "ignore":
-            devfunc = numba.cuda.jit(device=True)(func)
+            devfunc = cuda.jit(device=True)(func)
 
             # promote to a null-ignoring function
             # this code is never run in python, it only

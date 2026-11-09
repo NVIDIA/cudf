@@ -248,6 +248,8 @@ class datasource {
    * @brief Returns whether a device read of the given size is issued as a direct transfer to device
    * memory, rather than staged through host memory by cuDF or KvikIO.
    *
+   * Returns `false` when `supports_device_read()` is `false`.
+   *
    * @note For file sources, `true` means KvikIO hands the read to cuFile. cuFile may still stage
    * it through host memory if it falls back to its own compatibility mode, which is not observable.
    *

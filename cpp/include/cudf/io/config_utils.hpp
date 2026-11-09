@@ -28,8 +28,8 @@ namespace kvikio_integration {
  * @brief KvikIO's compatibility mode, which decides whether file reads use GPUDirect Storage.
  *
  * Even for a file that uses GPUDirect Storage, a read smaller than KvikIO's GDS threshold uses
- * POSIX I/O. The threshold is set with the KVIKIO_GDS_THRESHOLD environment variable or
- * `kvikio::defaults::set_gds_threshold()`; default is `kvikio::defaults::gds_threshold()`.
+ * POSIX I/O. The threshold is set with the KVIKIO_GDS_THRESHOLD environment variable; its
+ * default is documented at `kvikio::defaults::gds_threshold()`.
  */
 enum class compat_mode : int32_t {
   ON,   ///< Always use POSIX I/O

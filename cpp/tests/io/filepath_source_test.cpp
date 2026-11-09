@@ -116,6 +116,8 @@ class DirectDeviceReadSource : public HostOnlySource {
  public:
   using HostOnlySource::HostOnlySource;
 
+  [[nodiscard]] bool supports_device_read() const override { return true; }
+
   [[nodiscard]] bool is_device_read_direct(size_t) const override { return true; }
 };
 
@@ -148,9 +150,11 @@ TEST_F(FilepathSourceTest, IsDeviceReadDirect)
     cudf::io::datasource::create(cudf::device_span<std::byte const>{d_data.data(), d_data.size()})
       ->is_device_read_direct(large_read));
 
+  // A user source's answer reaches the caller through cudf's wrapper: false here...
   HostOnlySource host_only{data};
   EXPECT_FALSE(cudf::io::datasource::create(&host_only)->is_device_read_direct(large_read));
 
+  // ...and true here, which the wrapper can only report by forwarding the call
   DirectDeviceReadSource direct{data};
   EXPECT_TRUE(cudf::io::datasource::create(&direct)->is_device_read_direct(large_read));
 }

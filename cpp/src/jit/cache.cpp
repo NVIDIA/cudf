@@ -371,6 +371,19 @@ rtcx::blob compile_fragment(char const* name,
 
 }  // namespace
 
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
+{
+  switch (type) {
+    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
+    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
+    default:
+      CUDF_FAIL(
+        std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
+        std::invalid_argument);
+  }
+}
+
 kernel get_kernel(std::string const& name,
                   std::string const& source_file_id,
                   std::span<char const* const> header_include_names,

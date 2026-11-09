@@ -68,7 +68,7 @@ def test_disabled_is_a_no_op(disabled):
 def test_missing_extension_is_reported_with_how_to_build_it(disabled, monkeypatch):
     monkeypatch.delitem(sys.modules, "cudf_polars_cucascade", raising=False)
     monkeypatch.setattr(sys, "path", [])
-    with pytest.raises(RuntimeError, match="cudf_polars_cucascade") as excinfo:
+    with pytest.raises(ImportError, match="cudf_polars_cucascade") as excinfo:
         cucascade.configure_cucascade(1 << 30)
     assert "pip install" in str(excinfo.value)
     assert "python/cudf_polars/cucascade" in str(excinfo.value)
@@ -81,7 +81,7 @@ def test_extension_built_against_another_libcudf_is_refused(disabled, monkeypatc
     stale = types.ModuleType("cudf_polars_cucascade")
     stale.built_against_cudf_version = (running[0], running[1] + 1, 0)
     monkeypatch.setitem(sys.modules, "cudf_polars_cucascade", stale)
-    with pytest.raises(RuntimeError, match="rebuild"):
+    with pytest.raises(ImportError, match="rebuild"):
         cucascade.configure_cucascade(1 << 30)
     assert cucascade._cache is None
 

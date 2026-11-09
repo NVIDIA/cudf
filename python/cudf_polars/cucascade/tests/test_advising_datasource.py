@@ -7,10 +7,10 @@ from pylibcudf.io.datasource import Datasource
 from cudf_polars_cucascade import AdvisingDatasource
 
 
-def test_an_advising_datasource_is_a_pylibcudf_datasource():
+def test_advising_datasource_is_datasource():
     assert issubclass(AdvisingDatasource, Datasource)
 
 
-def test_an_advising_datasource_is_not_constructible():
-    with pytest.raises(ValueError, match=r"ScanCache\.open"):
+def test_advising_datasource_not_constructible():
+    with pytest.raises(ValueError, match=r"cannot be constructed directly"):
         AdvisingDatasource()

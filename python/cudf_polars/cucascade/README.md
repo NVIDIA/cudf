@@ -67,10 +67,17 @@ cucascade/
 ├── cmake/get_cucascade.cmake          fetches and builds cuCascade at a pinned commit
 ├── cudf_polars_cucascade/
 │   ├── cpp/                           cucascade_datasource (a cudf::io::datasource) and scan_cache
-│   ├── _cucascade.pyx, .pyi           the Cython wrapper: ScanCache, ScanCacheOptions, ...
-│   └── _exception_handler.pxd         maps cuCascade's exceptions to Python's
+│   ├── libcucascade/                  Cython declarations of the C++ classes, like pylibcudf/libcudf
+│   ├── scan_cache.pyx, .pxd, .pyi     ScanCache and ScanCacheConfig
+│   ├── advising_datasource.*          AdvisingDatasource, a pylibcudf Datasource
+│   ├── column_admission.*             ColumnStats
+│   ├── build_info.*                   the libcudf version the extension was built against
+│   └── exception_handler.pxd          maps cuCascade's exceptions to Python's
 └── tests/
 ```
+
+Unlike `pylibcudf`, which links an installed libcudf, this package compiles its (small) C++ in
+the same build: it is not a published package, so there is no separate libcucascade to link.
 
 The wrapper holds no logic. What to cache, how reads are advised to the cache, and the cache itself
 are in cuCascade, with its own tests. This package gives that to pylibcudf's readers as a

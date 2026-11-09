@@ -2,6 +2,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
 #pragma once
 
 #include <cudf/io/datasource.hpp>
@@ -26,7 +27,7 @@ namespace cudf_polars_cucascade {
  */
 class scan_cache {
  public:
-  explicit scan_cache(cucascade::io::scan_cache_options const& options);
+  explicit scan_cache(cucascade::io::scan_cache_config const& cfg);
 
   /**
    * @brief Open an object-store object for reading.
@@ -36,7 +37,7 @@ class scan_cache {
    */
   [[nodiscard]] std::unique_ptr<cudf::io::datasource> open(std::string const& path);
 
-  /// Register the column chunks of one file with the admission policy.
+  /** @brief Register the column chunks of one file with the admission policy. */
   void register_layout(std::string const& path,
                        std::string const& table,
                        std::vector<std::string> const& columns,
@@ -44,10 +45,10 @@ class scan_cache {
                        std::span<std::uint64_t const> offsets,
                        std::span<std::uint64_t const> sizes);
 
-  /// Per-column admission accounting.
+  /** @brief Per-column admission accounting. */
   [[nodiscard]] std::vector<cucascade::io::column_stats> stats() const;
 
-  /// Counters of the prefetching cache (reads, hits, misses, evictions) as text.
+  /** @brief Counters of the prefetching cache (reads, hits, misses, evictions) as text. */
   [[nodiscard]] std::string summary() const;
 
  private:

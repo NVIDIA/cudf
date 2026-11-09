@@ -2,6 +2,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
 #include "cucascade_datasource.hpp"
 
 #include <rmm/device_buffer.hpp>
@@ -65,7 +66,7 @@ std::unique_ptr<cudf::io::datasource::buffer> cucascade_datasource::device_read(
   size_t offset, size_t size, cuda::stream_ref stream)
 {
   rmm::device_buffer buf(size, stream);
-  auto n = device_read(offset, size, reinterpret_cast<uint8_t*>(buf.data()), stream);
+  auto n = device_read(offset, size, static_cast<uint8_t*>(buf.data()), stream);
   n      = std::min(n, size);
   buf.resize(n, stream);
   return cudf::io::datasource::buffer::create(std::move(buf));

@@ -2,11 +2,12 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
 #pragma once
 
 #include <cudf/io/datasource.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cucascade/io/advising_reader.hpp>
 

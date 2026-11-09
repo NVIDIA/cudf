@@ -3,12 +3,12 @@
 
 import pytest
 
-from cudf_polars_cucascade import ScanCache, ScanCacheOptions
+from cudf_polars_cucascade import ScanCache, ScanCacheConfig
 
 
 @pytest.fixture
-def make_options():
-    """Options for a small cache against an endpoint that nothing listens on."""
+def make_config():
+    """Config for a small cache against an endpoint that nothing listens on."""
 
     def make(**overrides):
         settings = {
@@ -19,7 +19,7 @@ def make_options():
             "secret_key": "test",
         }
         settings.update(overrides)
-        return ScanCacheOptions(**settings)
+        return ScanCacheConfig(**settings)
 
     return make
 
@@ -28,7 +28,7 @@ def make_options():
 def scan_cache():
     """A scan cache. Creating one pins its memory, so tests share it."""
     cache = ScanCache(
-        ScanCacheOptions(
+        ScanCacheConfig(
             cache_bytes=256 << 20,
             endpoint="http://127.0.0.1:9",
             region="us-east-1",

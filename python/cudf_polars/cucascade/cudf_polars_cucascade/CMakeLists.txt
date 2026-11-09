@@ -19,10 +19,11 @@ target_link_libraries(
 target_compile_features(cudf_polars_cucascade_cpp PUBLIC cxx_std_20)
 set_target_properties(cudf_polars_cucascade_cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-set(cython_sources _cucascade.pyx)
+set(cython_sources advising_datasource.pyx build_info.pyx column_admission.pyx scan_cache.pyx)
 set(linked_libraries cudf_polars_cucascade_cpp)
 rapids_cython_create_modules(
   CXX
   SOURCE_FILES "${cython_sources}"
-  LINKED_LIBRARIES "${linked_libraries}" MODULE_PREFIX cudf_polars_cucascade_ ASSOCIATED_TARGETS cudf
+  LINKED_LIBRARIES "${linked_libraries}" MODULE_PREFIX cudf_polars_cucascade_ ASSOCIATED_TARGETS
+                   cudf
 )

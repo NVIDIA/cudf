@@ -1,19 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-Optional cuCascade-backed reads of remote parquet files.
-
-With the ``cucascade_cache_bytes`` executor option set, ``s3://`` parquet files are
-read through cuCascade's REST backend and its host-memory cache, so a column read by
-one query is served from host memory by the next. With it unset, every function here
-is a no-op and the standard read path is used.
-
-The ``cudf_polars_cucascade`` extension (``python/cudf_polars/cucascade``) must be built
-and installed, and ``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY`` (and, if used,
-``AWS_SESSION_TOKEN``) must be set. The extension is built from source, against the libcudf of
-the environment it runs in, because it subclasses libcudf and pylibcudf types.
-"""
+"""Optional cuCascade-backed reads of remote parquet files."""
 
 from __future__ import annotations
 
@@ -24,6 +12,8 @@ import threading
 import types
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
+
+from packaging.version import InvalidVersion, Version
 
 import pylibcudf as plc
 
@@ -49,10 +39,10 @@ def _installed_cudf_version() -> tuple[int, int] | None:
     """The (major, minor) of the libcudf in use, from the installed pylibcudf, or None."""
     for distribution in ("pylibcudf", "libcudf"):
         try:
-            major, minor = importlib.metadata.version(distribution).split(".")[:2]
-            return int(major), int(minor)
-        except (importlib.metadata.PackageNotFoundError, ValueError):
+            installed = Version(importlib.metadata.version(distribution))
+        except (importlib.metadata.PackageNotFoundError, InvalidVersion):
             continue
+        return installed.major, installed.minor
     return None
 
 
@@ -61,7 +51,7 @@ def _load_extension() -> types.ModuleType:
     try:
         module = importlib.import_module(_EXTENSION)
     except ImportError as err:
-        raise RuntimeError(
+        raise ImportError(
             f"cucascade_cache_bytes is set but the {_EXTENSION} extension cannot be "
             "imported. It is built from source, against the libcudf of the environment it "
             "runs in. From the root of the cudf repository, run\n\n"
@@ -71,7 +61,7 @@ def _load_extension() -> types.ModuleType:
     built = tuple(module.built_against_cudf_version[:2])
     running = _installed_cudf_version()
     if running is not None and built != running:
-        raise RuntimeError(
+        raise ImportError(
             f"{_EXTENSION} was built against libcudf {built[0]}.{built[1]}, but libcudf "
             f"{running[0]}.{running[1]} is installed. It subclasses libcudf types, so it only "
             "works with the libcudf it was built against: rebuild it with the command in "
@@ -107,7 +97,7 @@ def configure_cucascade(cache_bytes: int) -> None:
             or "us-east-1"
         )
         _cache = module.ScanCache(
-            module.ScanCacheOptions(
+            module.ScanCacheConfig(
                 cache_bytes=cache_bytes,
                 endpoint=f"https://s3.{region}.amazonaws.com",
                 region=region,

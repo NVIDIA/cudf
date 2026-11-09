@@ -2,6 +2,7 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
 #include "scan_cache.hpp"
 
 #include "cucascade_datasource.hpp"
@@ -10,7 +11,7 @@
 
 namespace cudf_polars_cucascade {
 
-scan_cache::scan_cache(cucascade::io::scan_cache_options const& options) : _core(options) {}
+scan_cache::scan_cache(cucascade::io::scan_cache_config const& cfg) : _core(cfg) {}
 
 std::unique_ptr<cudf::io::datasource> scan_cache::open(std::string const& path)
 {

@@ -6,6 +6,6 @@ import pytest
 from cudf_polars_cucascade import ColumnStats
 
 
-def test_column_stats_are_not_constructible():
-    with pytest.raises(ValueError, match=r"ScanCache\.column_stats"):
+def test_column_stats_not_constructible():
+    with pytest.raises(ValueError, match=r"cannot be constructed directly"):
         ColumnStats()

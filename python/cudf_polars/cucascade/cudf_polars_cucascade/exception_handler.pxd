@@ -23,7 +23,7 @@ cdef extern from *:
      * Since this function interoperates with Python's exception state, it
      * does not throw any C++ exceptions.
      */
-    void cucascade_exception_handler()
+    void libcucascade_exception_handler()
     {
       try {
         if (PyErr_Occurred())
@@ -62,4 +62,4 @@ cdef extern from *:
 
     }  // anonymous namespace
     """
-    cdef void cucascade_exception_handler()
+    cdef void libcucascade_exception_handler()

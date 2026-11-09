@@ -3,38 +3,12 @@
 
 from collections.abc import Sequence
 
-from pylibcudf.io.datasource import Datasource
+from cudf_polars_cucascade.advising_datasource import AdvisingDatasource
+from cudf_polars_cucascade.column_admission import ColumnStats
 
-__all__ = [
-    "AdvisingDatasource",
-    "ColumnStats",
-    "ScanCache",
-    "ScanCacheOptions",
-    "built_against_cudf_version",
-]
+__all__ = ["ScanCache", "ScanCacheConfig"]
 
-built_against_cudf_version: tuple[int, int, int]
-
-class ColumnStats:
-    @property
-    def name(self) -> str: ...
-    @property
-    def registered(self) -> int: ...
-    @property
-    def requested(self) -> int: ...
-    @property
-    def admitted(self) -> int: ...
-    @property
-    def refused(self) -> int: ...
-    @property
-    def admitted_footprint(self) -> int: ...
-    @property
-    def rank(self) -> float: ...
-
-class AdvisingDatasource(Datasource):
-    def nbytes(self) -> int: ...
-
-class ScanCacheOptions:
+class ScanCacheConfig:
     def __init__(
         self,
         *,
@@ -57,7 +31,7 @@ class ScanCacheOptions:
     ) -> None: ...
 
 class ScanCache:
-    def __init__(self, options: ScanCacheOptions) -> None: ...
+    def __init__(self, config: ScanCacheConfig) -> None: ...
     def open(self, path: str) -> AdvisingDatasource: ...
     def register_layout(
         self,

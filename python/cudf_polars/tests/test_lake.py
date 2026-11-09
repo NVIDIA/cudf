@@ -839,6 +839,7 @@ def test_scan_iceberg_partition_value_for_file_missing_column(
 
 
 @pytest.mark.parametrize("initial_default", [None, 7])
+@pytest.mark.skipif(POLARS_VERSION_LT_21, reason="Bug in polars 2.0.0")
 def test_scan_iceberg_partition_values_shorter_than_paths(
     engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, initial_default: int | None
 ) -> None:

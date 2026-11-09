@@ -468,6 +468,65 @@ def test_dataframe_loc_slice(step):
     )
 
 
+@pytest.mark.parametrize(
+    "column_slice",
+    [
+        slice("missing", "a"),
+        slice("a", "missing"),
+        slice("missing", "missing"),
+    ],
+)
+def test_dataframe_loc_slice_missing_column_boundary(column_slice):
+    pdf = pd.DataFrame({"b": [1], "a": [2], "c": [3]})
+    gdf = cudf.from_pandas(pdf)
+
+    assert_exceptions_equal(
+        lambda: pdf.loc[:, column_slice],
+        lambda: gdf.loc[:, column_slice],
+    )
+
+
+@pytest.mark.parametrize(
+    ("columns", "column_slice"),
+    [
+        (["a", "b", "c"], slice("aa", "b")),
+        (["a", "b", "c"], slice("b", "bb")),
+        (["a", "b", "c"], slice("aa", "bb")),
+        (["a", "b", "c"], slice("a", "z")),
+        (["c", "b", "a"], slice("bb", "a")),
+        (["c", "b", "a"], slice("c", "aa")),
+        (["c", "b", "a"], slice("bb", "aa")),
+    ],
+)
+def test_dataframe_loc_slice_missing_sorted_column_boundary(
+    columns, column_slice
+):
+    pdf = pd.DataFrame({col: [idx] for idx, col in enumerate(columns)})
+    gdf = cudf.from_pandas(pdf)
+
+    assert_eq(gdf.loc[:, column_slice], pdf.loc[:, column_slice])
+
+
+@pytest.mark.parametrize(
+    "column_slice",
+    [
+        slice("aa", "b"),
+        slice(("a", 0), ("b", 1)),
+        slice(("a", 2), ("b", 3)),
+    ],
+)
+def test_dataframe_loc_slice_missing_sorted_multiindex_column_boundary(
+    column_slice,
+):
+    pdf = pd.DataFrame(
+        [[1, 2, 3]],
+        columns=pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1)]),
+    )
+    gdf = cudf.from_pandas(pdf)
+
+    assert_eq(gdf.loc[:, column_slice], pdf.loc[:, column_slice])
+
+
 def test_dataframe_loc_arraylike():
     size = 123
     rng = np.random.default_rng(seed=0)

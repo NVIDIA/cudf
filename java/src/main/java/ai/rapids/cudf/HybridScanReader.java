@@ -215,6 +215,33 @@ public class HybridScanReader implements AutoCloseable {
   }
 
   /**
+   * Create a hybrid scan reader from an already parsed Parquet file footer.
+   *
+   * <p>The reader shares the parsed footer with {@code metadata} rather than parsing it again,
+   * and keeps it alive on its own, so {@code metadata} may be closed before this reader.
+   * Otherwise behaves as {@link #HybridScanReader(HostMemoryBuffer, ParquetOptions)}.
+   *
+   * @param metadata the parsed footer
+   * @param opts     Parquet reader options. {@link ParquetOptions#DEFAULT} by default.
+   */
+  public HybridScanReader(HybridScanMetadata metadata, ParquetOptions opts) {
+    if (metadata == null) {
+      throw new IllegalArgumentException("metadata must not be null");
+    }
+    if (opts == null) {
+      opts = ParquetOptions.DEFAULT;
+    }
+    long handle = createFromMetadata(
+        metadata.getNativeHandle(),
+        opts.getIncludeColumnNames(),
+        opts.getReadBinaryAsString(),
+        opts.timeUnit().getTypeId().getNativeId());
+    this.cleaner = new HybridScanReaderCleaner(handle);
+    MemoryCleaner.register(this, cleaner);
+    cleaner.addRef();
+  }
+
+  /**
    * Install or replace the filter expression used by all subsequent filter-related APIs on
    * this reader; pass {@code null} to clear. Cheap to call, so callers can sweep the same
    * file with several candidate predicates in a loop.
@@ -314,6 +341,72 @@ public class HybridScanReader implements AutoCloseable {
     assertNotClosed();
     requireNonNullRowGroups(rowGroupIndices);
     return decodeRanges(dictionaryPagesByteRanges(cleaner.nativeHandle, rowGroupIndices));
+  }
+
+  /**
+   * Like {@link #dictionaryPagesByteRanges(int[])} but also returns a range for a column chunk
+   * whose footer does not pin its dictionary page down exactly.
+   *
+   * <p>Such a range only bounds a page that may not be there: some writers omit
+   * {@code dictionary_page_offset} even with a dictionary page present. A caller that opts into
+   * these ranges caps how much of each it reads with
+   * {@link DictionaryByteRange#byteRangeToRead(long)}, cuts what it read down to the one page with
+   * {@link #dictionaryPageLengths(HostMemoryBuffer[])}, and passes an empty buffer for a chunk whose
+   * page turns out not to be there.
+   *
+   * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry corresponds
+   * to the i-th column chunk needing a dictionary page. The result may be empty.
+   */
+  public DictionaryByteRange[] dictionaryPagesByteRangesIncludeUnbounded(int[] rowGroupIndices) {
+    assertNotClosed();
+    requireNonNullRowGroups(rowGroupIndices);
+    long[] packed =
+        dictionaryPagesByteRangesIncludeUnbounded(cleaner.nativeHandle, rowGroupIndices);
+    if (packed == null || packed.length == 0) {
+      return new DictionaryByteRange[0];
+    }
+    // Layout: [off0, size0, isExact0, off1, size1, isExact1, ...]
+    if (packed.length % 3 != 0) {
+      throw new IllegalStateException(
+          "Expected dictionary page ranges packed in threes, got " + packed.length + " longs");
+    }
+    int n = packed.length / 3;
+    DictionaryByteRange[] out = new DictionaryByteRange[n];
+    for (int i = 0; i < n; i++) {
+      out[i] = new DictionaryByteRange(new ByteRange(packed[3 * i], packed[3 * i + 1]),
+          packed[3 * i + 2] != 0);
+    }
+    return out;
+  }
+
+  /**
+   * The length of the dictionary page at the front of each buffer, its page header included, or 0
+   * for a buffer that does not begin with a whole dictionary page.
+   *
+   * <p>What was read of a range that only bounds its dictionary page begins at that page and runs
+   * past it, so it has to be cut down to the page before
+   * {@link #filterRowGroupsWithDictionaryPages} is given it. The page's own header says how long
+   * the page is, and this reads that header off the front of each buffer. A 0 means the chunk
+   * cannot be pruned with what was read, either because a writer claimed dictionary encoding and
+   * wrote no dictionary page, or because the page is longer than what was read; such a chunk is
+   * passed on as an empty buffer.
+   *
+   * <p>The buffers are read on the host, and nothing here touches the GPU.
+   *
+   * @param pageData one buffer per dictionary page range, read from the start of the range
+   * @return the length of the page in each buffer, in the order the buffers were given
+   */
+  public static long[] dictionaryPageLengths(HostMemoryBuffer[] pageData) {
+    if (pageData == null) {
+      throw new IllegalArgumentException("pageData must not be null");
+    }
+    try {
+      return dictionaryPageLengths(bufferAddrs(pageData), bufferLens(pageData));
+    } finally {
+      synchronized (pageData) {
+        // The monitor operation is a Java 8 reachability fence.
+      }
+    }
   }
 
   // TODO: add filterRowGroupsWithBloomFilters(int[] rowGroups) once the Java Parquet
@@ -758,7 +851,7 @@ public class HybridScanReader implements AutoCloseable {
     }
   }
 
-  private static long[] bufferAddrs(DeviceMemoryBuffer[] buffers) {
+  private static long[] bufferAddrs(MemoryBuffer[] buffers) {
     if (buffers == null) {
       throw new IllegalArgumentException("buffers must not be null");
     }
@@ -772,7 +865,7 @@ public class HybridScanReader implements AutoCloseable {
     return addrs;
   }
 
-  private static long[] bufferLens(DeviceMemoryBuffer[] buffers) {
+  private static long[] bufferLens(MemoryBuffer[] buffers) {
     if (buffers == null) {
       throw new IllegalArgumentException("buffers must not be null");
     }
@@ -808,6 +901,11 @@ public class HybridScanReader implements AutoCloseable {
                                               boolean[] readBinaryAsString,
                                               int timeUnitTypeId);
 
+  private static native long createFromMetadata(long metadataHandle,
+                                                String[] columnNames,
+                                                boolean[] readBinaryAsString,
+                                                int timeUnitTypeId);
+
   private static native void setFilter(long handle, long filterHandle);
 
   private static native void destroy(long handle);
@@ -824,6 +922,9 @@ public class HybridScanReader implements AutoCloseable {
   private static native int[] filterRowGroupsWithStats(long handle, int[] rowGroupIndices);
   private static native long[] bloomFiltersByteRanges(long handle, int[] rowGroupIndices);
   private static native long[] dictionaryPagesByteRanges(long handle, int[] rowGroupIndices);
+  private static native long[] dictionaryPagesByteRangesIncludeUnbounded(long handle,
+                                                                          int[] rowGroupIndices);
+  private static native long[] dictionaryPageLengths(long[] bufferAddresses, long[] bufferLengths);
   private static native int[] filterRowGroupsWithDictionaryPages(long handle,
                                                                  long[] bufferAddresses,
                                                                  long[] bufferLengths,

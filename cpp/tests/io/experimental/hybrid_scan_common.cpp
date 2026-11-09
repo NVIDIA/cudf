@@ -16,6 +16,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -50,12 +51,27 @@ cudf::test::strings_column_wrapper constant_strings(cudf::size_type value)
 /**
  * @brief Fail for types other than duration or timestamp
  */
-template <typename T, CUDF_ENABLE_IF(not cudf::is_chrono<T>())>
+template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
 {
   static_assert(
-    cudf::is_chrono<T>(),
+    cudf::is_chrono<T>() or cudf::is_fixed_point<T>(),
     "Use testdata::descending<T>() to generate descending values for non-temporal types");
+}
+
+/**
+ * @brief Creates a fixed-point column wrapper with low cardinality descending values from 100 to
+ * -99
+ *
+ * @tparam T Fixed-point type
+ * @return Column wrapper
+ */
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
+{
+  auto elements = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return T((num_ordered_rows / 2 - i) / 100, numeric::scale_type{0}); });
+  return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
 /**
@@ -64,7 +80,7 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Duration type
  * @return Column wrapper
  */
-template <typename T, CUDF_ENABLE_IF(cudf::is_duration<T>())>
+template <cudf::concepts::duration T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
@@ -78,7 +94,7 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Timestamp type
  * @return Column wrapper
  */
-template <typename T, CUDF_ENABLE_IF(cudf::is_timestamp<T>())>
+template <cudf::concepts::timestamp T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
@@ -157,9 +173,8 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
   std::vector<cudf::host_span<uint8_t const>> page_index_byte_spans;
   page_index_byte_spans.reserve(page_index_byte_ranges.size());
 
-  auto const page_index_buffers = cudf::io::parquet::fetch_page_indexes_to_host(
-    cudf::host_span<std::reference_wrapper<cudf::io::datasource> const>{inputs.datasource_refs},
-    cudf::host_span<cudf::io::parquet::byte_range_info const>{page_index_byte_ranges});
+  auto const page_index_buffers =
+    cudf::io::parquet::fetch_page_indexes_to_host(inputs.datasource_refs, page_index_byte_ranges);
   std::transform(page_index_buffers.begin(),
                  page_index_buffers.end(),
                  std::back_inserter(page_index_byte_spans),
@@ -202,7 +217,7 @@ multisource_device_data fetch_multisource_device_data(
     group_byte_ranges_by_source(byte_ranges_and_source_map, inputs.datasources.size());
   auto [buffers, per_source_spans, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
     inputs.datasource_refs,
-    cudf::host_span<std::vector<cudf::io::text::byte_range_info> const>{byte_ranges_per_source},
+    byte_ranges_per_source,
     cudf::io::parquet::io_submission_policy::SERIALIZE,
     stream,
     mr);
@@ -334,7 +349,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
 
   auto col0 = testdata::ascending<T>();
   auto col1 = []() {
-    if constexpr (cudf::is_chrono<T>()) {
+    if constexpr (cudf::is_chrono<T>() or cudf::is_fixed_point<T>()) {
       return descending_low_cardinality<T>();
     } else {
       return testdata::descending<T>();
@@ -475,6 +490,9 @@ INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ms);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_us);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ns);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::string_view);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal32);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal64);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal128);
 
 #undef INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT
 #undef INSTANTIATE_CREATE_PARQUET_WITH_STATS

@@ -6,9 +6,9 @@ context:
   version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
   minor_version: ${{ (version | split("."))[:2] | join(".") }}
   cuda_version: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[:2] | join(".") }}
-  cuda_major: '${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}'
-  datetime_string: '${{ env.get("RAPIDS_DATETIME_STRING") }}'
-  head_rev: '${{ git.head_rev(".")[:8] }}'
+  cuda_major: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}
+  datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
+  head_rev: ${{ git.head_rev(".")[:8] }}
 
 package:
   name: cudf-polars
@@ -41,7 +41,7 @@ requirements:
     - rapidsmpf =${{ minor_version }}
     - kvikio =${{ minor_version }}
     - cudf-streaming =${{ version }}
-    - polars>=1.35,<1.45
+    - polars>=2.0,<2.2
     - packaging
     - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
     - if: cuda_major == "12"

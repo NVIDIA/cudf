@@ -28,6 +28,7 @@ from cudf_polars.streaming.explain import (
 )
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.io import make_lazy_frame, make_partitioned_source
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 
 @pytest.fixture(scope="module")
@@ -331,7 +332,9 @@ def test_explain_logical_io_then_join(explain_engine, tmp_path, kind):
         }
     )
     customers = make_lazy_frame(customers, kind, path=tmp_path / f"customers_{kind}")
-    q = sales.join(customers, on="customer_id", how="inner").sort("customer_id")
+    q = sales.join(customers, on="customer_id", how="inner").sort(
+        "customer_id", "order_id"
+    )
 
     # Verify the query runs correctly
     assert_gpu_result_equal(q, engine=explain_engine)
@@ -460,12 +463,17 @@ def test_explain_logical_io_then_concat_then_groupby(explain_engine, tmp_path, k
     repr = explain_query(q_1, explain_engine, physical=False)
     assert "SORT" in repr
     assert "GROUPBY" in repr
-    assert "UNION" in repr
-    if kind == "parquet":
-        # Each source file has 3 rows
-        assert re.search(r"SCAN PARQUET.*row_count='~3'", repr)
-    elif kind == "frame":
-        assert re.search(r"DATAFRAMESCAN.*row_count='~3'", repr)
+    if POLARS_VERSION_LT_21 or kind == "frame":
+        assert "UNION" in repr
+        if kind == "parquet":
+            assert re.search(r"SCAN PARQUET.*row_count='~3'", repr)
+        elif kind == "frame":
+            assert re.search(r"DATAFRAMESCAN.*row_count='~3'", repr)
+    else:
+        # Polars 2.1 merges the concatenated file scans into a single scan.
+        assert "UNION" not in repr
+        if kind == "parquet":
+            assert re.search(r"SCAN PARQUET.*row_count='~6'", repr)
     # CSV has no row_count annotation in explain output
 
     # Check query plan q_2 - only SCAN nodes carry row_count annotations

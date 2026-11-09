@@ -30,6 +30,7 @@
 #include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -131,7 +132,7 @@ struct fixed_width_type_converter {
    */
   template <typename FromT>
   constexpr To operator()(FromT element) const
-    requires(std::integral<FromT> && cudf::is_timestamp<To>())
+    requires(cuda::std::integral<FromT> && cudf::is_timestamp<To>())
   {
     return To{typename To::duration{element}};
   }

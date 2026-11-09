@@ -13,7 +13,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
 
 @pytest.fixture
@@ -139,10 +138,6 @@ def test_over_unsupported_mapping_strategy(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-@pytest.mark.skipif(
-    not POLARS_VERSION_LT_136 and POLARS_VERSION_LT_139,
-    reason="Rolling window expressions are not accessible in polars 1.36-1.38",
-)
 @pytest.mark.parametrize("period", ["2d", "3d"])
 def test_rolling(
     engine: pl.GPUEngine, request, df: pl.LazyFrame, agg_expr, period: str
@@ -168,10 +163,6 @@ def test_rolling_unsupported(in_memory_engine, df: pl.LazyFrame, unsupported_agg
     assert_ir_translation_raises(query, in_memory_engine, NotImplementedError)
 
 
-@pytest.mark.skipif(
-    not POLARS_VERSION_LT_136 and POLARS_VERSION_LT_139,
-    reason="Rolling window expressions are not accessible in polars 1.36-1.38",
-)
 @pytest.mark.parametrize("closed", ["left", "right", "both", "none"])
 def test_rolling_closed(engine: pl.GPUEngine, request, df: pl.LazyFrame, closed: str):
     """Test rolling window functions with different closed parameters."""

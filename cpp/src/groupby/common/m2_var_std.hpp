@@ -14,12 +14,8 @@
 
 namespace cudf::groupby::detail {
 
-std::unique_ptr<column> compute_m2(data_type source_type,
-                                   column_view const& sum_sqr,
-                                   column_view const& sum,
-                                   column_view const& count,
-                                   cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+/// Whether M2, VARIANCE and STD support values of type `type`.
+bool is_m2_supported(data_type type);
 
 std::unique_ptr<column> compute_variance(column_view const& m2,
                                          column_view const& count,

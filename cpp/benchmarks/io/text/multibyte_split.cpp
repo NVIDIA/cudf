@@ -74,7 +74,7 @@ static cudf::string_scalar create_random_input(int32_t num_chars,
 
   // extract the chars from the returned strings column.
   auto input_column_contents = input_column->release();
-  auto chars_buffer          = input_column_contents.data.release();
+  auto chars_buffer          = std::move(input_column_contents.data);
 
   // turn the chars in to a string scalar.
   return cudf::string_scalar(std::move(*chars_buffer));

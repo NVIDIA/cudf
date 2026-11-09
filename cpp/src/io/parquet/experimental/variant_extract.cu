@@ -15,6 +15,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/io/experimental/variant.hpp>
@@ -57,7 +58,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iterator>
 #include <limits>
 #include <numeric>
@@ -647,22 +650,36 @@ __device__ cuda::std::optional<size_type> parse_index_step(cudf::string_view ste
   return index;
 }
 
+// The steps of a path, as a range of concatenated step strings: step `i` is the bytes
+// `chars[offsets[i] : offsets[i + 1]]`
+struct path_steps {
+  size_type const* offsets;
+  char const* chars;
+  size_type count;
+
+  [[nodiscard]] __device__ size_type size() const { return count; }
+  [[nodiscard]] __device__ cudf::string_view operator[](size_type i) const
+  {
+    return {chars + offsets[i], offsets[i + 1] - offsets[i]};
+  }
+};
+
 // Walk a path of object-key or array-index steps level by level starting at `val` and return
 // the span of the final value (subspan of `val`). Returns an empty span on failure.
 //
-// Each path step is encoded in the `path` strings column as either:
+// Each path step is either:
 //   - "<name>"  -> descend into an object by dictionary key, or
 //   - "[<N>]"   -> descend into an array by zero-based integer index.
 // The step kind is inferred from the first byte (`'['` means index).
 __device__ cuda::std::pair<device_span<uint8_t const>, op_status> resolve_path(
   device_span<uint8_t const> meta,
   device_span<uint8_t const> val,
-  column_device_view path,
+  path_steps path,
   cuda::std::optional<cuda::std::pair<metadata_dictionary, op_status>>& dict)
 {
   device_span<uint8_t const> sub_val = val;
   for (size_type i = 0; i < path.size(); ++i) {
-    auto const step = path.element<cudf::string_view>(i);
+    auto const step = path[i];
     if (step.size_bytes() >= 1 && step.data()[0] == '[') {
       auto const index = parse_index_step(step);
       if (!index.has_value()) { return {{}, op_status::MISSING_PATH}; }
@@ -992,7 +1009,8 @@ template <bool UseLocalScratch>
 CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_field_trie_kernel(
   cudf::lists_column_device_view metadata,
   cudf::lists_column_device_view values,
-  column_device_view steps,
+  device_span<size_type const> step_offsets,
+  char const* step_chars,
   device_span<size_type const> slot_steps,
   device_span<size_type const> slot_depth,
   device_span<size_type const> path_offsets,
@@ -1074,7 +1092,9 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_field_trie_kernel(
         auto const [field, status] =
           resolve_path(meta,
                        parent,
-                       steps.slice(slot_steps[slot], slot_steps[slot + 1] - slot_steps[slot]),
+                       path_steps{step_offsets.data() + slot_steps[slot],
+                                  step_chars,
+                                  slot_steps[slot + 1] - slot_steps[slot]},
                        dict);
         result = make_slot_result(field, val.data(), status);
       }
@@ -1584,37 +1604,52 @@ __device__ cuda::std::optional<variant_logical_type> logical_type_of(device_span
   }
 }
 
-std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> steps,
-                                          cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
-{
-  auto const depth = steps.size();
+// Host arrays packed back to back, each aligned for its type, so that they reach the device with a
+// single pinned allocation and copy; every pinned allocation synchronizes the stream
+class staging_buffer {
+ public:
+  template <typename T>
+  struct slice {
+    std::size_t offset;
+    std::size_t count;
+  };
 
-  auto host_offsets     = cudf::detail::make_pinned_vector_async<size_type>(depth + 1, stream);
-  auto const step_sizes = steps | std::views::transform([](std::string const& step) {
-                            return static_cast<size_type>(step.size());
-                          });
-  std::inclusive_scan(step_sizes.begin(), step_sizes.end(), host_offsets.begin() + 1);
-  auto host_chars = cudf::detail::make_pinned_vector_async<char>(host_offsets[depth], stream);
-  for (size_t i = 0; i < depth; ++i) {
-    std::ranges::copy(steps[i], host_chars.begin() + host_offsets[i]);
+  // `host` must stay alive until `upload` returns
+  template <typename T>
+  slice<T> add(std::vector<T> const& host)
+  {
+    auto const offset = cudf::detail::round_up_safe(size_, alignof(T));
+    pieces_.push_back({offset, host.data(), host.size() * sizeof(T)});
+    size_ = offset + host.size() * sizeof(T);
+    return {offset, host.size()};
   }
 
-  auto d_offsets = cudf::detail::make_device_uvector_async(host_offsets, stream, mr);
-  auto offsets_col =
-    std::make_unique<column>(data_type{type_id::INT32},
-                             static_cast<size_type>(host_offsets.size()),
-                             d_offsets.release(),
-                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                             0);
+  [[nodiscard]] rmm::device_uvector<std::byte> upload(cuda::stream_ref stream,
+                                                      rmm::device_async_resource_ref mr) const
+  {
+    auto host = cudf::detail::make_pinned_vector_async<std::byte>(size_, stream);
+    for (auto const& piece : pieces_) {
+      std::memcpy(host.data() + piece.offset, piece.data, piece.bytes);
+    }
+    return cudf::detail::make_device_uvector_async(host, stream, mr);
+  }
 
-  auto d_chars = cudf::detail::make_device_uvector_async(host_chars, stream, mr);
-  return cudf::make_strings_column(depth,
-                                   std::move(offsets_col),
-                                   d_chars.release(),
-                                   0,
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
-}
+  template <typename T>
+  [[nodiscard]] static device_span<T const> get(rmm::device_uvector<std::byte> const& device,
+                                                slice<T> slice)
+  {
+    return {reinterpret_cast<T const*>(device.data() + slice.offset), slice.count};
+  }
+
+ private:
+  struct piece {
+    std::size_t offset;
+    void const* data;
+    std::size_t bytes;
+  };
+  std::vector<piece> pieces_;
+  std::size_t size_ = 0;
+};
 
 }  // namespace
 
@@ -1668,31 +1703,6 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
     return std::make_unique<table>(std::move(output));
   }
 
-  auto steps_column      = build_path_column(trie.steps, stream, temp_mr);
-  auto steps_device_view = column_device_view::create(steps_column->view(), stream);
-  // The trie arrays are staged with a single copy, since each transfer costs more than its contents
-  auto h_trie_arrays = cudf::detail::make_pinned_vector_async<size_type>(
-    trie.slot_steps.size() + trie.slot_depth.size() + trie.path_offsets.size() +
-      trie.path_indices.size(),
-    stream);
-  auto next_host = h_trie_arrays.begin();
-  for (auto const* array :
-       {&trie.slot_steps, &trie.slot_depth, &trie.path_offsets, &trie.path_indices}) {
-    next_host = std::ranges::copy(*array, next_host).out;
-  }
-  auto const d_trie_arrays =
-    cudf::detail::make_device_uvector_async(h_trie_arrays, stream, temp_mr);
-  auto const* next_array = d_trie_arrays.data();
-  auto const next_span   = [&](std::vector<size_type> const& array) {
-    auto const span = device_span<size_type const>{next_array, array.size()};
-    next_array += array.size();
-    return span;
-  };
-  auto const d_slot_steps   = next_span(trie.slot_steps);
-  auto const d_slot_depth   = next_span(trie.slot_depth);
-  auto const d_path_offsets = next_span(trie.path_offsets);
-  auto const d_path_indices = next_span(trie.path_indices);
-
   // Resolve children with respect to any slice/offset on the parent struct
   structs_column_view const variant_struct{variant_column};
   auto const meta_view = variant_struct.get_sliced_child(0, stream);
@@ -1716,35 +1726,62 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   cuda::device_buffer<size_type> d_sizes(stream, temp_mr, num_outputs, cuda::no_init);
   cuda::device_buffer<size_type> d_src_offsets(stream, temp_mr, num_outputs, cuda::no_init);
 
-  // One null mask per output column, narrowed from all-valid by the walk
+  // One null mask per output column, narrowed from all-valid by the walk, and each output's
+  // offsets column, which the copy below finds through `d_offsets`
   std::vector<cuda::device_buffer<bitmask_type>> null_masks;
+  std::vector<std::unique_ptr<column>> offsets_columns;
   null_masks.reserve(num_paths);
-  auto h_null_masks = cudf::detail::make_pinned_vector_async<bitmask_type*>(num_paths, stream);
+  offsets_columns.reserve(num_paths);
   for (size_type path_idx = 0; path_idx < num_paths; ++path_idx) {
     null_masks.push_back(cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr));
-    h_null_masks[path_idx] = null_masks.back().data();
+    offsets_columns.push_back(make_numeric_column(
+      data_type{type_id::INT32}, num_rows + 1, mask_state::UNALLOCATED, stream, mr));
   }
-  auto const d_null_masks = cudf::detail::make_device_uvector_async(h_null_masks, stream, temp_mr);
 
-  // One caller-owned status buffer per path, written by the walk
-  auto h_statuses =
-    cudf::detail::make_pinned_vector_async<op_status*>(want_status ? num_paths : 0, stream);
-  std::ranges::transform(statuses, h_statuses.begin(), [](mutable_column_view const& status) {
-    return reinterpret_cast<op_status*>(status.data<uint8_t>());
+  // Everything the device reads from the host is staged with one copy
+  std::vector<size_type> step_offsets(trie.steps.size() + 1, 0);
+  auto const step_sizes = trie.steps | std::views::transform([](std::string const& step) {
+                            return static_cast<size_type>(step.size());
+                          });
+  std::inclusive_scan(step_sizes.begin(), step_sizes.end(), step_offsets.begin() + 1);
+  std::vector<char> step_chars;
+  step_chars.reserve(step_offsets.back());
+  for (auto const& step : trie.steps) {
+    step_chars.insert(step_chars.end(), step.begin(), step.end());
+  }
+  std::vector<bitmask_type*> mask_ptrs;
+  std::ranges::transform(
+    null_masks, std::back_inserter(mask_ptrs), [](auto& mask) { return mask.data(); });
+  std::vector<op_status*> status_ptrs;
+  std::ranges::transform(
+    statuses, std::back_inserter(status_ptrs), [](mutable_column_view const& status) {
+      return reinterpret_cast<op_status*>(status.data<uint8_t>());
+    });
+  std::vector<size_type*> offsets_ptrs;
+  std::ranges::transform(offsets_columns, std::back_inserter(offsets_ptrs), [](auto& column) {
+    return column->mutable_view().template data<size_type>();
   });
-  auto const d_statuses = cudf::detail::make_device_uvector_async(h_statuses, stream, temp_mr);
 
-  // Allocate each path's output offsets column; the copy below finds them through `d_offsets`
-  std::vector<std::unique_ptr<column>> offsets_columns;
-  offsets_columns.reserve(num_paths);
-  auto h_offsets = cudf::detail::make_pinned_vector_async<size_type*>(num_paths, stream);
-  for (size_type path_idx = 0; path_idx < num_paths; ++path_idx) {
-    auto offsets_column = make_numeric_column(
-      data_type{type_id::INT32}, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
-    h_offsets[path_idx] = offsets_column->mutable_view().data<size_type>();
-    offsets_columns.push_back(std::move(offsets_column));
-  }
-  auto const d_offsets = cudf::detail::make_device_uvector_async(h_offsets, stream, temp_mr);
+  staging_buffer staging;
+  auto const slot_steps_slice   = staging.add(trie.slot_steps);
+  auto const slot_depth_slice   = staging.add(trie.slot_depth);
+  auto const path_offsets_slice = staging.add(trie.path_offsets);
+  auto const path_indices_slice = staging.add(trie.path_indices);
+  auto const step_offsets_slice = staging.add(step_offsets);
+  auto const step_chars_slice   = staging.add(step_chars);
+  auto const masks_slice        = staging.add(mask_ptrs);
+  auto const statuses_slice     = staging.add(status_ptrs);
+  auto const offsets_slice      = staging.add(offsets_ptrs);
+  auto const d_staged           = staging.upload(stream, temp_mr);
+  auto const d_slot_steps       = staging_buffer::get(d_staged, slot_steps_slice);
+  auto const d_slot_depth       = staging_buffer::get(d_staged, slot_depth_slice);
+  auto const d_path_offsets     = staging_buffer::get(d_staged, path_offsets_slice);
+  auto const d_path_indices     = staging_buffer::get(d_staged, path_indices_slice);
+  auto const d_step_offsets     = staging_buffer::get(d_staged, step_offsets_slice);
+  auto const d_step_chars       = staging_buffer::get(d_staged, step_chars_slice);
+  auto const d_null_masks       = staging_buffer::get(d_staged, masks_slice);
+  auto const d_statuses         = staging_buffer::get(d_staged, statuses_slice);
+  auto const d_offsets          = staging_buffer::get(d_staged, offsets_slice);
 
   // Resolve the whole trie per row and compute the output sizes. The walk keeps one located value
   // per trie level, so only a pathologically deep trie needs scratch outside the thread
@@ -1779,7 +1816,8 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
       <<<num_blocks, block_size, stage_trie ? trie_bytes : 0, stream.get()>>>(
         meta_lists_device_view,
         val_lists_device_view,
-        *steps_device_view,
+        d_step_offsets,
+        d_step_chars.data(),
         d_slot_steps,
         d_slot_depth,
         d_path_offsets,
@@ -1816,8 +1854,10 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
           size_type row) -> size_type { return row < num_rows ? sizes[row] : 0; }));
     // Offsets are narrowed to size_type on the way out while the scan accumulates in 64 bits, so
     // the total still reveals an overflow that the offsets themselves would have wrapped away
-    auto const offsets_out = cudf::detail::make_sizes_to_offsets_iterator(
-      h_offsets[path_idx], h_offsets[path_idx] + num_rows + 1, d_byte_totals.data() + path_idx);
+    auto const offsets_out =
+      cudf::detail::make_sizes_to_offsets_iterator(offsets_ptrs[path_idx],
+                                                   offsets_ptrs[path_idx] + num_rows + 1,
+                                                   d_byte_totals.data() + path_idx);
     thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                            path_sizes,
                            path_sizes + num_rows + 1,

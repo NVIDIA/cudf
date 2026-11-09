@@ -11,6 +11,8 @@
 
 #include <rtcx/rtcx.hpp>
 
+#include <string_view>
+
 namespace CUDF_EXPORT cudf {
 
 struct [[nodiscard]] jit_bundle_t {

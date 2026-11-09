@@ -7,12 +7,15 @@
 #include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/strings/experimental/regex.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
 #include <nvbench/nvbench.cuh>
+
+#include <optional>
 
 static std::vector<std::string> const patterns = {
   "\\d+",                  // 0: builtins class and quantifier
@@ -31,6 +34,12 @@ static void bench_replace(nvbench::state& state)
   auto const max_width     = static_cast<cudf::size_type>(state.get_int64("max_width"));
   auto const pattern_index = state.get_int64("pattern");
   auto const rtype         = state.get_string("type");
+  auto backend             = state.get_string("backend");
+
+  if (backend != "interpreter" && backend != "jit") {
+    state.skip("invalid backend");
+    return;
+  }
 
   if (pattern_index < 0 || std::cmp_greater_equal(pattern_index, patterns.size())) {
     state.skip("invalid pattern index");
@@ -45,22 +54,45 @@ static void bench_replace(nvbench::state& state)
   // Wrap in a capture group for backref replace so \1 references the whole match
   auto const pat =
     (rtype == "backref") ? "(" + patterns[pattern_index] + ")" : patterns[pattern_index];
-  auto program = cudf::strings::regex_program::create(pat);
+  auto program     = backend == "interpreter" ? cudf::strings::regex_program::create(pat) : nullptr;
+  auto jit_options = cudf::experimental::regex_jit_program_options{
+    .replacement = rtype == "backref" ? "#\\1X" : "77"};
+  auto jit_program =
+    backend == "jit"
+      ? (rtype == "backref"
+           ? cudf::experimental::regex_jit_program::create_replace_with_backrefs(pat, jit_options)
+           : cudf::experimental::regex_jit_program::create_replace(pat, jit_options))
+      : nullptr;
 
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   if (rtype == "backref") {
     auto replacement = std::string("#\\1X");
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      cudf::strings::replace_with_backrefs(input, *program, replacement);
+      auto const stream = cuda::stream_ref{launch.get_stream().get_stream()};
+      if (backend == "jit") {
+        static_cast<void>(
+          cudf::experimental::replace_with_backrefs(input, *jit_program, replacement, stream));
+      } else {
+        static_cast<void>(
+          cudf::strings::replace_with_backrefs(input, *program, replacement, stream));
+      }
     });
   } else {
     auto replacement = cudf::string_scalar("77");
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      cudf::strings::replace_re(input, *program, replacement);
+      auto const stream = cuda::stream_ref{launch.get_stream().get_stream()};
+      if (backend == "jit") {
+        static_cast<void>(
+          cudf::experimental::replace_re(input, *jit_program, replacement, std::nullopt, stream));
+      } else {
+        static_cast<void>(
+          cudf::strings::replace_re(input, *program, replacement, std::nullopt, stream));
+      }
     });
   }
   state.add_buffer_size(
@@ -73,4 +105,5 @@ NVBENCH_BENCH(bench_replace)
   .add_int64_axis("max_width", {64, 128, 256})
   .add_int64_axis("num_rows", {262144, 2097152})
   .add_int64_axis("pattern", {0, 1, 2, 3, 4, 5, 6})
-  .add_string_axis("type", {"replace", "backref"});
+  .add_string_axis("type", {"replace", "backref"})
+  .add_string_axis("backend", {"interpreter", "jit"});

@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+build-backend = "scikit_build_core.build"
+requires = [
+    "cython>=3.0",
+    "cython-cmake>=2.0",
+    "pylibcudf",
+    "scikit-build-core>=0.11.0",
+]
+
+[project]
+name = "cudf-polars-cucascade"
+dynamic = ["version"]
+description = "A host-memory cache for the remote parquet reads of cudf-polars, built on cuCascade"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pylibcudf",
+]
+authors = [
+    { name = "NVIDIA Corporation" },
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+]
+
+[tool.scikit-build]
+build-dir = "build/{wheel_tag}"
+cmake.build-type = "Release"
+cmake.version = "CMakeLists.txt"
+ninja.make-fallback = false
+sdist.exclude = ["*tests*"]
+sdist.reproducible = true
+wheel.packages = ["cudf_polars_cucascade"]
+# pylibcudf is built against Python's limited API and this extension subclasses its types, so it
+# must be built the same way.
+wheel.py-api = "cp312"
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "cudf_polars_cucascade/VERSION"
+regex = "(?P<value>.*)"
+
+[tool.ruff]
+extend = "../../../pyproject.toml"
+
+[tool.ruff.lint.isort]
+known-first-party = ["cudf_polars_cucascade"]
+
+[tool.pytest.ini_options]
+addopts = "--tb=native --strict-config --strict-markers --import-mode=importlib"
+filterwarnings = ["error"]
+xfail_strict = true
+testpaths = ["tests"]

@@ -81,7 +81,7 @@ Homepage = "https://github.com/NVIDIA/cudf"
 version = {file = "cudf_polars/VERSION"}
 
 [tool.setuptools.packages.find]
-# exclude python/cudf_polars/quent/
+# exclude python/cudf_polars/quent/ and python/cudf_polars/cucascade/
 include = ["cudf_polars*"]
 
 [tool.pydistcheck]

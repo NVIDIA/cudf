@@ -203,6 +203,7 @@ jobs:
         test_python_cudf_polars:
           - 'python/cudf_polars/**'
           - '!python/cudf_polars/quent/**'
+          - '!python/cudf_polars/cucascade/**'
           - 'ci/test_python_cudf_polars.sh'
           - 'ci/test_python_cudf_polars_integrations.sh'
         test_cudf_polars_quent:

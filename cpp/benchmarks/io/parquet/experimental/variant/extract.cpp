@@ -101,7 +101,7 @@ void append_le(std::vector<uint8_t>& out, uint64_t bits, int width)
 }
 
 // Dictionary key of the i-th leaf field: "f000", "f001", ... Zero padding makes the numeric order
-// the lexicographic order, which the callers rely on to predict each key's field id.
+// the lexicographic order, which the callers rely on to predict each key's field id
 std::string field_key(int i)
 {
   CUDF_EXPECTS(i >= 0 && i < 1000, "field key index does not fit the zero-padded key width");
@@ -109,7 +109,7 @@ std::string field_key(int i)
 }
 
 // A field of an object under construction: its dictionary id and its already-encoded value bytes,
-// which the caller keeps alive.
+// which the caller keeps alive
 struct object_field {
   uint8_t id;
   std::span<uint8_t const> value;
@@ -117,7 +117,7 @@ struct object_field {
 
 // Build a VARIANT object from (field id, value) pairs. Ids must be ascending, which for a
 // name-sorted dictionary is also name order, as the spec requires. Field offsets widen to 2 bytes
-// once the values region outgrows a single byte.
+// once the values region outgrows a single byte
 std::vector<uint8_t> build_object(std::vector<object_field> const& fields)
 {
   constexpr std::size_t max_one_byte = std::numeric_limits<uint8_t>::max();
@@ -423,7 +423,7 @@ std::vector<uint8_t> build_flat_object(int num_fields,
                                        int target_fid,
                                        std::span<uint8_t const> inner)
 {
-  // Pads the object out to num_fields; BOOLEAN_TRUE encodes in its header byte alone.
+  // Pads the object out to num_fields; BOOLEAN_TRUE encodes in its header byte alone
   static constexpr uint8_t filler_value =
     make_variant_primitive_header(variant_primitive_type::BOOLEAN_TRUE);
 
@@ -696,7 +696,7 @@ NVBENCH_BENCH(bench_variant_extract_fields)
 // Compares extracting many fields in one batched call against looping the single-field API, with
 // and without a prefix shared by all the requested paths. Type is fixed to int32_t; both APIs
 // decode, so the two sides of the comparison are end-to-end equivalent.
-// Every field holds a real leaf, so no path hits a filler value and skips its cast and copy.
+// Every field holds a real leaf, so no path hits a filler value and skips its cast and copy
 static void bench_variant_extract_multi_field(nvbench::state& state)
 {
   auto stream = cudf::get_default_stream();
@@ -709,7 +709,7 @@ static void bench_variant_extract_multi_field(nvbench::state& state)
   bool const batched       = state.get_string("api") == "batched";
 
   // Dictionary: the shared parent key "a", the leaf keys f00..f{N-1}, and "z" for miss rows, in
-  // sorted order. Field ids are dictionary indices, so "a" is 0 and leaf `i` is `i + 1`.
+  // sorted order. Field ids are dictionary indices, so "a" is 0 and leaf `i` is `i + 1`
   std::vector<std::string> keys{"a"};
   for (int i = 0; i < num_fields; ++i) {
     keys.push_back(field_key(i));
@@ -723,10 +723,10 @@ static void bench_variant_extract_multi_field(nvbench::state& state)
     leaf_fields.emplace_back(static_cast<uint8_t>(i + 1), leaf);
   }
   // Shared-prefix layout nests every leaf under "a"; the disjoint layout puts them at the top
-  // level.
+  // level
   auto const leaf_object = build_object(leaf_fields);
   auto hit_val           = shared_prefix ? build_object({{uint8_t{0}, leaf_object}}) : leaf_object;
-  // Miss rows hold an object keyed on "z" alone, so every path fails at its first step.
+  // Miss rows hold an object keyed on "z" alone, so every path fails at its first step
   auto miss_val = build_object({{static_cast<uint8_t>(num_fields + 1), leaf}});
   pad_to_equal_size(hit_val, miss_val);
 

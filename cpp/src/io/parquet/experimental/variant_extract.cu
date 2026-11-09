@@ -946,7 +946,7 @@ __device__ slot_result make_slot_result(device_span<uint8_t const> field,
     static_cast<size_type>(field.data() - val_base), static_cast<size_type>(field.size()), status};
 }
 
-// The span a slot located, or an empty span if it did not resolve.
+// The span a slot located, or an empty span if it did not resolve
 __device__ device_span<uint8_t const> slot_span(device_span<uint8_t const> val,
                                                 slot_result const& result)
 {
@@ -956,11 +956,11 @@ __device__ device_span<uint8_t const> slot_span(device_span<uint8_t const> val,
 
 // Tries up to this deep are walked with a per-thread stack in local memory. The stack is indexed
 // by depth at run time, so it cannot live in registers, but local memory is per-thread and the
-// hardware coalesces it across a warp. A deeper trie uses a global scratch allocation instead.
+// hardware coalesces it across a warp. A deeper trie uses a global scratch allocation instead
 constexpr size_type max_local_trie_depth = 16;
 
 // Global scratch is per thread, so its grid is capped to keep the allocation independent of the row
-// count, and its total is capped because the trie depth is bounded only by the number of paths.
+// count, and its total is capped because the trie depth is bounded only by the number of paths
 constexpr int max_global_scratch_blocks        = 256;
 constexpr std::size_t max_global_scratch_bytes = std::size_t{32} * 1024 * 1024;
 
@@ -1061,7 +1061,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_field_trie_kernel(
     for (size_type slot = 0; slot < num_slots; ++slot) {
       auto const depth = slot_depth[slot];
       // An empty value blob resolves nothing, and a slot under one that did not resolve reports
-      // its parent's reason rather than what probing an empty value would say.
+      // its parent's reason rather than what probing an empty value would say
       auto const parent = depth == 0 ? val : slot_span(val, located(depth - 1));
       auto const parent_status =
         depth == 0 ? (val.empty() ? op_status::MALFORMED_VARIANT : op_status::SUCCESS)
@@ -1337,7 +1337,7 @@ void validate_variant_child(column_view const& child)
 }
 
 // Statuses are written one per row of the input, in place, so the buffer has to line up with it.
-// `input_name` names the column the row count must match, for the error message.
+// `input_name` names the column the row count must match, for the error message
 void validate_status_column(std::optional<mutable_column_view> const& status,
                             size_type num_rows,
                             std::string_view input_name)
@@ -1353,7 +1353,7 @@ void validate_status_column(std::optional<mutable_column_view> const& status,
                std::invalid_argument);
 }
 
-// The output types a VARIANT value can be decoded into, i.e. those `cast_variant` dispatches on.
+// The output types a VARIANT value can be decoded into, i.e. those `cast_variant` dispatches on
 void validate_cast_type(data_type desired_type)
 {
   switch (desired_type.id()) {
@@ -1711,7 +1711,7 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   auto const* d_row_valid = reinterpret_cast<bitmask_type const*>(row_mask.data());
 
   // Per-path outputs are contiguous, so each path's sizes can be scanned on their own. Only each
-  // path has to fit in size_type, so the (path, row) index across all of them is 64-bit.
+  // path has to fit in size_type, so the (path, row) index across all of them is 64-bit
   auto const num_outputs = static_cast<int64_t>(num_paths) * num_rows;
   cuda::device_buffer<size_type> d_sizes(stream, temp_mr, num_outputs, cuda::no_init);
   cuda::device_buffer<size_type> d_src_offsets(stream, temp_mr, num_outputs, cuda::no_init);
@@ -1747,7 +1747,7 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   auto const d_offsets = cudf::detail::make_device_uvector_async(h_offsets, stream, temp_mr);
 
   // Resolve the whole trie per row and compute the output sizes. The walk keeps one located value
-  // per trie level, so only a pathologically deep trie needs scratch outside the thread.
+  // per trie level, so only a pathologically deep trie needs scratch outside the thread
   auto const trie_depth = 1 + *std::max_element(trie.slot_depth.begin(), trie.slot_depth.end());
   bool const use_local_scratch = trie_depth <= max_local_trie_depth;
   auto const grid              = cudf::detail::grid_1d{num_rows, block_size};
@@ -1808,14 +1808,14 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
   // One scan per path; `exclusive_scan_by_key` was slower once rows outnumber paths
   for (size_type path_idx = 0; path_idx < num_paths; ++path_idx) {
     // The scan takes one input per output; the extra trailing input is never read for its own
-    // output element.
+    // output element
     auto const path_sizes = cudf::detail::make_counting_transform_iterator(
       size_type{0},
       cuda::proclaim_return_type<size_type>(
         [sizes = d_sizes.data() + flat_index(path_idx, 0, num_rows), num_rows] __device__(
           size_type row) -> size_type { return row < num_rows ? sizes[row] : 0; }));
     // Offsets are narrowed to size_type on the way out while the scan accumulates in 64 bits, so
-    // the total still reveals an overflow that the offsets themselves would have wrapped away.
+    // the total still reveals an overflow that the offsets themselves would have wrapped away
     auto const offsets_out = cudf::detail::make_sizes_to_offsets_iterator(
       h_offsets[path_idx], h_offsets[path_idx] + num_rows + 1, d_byte_totals.data() + path_idx);
     thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
@@ -1960,7 +1960,7 @@ std::unique_ptr<table> extract_variant_fields(column_view const& variant_column,
 
   auto const want_status = !statuses.empty();
   // Each path's status is filled by the walk, then read back by that path's cast as incoming status
-  // and overwritten in place with the final status.
+  // and overwritten in place with the final status
   auto const values =
     get_variant_fields(variant_column, paths, statuses, stream, resources.as_temporary());
 

@@ -1337,7 +1337,7 @@ TEST_F(GetVariantFieldTest, EmptyInput)
 
 namespace {
 
-// One status buffer per path, kept alongside the views handed to the batched APIs.
+// One status buffer per path, kept alongside the views handed to the batched APIs
 struct status_buffers {
   std::vector<std::unique_ptr<cudf::column>> columns;
   std::vector<cudf::mutable_column_view> views;
@@ -1368,7 +1368,7 @@ void expect_path_statuses(std::span<std::string_view const> paths,
 // The batched APIs must agree with the single-path API applied to each path in turn, which is what
 // most of the tests below check: the single-path behavior is the specification. Both the values and
 // the per-row statuses are compared, since the batched walk derives a status for a whole subtree
-// from its prefix rather than resolving each path on its own.
+// from its prefix rather than resolving each path on its own
 void expect_matches_looped_get(cudf::column_view const& variant,
                                std::vector<std::string> const& paths)
 {
@@ -1397,7 +1397,7 @@ struct GetVariantFieldsTest : public cudf::test::BaseFixture {};
 
 TEST_F(GetVariantFieldsTest, DuplicateAndPrefixPaths)
 {
-  // "$.observation" is both a requested output and the prefix of another path, and appears twice.
+  // "$.observation" is both a requested output and the prefix of another path, and appears twice
   auto const col = make_apache_variant(avf::object_nested);
   expect_matches_looped_get(
     col, {"$.observation", "$.observation.time", "$.observation", "$.observation.value"});
@@ -1407,7 +1407,7 @@ TEST_F(GetVariantFieldsTest, TrieTooLargeForSharedMemory)
 {
   // Enough paths that the trie arrays no longer fit the shared memory the walk stages them in, so
   // they are read from global memory instead. The fields that resolve sit at both ends, so the
-  // output mapping is checked across the whole of the larger arrays.
+  // output mapping is checked across the whole of the larger arrays
   auto paths = std::vector<std::string>{"x", "y", "z"};
   for (int i = 0; i < 4000; ++i) {
     paths.push_back(std::format("$.field_{}", i));
@@ -1421,7 +1421,7 @@ TEST_F(GetVariantFieldsTest, WideAndDeepTrieUsesGlobalScratch)
   // Global scratch over a trie whose slots mostly resolve: a 20-level nest of
   // single-field objects, where each level is both a requested output and the parent of a sibling
   // path that misses. Several slots therefore share a depth and each has to find its own parent,
-  // which the chain in LargeMixedInputUsesGlobalScratch cannot check because none of it resolves.
+  // which the chain in LargeMixedInputUsesGlobalScratch cannot check because none of it resolves
   constexpr int depth = 20;
   auto const keys     = make_numeric_keys(depth + 1);
   auto value          = enc_int32(7);
@@ -1431,7 +1431,7 @@ TEST_F(GetVariantFieldsTest, WideAndDeepTrieUsesGlobalScratch)
   auto const col = wrap_single_variant(build_metadata(keys, /*sorted=*/true), value);
 
   // The last key is in the dictionary but in no object, so the sibling paths fail at their own
-  // step rather than inheriting a failed prefix.
+  // step rather than inheriting a failed prefix
   auto const missing_key = std::format(".k{:02}", depth);
   std::vector<std::string> paths;
   std::string prefix = "$";
@@ -1464,7 +1464,7 @@ enum class row_kind { NULL_ROW, EMPTY_ROW, ONE_KEY, TWO_KEYS };
 // not a multiple of 32, and it exceeds both one counting block's share of a mask and the thread
 // count of the capped global-scratch grid. Every path in `chain` extends `$.k01.k02`, which holds
 // an INT32, so none of them resolves. The paths are listed out of trie order, so outputs are not
-// in slot order.
+// in slot order
 void expect_large_mixed_input(std::vector<std::string> const& chain)
 {
   constexpr cudf::size_type num_rows = 100'003;
@@ -3353,14 +3353,14 @@ TEST_F(ExtractVariantFieldStatusTest, MissingNestedPathStatus)
 }
 
 // The batched status columns are checked against the single-path ones for every path of every case
-// in expect_matches_looped_get; the cases here pin down the values that agreement rests on.
+// in expect_matches_looped_get; the cases here pin down the values that agreement rests on
 
 struct GetVariantFieldsStatusTest : public cudf::test::BaseFixture {};
 
 TEST_F(GetVariantFieldsStatusTest, FailedPrefixReasonReachesItsWholeSubtree)
 {
   // "$.a" is a VARIANT null, so the paths below it are missing_path rather than the malformed
-  // status that probing the empty value they inherit would give.
+  // status that probing the empty value they inherit would give
   auto const m      = build_metadata({"a"});
   auto const v      = build_single_field_object(/*fid=*/0, enc_null());
   auto const col    = wrap_single_variant(m, v);
@@ -3432,7 +3432,7 @@ TEST_F(ExtractVariantFieldsStatusTest, CastStatusReachesBatchedOutput)
   auto const stream = cudf::test::get_default_stream();
 
   // "y" as INT32 is a type mismatch where it resolves, so the cast's own status has to reach the
-  // batched output too.
+  // batched output too
   std::vector<std::string_view> const paths{"x", "y", "nope"};
   std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32},
                                            cudf::data_type{cudf::type_id::INT32},

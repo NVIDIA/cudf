@@ -8,6 +8,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 /**
@@ -521,8 +523,8 @@ filter_join_indices_output_size(
  * For both null-aware and non-null-aware predicates, the output value is uninitialized and must
  * be set on every execution path.
  * The remaining parameters correspond to columns in the left table followed by the right table.
- * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors. PTX UDFs
- * do not support returning errors.
+ * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors.
+ * PTX modules functions must return `cudf::errc` as a 32-bit integer status.
  *
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
@@ -571,6 +573,7 @@ filter_join_indices_jit(cudf::table_view const& left,
  * @param right_indices Device span of row indices in right table from join
  * @param predicate An AST expression that returns a boolean for each pair of rows
  * @param join_kind The type of join operation (INNER_JOIN, LEFT_JOIN, or FULL_JOIN)
+ * @param fragments Device modules defining the called functions; linked together
  * @param stream CUDA stream for operations
  * @param mr Device memory resource
  * @return A pair of device vectors [filtered_left_indices, filtered_right_indices]
@@ -583,8 +586,9 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         cudf::ast::expression const& predicate,
                         cudf::join_kind join_kind,
-                        cuda::stream_ref stream   = cudf::get_default_stream(),
-                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+                        cudf::lto_fragments fragments = {},
+                        cuda::stream_ref stream       = cudf::get_default_stream(),
+                        cudf::memory_resources mr     = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

@@ -640,7 +640,8 @@ void infer_column_types(parse_options const& parse_opts,
   for (auto col_idx = 0u; col_idx < column_flags.size(); ++col_idx) {
     if (not(column_flags[col_idx] & column_parse::inferred)) { continue; }
     auto const& stats = column_stats[inf_col_idx++];
-    if (stats.null_count == num_records or stats.total_count() == 0) {
+    // Missing fields are absent from the histogram and also represent nulls.
+    if (stats.null_count == stats.total_count()) {
       // Entire column is NULL; allocate the smallest amount of memory
       column_types[col_idx] = data_type(cudf::type_id::INT8);
     } else if (stats.string_count > 0L) {
@@ -669,16 +670,18 @@ void infer_column_types(parse_options const& parse_opts,
  *
  * @param size Number of entries
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned staging entries' device memory
  * @return Typed buffer of `size` null string staging entries
  */
 template <typename OffsetT>
 cuda::device_buffer<string_offset_pair<OffsetT>> make_null_string_indices(size_type size,
-                                                                          cuda::stream_ref stream)
+                                                                          cuda::stream_ref stream,
+                                                                          cudf::memory_resources mr)
 {
   cuda::device_buffer<string_offset_pair<OffsetT>> indices(
-    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
+    stream, mr.get_output_mr(), size, cuda::no_init);
   // Short rows leave missing fields untouched; zero is a valid offset, not a null.
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                indices.begin(),
                indices.end(),
                string_offset_pair<OffsetT>{});
@@ -768,7 +771,8 @@ decode_result decode_data(parse_options const& parse_opts,
                                ? column_buffer(column_types[active_col], true)
                                : column_buffer(column_types[active_col], num_records, true, stream, mr);
       if (is_string) {
-        staging[active_col].emplace(make_null_string_indices<OffsetT>(num_records, stream));
+        staging[active_col].emplace(make_null_string_indices<OffsetT>(
+          num_records, stream, cudf::get_current_device_resource_ref()));
       }
 
       out_buffer.name = column_names[col];

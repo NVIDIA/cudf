@@ -19,7 +19,12 @@ case "${POLARS_VERSIONS:-latest}" in
 esac
 export CUDF_EXTRA_DEPENDENCY_MATRIX="polars_compat_version=${POLARS_COMPAT_VERSION}"
 
-source ./ci/test_python_common.sh test_python_other test_cudf_polars_compat
+# Channel with the cudf-polars-quent package built in the previous step. The package is
+# abi3 with no CUDA dependency, so it is requested as a stable artifact without --cuda.
+CUDF_POLARS_QUENT_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_python cudf-polars-quent cudf --stable)")
+export CUDF_POLARS_QUENT_CHANNEL
+
+source ./ci/test_python_common.sh test_python_other test_cudf_polars_compat test_cudf_polars_quent
 
 rapids-logger "Check GPU usage"
 nvidia-smi

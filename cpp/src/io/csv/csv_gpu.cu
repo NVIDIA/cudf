@@ -9,6 +9,7 @@
 #include "io/utilities/parsing_utils.cuh"
 #include "io/utilities/trie.cuh"
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -27,6 +28,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/std/algorithm>
 #include <cuda/stream>
 #include <thrust/count.h>
@@ -190,6 +192,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     field_start = cudf::io::gpu::skip_leading_delimiter_run(field_start, row_end, opts);
     if (field_start >= row_end) break;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, opts);
+    // Trailing whitespace before the record terminator does not start another field
+    if (opts.multi_delimiter and next_delimiter == field_start) { break; }
 
     // Checking if this is a column that the user wants --- user can filter columns
     if (column_flags[col] & column_parse::inferred) {
@@ -286,6 +290,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       }
       actual_col++;
     }
+    // Row offsets can span skipped comments or blank lines. Only a delimiter
+    // starts another field; a record terminator must leave missing fields null.
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, opts)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     col++;
@@ -343,6 +351,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     if (field_start >= row_end) break;
     next_field          = field_start;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, options);
+    // Trailing whitespace before the record terminator does not start another field
+    if (options.multi_delimiter and next_delimiter == field_start) { break; }
 
     if (column_flags[col] & column_parse::enabled) {
       // check if the entire field is a NaN string - consistent with pandas
@@ -414,6 +424,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       }
       ++actual_col;
     }
+    // Row offsets can span skipped comments or blank lines. Only a delimiter
+    // starts another field; a record terminator must leave missing fields null.
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, options)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     ++col;
@@ -853,7 +867,7 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   int const block_size = csvparse_block_dim;
   int const grid_size  = (row_starts.size() + block_size - 1) / block_size;
 
-  auto d_stats = cudf::detail::make_zeroed_device_uvector_async<column_type_histogram>(
+  auto d_stats = cudf::detail::make_zeroed_device_buffer_async<column_type_histogram>(
     num_active_columns, stream, cudf::get_current_device_resource_ref());
 
   data_type_detection<<<grid_size, block_size, 0, stream.get()>>>(
@@ -877,7 +891,7 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
   // Calculate actual block count to use based on records count
   auto const block_size = csvparse_block_dim;
   auto const num_rows   = row_offsets.size() - 1;
-  auto const grid_size  = cudf::util::div_rounding_up_safe<size_t>(num_rows, block_size);
+  auto const grid_size  = cudf::detail::div_rounding_up_safe<size_t>(num_rows, block_size);
 
   convert_csv_to_cudf<OffsetT><<<grid_size, block_size, 0, stream.get()>>>(
     options, data, column_flags, row_offsets, dtypes, columns, valids, valid_counts);
@@ -917,7 +931,8 @@ uint32_t __host__ gather_row_offsets(parse_options_view const& options,
                                      cuda::stream_ref stream)
 {
   uint32_t dim_grid = 1 + (chunk_size / rowofs_block_bytes);
-  auto ctxtree      = rmm::device_uvector<packed_rowctx_t>(dim_grid * bk_ctxtree_size, stream);
+  auto ctxtree      = cuda::device_buffer<packed_rowctx_t>(
+    stream, cudf::get_current_device_resource_ref(), dim_grid * bk_ctxtree_size, cuda::no_init);
 
   gather_row_offsets_gpu<<<dim_grid, rowofs_block_dim, 0, stream.get()>>>(
     row_ctx,

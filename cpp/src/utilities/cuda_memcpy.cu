@@ -10,8 +10,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <algorithm>
 #include <ranges>
 #include <vector>
@@ -33,7 +31,7 @@ void copy_pinned(void* dst, void const* src, std::size_t size, cuda::stream_ref 
 
   if (size < get_kernel_pinned_copy_threshold()) {
     int const block_size = 256;
-    auto const grid_size = cudf::util::div_rounding_up_safe<size_t>(size, block_size);
+    auto const grid_size = cudf::detail::div_rounding_up_safe<size_t>(size, block_size);
     // We are explicitly launching the kernel here instead of calling a thrust function because the
     // thrust function can potentially call cudaMemcpyAsync instead of using a kernel
     copy_kernel<<<grid_size, block_size, 0, stream.get()>>>(

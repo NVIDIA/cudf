@@ -7,7 +7,7 @@ from __future__ import annotations
 import operator
 import struct
 from bisect import bisect_left
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext, suppress
 from dataclasses import dataclass, field
 from enum import IntEnum
 from itertools import accumulate, pairwise
@@ -22,15 +22,19 @@ from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
-from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
 from rapidsmpf.streaming.core.message import Message
 
+from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.dsl.utils.windows import duration_to_scalar
-from cudf_polars.streaming.actor_graph.utils import ChunkStore, names_to_indices
+from cudf_polars.streaming.actor_graph.collectives.slice_exchange import (
+    SliceRoute,
+    SparseExchange,
+)
+from cudf_polars.streaming.actor_graph.utils import ChunkStore
 from cudf_polars.utils.cuda_stream import join_cuda_streams
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+    from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
 
     from pylibcudf.utils import CudaStreamLike
     from rapidsmpf.communicator.communicator import Communicator
@@ -731,12 +735,20 @@ class _PreparedInput:
 
     owned_buffer: ChunkStore
     """Spillable messages containing locally owned chunks."""
-    ghost_exchange: SparseAlltoall | None
+    ghost_exchange: SparseExchange | None
     """Exchange used to send or receive ghost chunks."""
     ghost_sources: tuple[int, ...]
     """Candidate source ranks for ghost chunks in input order."""
     owned_host_values: tuple[RangeValues | None, ...]
     """Cached host range values for locally owned chunks."""
+
+    async def aclose(self) -> None:
+        """Release buffered chunks and finish the ghost exchange."""
+        try:
+            self.owned_buffer.clear()
+        finally:
+            if self.ghost_exchange is not None:
+                await self.ghost_exchange.aclose()
 
 
 class OverlapInput[BufferedChunkT: BufferedChunk]:
@@ -780,19 +792,25 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
             self._prepared = await self._prepare()
         return self
 
-    async def __aexit__(self, *exc_info: object) -> None:
+    async def __aexit__(
+        self, exc_type: object, _exc_value: object, _traceback: object
+    ) -> None:
         """Release messages still owned by this input."""
         prepared, self._prepared = self._prepared, None
         if prepared is not None:
-            prepared.owned_buffer.clear()
+            if exc_type is not None:
+                with suppress(BaseException):
+                    await prepared.aclose()
+            else:
+                await prepared.aclose()
 
-    def __aiter__(self) -> AsyncIterator[StagedChunk[BufferedChunkT]]:
+    def __aiter__(self) -> AsyncGenerator[StagedChunk[BufferedChunkT]]:
         """Yield prepared chunks in row order."""
         return self._chunks()
 
     async def _raw_owned_chunks(
         self,
-    ) -> AsyncIterator[tuple[TableChunk, RangeValues | None]]:
+    ) -> AsyncGenerator[tuple[TableChunk, RangeValues | None]]:
         """Yield locally owned chunks and any cached host range values."""
         if not self.multirank:
             while (msg := await self.ch_in.recv(self.context)) is not None:
@@ -809,16 +827,20 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
 
     async def _raw_ghost_chunks(
         self, sources: Iterable[int]
-    ) -> AsyncIterator[tuple[TableChunk, None]]:
+    ) -> AsyncGenerator[tuple[TableChunk, None]]:
         """Yield exchanged chunks from each source rank in row order."""
         prepared = self._prepared
         for source in sources:
             assert prepared is not None
             assert prepared.ghost_exchange is not None
-            for packed in prepared.ghost_exchange.extract(source):
-                yield TableChunk.from_packed_data(packed, self.context.br()), None
+            chunks = prepared.ghost_exchange.extract(source)
+            try:
+                for message in chunks:
+                    yield TableChunk.from_message(message, br=self.context.br()), None
+            finally:
+                chunks.clear()
 
-    async def _chunks(self) -> AsyncIterator[StagedChunk[BufferedChunkT]]:
+    async def _chunks(self) -> AsyncGenerator[StagedChunk[BufferedChunkT]]:
         """Prepare chunks in one row coordinate system for this rank."""
         if self.multirank and self._prepared is None:
             raise RuntimeError(
@@ -833,16 +855,17 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
             (False, self._raw_ghost_chunks(sources[split:])),
         )
         for owned, values in inputs:
-            async for raw_chunk, host_values in values:
-                chunk = await self.policy.prepare_chunk(
-                    self.context,
-                    raw_chunk,
-                    row_offset=row_offset,
-                    host_values=host_values,
-                )
-                self.policy.observe(chunk)
-                row_offset = chunk.row_stop
-                yield StagedChunk(chunk, owned=owned)
+            async with aclosing(values):
+                async for raw_chunk, host_values in values:
+                    chunk = await self.policy.prepare_chunk(
+                        self.context,
+                        raw_chunk,
+                        row_offset=row_offset,
+                        host_values=host_values,
+                    )
+                    self.policy.observe(chunk)
+                    row_offset = chunk.row_stop
+                    yield StagedChunk(chunk, owned=owned)
 
     async def _prepare(self) -> _PreparedInput:
         """Buffer local input, agree on a plan, and exchange ghost chunks."""
@@ -885,7 +908,8 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
                 starts[self.comm.rank],
             )
         except BaseException:
-            buffer.clear()
+            with suppress(BaseException):
+                buffer.clear()
             raise
 
     async def _buffer_count_input(self, buffer: ChunkStore) -> _CountSummary:
@@ -1124,7 +1148,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
 
     async def _exchange(
         self,
-        buffer: ChunkStore,
+        source_buffer: ChunkStore,
         policy: RangeOverlapPolicy | RowCountOverlapPolicy,
         sends: Sequence[GhostSend],
         sources: Sequence[int],
@@ -1144,18 +1168,19 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
         sources = tuple(sorted(sources))
         destinations = tuple(sorted(set(destinations)))
         if not (sources or destinations):
-            return _PreparedInput(buffer, None, sources, host_values)
-        exchange = SparseAlltoall(
+            return _PreparedInput(source_buffer, None, sources, host_values)
+        output = ChunkStore(self.context)
+        exchange = SparseExchange(
             self.context,
             self.comm,
             self.collective_id,
-            srcs=sources,
-            dsts=destinations,
+            sources=sources,
+            destinations=destinations,
         )
-        source, output = buffer, ChunkStore(self.context)
+        prepared = _PreparedInput(output, exchange, sources, host_values)
         start = 0
         try:
-            for position, msg in enumerate(source):
+            for position, msg in enumerate(source_buffer):
                 chunk = TableChunk.from_message(msg, br=self.context.br())
                 size = chunk.shape[0]
                 pieces: list[tuple[int, int, int]] = []
@@ -1209,26 +1234,18 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
                             range_values,
                             range_requests,
                         )
-                    for destination, begin, end in pieces:
-                        await self._send(exchange, destination, available, begin, end)
+                    await exchange.insert_slices(
+                        available,
+                        tuple(SliceRoute(*piece) for piece in pieces),
+                    )
                     output.insert(Message(0, available))
                 start += size
+            await exchange.finish()
         except BaseException:
-            output.clear()
+            with suppress(BaseException):
+                await prepared.aclose()
             raise
-        finally:
-            try:
-                source.clear()
-            except BaseException:
-                output.clear()
-                raise
-            finally:
-                try:
-                    await exchange.insert_finished(self.context)
-                except BaseException:
-                    output.clear()
-                    raise
-        return _PreparedInput(output, exchange, sources, host_values)
+        return prepared
 
     async def _range_pieces(
         self,
@@ -1276,33 +1293,3 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
             if begin < end:
                 pieces.append((destination, begin, end))
         return pieces
-
-    async def _send(
-        self,
-        exchange: SparseAlltoall,
-        destination: int,
-        chunk: TableChunk,
-        start: int,
-        stop: int,
-    ) -> None:
-        """Pack and send one half-open chunk slice to a destination rank."""
-        table = (
-            plc.Table(chunk.table_view().columns())
-            if start == 0 and stop == chunk.shape[0]
-            else plc.copying.slice(
-                chunk.table_view(), [start, stop], stream=chunk.stream
-            )[0]
-        )
-        piece = TableChunk.from_pylibcudf_table(
-            table,
-            chunk.stream,
-            exclusive_view=False,
-            br=self.context.br(),
-        )
-        piece, extra = await make_table_chunks_available_or_wait(
-            self.context,
-            piece,
-            reserve_extra=piece.into_packed_data_cost(),
-            net_memory_delta=0,
-        )
-        exchange.insert(destination, piece.into_packed_data(extra))

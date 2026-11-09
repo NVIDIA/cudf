@@ -19,6 +19,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/data_sink.hpp>
@@ -38,9 +39,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/std/concepts>
 #include <cuda/stream>
@@ -106,12 +107,13 @@ void write_compressed_to_sink(data_sink* out_sink,
                               device_span<char const> tail,
                               compression_type compression,
                               size_t requested_block_size,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   if (data.empty() and tail.empty()) { return; }
 
   auto const block_size      = compression_block_size(compression, requested_block_size);
-  auto const num_data_blocks = cudf::util::div_rounding_up_safe(data.size(), block_size);
+  auto const num_data_blocks = cudf::detail::div_rounding_up_safe(data.size(), block_size);
   auto const num_blocks      = num_data_blocks + (tail.empty() ? 0 : 1);
 
   auto h_inputs =
@@ -137,20 +139,21 @@ void write_compressed_to_sink(data_sink* out_sink,
   out_offsets[0]       = 0;
   std::transform_inclusive_scan(
     h_inputs.begin(), h_inputs.end(), out_offsets.begin() + 1, std::plus{}, [&](auto const& input) {
-      return cudf::util::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
-                                       alignment);
+      return cudf::detail::round_up_safe(io::detail::max_compressed_size(compression, input.size()),
+                                         alignment);
     });
-  rmm::device_uvector<uint8_t> comp_buffer(out_offsets.back(), stream);
+  auto const temp_mr = mr.get_temporary_mr();
+  cuda::device_buffer<uint8_t> comp_buffer(stream, temp_mr, out_offsets.back(), cuda::no_init);
 
   for (size_t block = 0; block < num_blocks; ++block) {
     h_outputs[block] = device_span<uint8_t>{comp_buffer.data() + out_offsets[block],
                                             out_offsets[block + 1] - out_offsets[block]};
   }
-  auto const temp_mr   = cudf::get_current_device_resource_ref();
-  auto const d_inputs  = cudf::detail::make_device_uvector_async(h_inputs, stream, temp_mr);
-  auto const d_outputs = cudf::detail::make_device_uvector_async(h_outputs, stream, temp_mr);
+  auto const d_inputs  = cudf::detail::make_device_buffer_async(h_inputs, stream, temp_mr);
+  auto const d_outputs = cudf::detail::make_device_buffer_async(h_outputs, stream, temp_mr);
 
-  rmm::device_uvector<io::detail::codec_exec_result> d_results(num_blocks, stream, temp_mr);
+  cuda::device_buffer<io::detail::codec_exec_result> d_results(
+    stream, temp_mr, num_blocks, cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                d_results.begin(),
                d_results.end(),
@@ -172,23 +175,25 @@ void write_compressed_to_sink(data_sink* out_sink,
   auto h_dests   = cudf::detail::make_pinned_vector_async<uint8_t*>(num_blocks, stream);
   auto h_sizes   = cudf::detail::make_pinned_vector_async<size_t>(num_blocks, stream);
   size_t total_comp_size{0};
-  rmm::device_uvector<uint8_t> packed_buffer(
+  cuda::device_buffer<uint8_t> packed_buffer(
+    stream,
+    mr.get_temporary_mr(),
     std::accumulate(results.begin(),
                     results.end(),
                     size_t{0},
                     [](size_t sum, auto const& result) { return sum + result.bytes_written; }),
-    stream);
+    cuda::no_init);
   for (size_t block = 0; block < num_blocks; ++block) {
     h_sources[block] = comp_buffer.data() + out_offsets[block];
     h_dests[block]   = packed_buffer.data() + total_comp_size;
     h_sizes[block]   = results[block].bytes_written;
     total_comp_size += results[block].bytes_written;
   }
-  auto const d_sources = cudf::detail::make_device_uvector_async(h_sources, stream, temp_mr);
-  auto const d_dests   = cudf::detail::make_device_uvector_async(h_dests, stream, temp_mr);
-  auto const d_sizes   = cudf::detail::make_device_uvector_async(h_sizes, stream, temp_mr);
+  auto const d_sources = cudf::detail::make_device_buffer_async(h_sources, stream, temp_mr);
+  auto const d_dests   = cudf::detail::make_device_buffer_async(h_dests, stream, temp_mr);
+  auto const d_sizes   = cudf::detail::make_device_buffer_async(h_sizes, stream, temp_mr);
   cudf::detail::batched_memcpy_async(
-    d_sources.begin(), d_dests.begin(), d_sizes.begin(), num_blocks, stream);
+    d_sources.begin(), d_dests.begin(), d_sizes.begin(), num_blocks, stream, mr.as_temporary());
 
   write_to_sink(
     out_sink, {reinterpret_cast<char const*>(packed_buffer.data()), total_comp_size}, stream);
@@ -458,10 +463,15 @@ void write_chunked_begin(data_sink* out_sink,
 
     if (compression != compression_type::NONE) {
       // the compressor operates on device memory, so the header needs to be copied to the device
-      auto const d_header = cudf::detail::make_device_uvector_async(
+      auto const d_header = cudf::detail::make_device_buffer_async(
         host_span<char const>{header}, stream, cudf::get_current_device_resource_ref());
-      write_compressed_to_sink(
-        out_sink, d_header, {}, compression, options.get_compression_block_size(), stream);
+      write_compressed_to_sink(out_sink,
+                               d_header,
+                               {},
+                               compression,
+                               options.get_compression_block_size(),
+                               stream,
+                               cudf::get_current_device_resource_ref());
     } else {
       out_sink->host_write(header.data(), header.size());
     }
@@ -531,7 +541,8 @@ void write_chunked(data_sink* out_sink,
       device_span{newline.data(), static_cast<size_t>(newline.size())},
       compression,
       block_size,
-      stream);
+      stream,
+      cudf::get_current_device_resource_ref());
   }
 
   write_to_sink(out_sink, data, stream);

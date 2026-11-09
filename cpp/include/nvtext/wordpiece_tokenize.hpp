@@ -34,11 +34,12 @@ struct wordpiece_vocabulary {
    *
    * @param input Strings for the vocabulary
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @param mr Memory resources used for temporary allocations and the returned object's device
+   * memory
    */
   wordpiece_vocabulary(cudf::strings_column_view const& input,
-                       cuda::stream_ref stream           = cudf::get_default_stream(),
-                       rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                       cuda::stream_ref stream   = cudf::get_default_stream(),
+                       cudf::memory_resources mr = cudf::get_current_device_resource_ref());
   ~wordpiece_vocabulary();
 
   struct wordpiece_vocabulary_impl;
@@ -55,13 +56,13 @@ struct wordpiece_vocabulary {
  *
  * @param input Strings for the vocabulary
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned object's device memory
  * @return Object to be used with nvtext::wordpiece_tokenize
  */
 std::unique_ptr<wordpiece_vocabulary> load_wordpiece_vocabulary(
   cudf::strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the token ids for the input string a wordpiece tokenizer
@@ -100,7 +101,7 @@ std::unique_ptr<wordpiece_vocabulary> load_wordpiece_vocabulary(
  * @param max_words_per_row Maximum number of words to tokenize for each row.
  *                          Default 0 tokenizes all words.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Lists column of token ids
  */
 std::unique_ptr<cudf::column> wordpiece_tokenize(
@@ -108,7 +109,7 @@ std::unique_ptr<cudf::column> wordpiece_tokenize(
   wordpiece_vocabulary const& vocabulary,
   cudf::size_type max_words_per_row = 0,
   cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr         = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of tokenize group
 }  // namespace CUDF_EXPORT nvtext

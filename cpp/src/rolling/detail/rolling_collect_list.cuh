@@ -90,7 +90,8 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
  *  Mapping back to `input`    == [0,1,0,1,2,1,2,3,2,3,4,3,4]
  */
 std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view const& offsets,
-                                                           cuda::stream_ref stream);
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr);
 
 /**
  * @brief Create gather map to generate the child column of the result of
@@ -100,15 +101,16 @@ template <typename PrecedingIter>
 std::unique_ptr<column> create_collect_gather_map(column_view const& child_offsets,
                                                   column_view const& per_row_mapping,
                                                   PrecedingIter preceding_iter,
-                                                  cuda::stream_ref stream)
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   auto gather_map = make_fixed_width_column(data_type{type_to_id<size_type>()},
                                             per_row_mapping.size(),
                                             mask_state::UNALLOCATED,
                                             stream,
-                                            cudf::get_current_device_resource_ref());
+                                            mr.get_output_mr());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{per_row_mapping.size()},
     gather_map->mutable_view().template begin<size_type>(),
@@ -166,11 +168,15 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
 
   // Map each element of the collect() result's child column
   // to the index where it appears in the input.
-  auto per_row_mapping = get_list_child_to_list_row_mapping(offsets->view(), stream);
+  auto per_row_mapping = get_list_child_to_list_row_mapping(
+    offsets->view(), stream, cudf::get_current_device_resource_ref());
 
   // Generate gather map to produce the collect() result's child column.
-  auto gather_map =
-    create_collect_gather_map(offsets->view(), per_row_mapping->view(), preceding_begin, stream);
+  auto gather_map = create_collect_gather_map(offsets->view(),
+                                              per_row_mapping->view(),
+                                              preceding_begin,
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
 
   // If gather_map collects null elements, and null_policy == EXCLUDE,
   // those elements must be filtered out, and offsets recomputed.

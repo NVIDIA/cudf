@@ -12,12 +12,10 @@
 #include <cstddef>
 #include <map>
 #include <numeric>
-#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::experimental::detail {
@@ -77,13 +75,33 @@ struct trie_builder_node {
   [[nodiscard]] bool needs_slot() const { return ends_a_path || children.size() > 1; }
 };
 
-// A node waiting to be visited by the slot-emitting descent. `pending` carries the steps of the
-// collapsed single-child chain since the last slot, and becomes that slot's step range.
-struct descent_state {
-  std::size_t node;
-  size_type depth;
-  std::vector<std::string> pending;
-};
+// Emits the slots of `node`'s subtree in pre-order. `pending` holds the steps of the collapsed
+// single-child chain since the last slot, and becomes the next slot's step range. Recursion is as
+// deep as the longest path has steps.
+void emit_slots(std::vector<trie_builder_node> const& nodes,
+                std::size_t node,
+                size_type depth,
+                std::vector<std::string>& pending,
+                variant_path_trie& trie,
+                std::vector<size_type>& slot_of_node)
+{
+  std::vector<std::string> child_pending;
+  auto* chain = &pending;
+  // The root is the value blob itself and never becomes a slot.
+  if (node != 0 && nodes[node].needs_slot()) {
+    slot_of_node[node] = static_cast<size_type>(trie.slot_depth.size());
+    trie.steps.insert(trie.steps.end(), pending.begin(), pending.end());
+    trie.slot_steps.push_back(static_cast<size_type>(trie.steps.size()));
+    trie.slot_depth.push_back(depth);
+    ++depth;
+    chain = &child_pending;
+  }
+  for (auto const& [step, child] : nodes[node].children) {
+    chain->push_back(step);
+    emit_slots(nodes, child, depth, *chain, trie, slot_of_node);
+    chain->pop_back();
+  }
+}
 
 }  // namespace
 
@@ -152,33 +170,8 @@ variant_path_trie build_variant_path_trie(std::span<std::string_view const> path
   trie.slot_steps.push_back(0);
   std::vector<size_type> slot_of_node(nodes.size(), -1);
 
-  // Depth-first descent from the root, emitting slots in pre-order
-  std::vector<descent_state> stack;
-  stack.push_back({0, 0, {}});
-
-  while (!stack.empty()) {
-    auto state = std::move(stack.back());
-    stack.pop_back();
-
-    // The root is the value blob itself and never becomes a slot.
-    auto child_depth = state.depth;
-    std::vector<std::string> child_pending;
-    if (state.node != 0 && nodes[state.node].needs_slot()) {
-      slot_of_node[state.node] = static_cast<size_type>(trie.slot_depth.size());
-      trie.steps.insert(trie.steps.end(), state.pending.begin(), state.pending.end());
-      trie.slot_steps.push_back(static_cast<size_type>(trie.steps.size()));
-      trie.slot_depth.push_back(state.depth);
-      child_depth = state.depth + 1;
-    } else {
-      child_pending = std::move(state.pending);
-    }
-
-    // Pushed in reverse so popping visits children in order, keeping each subtree contiguous.
-    for (auto const& [step, child] : std::ranges::reverse_view(nodes[state.node].children)) {
-      stack.emplace_back(child, child_depth, child_pending);
-      stack.back().pending.push_back(step);
-    }
-  }
+  std::vector<std::string> pending;
+  emit_slots(nodes, 0, 0, pending, trie, slot_of_node);
 
   // Invert the path-to-slot mapping into CSR form, counting then filling.
   auto const num_slots = trie.slot_depth.size();

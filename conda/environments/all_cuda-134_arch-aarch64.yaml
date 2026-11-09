@@ -17,6 +17,7 @@ dependencies:
 - cmake>=4.0
 - cramjam
 - croaring==4.4.2
+- cuda-bindings>=13.0.2,<13.5
 - cuda-bindings>=13.0.2,<14.0
 - cuda-cudart-dev
 - cuda-cupti-dev

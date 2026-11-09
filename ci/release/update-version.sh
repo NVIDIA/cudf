@@ -147,6 +147,7 @@ echo "${RAPIDS_BRANCH_NAME}" > RAPIDS_BRANCH
 DEPENDENCIES=(
   cudf
   cudf-polars
+  cudf-polars-quent
   cudf-streaming
   cudf_kafka
   cugraph

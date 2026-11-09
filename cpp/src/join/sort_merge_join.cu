@@ -328,15 +328,15 @@ struct is_matched {
 };
 
 /**
- * @brief Maps a probe row to its build row when every build key is unique.
+ * @brief Maps a left row to its right row when every right key is distinct.
  *
- * Without match counts, the probe row is known to match.
+ * Without match counts, the left row is known to match.
  */
 template <typename SmallerIterator>
-struct unique_match_index {
-  size_type const* match_starts;  ///< Matching-run start per probe row
-  size_type const* match_counts;  ///< Optional matching-row count per probe row
-  SmallerIterator smaller_order;  ///< Iterator over build rows in sorted order
+struct distinct_match_index {
+  size_type const* match_starts;  ///< Matching-run start per left row
+  size_type const* match_counts;  ///< Optional matching-row count per left row
+  SmallerIterator smaller_order;  ///< Iterator over right rows in sorted order
 
   __device__ size_type operator()(size_type idx) const
   {
@@ -364,20 +364,20 @@ void batched_copy(InputIts input_iterators,
 enum class compute_match_starts : bool { NO, YES };
 
 /**
- * @brief Stores the matching build-run range for one probe row from its typed search position.
+ * @brief Stores the matching right-run range for one left row from its typed search position.
  */
 template <typename T>
 struct typed_match_range_output {
-  T const* run_keys;             ///< Key value of each build run
-  T const* probe_keys;           ///< Probe key values
-  size_type num_runs;            ///< Number of build key runs
-  size_type const* run_offsets;  ///< Build-run starts and trailing sentinel
+  T const* run_keys;             ///< Key value of each right run
+  T const* left_keys;            ///< Left key values
+  size_type num_runs;            ///< Number of right key runs
+  size_type const* run_offsets;  ///< Right-run starts and trailing sentinel
   size_type* match_starts;       ///< Optional matching-run start output; nullptr skips it
-  size_type* match_counts;       ///< Output matching-row count per probe row
+  size_type* match_counts;       ///< Output matching-row count per left row
 
   __device__ void operator()(size_type idx, size_type run_idx) const
   {
-    auto const is_match = run_idx < num_runs && run_keys[run_idx] == probe_keys[idx];
+    auto const is_match = run_idx < num_runs && run_keys[run_idx] == left_keys[idx];
     auto const start    = is_match ? run_offsets[run_idx] : 0;
     if (match_starts != nullptr) { match_starts[idx] = start; }
     match_counts[idx] = is_match ? run_offsets[run_idx + 1] - start : 0;
@@ -388,23 +388,23 @@ struct typed_match_range_output {
 constexpr size_type run_sample_stride = 32;
 
 /**
- * @brief Searches the run keys for one probe row through a sampled two-level index.
+ * @brief Searches the run keys for one left row through a sampled two-level index.
  *
  * The search first runs over every `run_sample_stride`-th run key, which is small enough to stay
- * cache resident, and then over the one segment of run keys that can contain the probe key.
+ * cache resident, and then over the one segment of run keys that can contain the left key.
  * Run keys are strictly increasing, so the result equals a lower bound over all run keys.
  */
 template <typename T>
 struct sampled_run_search {
-  T const* run_keys;                   ///< Key value of each build run
-  size_type num_runs;                  ///< Number of build key runs
+  T const* run_keys;                   ///< Key value of each right run
+  size_type num_runs;                  ///< Number of right key runs
   T const* run_samples;                ///< Every `run_sample_stride`-th run key
   size_type num_samples;               ///< Number of sampled run keys
   typed_match_range_output<T> output;  ///< Stores the matching run range
 
   __device__ void operator()(size_type idx) const
   {
-    auto const key = output.probe_keys[idx];
+    auto const key = output.left_keys[idx];
     auto const samples_end =
       cuda::std::upper_bound(run_samples, run_samples + num_samples, key) - run_samples;
     auto const segment =
@@ -416,71 +416,70 @@ struct sampled_run_search {
   }
 };
 
-template <typename T>
-void search_typed_match_ranges(column_view const& build,
-                               column_view const& probe,
-                               device_span<size_type const> run_rows,
-                               device_span<size_type const> run_offsets,
-                               size_type* match_starts,
-                               size_type* match_counts,
-                               cuda::stream_ref stream)
-{
-  auto const policy   = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
-  auto const num_runs = static_cast<size_type>(run_rows.size());
-  auto run_keys       = cuda::device_buffer<T>(
-    stream, cudf::get_current_device_resource_ref(), num_runs, cuda::no_init);
-  thrust::gather(policy, run_rows.begin(), run_rows.end(), build.data<T>(), run_keys.begin());
-  auto const num_samples = cuda::ceil_div(num_runs, run_sample_stride);
-  auto run_samples       = cuda::device_buffer<T>(
-    stream, cudf::get_current_device_resource_ref(), num_samples, cuda::no_init);
-  thrust::copy_n(policy,
-                 cuda::strided_iterator{run_keys.begin(), run_sample_stride},
-                 num_samples,
-                 run_samples.begin());
-  thrust::for_each_n(policy,
-                     cuda::counting_iterator<size_type>{0},
-                     probe.size(),
-                     sampled_run_search<T>{run_keys.data(),
-                                           num_runs,
-                                           run_samples.data(),
-                                           num_samples,
-                                           typed_match_range_output<T>{run_keys.data(),
-                                                                       probe.data<T>(),
-                                                                       num_runs,
-                                                                       run_offsets.data(),
-                                                                       match_starts,
-                                                                       match_counts}});
-}
-
 /**
- * @brief Finds the matching build run of each probe row by comparing key values directly.
+ * @brief Calls `fn` with a value of the integer type that the typed key search uses for `type`.
  *
  * Keys are searched through an integer of the same width and signedness, so every integer and
  * chrono key type shares one of four instantiations.
  *
- * @return Whether the key type is supported; nothing is written otherwise
+ * @return Whether `type` is supported; `fn` is not called otherwise
  */
-bool find_typed_match_ranges(column_view const& build,
-                             column_view const& probe,
-                             device_span<size_type const> run_rows,
+template <typename Fn>
+bool dispatch_typed_search_key(data_type type, Fn&& fn)
+{
+  if (!cudf::is_integral(type) && !cudf::is_chrono(type)) { return false; }
+  auto const is_unsigned = cudf::is_unsigned(type);
+  switch (cudf::size_of(type)) {
+    case 4: is_unsigned ? fn(uint32_t{}) : fn(int32_t{}); return true;
+    case 8: is_unsigned ? fn(uint64_t{}) : fn(int64_t{}); return true;
+    default: return false;
+  }
+}
+
+/**
+ * @brief Right run keys in the representation that the typed key search reads.
+ */
+struct typed_run_keys_view {
+  void const* keys    = nullptr;  ///< Key value of each run; nullptr if the keys are unsupported
+  void const* samples = nullptr;  ///< Every `run_sample_stride`-th run key
+};
+
+/**
+ * @brief Finds the matching right run of each left row by comparing key values directly.
+ *
+ * @param run_keys Right run keys built for the type of `left`
+ * @param left Left key column, with the same type as the right key column and no nulls
+ * @param run_offsets Right-run starts and trailing sentinel
+ * @param match_starts Optional matching-run start output; nullptr skips it
+ * @param match_counts Output matching-row count per left row
+ * @param stream CUDA stream used for device operations
+ * @param temp_mr Memory resource used for temporary allocations
+ */
+void find_typed_match_ranges(typed_run_keys_view run_keys,
+                             column_view const& left,
                              device_span<size_type const> run_offsets,
                              size_type* match_starts,
                              size_type* match_counts,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             rmm::device_async_resource_ref temp_mr)
 {
-  auto const type = build.type();
-  if (!cudf::is_integral(type) && !cudf::is_chrono(type)) { return false; }
-  auto const is_unsigned = cudf::is_unsigned(type);
-  auto const search      = [&]<typename T>() {
-    search_typed_match_ranges<T>(
-      build, probe, run_rows, run_offsets, match_starts, match_counts, stream);
-    return true;
-  };
-  switch (cudf::size_of(type)) {
-    case 4: return is_unsigned ? search.operator()<uint32_t>() : search.operator()<int32_t>();
-    case 8: return is_unsigned ? search.operator()<uint64_t>() : search.operator()<int64_t>();
-    default: return false;
-  }
+  dispatch_typed_search_key(left.type(), [&](auto key) {
+    using T                = decltype(key);
+    auto const num_runs    = static_cast<size_type>(run_offsets.size()) - 1;
+    auto const keys        = static_cast<T const*>(run_keys.keys);
+    auto const num_samples = cuda::ceil_div(num_runs, run_sample_stride);
+    thrust::for_each_n(
+      rmm::exec_policy_nosync(stream, temp_mr),
+      cuda::counting_iterator<size_type>{0},
+      left.size(),
+      sampled_run_search<T>{
+        keys,
+        num_runs,
+        static_cast<T const*>(run_keys.samples),
+        num_samples,
+        typed_match_range_output<T>{
+          keys, left.data<T>(), num_runs, run_offsets.data(), match_starts, match_counts}});
+  });
 }
 
 template <typename SmallerIterator>
@@ -491,6 +490,7 @@ class merge {
   SmallerIterator sorted_smaller_order_begin;
   device_span<size_type const> unique_smaller_rows;
   device_span<size_type const> smaller_run_offsets;
+  typed_run_keys_view typed_smaller_run_keys;
   std::unique_ptr<detail::row::lexicographic::two_table_comparator> tt_comparator;
 
  public:
@@ -499,8 +499,8 @@ class merge {
     std::unique_ptr<rmm::device_uvector<size_type>> counts;
   };
 
-  /// Whether every build row is its own key run, so each probe row matches at most one row.
-  [[nodiscard]] bool has_unique_smaller_keys() const
+  /// Whether every right row is its own key run, so each left row matches at most one row.
+  [[nodiscard]] bool has_distinct_right_keys() const
   {
     return static_cast<size_type>(unique_smaller_rows.size()) == smaller.num_rows();
   }
@@ -509,6 +509,7 @@ class merge {
         SmallerIterator sorted_smaller_order_begin,
         device_span<size_type const> unique_smaller_rows,
         device_span<size_type const> smaller_run_offsets,
+        typed_run_keys_view typed_smaller_run_keys,
         table_view const& larger,
         cuda::stream_ref stream,
         cudf::memory_resources mr)
@@ -516,7 +517,8 @@ class merge {
       larger{larger},
       sorted_smaller_order_begin{sorted_smaller_order_begin},
       unique_smaller_rows{unique_smaller_rows},
-      smaller_run_offsets{smaller_run_offsets}
+      smaller_run_offsets{smaller_run_offsets},
+      typed_smaller_run_keys{typed_smaller_run_keys}
   {
     std::vector<cudf::order> column_order(smaller.num_columns(), cudf::order::ASCENDING);
     std::vector<cudf::null_order> null_precedence(smaller.num_columns(), cudf::null_order::BEFORE);
@@ -556,15 +558,15 @@ typename merge<SmallerIterator>::match_ranges merge<SmallerIterator>::find_match
   auto match_counts            = cudf::detail::make_zeroed_device_uvector_async<size_type>(
     static_cast<std::size_t>(larger_numrows) + 1, stream, output_mr);
 
-  if (!has_nulls && smaller.num_columns() == 1 &&
-      smaller.column(0).type() == larger.column(0).type() &&
-      find_typed_match_ranges(smaller.column(0),
-                              larger.column(0),
-                              unique_smaller_rows,
-                              smaller_run_offsets,
-                              match_starts_data,
-                              match_counts.data(),
-                              stream)) {
+  if (typed_smaller_run_keys.keys != nullptr && !has_nulls &&
+      smaller.column(0).type() == larger.column(0).type()) {
+    find_typed_match_ranges(typed_smaller_run_keys,
+                            larger.column(0),
+                            smaller_run_offsets,
+                            match_starts_data,
+                            match_counts.data(),
+                            stream,
+                            mr.get_temporary_mr());
     return {std::move(match_starts),
             std::make_unique<rmm::device_uvector<size_type>>(std::move(match_counts))};
   }
@@ -622,23 +624,24 @@ merge<SmallerIterator>::inner(cuda::stream_ref stream, cudf::memory_resources mr
   auto [match_starts, match_counts] =
     find_match_ranges(compute_match_starts::YES, stream, mr.as_temporary());
 
-  if (has_unique_smaller_keys()) {
-    auto const policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+  if (has_distinct_right_keys()) {
+    auto const policy = rmm::exec_policy_nosync(stream, temp_mr);
     auto const counts = match_counts->begin();
     auto const total  = thrust::count_if(policy, counts, counts + larger_numrows, is_matched{});
-    rmm::device_uvector<size_type> larger_indices(total, stream, mr);
-    rmm::device_uvector<size_type> smaller_indices(total, stream, mr);
+    rmm::device_uvector<size_type> larger_indices(total, stream, mr.get_output_mr());
+    rmm::device_uvector<size_type> smaller_indices(total, stream, mr.get_output_mr());
     cudf::detail::copy_if_async(cuda::counting_iterator<size_type>{0},
                                 cuda::counting_iterator<size_type>{larger_numrows},
                                 counts,
                                 larger_indices.begin(),
                                 is_matched{},
-                                stream);
+                                stream,
+                                mr.as_temporary());
     thrust::transform(policy,
                       larger_indices.begin(),
                       larger_indices.end(),
                       smaller_indices.begin(),
-                      unique_match_index<SmallerIterator>{
+                      distinct_match_index<SmallerIterator>{
                         match_starts->data(), nullptr, sorted_smaller_order_begin});
     return {std::make_unique<rmm::device_uvector<size_type>>(std::move(smaller_indices)),
             std::make_unique<rmm::device_uvector<size_type>>(std::move(larger_indices))};
@@ -702,16 +705,16 @@ merge<SmallerIterator>::left(cuda::stream_ref stream, cudf::memory_resources mr)
   auto [match_starts, match_counts] =
     find_match_ranges(compute_match_starts::YES, stream, mr.as_temporary());
 
-  if (has_unique_smaller_keys()) {
-    auto const policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
-    rmm::device_uvector<size_type> larger_indices(larger_numrows, stream, mr);
-    rmm::device_uvector<size_type> smaller_indices(larger_numrows, stream, mr);
+  if (has_distinct_right_keys()) {
+    auto const policy = rmm::exec_policy_nosync(stream, temp_mr);
+    rmm::device_uvector<size_type> larger_indices(larger_numrows, stream, mr.get_output_mr());
+    rmm::device_uvector<size_type> smaller_indices(larger_numrows, stream, mr.get_output_mr());
     thrust::sequence(policy, larger_indices.begin(), larger_indices.end(), 0);
     thrust::transform(policy,
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{larger_numrows},
                       smaller_indices.begin(),
-                      unique_match_index<SmallerIterator>{
+                      distinct_match_index<SmallerIterator>{
                         match_starts->data(), match_counts->data(), sorted_smaller_order_begin});
     return {std::make_unique<rmm::device_uvector<size_type>>(std::move(smaller_indices)),
             std::make_unique<rmm::device_uvector<size_type>>(std::move(larger_indices))};
@@ -938,6 +941,29 @@ sort_merge_join::sort_merge_join(table_view const& right,
   right_run_rows    = std::move(run_index.rows);
   right_run_offsets = std::move(run_index.offsets);
   num_right_runs    = run_index.num_runs;
+
+  if (right_view.num_columns() != 1 || has_nested_nulls(right_view)) { return; }
+  auto const right_keys = right_view.column(0);
+  dispatch_typed_search_key(right_keys.type(), [&](auto key) {
+    using T                = decltype(key);
+    auto const policy      = rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
+    auto const num_samples = cuda::ceil_div(num_right_runs, run_sample_stride);
+    auto keys              = cuda::device_buffer<std::byte>(
+      stream, mr.get_output_mr(), num_right_runs * sizeof(T), cuda::no_init);
+    auto samples = cuda::device_buffer<std::byte>(
+      stream, mr.get_output_mr(), num_samples * sizeof(T), cuda::no_init);
+    auto const keys_begin = reinterpret_cast<T*>(keys.data());
+    thrust::gather(policy,
+                   right_run_rows->begin(),
+                   right_run_rows->begin() + num_right_runs,
+                   right_keys.data<T>(),
+                   keys_begin);
+    thrust::copy_n(policy,
+                   cuda::strided_iterator{keys_begin, run_sample_stride},
+                   num_samples,
+                   reinterpret_cast<T*>(samples.data()));
+    right_typed_run_keys = typed_run_keys{std::move(keys), std::move(samples)};
+  });
 }
 
 cuda::device_buffer<size_type> sort_merge_join::preprocessed_table::map_table_to_unprocessed(
@@ -999,6 +1025,10 @@ auto sort_merge_join::invoke_merge(table_view right_view,
     device_span<size_type const>{right_run_rows->data(), static_cast<std::size_t>(num_right_runs)};
   auto const right_offsets = device_span<size_type const>{
     right_run_offsets->data(), static_cast<std::size_t>(num_right_runs) + 1};
+  auto const typed_right_keys =
+    right_typed_run_keys.has_value()
+      ? typed_run_keys_view{right_typed_run_keys->keys.data(), right_typed_run_keys->samples.data()}
+      : typed_run_keys_view{};
   // The merge object is a temporary; this class takes no caller-provided temporary resource.
   cudf::memory_resources const merge_mr{cudf::get_current_device_resource_ref()};
   auto has_right_sorting_order = preprocessed_right._null_processed_table_sorted_order.has_value();
@@ -1008,6 +1038,7 @@ auto sort_merge_join::invoke_merge(table_view right_view,
               r_view.begin<size_type>(),
               unique_right_rows,
               right_offsets,
+              typed_right_keys,
               left_view,
               stream,
               merge_mr);
@@ -1017,6 +1048,7 @@ auto sort_merge_join::invoke_merge(table_view right_view,
             cuda::counting_iterator<cudf::size_type>{0},
             unique_right_rows,
             right_offsets,
+            typed_right_keys,
             left_view,
             stream,
             merge_mr);

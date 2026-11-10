@@ -187,7 +187,8 @@ std::unique_ptr<table> drop_nans(
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied to the corresponding output column
- * if the corresponding element `i` in the mask is non-null and `true`.
+ * if the corresponding element `i` in the mask is `true`. Rows with null mask elements are
+ * dropped unless `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p retention_mask is empty, or @p input has zero rows, an empty table is returned.
@@ -211,23 +212,10 @@ std::unique_ptr<table> apply_retention_mask(
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Filters `input` using `retention_mask` of boolean values as a mask.
+ * @copydoc apply_retention_mask(table_view const&, column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
  *
- * Same as `apply_retention_mask` above, except that rows whose @p retention_mask element is null
- * are kept if @p null_handling is `null_policy::INCLUDE` and dropped if `null_policy::EXCLUDE`.
- *
- * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
- * retention_mask.
- * @throws cudf::logic_error if @p retention_mask is not `type_id::BOOL8` type.
- *
- * @param[in] input The input table_view to filter
- * @param[in] retention_mask A nullable column_view of type type_id::BOOL8 used
- * as a mask to filter the `input`.
- * @param[in] null_handling Whether rows with null @p retention_mask elements are kept or dropped
- * @param[in] stream CUDA stream used for device memory operations and kernel launches
- * @param[in] mr Memory resources used for temporary allocations and the returned table
- * @return Table containing copy of all rows of @p input passing the filter defined by
- * @p retention_mask and @p null_handling.
+ * @param[in] null_handling Whether to keep or drop rows with null mask elements
  */
 std::unique_ptr<table> apply_retention_mask(
   table_view const& input,
@@ -260,7 +248,8 @@ std::unique_ptr<table> apply_retention_mask(
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied from the corresponding output column
- * if the corresponding element `i` in the mask is non-null and `false`.
+ * if the corresponding element `i` in the mask is `false`. Rows with null mask elements are
+ * dropped unless `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p deletion_mask is empty, a copy of @p input is returned. If @p input has zero rows,
@@ -285,23 +274,10 @@ std::unique_ptr<table> apply_deletion_mask(
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Filters `input` using `deletion_mask` of boolean values as a mask.
+ * @copydoc apply_deletion_mask(table_view const&, column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
  *
- * Same as `apply_deletion_mask` above, except that rows whose @p deletion_mask element is null
- * are kept if @p null_handling is `null_policy::INCLUDE` and dropped if `null_policy::EXCLUDE`.
- *
- * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
- * deletion_mask.
- * @throws cudf::logic_error if @p deletion_mask is not `type_id::BOOL8` type.
- *
- * @param[in] input The input table_view to filter
- * @param[in] deletion_mask A nullable column_view of type type_id::BOOL8 used
- * as a mask to filter the `input`.
- * @param[in] null_handling Whether rows with null @p deletion_mask elements are kept or dropped
- * @param[in] stream CUDA stream used for device memory operations and kernel launches
- * @param[in] mr Memory resources used for temporary allocations and the returned table
- * @return Table containing copy of all rows of @p input not deleted by @p deletion_mask and
- * @p null_handling.
+ * @param[in] null_handling Whether to keep or drop rows with null mask elements
  */
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,

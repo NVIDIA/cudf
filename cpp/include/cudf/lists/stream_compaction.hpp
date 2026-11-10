@@ -61,6 +61,31 @@ std::unique_ptr<column> apply_retention_mask(
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Filters elements in each row of `input` LIST column using `retention_mask`
+ * LIST of booleans as a mask.
+ *
+ * Same as `apply_retention_mask` above, except that elements whose @p retention_mask element is
+ * null are kept if @p null_handling is `null_policy::INCLUDE` and dropped if
+ * `null_policy::EXCLUDE`.
+ *
+ * @throws cudf::logic_error if @p retention_mask is not a "lists of bools" column
+ * @throws cudf::logic_error if @p input and @p retention_mask have different number of rows
+ *
+ * @param input The input list column view to be filtered
+ * @param retention_mask A nullable list of bools column used to filter `input` elements
+ * @param null_handling Whether elements with null @p retention_mask elements are kept or dropped
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return List column of the same type as `input`, containing filtered list rows
+ */
+std::unique_ptr<column> apply_retention_mask(
+  lists_column_view const& input,
+  lists_column_view const& retention_mask,
+  null_policy null_handling,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
  * @brief Filters elements in each row of `input` LIST column using `boolean_mask`
  * LIST of booleans as a mask.
  *
@@ -112,6 +137,32 @@ std::unique_ptr<column> apply_retention_mask(
 std::unique_ptr<column> apply_deletion_mask(
   lists_column_view const& input,
   lists_column_view const& deletion_mask,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Filters elements in each row of `input` LIST column using `deletion_mask`
+ * LIST of booleans as a mask.
+ *
+ * Same as `apply_deletion_mask` above, except that elements whose @p deletion_mask element is
+ * null are kept if @p null_handling is `null_policy::INCLUDE` and dropped if
+ * `null_policy::EXCLUDE`.
+ *
+ * @throws cudf::logic_error if @p deletion_mask is not a "lists of bools" column
+ * @throws cudf::logic_error if @p input and @p deletion_mask have different number of rows
+ *
+ * @param input The input list column view to be filtered
+ * @param deletion_mask A nullable list of bools column used to filter `input` elements
+ * @param null_handling Whether elements with null @p deletion_mask elements are kept or dropped
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return List column of the same type as `input`, containing list rows with deleted elements
+ * removed
+ */
+std::unique_ptr<column> apply_deletion_mask(
+  lists_column_view const& input,
+  lists_column_view const& deletion_mask,
+  null_policy null_handling,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 

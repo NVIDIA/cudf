@@ -872,7 +872,8 @@ void sort_merge_join::preprocessed_table::apply_nonnull_filter(cuda::stream_ref 
 
   // Use the internal apply_mask directly to avoid the public API overhead (NVTX range).
   _null_processed_table =
-    detail::apply_mask(_table_view, *bool_mask, detail::mask_type::RETENTION, stream, temp_mr);
+    detail::apply_mask(
+      _table_view, *bool_mask, detail::mask_type::RETENTION, null_policy::EXCLUDE, stream, temp_mr);
   _null_processed_table_view = _null_processed_table.value()->view();
 }
 

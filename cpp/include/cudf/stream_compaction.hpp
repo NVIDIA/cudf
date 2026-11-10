@@ -211,6 +211,32 @@ std::unique_ptr<table> apply_retention_mask(
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Filters `input` using `retention_mask` of boolean values as a mask.
+ *
+ * Same as `apply_retention_mask` above, except that rows whose @p retention_mask element is null
+ * are kept if @p null_handling is `null_policy::INCLUDE` and dropped if `null_policy::EXCLUDE`.
+ *
+ * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
+ * retention_mask.
+ * @throws cudf::logic_error if @p retention_mask is not `type_id::BOOL8` type.
+ *
+ * @param[in] input The input table_view to filter
+ * @param[in] retention_mask A nullable column_view of type type_id::BOOL8 used
+ * as a mask to filter the `input`.
+ * @param[in] null_handling Whether rows with null @p retention_mask elements are kept or dropped
+ * @param[in] stream CUDA stream used for device memory operations and kernel launches
+ * @param[in] mr Memory resources used for temporary allocations and the returned table
+ * @return Table containing copy of all rows of @p input passing the filter defined by
+ * @p retention_mask and @p null_handling.
+ */
+std::unique_ptr<table> apply_retention_mask(
+  table_view const& input,
+  column_view const& retention_mask,
+  null_policy null_handling,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
  * @brief Filters `input` using `boolean_mask` of boolean values as a mask.
  *
  * @deprecated in release 26.10. Use `apply_retention_mask` instead.
@@ -255,6 +281,32 @@ std::unique_ptr<table> apply_retention_mask(
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,
   column_view const& deletion_mask,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Filters `input` using `deletion_mask` of boolean values as a mask.
+ *
+ * Same as `apply_deletion_mask` above, except that rows whose @p deletion_mask element is null
+ * are kept if @p null_handling is `null_policy::INCLUDE` and dropped if `null_policy::EXCLUDE`.
+ *
+ * @throws cudf::logic_error if non-empty @p input has different number of rows than @p
+ * deletion_mask.
+ * @throws cudf::logic_error if @p deletion_mask is not `type_id::BOOL8` type.
+ *
+ * @param[in] input The input table_view to filter
+ * @param[in] deletion_mask A nullable column_view of type type_id::BOOL8 used
+ * as a mask to filter the `input`.
+ * @param[in] null_handling Whether rows with null @p deletion_mask elements are kept or dropped
+ * @param[in] stream CUDA stream used for device memory operations and kernel launches
+ * @param[in] mr Memory resources used for temporary allocations and the returned table
+ * @return Table containing copy of all rows of @p input not deleted by @p deletion_mask and
+ * @p null_handling.
+ */
+std::unique_ptr<table> apply_deletion_mask(
+  table_view const& input,
+  column_view const& deletion_mask,
+  null_policy null_handling,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 

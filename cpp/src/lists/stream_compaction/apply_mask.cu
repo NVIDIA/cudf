@@ -8,11 +8,13 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/replace.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/unary.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/stream_compaction.hpp>
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -26,6 +28,7 @@ namespace detail {
 std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                    lists_column_view const& boolean_mask,
                                    cudf::detail::mask_type mask_kind,
+                                   null_policy null_handling,
                                    cuda::stream_ref stream,
                                    cudf::memory_resources mr)
 {
@@ -38,12 +41,25 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 
   auto constexpr offset_data_type = data_type{type_id::INT32};
 
-  auto const mask_sliced_child = boolean_mask.get_sliced_child(stream);
+  // For INCLUDE, replace null mask elements with the value that keeps the element so that the
+  // filtered child and the segmented sizes below agree.
+  auto const raw_mask_sliced_child = boolean_mask.get_sliced_child(stream);
+  auto const null_replaced_mask_child =
+    (null_handling == null_policy::INCLUDE and raw_mask_sliced_child.has_nulls())
+      ? cudf::detail::replace_nulls(
+          raw_mask_sliced_child,
+          cudf::numeric_scalar<bool>(mask_kind == cudf::detail::mask_type::RETENTION, true, stream),
+          stream,
+          cudf::get_current_device_resource_ref())
+      : std::unique_ptr<column>{};
+  auto const mask_sliced_child =
+    null_replaced_mask_child ? null_replaced_mask_child->view() : raw_mask_sliced_child;
 
   auto const make_filtered_child = [&] {
     auto filtered = cudf::detail::apply_mask(cudf::table_view{{input.get_sliced_child(stream)}},
                                              mask_sliced_child,
                                              mask_kind,
+                                             null_handling,
                                              stream,
                                              mr)
                       ->release();
@@ -109,7 +125,19 @@ std::unique_ptr<column> apply_retention_mask(lists_column_view const& input,
                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::apply_mask(input, retention_mask, cudf::detail::mask_type::RETENTION, stream, mr);
+  return detail::apply_mask(
+    input, retention_mask, cudf::detail::mask_type::RETENTION, null_policy::EXCLUDE, stream, mr);
+}
+
+std::unique_ptr<column> apply_retention_mask(lists_column_view const& input,
+                                             lists_column_view const& retention_mask,
+                                             null_policy null_handling,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::apply_mask(
+    input, retention_mask, cudf::detail::mask_type::RETENTION, null_handling, stream, mr);
 }
 
 std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
@@ -118,7 +146,8 @@ std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::apply_mask(input, boolean_mask, cudf::detail::mask_type::RETENTION, stream, mr);
+  return detail::apply_mask(
+    input, boolean_mask, cudf::detail::mask_type::RETENTION, null_policy::EXCLUDE, stream, mr);
 }
 
 std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
@@ -127,7 +156,19 @@ std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
                                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::apply_mask(input, deletion_mask, cudf::detail::mask_type::DELETION, stream, mr);
+  return detail::apply_mask(
+    input, deletion_mask, cudf::detail::mask_type::DELETION, null_policy::EXCLUDE, stream, mr);
+}
+
+std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
+                                            lists_column_view const& deletion_mask,
+                                            null_policy null_handling,
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::apply_mask(
+    input, deletion_mask, cudf::detail::mask_type::DELETION, null_handling, stream, mr);
 }
 
 }  // namespace cudf::lists

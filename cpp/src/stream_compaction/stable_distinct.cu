@@ -63,7 +63,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
   }();
 
   return cudf::detail::apply_mask(
-    input, cudf::device_span<bool const>(output_markers), mask_type::RETENTION, stream, mr);
+    input, cudf::device_span<bool const>(output_markers), mask_type::RETENTION, null_policy::EXCLUDE, stream, mr);
 }
 
 }  // namespace detail

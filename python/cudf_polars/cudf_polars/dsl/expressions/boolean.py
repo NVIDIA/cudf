@@ -583,6 +583,18 @@ class BooleanFunction(Expr):
                 ).astype(needles.dtype, stream=df.stream)
             else:
                 haystack_size = haystack.size
+            if haystack_size and haystack.obj.type().id() == plc.TypeId.EMPTY:
+                # The haystack only contains nulls (e.g. ``is_in([None])``) and
+                # libcudf cannot search a column of type EMPTY.
+                if nulls_equal:
+                    out = plc.unary.is_null(needles.obj, stream=df.stream)
+                else:
+                    out = plc.Column.from_scalar(
+                        plc.Scalar.from_py(py_val=False, stream=df.stream),
+                        needles.size,
+                        stream=df.stream,
+                    ).with_mask(needles.obj.null_mask(), needles.null_count)
+                return Column(out, dtype=self.dtype)
             if haystack_size:
                 result = plc.search.contains(
                     haystack.obj,

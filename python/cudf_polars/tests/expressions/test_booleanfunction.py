@@ -142,6 +142,33 @@ def test_boolean_finite(engine: pl.GPUEngine, expr):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("a").is_finite(),
+        pl.col("a").is_infinite(),
+        pl.col("a").is_nan(),
+        pl.col("a").is_not_nan(),
+        pl.col("b").is_finite(),
+        pl.col("b").is_infinite(),
+        pl.col("b").is_nan(),
+        pl.col("b").is_not_nan(),
+        pl.col("b").is_in(pl.Series([], dtype=pl.Int64())),
+    ],
+)
+def test_boolean_sliced_input(engine: pl.GPUEngine, expr):
+    # sort().slice() hands the expression a column with a nonzero offset.
+    df = pl.LazyFrame(
+        {
+            "a": [0.0, None, 2.0, 3.0, float("inf"), float("nan"), None, 7.0, 8.0],
+            "b": [0, None, 2, 3, 4, 5, None, 7, 8],
+            "k": range(9),
+        }
+    )
+    q = df.sort("k").slice(3, 6).select(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("closed", ["both", "left", "right", "none"])
 @pytest.mark.parametrize(
     "bounds", [(1, 2), (-1, 10), (11, 10), (pl.col("lo"), pl.col("hi"))]
@@ -273,6 +300,20 @@ def test_expr_is_in_empty_list(engine: pl.GPUEngine):
 def test_expr_is_in_empty_list_with_nulls(engine: pl.GPUEngine):
     ldf = pl.LazyFrame({"a": [1, None, 3]})
     q = ldf.select(pl.col("a").is_in([]))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize("needles", [[1, 2, None, 4], [None, None], [1, 2]])
+def test_expr_is_in_only_null(engine: pl.GPUEngine, needles, nulls_equal):
+    ldf = pl.LazyFrame({"a": pl.Series(needles, dtype=pl.Int64())})
+    q = ldf.select(pl.col("a").is_in([None], nulls_equal=nulls_equal))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_expr_is_in_only_nulls_string(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": ["x", None, "y"]})
+    q = ldf.select(pl.col("a").is_in([None, None], nulls_equal=True))
     assert_gpu_result_equal(q, engine=engine)
 
 

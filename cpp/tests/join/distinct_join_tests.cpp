@@ -4,7 +4,9 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/byte_literals.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/large_memory.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
@@ -736,6 +738,8 @@ TEST_F(DistinctJoinTest, InvalidLoadFactor)
 
 TEST_F(DistinctJoinTest, DistinctLargeExtentOverflowPrevention)
 {
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(24_GiB);
   // Test that validates size_t extent can handle hash table sizes that would
   // overflow int32_t extent when load_factor < 1.0
 

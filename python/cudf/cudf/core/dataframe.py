@@ -630,8 +630,8 @@ def _pd_index_level_dtypes(idx) -> tuple | None:
 @_performance_tracking
 def _listlike_to_column_accessor(
     data: Sequence,
-    columns: None | pd.Index,
-    index: None | Index,
+    columns: pd.Index | None,
+    index: Index | None,
     nan_as_null: bool,
 ) -> tuple[dict[Any, ColumnBase], Index, pd.Index]:
     """
@@ -825,7 +825,7 @@ def _listlike_to_column_accessor(
 @_performance_tracking
 def _array_to_column_accessor(
     data: np.ndarray | cupy.ndarray,
-    columns: None | pd.Index,
+    columns: pd.Index | None,
     nan_as_null: bool,
 ) -> ColumnAccessor:
     """Convert a 1D or 2D numpy or cupy array to a ColumnAccessor for DataFrame.__init__"""
@@ -866,8 +866,8 @@ def _array_to_column_accessor(
 @_performance_tracking
 def _mapping_to_column_accessor(
     data: Mapping,
-    index: None | Index,
-    dtype: None | Dtype,
+    index: Index | None,
+    dtype: Dtype | None,
     nan_as_null: bool,
 ) -> tuple[dict[Any, ColumnBase], Index, pd.Index]:
     """
@@ -5360,8 +5360,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
     def query(
         self,
         expr: str,
-        local_dict: None | dict[str, Any] = None,
-        global_dict: None | dict[str, Any] = None,
+        local_dict: dict[str, Any] | None = None,
+        global_dict: dict[str, Any] | None = None,
         **kwargs,
     ) -> DataFrame:
         """

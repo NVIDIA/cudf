@@ -67,9 +67,7 @@ class sort_merge_join {
    */
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  inner_join(table_view const& left,
-             cuda::stream_ref stream,
-             rmm::device_async_resource_ref mr) const;
+  inner_join(table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Returns the row indices for a left join.
@@ -81,9 +79,7 @@ class sort_merge_join {
    */
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  left_join(table_view const& left,
-            cuda::stream_ref stream,
-            rmm::device_async_resource_ref mr) const;
+  left_join(table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -93,8 +89,9 @@ class sort_merge_join {
    * @param mr Device memory resource used to allocate the result device memory
    * @return A unique_ptr to join_match_context
    */
-  std::unique_ptr<join_match_context> inner_join_match_context(
-    table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+  std::unique_ptr<join_match_context> inner_join_match_context(table_view const& left,
+                                                               cuda::stream_ref stream,
+                                                               cudf::memory_resources mr) const;
 
   /**
    * @brief Performs an inner join between a partition of the left table and the right table.
@@ -108,7 +105,7 @@ class sort_merge_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_inner_join(cudf::join_partition_context const& context,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr) const;
+                         cudf::memory_resources mr) const;
 
  private:
   /**

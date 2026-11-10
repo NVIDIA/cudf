@@ -9,6 +9,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
@@ -56,8 +57,8 @@ expression_parser::expression_parser(
   std::optional<std::reference_wrapper<cudf::table_view const>> right,
   bool has_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
-  : _device_data_buffer{stream, mr},
+  cudf::memory_resources mr)
+  : _device_data_buffer{stream, mr.get_output_mr()},
     _left{left},
     _right{right},
     _expression_count{0},
@@ -77,12 +78,12 @@ expression_parser::expression_parser(expression const& expr,
                                      cudf::table_view const& table,
                                      bool has_nulls,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   : expression_parser(expr, table, {}, has_nulls, stream, mr)
 {
 }
 
-void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+void expression_parser::move_to_device(cuda::stream_ref stream, cudf::memory_resources mr)
 {
   std::vector<cudf::size_type> sizes;
   std::vector<void const*> data_pointers;
@@ -113,7 +114,8 @@ void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_asyn
     std::memcpy(host_data_buffer.data() + buffer_offsets[i], data_pointers[i], sizes[i]);
   }
 
-  _device_data_buffer = cuda::device_buffer<std::byte>(stream, mr, host_data_buffer);
+  _device_data_buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_output_mr(), host_data_buffer);
   cudf::detail::sync_stream(stream);
 
   // Create device pointers to components of plan

@@ -1059,7 +1059,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::inner_join(table_view const& left,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr) const
+                            cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"sort_merge_join::inner_join"};
   // Sanity checks
@@ -1090,7 +1090,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::left_join(table_view const& left,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr) const
+                           cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"sort_merge_join::left_join"};
   // Sanity checks
@@ -1143,8 +1143,10 @@ sort_merge_join::left_join(table_view const& left,
                                   stream,
                                   mrs.as_temporary());
 
-      rmm::device_uvector<size_type> left_result_indices(total_output_size, stream, mr);
-      rmm::device_uvector<size_type> right_result_indices(total_output_size, stream, mr);
+      rmm::device_uvector<size_type> left_result_indices(
+        total_output_size, stream, mr.get_output_mr());
+      rmm::device_uvector<size_type> right_result_indices(
+        total_output_size, stream, mr.get_output_mr());
       CUDF_CUDA_TRY(cub::DeviceMerge::MergePairs(
         preprocessed_left_indices->begin(),
         preprocessed_right_indices->begin(),
@@ -1165,7 +1167,7 @@ sort_merge_join::left_join(table_view const& left,
 }
 
 std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_context(
-  table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"sort_merge_join::inner_join_match_context"};
   // Sanity checks
@@ -1192,7 +1194,7 @@ std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_cont
         // positions
         auto unprocessed_matches_per_row =
           cudf::detail::make_zeroed_device_uvector_async<size_type>(
-            preprocessed_left._table_view.num_rows(), stream, mr);
+            preprocessed_left._table_view.num_rows(), stream, mr.get_output_mr());
         auto mapping = preprocessed_left.map_table_to_unprocessed(stream);
         thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                         matches_per_row->begin(),
@@ -1216,7 +1218,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& context,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr) const
+                                        cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"sort_merge_join::partitioned_inner_join"};
 
@@ -1291,7 +1293,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::inner_join(table_view const& left,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr) const
+                            cudf::memory_resources mr) const
 {
   return _impl->inner_join(left, stream, mr);
 }
@@ -1300,13 +1302,13 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::left_join(table_view const& left,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr) const
+                           cudf::memory_resources mr) const
 {
   return _impl->left_join(left, stream, mr);
 }
 
 std::unique_ptr<join_match_context> sort_merge_join::inner_join_match_context(
-  table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   return _impl->inner_join_match_context(left, stream, mr);
 }
@@ -1315,7 +1317,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& context,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr) const
+                                        cudf::memory_resources mr) const
 {
   return _impl->partitioned_inner_join(context, stream, mr);
 }

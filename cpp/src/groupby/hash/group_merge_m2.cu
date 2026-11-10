@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -76,7 +77,7 @@ std::unique_ptr<column> merge_m2(column_view const& values,
                                  device_span<size_type const> group_offsets,
                                  size_type num_groups,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto result_counts = make_numeric_column(
     data_type(type_to_id<count_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
@@ -124,7 +125,7 @@ std::unique_ptr<column> group_merge_m2(column_view const& values,
                                        device_span<size_type const> group_offsets,
                                        size_type num_groups,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(values.type().id() == type_id::STRUCT,
                "Input to `group_merge_m2` must be a structs column.");

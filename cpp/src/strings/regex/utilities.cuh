@@ -111,7 +111,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            ProgDevice& d_prog,
                            size_type strings_count,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cudf::memory_resources mr)
 {
   auto output_sizes = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
@@ -138,7 +138,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
     cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // Now build the chars column
-  rmm::device_uvector<char> chars(char_bytes, stream, mr);
+  rmm::device_uvector<char> chars(char_bytes, stream, mr.get_output_mr());
   if (char_bytes > 0) {
     size_and_exec_fn.d_chars = chars.data();
     for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(

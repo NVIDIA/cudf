@@ -5,6 +5,8 @@
 
 #include <benchmarks/io/cuio_common.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -13,6 +15,7 @@
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/cmath>
 
 #include <unistd.h>
@@ -49,7 +52,7 @@ std::string random_file_in_dir(std::string const& dir_path)
 cuio_source_sink_pair::cuio_source_sink_pair(io_type type_param)
   : type{type_param},
     pinned_buffer({pinned_memory_resource(), cudf::get_default_stream()}),
-    d_buffer{0, cudf::get_default_stream()},
+    d_buffer{cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 0, cuda::no_init},
     file_name{random_file_in_dir(tmpdir.path())},
     void_sink{cudf::io::data_sink::create()},
     owns_file{true}
@@ -110,11 +113,16 @@ cudf::io::source_info cuio_source_sink_pair::make_source_info()
       // TODO: make cuio_source_sink_pair stream-friendly and avoid implicit use of the default
       // stream
       auto const stream = cudf::get_default_stream();
-      d_buffer.resize(h_buffer.size(), stream);
+      // TODO: Restore resizing when https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+      // Retain the allocation when it can hold the current input; all bytes are overwritten below.
+      if (d_buffer.size() < h_buffer.size()) {
+        d_buffer = cuda::device_buffer<std::byte>(
+          stream, d_buffer.memory_resource(), h_buffer.size(), cuda::no_init);
+      }
       CUDF_CUDA_TRY(cudaMemcpyAsync(
         d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.get()));
 
-      return cudf::io::source_info(d_buffer);
+      return cudf::io::source_info(d_buffer.subspan(0, h_buffer.size()));
     }
     default: CUDF_FAIL("invalid input type");
   }

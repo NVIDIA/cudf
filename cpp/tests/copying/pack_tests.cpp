@@ -626,17 +626,30 @@ TEST_F(ExperimentalPackUnpackTest, StagingIsBoundedByStagingBudget)
   // shift, so both regions are staged, over several windows.
   auto const input = cudf::slice(cudf::table_view{{numbers}}, {1, rows}).front();
 
-  for (auto const compression : {cx::pack_compression::automatic, cx::pack_compression::zstd}) {
-    SCOPED_TRACE(static_cast<int>(compression));
-    auto options                 = make_options(compression);
-    options.staging_buffer_bytes = 1024 * 1024;
-    cudf::test::memory_resource_test_harness harness;
-    auto const plan = without_current_resource(harness, [&](cudf::memory_resources mr) {
-      return cx::prepare_pack(input, options, cudf::get_default_stream(), mr);
-    });
-    EXPECT_LE(harness.output_mr().get_bytes_counter().value, options.staging_buffer_bytes);
-    for (auto const kind : {destination_kind::device, destination_kind::pinned}) {
-      expect_materializes_to(input, pack_to(plan, kind, &harness).view(), &harness);
+  // A small budget spreads the blocks over several windows; the default fits them in one.
+  for (auto const staging_buffer_bytes :
+       {std::size_t{1024 * 1024}, cx::pack_options{}.staging_buffer_bytes}) {
+    for (auto const compression : {cx::pack_compression::none,
+                                   cx::pack_compression::automatic,
+                                   cx::pack_compression::cascaded,
+                                   cx::pack_compression::zstd,
+                                   cx::pack_compression::snappy}) {
+      SCOPED_TRACE(std::to_string(staging_buffer_bytes) + " " +
+                   std::to_string(static_cast<int>(compression)));
+      auto options                 = make_options(compression);
+      options.staging_buffer_bytes = staging_buffer_bytes;
+      cudf::test::memory_resource_test_harness harness;
+      auto const plan = without_current_resource(harness, [&](cudf::memory_resources mr) {
+        return cx::prepare_pack(input, options, cudf::get_default_stream(), mr);
+      });
+      EXPECT_LE(harness.output_mr().get_bytes_counter().value, options.staging_buffer_bytes);
+      for (auto const kind :
+           {destination_kind::device, destination_kind::pinned, destination_kind::pageable}) {
+        cudf::test::memory_resource_test_harness pack_harness;
+        auto const packed = pack_to(plan, kind, &pack_harness);
+        EXPECT_LE(pack_harness.temporary_mr().get_bytes_counter().peak, plan.sizes().scratch_bytes);
+        expect_materializes_to(input, packed.view(), &harness);
+      }
     }
   }
 

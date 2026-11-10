@@ -3430,7 +3430,11 @@ class pack_plan::impl {
       regions.empty()
         ? input.metadata.size()
         : compression_metadata_size(input.metadata.size(), regions.size(), blocks.size());
-    storage_sizes = pack_sizes{metadata_bytes, destination_bytes, split_align, uncompressed_bytes};
+    storage_sizes = pack_sizes{metadata_bytes,
+                               destination_bytes,
+                               split_align,
+                               uncompressed_bytes,
+                               regions.empty() ? max_window_bytes : compressed_scratch_bytes()};
   }
 
   [[nodiscard]] pack_sizes const& sizes() const { return storage_sizes; }
@@ -3772,6 +3776,62 @@ class pack_plan::impl {
         cudf::detail::make_device_uvector(copies, input.state->get_stream(), mr.get_output_mr()));
     }
     return destination_bytes;
+  }
+
+  /// Bounds the temporary allocations of `pack_compressed()` for a host destination, which also
+  /// needs the compaction buffer.
+  [[nodiscard]] std::size_t compressed_scratch_bytes() const
+  {
+    // Block descriptors, results and sort storage that codec calls allocate beyond the codec's
+    // reported scratch, per block and once per call.
+    constexpr std::size_t codec_bytes_per_block = 256;
+    constexpr std::size_t codec_bytes_per_call  = 64 * 1024;
+
+    auto const stream = input.state->get_stream();
+    auto const staging =
+      max_window_bytes + max_window_output_bytes + max_window_blocks * split_align;
+    auto const block_spans =
+      blocks.size() * (sizeof(device_span<uint8_t const>) + sizeof(device_span<uint8_t>) +
+                       sizeof(codec_exec_result));
+    // Each window's codec calls and its compaction copy run one after another.
+    std::size_t window_bytes = 0;
+    for (auto const& window : windows) {
+      for (auto const& batch : batches) {
+        auto const begin = std::max(batch.block_begin, window.first_item);
+        auto const end   = std::min(batch.block_end, window.end_item);
+        if (begin >= end || batch.codec == pack_compression::none) { continue; }
+        auto const num_blocks = end - begin;
+        auto const total_bytes =
+          std::transform_reduce(blocks.begin() + begin,
+                                blocks.begin() + end,
+                                std::size_t{0},
+                                std::plus{},
+                                [](auto const& block) { return block.input_bytes; });
+        auto const codec_scratch =
+          batch.codec == pack_compression::cascaded
+            ? 0
+            : io::detail::get_compression_scratch_size(to_io_compression(batch.codec),
+                                                       num_blocks,
+                                                       batch.max_block_bytes,
+                                                       total_bytes,
+                                                       stream);
+        window_bytes = std::max(
+          window_bytes, codec_scratch + num_blocks * codec_bytes_per_block + codec_bytes_per_call);
+      }
+      auto const num_blocks = window.end_item - window.first_item;
+      std::size_t copy_temp = 0;
+      CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(nullptr,
+                                               copy_temp,
+                                               static_cast<uint8_t const**>(nullptr),
+                                               static_cast<uint8_t**>(nullptr),
+                                               static_cast<std::size_t*>(nullptr),
+                                               num_blocks,
+                                               stream.get()));
+      window_bytes = std::max(
+        window_bytes,
+        num_blocks * (sizeof(uint8_t const*) + sizeof(uint8_t*) + sizeof(std::size_t)) + copy_temp);
+    }
+    return staging + block_spans + window_bytes;
   }
 };
 

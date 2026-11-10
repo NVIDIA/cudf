@@ -399,6 +399,9 @@ struct pack_sizes {
   std::size_t payload_bytes;      ///< Required destination capacity (an upper bound if compressed)
   std::size_t payload_alignment;  ///< Required alignment for the payload base address
   std::size_t uncompressed_payload_bytes;  ///< Exact contiguous size before compression
+  /// Upper bound on the device memory `pack_into()` allocates from the temporary resource, for any
+  /// destination kind
+  std::size_t scratch_bytes;
 };
 
 struct pack_result;
@@ -566,9 +569,10 @@ struct pack_result {
  * @brief Execute a prepared pack into caller-owned device or host memory.
  *
  * `destination` may be device, pinned host or pageable host memory of at least
- * `plan.sizes().payload_bytes` bytes. Host and compressed output are staged in windows through
- * `pack_options::staging_buffer_bytes` of device memory, doubled for compressed host output.
- * Compressed output synchronizes the stream.
+ * `plan.sizes().payload_bytes` bytes. Host and compressed output are staged in windows of at most
+ * `pack_options::staging_buffer_bytes`. Staging, compaction and codec scratch together allocate at
+ * most `plan.sizes().scratch_bytes` from the temporary resource. Compressed output synchronizes
+ * the stream.
  *
  * Work is submitted to the stream captured by the plan. The caller must preserve the input and
  * destination until that stream reaches the operation.

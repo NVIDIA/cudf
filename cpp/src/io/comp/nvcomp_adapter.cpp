@@ -304,24 +304,6 @@ nvcompStatus_t batched_compress_get_temp_size(compression_type compression,
   }
 }
 
-size_t batched_compress_temp_size(compression_type compression,
-                                  size_t batch_size,
-                                  size_t max_uncompressed_chunk_bytes,
-                                  size_t max_total_uncompressed_bytes,
-                                  cuda::stream_ref stream)
-{
-  size_t temp_size                   = 0;
-  nvcompStatus_t const nvcomp_status = batched_compress_get_temp_size(compression,
-                                                                      batch_size,
-                                                                      max_uncompressed_chunk_bytes,
-                                                                      &temp_size,
-                                                                      max_total_uncompressed_bytes,
-                                                                      stream);
-
-  CHECK_NVCOMP_STATUS(nvcomp_status);
-  return temp_size;
-}
-
 // Dispatcher for nvcompBatched<format>CompressAsync
 void batched_compress_async(compression_type compression,
                             void const* const* device_uncompressed_ptrs,
@@ -568,6 +550,19 @@ size_t batched_decompress_temp_size_ex(compression_type compression,
 }
 
 }  // namespace
+
+size_t batched_compress_temp_size(compression_type compression,
+                                  size_t num_chunks,
+                                  size_t max_uncomp_chunk_size,
+                                  size_t max_total_uncomp_size,
+                                  cuda::stream_ref stream)
+{
+  size_t temp_size                   = 0;
+  nvcompStatus_t const nvcomp_status = batched_compress_get_temp_size(
+    compression, num_chunks, max_uncomp_chunk_size, &temp_size, max_total_uncomp_size, stream);
+  CHECK_NVCOMP_STATUS(nvcomp_status);
+  return temp_size;
+}
 
 size_t batched_decompress_temp_size(compression_type compression,
                                     size_t num_chunks,

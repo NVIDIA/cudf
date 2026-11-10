@@ -95,7 +95,7 @@ std::unique_ptr<column> replace_re(strings_column_view const& input,
                                    string_scalar const& replacement,
                                    std::optional<size_type> max_replace_count,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
@@ -142,7 +142,7 @@ std::unique_ptr<column> replace_re(strings_column_view const& strings,
                                    string_scalar const& replacement,
                                    std::optional<size_type> max_replace_count,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_re(strings, prog, replacement, max_replace_count, stream, mr);

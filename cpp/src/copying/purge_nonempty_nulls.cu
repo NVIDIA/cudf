@@ -43,9 +43,10 @@ bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref str
     return d_input.is_null_nocheck(row_idx) && (offsets[row_idx] != offsets[row_idx + 1]);
   };
 
-  auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
-  auto const row_end   = row_begin + input.size();
-  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream) > 0;
+  auto const row_begin      = cuda::counting_iterator<cudf::size_type>{0};
+  auto const row_end        = row_begin + input.size();
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream, mr.as_temporary()) > 0;
 }
 
 }  // namespace
@@ -78,7 +79,7 @@ bool has_nonempty_nulls(cudf::column_view const& input, cuda::stream_ref stream)
 
 std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   // If not compound types (LIST/STRING/STRUCT/DICTIONARY) then just copy the input into output.
   if (!cudf::is_compound(input.type())) { return std::make_unique<column>(input, stream, mr); }
@@ -123,11 +124,11 @@ bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 }
 
 /**
- * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
+ * @copydoc cudf::purge_nonempty_nulls(column_view const&, cudf::memory_resources)
  */
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   return detail::purge_nonempty_nulls(input, stream, mr);
 }

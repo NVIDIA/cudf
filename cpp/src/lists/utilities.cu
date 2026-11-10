@@ -23,8 +23,12 @@ std::unique_ptr<column> generate_labels(lists_column_view const& input,
                                     stream,
                                     mr.get_output_mr());
   auto const labels_begin = labels->mutable_view().template begin<size_type>();
-  cudf::detail::label_segments(
-    input.offsets_begin(), input.offsets_end(), labels_begin, labels_begin + n_elements, stream);
+  cudf::detail::label_segments(input.offsets_begin(),
+                               input.offsets_end(),
+                               labels_begin,
+                               labels_begin + n_elements,
+                               stream,
+                               mr.as_temporary());
   return labels;
 }
 
@@ -43,7 +47,8 @@ std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
                                   labels_begin + labels.size(),
                                   offsets_begin,
                                   offsets_begin + out_offsets->size(),
-                                  stream);
+                                  stream,
+                                  mr.as_temporary());
   return out_offsets;
 }
 

@@ -30,6 +30,7 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <span>
 #include <string>
 
 // Size of the serialized table header that precedes the column entries in the
@@ -487,7 +488,7 @@ TEST_F(ExperimentalPackUnpackTest, CompressContiguousSplitPartitions)
     cudf::table_view{{numbers, strings, lists->view(), structs, dictionary->view()}};
 
   std::vector<cudf::size_type> const splits{0, 1000, 20000, 20001, 50000};
-  auto const partitions = cudf::contiguous_split(input, splits);
+  auto const partitions = cudf::contiguous_split(input, std::span<cudf::size_type const>{splits});
   auto const expected   = cudf::split(input, splits);
   ASSERT_EQ(partitions.size(), expected.size());
   for (std::size_t i = 0; i < partitions.size(); ++i) {
@@ -1386,7 +1387,11 @@ TEST_F(PackUnpackTest, EmptyBuffersPreserveStreamAndResource)
     verify_buffer(cudf::pack(input, stream, output_ref));
     if (input.num_columns() == 0 && input.num_rows() == 0) { continue; }
 
-    auto partitions = cudf::contiguous_split(input, {input.num_rows() / 2}, stream, output_ref);
+    auto partitions = cudf::contiguous_split(
+      input,
+      std::span<cudf::size_type const>{std::vector<cudf::size_type>{input.num_rows() / 2}},
+      stream,
+      output_ref);
     ASSERT_EQ(partitions.size(), 2);
     for (auto const& partition : partitions) {
       verify_buffer(partition.data);

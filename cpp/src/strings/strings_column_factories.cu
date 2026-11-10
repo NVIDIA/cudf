@@ -8,10 +8,12 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -21,7 +23,7 @@ namespace cudf {
 namespace strings::detail {
 
 CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(
-  device_span<size_type const> sizes, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  device_span<size_type const> sizes, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   return make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
 }
@@ -29,7 +31,7 @@ CUDF_EXPORT std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_colum
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cudf::device_span<string_index_pair const>> const& input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   std::vector<std::pair<string_index_pair const*, size_type>> ranges;
   ranges.reserve(input.size());
@@ -45,7 +47,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
 std::unique_ptr<column> make_strings_column(
   device_span<cuda::std::pair<char const*, size_type> const> strings,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return cudf::strings::detail::make_strings_column(strings.begin(), strings.end(), stream, mr);
@@ -54,7 +56,7 @@ std::unique_ptr<column> make_strings_column(
 std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<cudf::device_span<cuda::std::pair<char const*, size_type> const>> const& input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return cudf::strings::detail::make_strings_column_batch(input, stream, mr);
@@ -77,7 +79,7 @@ struct string_view_to_pair {
 std::unique_ptr<column> make_strings_column(device_span<string_view const> string_views,
                                             string_view null_placeholder,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 

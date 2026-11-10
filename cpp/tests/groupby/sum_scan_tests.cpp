@@ -70,6 +70,17 @@ TYPED_TEST(groupby_sum_scan_test, pre_sorted)
                    std::move(agg),
                    cudf::null_policy::EXCLUDE,
                    cudf::sorted::YES);
+
+  // Excluded null keys must also drop their rows from the scanned values.
+  key_wrapper keys_with_nulls({0, 0, 1, 1, 1}, cudf::test::iterators::nulls_at({0, 1}));
+  value_wrapper vals_with_nulls{5, 5, 0, 3, 6};
+  test_single_scan(keys_with_nulls,
+                   vals_with_nulls,
+                   key_wrapper({1, 1, 1}, cudf::test::iterators::no_nulls()),
+                   result_wrapper{0, 3, 9},
+                   cudf::make_sum_aggregation<cudf::groupby_scan_aggregation>(),
+                   cudf::null_policy::EXCLUDE,
+                   cudf::sorted::YES);
 }
 
 TYPED_TEST(groupby_sum_scan_test, empty_cols)

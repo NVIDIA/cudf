@@ -40,7 +40,7 @@ test = [
     "fastavro>=0.22.9",
     "mmh3",
     "nanoarrow",
-    "numba-cuda>=0.22.2,<0.31.0",
+    "numba-cuda-mlir>=0.3.0",
     "numba>=0.60.0,<0.65.0",
     "pandas>=3.0.0,<3.1.0",
     "pyarrow>=19.0.0",
@@ -120,6 +120,7 @@ dependencies-file = "../../dependencies.yaml"
 matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 requires = [
     "cmake>=4.0",
+    "cuda-bindings>=13.0.2,<13.5",
     "cython>=3.2.2,<3.3.0a0",
     "libcudf==26.12.*,>=0.0.0a0",
     "librmm==26.12.*,>=0.0.0a0",

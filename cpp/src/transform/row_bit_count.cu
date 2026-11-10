@@ -8,6 +8,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -21,9 +22,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -473,7 +474,7 @@ CUDF_KERNEL void compute_segment_sizes(device_span<column_device_view const> col
 std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
                                                 size_type segment_length,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   // If there is no rows, segment_length will not be checked.
   if (t.num_rows() <= 0) { return cudf::make_empty_column(type_id::INT32); }
@@ -490,7 +491,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
   CUDF_EXPECTS(info.size() == cols.size(), "Size/info mismatch");
 
   // create output buffer and view
-  auto const num_segments = cudf::util::div_rounding_up_safe(t.num_rows(), segment_length);
+  auto const num_segments = cudf::detail::div_rounding_up_safe(t.num_rows(), segment_length);
   auto output             = cudf::make_fixed_width_column(
     data_type{type_id::INT32}, num_segments, mask_state::UNALLOCATED, stream, mr);
   mutable_column_view mcv = output->mutable_view();
@@ -520,8 +521,8 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
     create_column_device_views<column_device_view>(host_span<column_view const>{cols}, stream);
 
   // move stack info to the gpu
-  rmm::device_uvector<column_info> d_info =
-    cudf::detail::make_device_uvector_async(info, stream, cudf::get_current_device_resource_ref());
+  cuda::device_buffer<column_info> d_info =
+    cudf::detail::make_device_buffer_async(info, stream, cudf::get_current_device_resource_ref());
 
   // each thread needs to maintain a stack of row spans of size max_branch_depth. we will use
   // shared memory to do this rather than allocating a potentially gigantic temporary buffer
@@ -555,7 +556,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 
 std::unique_ptr<column> row_bit_count(table_view const& t,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   return detail::segmented_row_bit_count(t, 1, stream, mr);
 }
@@ -565,7 +566,7 @@ std::unique_ptr<column> row_bit_count(table_view const& t,
 std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
                                                 size_type segment_length,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::segmented_row_bit_count(t, segment_length, stream, mr);
@@ -573,7 +574,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 
 std::unique_ptr<column> row_bit_count(table_view const& t,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::row_bit_count(t, stream, mr);

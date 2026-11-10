@@ -1204,14 +1204,15 @@ struct out_to_in_index_function {
 // packed block of memory 1: split indices and src_buf_info structs
 struct packed_split_indices_and_src_buf_info {
   packed_split_indices_and_src_buf_info(cudf::table_view const& input,
-                                        std::vector<size_type> const& splits,
+                                        std::span<size_type const> splits,
                                         std::size_t num_partitions,
                                         cudf::size_type num_src_bufs,
                                         cuda::stream_ref stream,
                                         rmm::device_async_resource_ref temp_mr)
-    : indices_size(cudf::util::round_up_safe((num_partitions + 1) * sizeof(int64_t), split_align)),
+    : indices_size(
+        cudf::detail::round_up_safe((num_partitions + 1) * sizeof(int64_t), split_align)),
       src_buf_info_size(
-        cudf::util::round_up_safe(num_src_bufs * sizeof(src_buf_info), split_align)),
+        cudf::detail::round_up_safe(num_src_bufs * sizeof(src_buf_info), split_align)),
       // host-side
       h_indices_and_source_info{
         detail::make_host_vector<uint8_t>(indices_size + src_buf_info_size, stream)},
@@ -1272,8 +1273,9 @@ struct packed_partition_buf_size_and_dst_buf_info {
                                              cuda::stream_ref stream,
                                              rmm::device_async_resource_ref temp_mr)
     : stream(stream),
-      buf_sizes_size{cudf::util::round_up_safe(num_partitions * sizeof(std::size_t), split_align)},
-      dst_buf_info_size{cudf::util::round_up_safe(num_bufs * sizeof(dst_buf_info), split_align)},
+      buf_sizes_size{
+        cudf::detail::round_up_safe(num_partitions * sizeof(std::size_t), split_align)},
+      dst_buf_info_size{cudf::detail::round_up_safe(num_bufs * sizeof(dst_buf_info), split_align)},
       // host-side
       h_buf_sizes_and_dst_info{
         detail::make_host_vector<uint8_t>(buf_sizes_size + dst_buf_info_size, stream)},
@@ -1322,8 +1324,8 @@ struct packed_src_and_dst_pointers {
                               cuda::stream_ref stream,
                               rmm::device_async_resource_ref temp_mr)
     : stream(stream),
-      src_bufs_size{cudf::util::round_up_safe(num_src_bufs * sizeof(uint8_t*), split_align)},
-      dst_bufs_size{cudf::util::round_up_safe(num_partitions * sizeof(uint8_t*), split_align)},
+      src_bufs_size{cudf::detail::round_up_safe(num_src_bufs * sizeof(uint8_t*), split_align)},
+      dst_bufs_size{cudf::detail::round_up_safe(num_partitions * sizeof(uint8_t*), split_align)},
       // host-side
       h_src_and_dst_buffers{
         detail::make_host_vector<uint8_t>(src_bufs_size + dst_bufs_size, stream)},
@@ -1414,7 +1416,7 @@ std::unique_ptr<packed_src_and_dst_pointers> setup_src_and_dst_pointers(
  */
 std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
   cudf::table_view const& input,
-  std::vector<size_type> const& splits,
+  std::span<size_type const> splits,
   std::size_t num_partitions,
   cudf::size_type num_src_bufs,
   std::size_t num_bufs,
@@ -1578,7 +1580,7 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
  */
 std::tuple<size_type, std::size_t, std::unique_ptr<packed_partition_buf_size_and_dst_buf_info>>
 compute_num_bufs_and_splits(cudf::table_view const& input,
-                            std::vector<size_type> const& splits,
+                            std::span<size_type const> splits,
                             cuda::stream_ref stream,
                             rmm::device_async_resource_ref temp_mr)
 {
@@ -1979,10 +1981,10 @@ void copy_data(int num_batches_to_copy,
  * special handling has to happen in the calling code.
  *
  * @param input table_view of source table to be split
- * @param splits the splits specified by the user, or an empty vector if no splits
+ * @param splits the splits specified by the user, or an empty span if no splits
  * @returns true if the input is empty, false otherwise
  */
-bool check_inputs(cudf::table_view const& input, std::vector<size_type> const& splits)
+bool check_inputs(cudf::table_view const& input, std::span<size_type const> splits)
 {
   auto const num_rows = input.num_rows();
   if (input.num_columns() == 0 && num_rows == 0) { return true; }
@@ -2033,7 +2035,7 @@ struct contiguous_split_state {
   }
 
   contiguous_split_state(cudf::table_view const& input,
-                         std::vector<size_type> const& splits,
+                         std::span<size_type const> splits,
                          cuda::stream_ref stream,
                          std::optional<rmm::device_async_resource_ref> mr,
                          rmm::device_async_resource_ref temp_mr)
@@ -2201,7 +2203,7 @@ struct contiguous_split_state {
     std::size_t end = 0;
     for (std::size_t i = 0; i < batches.size(); ++i) {
       auto const bytes =
-        util::round_up_safe(batches[i].num_elements * batches[i].element_size, split_align);
+        cudf::detail::round_up_safe(batches[i].num_elements * batches[i].element_size, split_align);
       if (bytes == 0) { continue; }
       auto const begin = batches[i].dst_offset;
       CUDF_EXPECTS(begin >= end, "Copy batches are not ordered by destination offset");
@@ -2279,7 +2281,7 @@ struct contiguous_split_state {
 
  private:
   contiguous_split_state(cudf::table_view const& input,
-                         std::vector<size_type> const& splits,
+                         std::span<size_type const> splits,
                          std::size_t user_buffer_size,
                          cuda::stream_ref stream,
                          std::optional<rmm::device_async_resource_ref> mr,
@@ -2476,28 +2478,43 @@ struct contiguous_split_state {
 };
 
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
-                                           std::vector<size_type> const& splits,
+                                           std::span<size_type const> splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
-  // `temp_mr` is the same as `mr` for contiguous_split as it allocates all
-  // of its memory from the default memory resource in cuDF
-  auto temp_mr = mr;
-  auto state   = contiguous_split_state(input, splits, stream, mr, temp_mr);
+  // contiguous_split allocates its temporaries from the output resource, as it did before
+  // `cudf::memory_resources`; using `mr.get_temporary_mr()` is left to a follow-up.
+  auto temp_mr = mr.get_output_mr();
+  auto state   = contiguous_split_state(input, splits, stream, mr.get_output_mr(), temp_mr);
   return state.contiguous_split();
 }
 
 };  // namespace detail
 
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
-                                           std::vector<size_type> const& splits,
+                                           std::span<size_type const> splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contiguous_split(input, splits, stream, mr);
 }
 
+std::vector<packed_table> contiguous_split(cudf::table_view const& input,
+                                           std::vector<size_type> const& splits,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
+{
+  return cudf::contiguous_split(input, std::span<size_type const>{splits}, stream, mr);
+}
+std::vector<packed_table> contiguous_split(cudf::table_view const& input,
+                                           std::initializer_list<size_type> splits,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
+{
+  return cudf::contiguous_split(
+    input, std::span<size_type const>{splits.begin(), splits.size()}, stream, mr);
+}
 chunked_pack::chunked_pack(cudf::table_view const& input,
                            std::size_t user_buffer_size,
                            cuda::stream_ref stream,
@@ -2672,7 +2689,8 @@ struct block_batch {
 
 void copy_blocks(device_span<device_span<uint8_t const> const> inputs,
                  device_span<device_span<uint8_t> const> outputs,
-                 cuda::stream_ref stream)
+                 cuda::stream_ref stream,
+                 cudf::memory_resources mr)
 {
   if (inputs.empty()) { return; }
   auto const sources = cuda::make_transform_iterator(
@@ -2687,7 +2705,7 @@ void copy_blocks(device_span<device_span<uint8_t const> const> inputs,
     inputs.begin(),
     cuda::proclaim_return_type<std::size_t>(
       [] __device__(device_span<uint8_t const> span) { return span.size(); }));
-  cudf::detail::batched_memcpy_async(sources, destinations, sizes, inputs.size(), stream);
+  cudf::detail::batched_memcpy_async(sources, destinations, sizes, inputs.size(), stream, mr);
 }
 
 struct buffer_copy {
@@ -2699,11 +2717,11 @@ struct buffer_copy {
 /// Copies every buffer with one kernel, where per-buffer memcpy calls cost microseconds each.
 void copy_buffers(std::span<buffer_copy const> copies,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref temp_mr)
+                  cudf::memory_resources mr)
 {
   if (copies.empty()) { return; }
   // The upload reads `copies` in stream order, and callers free it once this returns.
-  auto const d_copies = cudf::detail::make_device_uvector(copies, stream, temp_mr);
+  auto const d_copies = cudf::detail::make_device_uvector(copies, stream, mr.get_temporary_mr());
   auto const sources  = cuda::make_transform_iterator(
     d_copies.begin(), cuda::proclaim_return_type<uint8_t const*>([] __device__(buffer_copy copy) {
       return copy.source;
@@ -2715,7 +2733,7 @@ void copy_buffers(std::span<buffer_copy const> copies,
   auto const sizes = cuda::make_transform_iterator(
     d_copies.begin(),
     cuda::proclaim_return_type<std::size_t>([] __device__(buffer_copy copy) { return copy.size; }));
-  cudf::detail::batched_memcpy_async(sources, destinations, sizes, copies.size(), stream);
+  cudf::detail::batched_memcpy_async(sources, destinations, sizes, copies.size(), stream, mr);
 }
 
 void compress_batch(block_batch const& batch,
@@ -2741,7 +2759,7 @@ void decompress_batch(pack_compression codec,
                       cuda::stream_ref stream,
                       cudf::memory_resources mr)
 {
-  if (codec == pack_compression::none) { return copy_blocks(inputs, outputs, stream); }
+  if (codec == pack_compression::none) { return copy_blocks(inputs, outputs, stream, mr); }
   io::detail::decompress(
     to_io_compression(codec), inputs, outputs, results, max_block_bytes, total_bytes, stream, mr);
 }
@@ -2965,7 +2983,7 @@ std::unique_ptr<column> allocate_materialized_column(
     null_mask = cuda::device_buffer<bitmask_type>(
       stream,
       mr.get_output_mr(),
-      cudf::util::div_rounding_up_safe(
+      cudf::detail::div_rounding_up_safe(
         std::max(bytes, bitmask_allocation_size_bytes(metadata.num_rows())), sizeof(bitmask_type)),
       cuda::no_init);
     source.fill(offset, {reinterpret_cast<uint8_t*>(null_mask.data()), bytes});
@@ -3039,7 +3057,7 @@ void append_packed_buffers(packed_metadata_view::column_view const& column,
   add(packed_metadata_access::null_mask_offset(column),
       pack_region_kind::validity,
       type_id::INT32,
-      cudf::util::div_rounding_up_safe(rows, std::size_t{32}) * sizeof(bitmask_type));
+      cudf::detail::div_rounding_up_safe(rows, std::size_t{32}) * sizeof(bitmask_type));
   if (type.id() == type_id::STRING) {
     add(packed_metadata_access::data_offset(column),
         pack_region_kind::string_characters,
@@ -3115,7 +3133,7 @@ class byte_range_loader {
     std::size_t staged_bytes = 0;
     for (auto& item : merged) {
       item.staged_offset = staged_bytes;
-      staged_bytes = cudf::util::round_up_safe(staged_bytes + item.end - item.begin, split_align);
+      staged_bytes = cudf::detail::round_up_safe(staged_bytes + item.end - item.begin, split_align);
     }
     _staged = rmm::device_buffer(staged_bytes, stream, mr.get_temporary_mr());
     std::vector<void*> destinations;
@@ -3233,7 +3251,7 @@ std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
     copies.push_back(
       {loader.device_pointer(payload_ranges[i].data()), destinations[i], payload_ranges[i].size()});
   }
-  copy_buffers(copies, stream, mr.get_temporary_mr());
+  copy_buffers(copies, stream, mr);
   // Host sources are read when the stream reaches each copy, so they must outlive this call.
   if (loader.has_pending_host_reads()) { stream.sync(); }
   return std::make_unique<table>(std::move(columns), metadata.num_rows());
@@ -3398,7 +3416,7 @@ class pack_plan::impl {
       plan_compression_blocks();
       // The capacity bound: the block size table, then a worst-case slot per block.
       auto const table_bytes =
-        cudf::util::round_up_safe(blocks.size() * sizeof(uint64_t), split_align);
+        cudf::detail::round_up_safe(blocks.size() * sizeof(uint64_t), split_align);
       destination_bytes = plan_compression_windows(table_bytes, options.staging_buffer_bytes, mr);
       d_blocks =
         cudf::detail::make_device_uvector(blocks, input.state->get_stream(), mr.get_output_mr());
@@ -3522,13 +3540,13 @@ class pack_plan::impl {
         targets.clear();
         copy_bytes.clear();
         for (auto block_idx = window.first_item; block_idx < window.end_item; ++block_idx) {
-          auto const& block  = blocks[block_idx];
-          auto const& region = regions[block.region];
-          auto const& result = h_results[block_idx - window.first_item];
-          auto const is_raw  = is_stored_raw(block, region, result);
-          auto const bytes   = is_raw ? block.input_bytes : result.bytes_written;
-          payload_bytes =
-            cudf::util::round_up_safe(payload_bytes, is_raw ? sizeof(uint64_t) : region.alignment);
+          auto const& block        = blocks[block_idx];
+          auto const& region       = regions[block.region];
+          auto const& result       = h_results[block_idx - window.first_item];
+          auto const is_raw        = is_stored_raw(block, region, result);
+          auto const bytes         = is_raw ? block.input_bytes : result.bytes_written;
+          payload_bytes            = cudf::detail::round_up_safe(payload_bytes,
+                                                      is_raw ? sizeof(uint64_t) : region.alignment);
           block_offsets[block_idx] = payload_bytes;
           table[block_idx]         = is_raw ? (raw_block_flag | bytes) : bytes;
           sources.push_back(is_raw ? block.input_in(slots) : slots + block.window_offset);
@@ -3542,7 +3560,7 @@ class pack_plan::impl {
         auto const d_copy_bytes =
           cudf::detail::make_device_uvector_async(copy_bytes, stream, temp_mr);
         cudf::detail::batched_memcpy_async(
-          d_sources.begin(), d_targets.begin(), d_copy_bytes.begin(), d_sources.size(), stream);
+          d_sources.begin(), d_targets.begin(), d_copy_bytes.begin(), d_sources.size(), stream, mr);
         if (to_host) {
           CUDF_CUDA_TRY(cudf::detail::memcpy_async(
             destination.data() + window_begin, compacted, payload_bytes - window_begin, stream));
@@ -3646,7 +3664,7 @@ class pack_plan::impl {
                            cascaded,
                            automatic,
                            block_bytes,
-                           cudf::util::div_rounding_up_safe(layout.data_bytes, block_bytes));
+                           cudf::detail::div_rounding_up_safe(layout.data_bytes, block_bytes));
     }
     CUDF_EXPECTS(uncompressed_end == uncompressed_bytes,
                  "Prepared compression regions do not cover the complete payload");
@@ -3709,13 +3727,14 @@ class pack_plan::impl {
     for (std::size_t block_idx = 0; block_idx < blocks.size(); ++block_idx) {
       auto& block = blocks[block_idx];
       auto const slot_bytes =
-        cudf::util::round_up_safe(std::max(block.output_bytes, block.input_bytes), split_align);
+        cudf::detail::round_up_safe(std::max(block.output_bytes, block.input_bytes), split_align);
       // A raw block is staged into its slot, which no codec writes, and otherwise compacted
       // straight from its source, so it needs no slot.
       auto const is_staged     = block.input == nullptr;
       auto const working_bytes = !block.is_raw || is_staged ? slot_bytes : std::size_t{0};
-      auto const staged_bytes =
-        is_staged && !block.is_raw ? cudf::util::round_up_safe(block.input_bytes, split_align) : 0;
+      auto const staged_bytes  = is_staged && !block.is_raw
+                                   ? cudf::detail::round_up_safe(block.input_bytes, split_align)
+                                   : 0;
       CUDF_EXPECTS(slot_bytes + staged_bytes <= window_budget,
                    "The staging buffer is too small for the compression block size");
       // Host destinations also compact each window's output, raw blocks included, into staging.
@@ -3947,7 +3966,7 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
       entry.data_bytes <= entry.uncompressed_bytes &&
         (entry.data_bytes == 0 || entry.block_bytes > 0) &&
         entry.num_blocks == (entry.data_bytes == 0 ? 0
-                                                   : cudf::util::div_rounding_up_safe(
+                                                   : cudf::detail::div_rounding_up_safe(
                                                        entry.data_bytes, entry.block_bytes)) &&
         entry.block_begin <= num_blocks && entry.num_blocks <= num_blocks - entry.block_begin,
       "Compressed region has an invalid block directory");
@@ -4139,9 +4158,9 @@ std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> me
     CUDF_EXPECTS(i + 1 < buffers.size() || parsed.has_value() || buffer.data_bytes.has_value(),
                  "Packed metadata is malformed");
     auto const end = i + 1 < buffers.size() ? buffers[i + 1].offset
-                     : parsed.has_value()
-                       ? parsed->uncompressed_payload_bytes
-                       : cudf::util::round_up_safe(buffer.offset + *buffer.data_bytes, split_align);
+                     : parsed.has_value()   ? parsed->uncompressed_payload_bytes
+                                            : cudf::detail::round_up_safe(
+                                              buffer.offset + *buffer.data_bytes, split_align);
     CUDF_EXPECTS(end >= buffer.offset, "Packed metadata is malformed");
     if (end == buffer.offset) { continue; }
     buffer.info.region_index       = regions.size();

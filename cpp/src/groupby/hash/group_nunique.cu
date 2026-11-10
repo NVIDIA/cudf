@@ -67,7 +67,7 @@ std::unique_ptr<column> group_nunique(column_view const& values,
                                       cudf::device_span<size_type const> group_offsets,
                                       null_policy null_handling,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_EXPECTS(num_groups >= 0, "number of groups cannot be negative");
   CUDF_EXPECTS(static_cast<size_t>(values.size()) == group_labels.size(),

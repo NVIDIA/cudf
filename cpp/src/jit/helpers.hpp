@@ -52,7 +52,7 @@ std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView
            cuda::device_buffer<DeviceView>>
 column_views_to_device(std::span<ColumnView const> views,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cudf::memory_resources mr)
 {
   std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>> handles;
 
@@ -67,7 +67,8 @@ column_views_to_device(std::span<ColumnView const> views,
     host_array.push_back(*h);
   }
 
-  cuda::device_buffer<DeviceView> device_array{stream, mr, handles.size(), cuda::no_init};
+  cuda::device_buffer<DeviceView> device_array{
+    stream, mr.get_output_mr(), handles.size(), cuda::no_init};
   cudf::detail::cuda_memcpy<DeviceView>(device_array, host_array, stream);
 
   return std::make_tuple(std::move(handles), std::move(device_array));
@@ -97,6 +98,14 @@ rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
 std::string define_operation(std::string const& cuda_source,
                              std::string_view operation_macro,
                              std::string_view function_name);
+
+/**
+ * @brief Convert an LTO binary type to an RTCX binary type.
+ *
+ * @param type The LTO binary type to convert
+ * @return The corresponding RTCX binary type
+ */
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type);
 
 }  // namespace jit
 }  // namespace cudf

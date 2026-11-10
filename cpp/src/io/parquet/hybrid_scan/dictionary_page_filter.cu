@@ -1009,7 +1009,7 @@ struct dictionary_caster {
   [[nodiscard]] std::vector<std::unique_ptr<cudf::column>> build_columns(
     cudf::host_span<rmm::device_buffer> results_buffers,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cudf::memory_resources mr)
   {
     auto columns = std::vector<std::unique_ptr<cudf::column>>{};
     columns.reserve(results_buffers.size());
@@ -1044,7 +1044,7 @@ struct dictionary_caster {
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cudf::memory_resources mr)
   {
     // Host vectors to store the running number of hash set slots and decoded values for all
     // dictionaries
@@ -1122,7 +1122,8 @@ struct dictionary_caster {
                   [&](auto i) {
                     // Allocate the results buffer using the user-provided memory resource (output
                     // memory)
-                    results_buffers[i]   = rmm::device_buffer(total_row_groups, stream, mr);
+                    results_buffers[i] =
+                      rmm::device_buffer(total_row_groups, stream, mr.get_output_mr());
                     host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
                   });
     if constexpr (not cuda::std::is_same_v<T, cudf::string_view>) {
@@ -1229,7 +1230,7 @@ struct dictionary_caster {
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cudf::memory_resources mr)
   {
     // Get the total number of scalars and literals
     auto const total_num_literals = static_cast<cudf::size_type>(literals.size());
@@ -1258,7 +1259,8 @@ struct dictionary_caster {
                   [&](auto i) {
                     // Allocate the results buffer using the user-provided memory resource (output
                     // memory)
-                    results_buffers[i]   = rmm::device_buffer(total_row_groups, stream, mr);
+                    results_buffers[i] =
+                      rmm::device_buffer(total_row_groups, stream, mr.get_output_mr());
                     host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
                   });
 
@@ -1325,7 +1327,7 @@ struct dictionary_caster {
     cudf::host_span<ast::literal* const> literals,
     cudf::host_span<ast::ast_operator const> operators,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr)
+    cudf::memory_resources mr)
   {
     // Booleans and compound types are not collected by `dictionary_literals_collector`
     if constexpr (not is_supported_dictionary_type<T>) {

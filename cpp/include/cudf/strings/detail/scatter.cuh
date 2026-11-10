@@ -53,7 +53,7 @@ std::unique_ptr<column> scatter(SourceIterator begin,
                                 MapIterator scatter_map,
                                 strings_column_view const& target,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   if (target.is_empty()) return make_empty_column(type_id::STRING);
 

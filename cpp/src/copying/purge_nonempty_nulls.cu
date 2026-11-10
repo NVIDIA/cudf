@@ -130,11 +130,11 @@ bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 }
 
 /**
- * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
+ * @copydoc cudf::purge_nonempty_nulls(column_view const&, cudf::memory_resources)
  */
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   return detail::purge_nonempty_nulls(input, stream, mr);
 }

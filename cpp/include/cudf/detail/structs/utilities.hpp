@@ -168,7 +168,7 @@ class flattened_table {
   std::vector<cudf::null_order> const& null_precedence,
   cudf::structs::detail::column_nullability nullability,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @brief Superimpose nulls from a given null mask into the input column, using bitwise AND.
@@ -190,7 +190,7 @@ class flattened_table {
   cudf::size_type null_count,
   std::unique_ptr<cudf::column>&& input,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @brief Superimpose nulls from multiple null masks into corresponding input columns
@@ -213,7 +213,7 @@ class flattened_table {
   host_span<bitmask_type const* const> null_masks,
   std::vector<std::unique_ptr<column>> inputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @brief Enforces null consistency in struct columns by propagating nulls from parent to
@@ -232,9 +232,7 @@ class flattened_table {
  * @return A vector of columns with nulls properly propagated from parent structs to all descendants
  */
 [[nodiscard]] std::vector<std::unique_ptr<column>> enforce_null_consistency(
-  std::vector<std::unique_ptr<column>> columns,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  std::vector<std::unique_ptr<column>> columns, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Push down nulls from the given input column into its children columns, using bitwise AND.

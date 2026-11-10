@@ -73,7 +73,7 @@ direct_inner_join(column_view const& left_keys,
                   column_view const& right_keys,
                   std::size_t capacity,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
+                  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     left_keys.type().id() == type_id::UINT32 and right_keys.type().id() == type_id::UINT32,
@@ -87,8 +87,9 @@ direct_inner_join(column_view const& left_keys,
                std::invalid_argument);
 
   if (left_keys.is_empty() or right_keys.is_empty()) {
-    return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                     std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
+    return std::pair(
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
   }
 
   // Build: scatter each right row index to the slot addressed by its key value
@@ -103,9 +104,9 @@ direct_inner_join(column_view const& left_keys,
 
   // Probe: a single pass emitting the (left index, matched right index) pairs
   auto left_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr);
+    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr.get_output_mr());
   auto right_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr);
+    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr.get_output_mr());
 
   auto const d_left_keys = left_keys.begin<std::uint32_t>();
   auto const out_iter    = cuda::tabulate_output_iterator{
@@ -134,7 +135,7 @@ direct_inner_join(column_view const& left_keys,
                   column_view const& right_keys,
                   std::size_t capacity,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
+                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::direct_inner_join(left_keys, right_keys, capacity, stream, mr);

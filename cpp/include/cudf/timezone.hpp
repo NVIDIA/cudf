@@ -77,7 +77,7 @@ CUDF_HOST_DEVICE constexpr duration_s solar_cycle_duration()
 std::unique_ptr<table> make_timezone_transition_table(
   std::optional<std::string_view> tzif_dir,
   std::string_view timezone_name,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace CUDF_EXPORT cudf

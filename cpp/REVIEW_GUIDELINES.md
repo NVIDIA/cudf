@@ -99,6 +99,7 @@
 - Test code not in the global namespace
 - Benchmarks not using NVBench (not Google Benchmark)
 - **Using external datasets** (tests must not depend on external resources)
+- New tests that duplicate existing coverage (same function, same class of input, same assertion) instead of extending an existing test, type list, or `INSTANTIATE_TEST_SUITE_P` list; cite the covering test
 
 ## MEDIUM Issues (Comment Selectively)
 

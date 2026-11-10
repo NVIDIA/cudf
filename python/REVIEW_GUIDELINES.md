@@ -64,6 +64,7 @@
 - Using external datasets (tests must not depend on external resources)
 - Missing tests for different array types (CuPy, Numba)
 - New pytest files not conforming to standards and patterns of existing test files in that directory
+- New tests that duplicate existing coverage instead of extending an existing test or `@pytest.mark.parametrize` list; cite the covering test
 
 ### Documentation
 - Missing or incorrect docstrings for public methods

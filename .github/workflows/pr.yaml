@@ -444,8 +444,8 @@ jobs:
       cache-read-only: true
       cache-environment: |
         LIBCUDF_KERNEL_CACHE_PATH=.cache/libcudf
-      matrix_filter: map(select(.GPU == "h100" and .ARCH == "amd64" and .CUDA_VER == "12.9.2" and .LINUX_VER == "ubuntu22.04" and .PY_VER == "3.14"))
-      matrix_type: pull-request
+      matrix_filter: map(select(.CUDA_VER == "12.9.2" and .LINUX_VER == "ubuntu22.04" and .PY_VER == "3.14" and ((.GPU == "h100" and .ARCH == "amd64") or (.GPU == "l4" and .ARCH == "arm64"))))
+      matrix_type: pull-request,nightly
   conda-python-build:
     needs: [build-details, conda-cpp-build]
     permissions:

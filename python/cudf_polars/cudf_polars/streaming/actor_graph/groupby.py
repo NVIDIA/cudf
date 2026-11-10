@@ -1353,7 +1353,9 @@ async def groupby_actor(
                 scope=RowOrderingScope.RANK_LOCAL,
             )
         ):
-            strict_ordering = flat_ordering.as_strict(context.br())
+            strict_ordering = await ir_context.to_thread(
+                flat_ordering.as_strict, context.br()
+            )
             # Collapsed boundaries could require assembling many raw chunks at once.
             if strict_ordering.num_boundaries == flat_ordering.num_boundaries:
                 await _strictify_chunkwise_groupby(

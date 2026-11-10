@@ -6,7 +6,6 @@
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -64,6 +63,7 @@ def main():
     replacement = preload.replace(
         "LD_PRELOAD=", f"LD_PRELOAD={args.crash_library}:", 1
     )
+    modification = f"LD_PRELOAD=path_list_prepend:{args.crash_library}"
     originals = {}
     cost = args.test_dir / "Testing/Temporary/CTestCostData.txt"
     initial_cost = cost.read_bytes() if cost.exists() else None
@@ -75,30 +75,35 @@ def main():
         seed.mkdir()
     records = []
     try:
-        # CTest overrides LD_PRELOAD per test. Update only generated test
-        # configuration, preserving the original commands and GPU slots.
-        for path in args.test_dir.rglob("CTestTestfile.cmake"):
-            text = path.read_text()
-            lines = text.splitlines(keepends=True)
-            updated = "".join(
-                line.replace(preload, replacement)
-                if "set_tests_properties(" in line
-                and re.search(r"\bTRANSFORM_TEST\b", line)
-                else line
-                for line in lines
-            )
-            if updated != text:
-                originals[path] = text
-                path.write_text(updated)
-        if not originals:
-            raise RuntimeError("No generated CTest preload definition found")
+        # Installed CTest definitions resolve paths at runtime, so their raw
+        # preload strings need not match discovery's expanded paths.
+        path = args.test_dir / "CTestTestfile.cmake"
+        originals[path] = path.read_text()
+        modifications = ";".join(
+            [*properties.get("ENVIRONMENT_MODIFICATION", []), modification]
+        )
+        path.write_text(
+            originals[path]
+            + "\nset_tests_properties(TRANSFORM_TEST PROPERTIES "
+            + f"ENVIRONMENT_MODIFICATION [==[{modifications}]==])\n"
+        )
         discovery = subprocess.check_output(
             ["ctest", "--show-only=json-v1", "-R", "^TRANSFORM_TEST$"],
             cwd=args.test_dir,
             text=True,
         )
         (args.output / "ctest-instrumented.json").write_text(discovery)
-        assert replacement in discovery
+        instrumented = next(
+            t
+            for t in json.loads(discovery)["tests"]
+            if t["name"] == "TRANSFORM_TEST"
+        )
+        updated_properties = {
+            p["name"]: p["value"] for p in instrumented["properties"]
+        }
+        assert modification in updated_properties["ENVIRONMENT_MODIFICATION"]
+        assert updated_properties["ENVIRONMENT"] == properties["ENVIRONMENT"]
+        assert instrumented["command"] == test["command"]
         for trial_number in range(1, args.trials + 1):
             trial = args.output / f"native-{trial_number}"
             trial.mkdir()

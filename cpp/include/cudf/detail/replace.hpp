@@ -17,48 +17,48 @@ namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::replace_nulls(column_view const&, column_view const&,
- * cuda::stream_ref, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> replace_nulls(column_view const& input,
                                       cudf::column_view const& replacement,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::replace_nulls(column_view const&, scalar const&,
- * cuda::stream_ref, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> replace_nulls(column_view const& input,
                                       scalar const& replacement,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::replace_nulls(column_view const&, replace_policy const&,
- * cuda::stream_ref, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> replace_nulls(column_view const& input,
                                       replace_policy const& replace_policy,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::replace_nans(column_view const&, column_view const&,
- * cuda::stream_ref, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      column_view const& replacement,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr);
+                                     cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::replace_nans(column_view const&, scalar const&,
- * cuda::stream_ref, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      scalar const& replacement,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr);
+                                     cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::find_and_replace_all
@@ -67,14 +67,14 @@ std::unique_ptr<column> find_and_replace_all(column_view const& input_col,
                                              column_view const& values_to_replace,
                                              column_view const& replacement_values,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr);
+                                             cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::normalize_nans_and_zeros
  */
 std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr);
+                                                 cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

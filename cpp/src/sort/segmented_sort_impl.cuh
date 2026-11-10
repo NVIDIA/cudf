@@ -157,7 +157,7 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
                                                     column_view const& segment_offsets,
                                                     order const& column_order,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cudf::memory_resources mr)
 {
   // Unfortunately, CUB's segmented sort functions cannot accept iterators.
   // We have to build a pre-filled sequence of indices as input.
@@ -201,10 +201,12 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
  * @param num_rows Total number of rows in the input keys to sort
  * @param offsets The offsets identifying the segments
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned segment indices' device memory
  */
 cuda::device_buffer<size_type> get_segment_indices(size_type num_rows,
                                                    column_view const& offsets,
-                                                   cuda::stream_ref stream);
+                                                   cuda::stream_ref stream,
+                                                   cudf::memory_resources mr);
 
 /**
  * @brief Segmented sorted-order utility
@@ -227,7 +229,7 @@ std::unique_ptr<column> segmented_sorted_order_common(
   std::vector<order> const& column_order,
   std::vector<null_order> const& null_precedence,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (keys.num_rows() == 0 || keys.num_columns() == 0) {
     return cudf::make_empty_column(type_to_id<size_type>());
@@ -267,7 +269,8 @@ std::unique_ptr<column> segmented_sorted_order_common(
   }
 
   // Get segment id of each element in all segments.
-  auto segment_ids = get_segment_indices(keys.num_rows(), segment_offsets, stream);
+  auto segment_ids = get_segment_indices(
+    keys.num_rows(), segment_offsets, stream, cudf::get_current_device_resource_ref());
 
   // insert segment id before all columns.
   std::vector<column_view> keys_with_segid;
@@ -304,7 +307,7 @@ std::unique_ptr<table> segmented_sort_by_key_common(table_view const& values,
                                                     std::vector<order> const& column_order,
                                                     std::vector<null_order> const& null_precedence,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cudf::memory_resources mr)
 {
   CUDF_EXPECTS(values.num_rows() == keys.num_rows(),
                "Mismatch in number of rows for values and keys");

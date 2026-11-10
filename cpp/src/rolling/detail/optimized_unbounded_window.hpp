@@ -41,6 +41,6 @@ std::unique_ptr<column> optimized_unbounded_window(table_view const& group_keys,
                                                    column_view const& input,
                                                    rolling_aggregation const& aggr,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr);
+                                                   cudf::memory_resources mr);
 }  // namespace detail
 }  // namespace cudf

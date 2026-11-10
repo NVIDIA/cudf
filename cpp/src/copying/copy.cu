@@ -70,7 +70,7 @@ struct copy_if_else_functor_impl<T, std::enable_if_t<is_rep_layout_compatible<T>
                                      bool right_nullable,
                                      Filter filter,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto p_lhs      = get_iterable_device_view{}(lhs_h, stream);
     auto p_rhs      = get_iterable_device_view{}(rhs_h, stream);
@@ -103,7 +103,7 @@ struct copy_if_else_functor_impl<string_view> {
                                      bool right_nullable,
                                      Filter filter,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     using T = string_view;
 
@@ -155,17 +155,19 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                      size_type size,
                                                      Filter is_left,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   // TODO: switch these to resizable buffers once https://github.com/NVIDIA/cccl/issues/12051
   // is resolved
   auto gather_map_storage = cuda::device_buffer<size_type>{
-    stream, cudf::get_current_device_resource_ref(), static_cast<std::size_t>(size), cuda::no_init};
+    stream, mrs.get_temporary_mr(), static_cast<std::size_t>(size), cuda::no_init};
   auto const gather_map_end = cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                                                     cuda::counting_iterator<size_type>{size},
                                                     gather_map_storage.begin(),
                                                     is_left,
-                                                    stream);
+                                                    stream,
+                                                    mrs.as_temporary());
 
   auto const gather_map = device_span<size_type const>{
     gather_map_storage.data(),
@@ -176,7 +178,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                     out_of_bounds_policy::DONT_CHECK,
                                                     negative_index_policy::NOT_ALLOWED,
                                                     stream,
-                                                    cudf::get_current_device_resource_ref());
+                                                    mrs.as_temporary());
 
   auto result = cudf::detail::scatter(
     table_view{std::vector<column_view>{scatter_src_lhs->get_column(0).view()}},
@@ -194,15 +196,17 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::scalar const& lhs,
                                                      size_type size,
                                                      Filter is_left,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto scatter_map = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), static_cast<std::size_t>(size), cuda::no_init);
+    stream, mrs.get_temporary_mr(), static_cast<std::size_t>(size), cuda::no_init);
   auto const scatter_map_end = cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                                                      cuda::counting_iterator<size_type>{size},
                                                      scatter_map.begin(),
                                                      is_left,
-                                                     stream);
+                                                     stream,
+                                                     mrs.as_temporary());
 
   auto const scatter_map_size  = std::distance(scatter_map.begin(), scatter_map_end);
   auto scatter_source          = std::vector<std::reference_wrapper<scalar const>>{std::ref(lhs)};
@@ -224,7 +228,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::column_view const& lh
                                                      size_type size,
                                                      Filter is_left,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
   return scatter_gather_based_if_else(rhs, lhs, size, logical_not{is_left}, stream, mr);
 }
@@ -235,7 +239,7 @@ std::unique_ptr<column> scatter_gather_based_if_else(cudf::scalar const& lhs,
                                                      size_type size,
                                                      Filter is_left,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
   auto rhs_col = cudf::make_column_from_scalar(rhs, size, stream, mr);
   return scatter_gather_based_if_else(lhs, rhs_col->view(), size, is_left, stream, mr);
@@ -251,7 +255,7 @@ struct copy_if_else_functor_impl<struct_view> {
                                      bool,
                                      Filter filter,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
   }
@@ -267,7 +271,7 @@ struct copy_if_else_functor_impl<list_view> {
                                      bool,
                                      Filter filter,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
   }
@@ -283,7 +287,7 @@ struct copy_if_else_functor_impl<dictionary32> {
                                      bool,
                                      Filter filter,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     return scatter_gather_based_if_else(lhs, rhs, size, filter, stream, mr);
   }
@@ -302,7 +306,7 @@ struct copy_if_else_functor {
                                      bool right_nullable,
                                      Filter filter,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     copy_if_else_functor_impl<T> copier{};
     return copier(lhs, rhs, size, left_nullable, right_nullable, filter, stream, mr);
@@ -317,7 +321,7 @@ std::unique_ptr<column> copy_if_else(Left const& lhs,
                                      bool right_nullable,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(boolean_mask.type() == data_type(type_id::BOOL8),
                "Boolean mask column must be of type type_id::BOOL8",
@@ -355,7 +359,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(boolean_mask.size() == lhs.size(),
                "Boolean mask column must be the same size as lhs and rhs columns",
@@ -372,7 +376,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(boolean_mask.size() == rhs.size(),
                "Boolean mask column must be the same size as rhs column",
@@ -387,7 +391,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(boolean_mask.size() == lhs.size(),
                "Boolean mask column must be the same size as lhs column",
@@ -402,7 +406,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     cudf::have_same_types(lhs, rhs), "Both inputs must be of the same type", cudf::data_type_error);
@@ -416,7 +420,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_if_else(lhs, rhs, boolean_mask, stream, mr);
@@ -426,7 +430,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      column_view const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_if_else(lhs, rhs, boolean_mask, stream, mr);
@@ -436,7 +440,7 @@ std::unique_ptr<column> copy_if_else(column_view const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_if_else(lhs, rhs, boolean_mask, stream, mr);
@@ -446,7 +450,7 @@ std::unique_ptr<column> copy_if_else(scalar const& lhs,
                                      scalar const& rhs,
                                      column_view const& boolean_mask,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_if_else(lhs, rhs, boolean_mask, stream, mr);

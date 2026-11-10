@@ -14,6 +14,7 @@
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -30,7 +31,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <iterator>
 #include <utility>
+#include <vector>
 
 namespace cudf::groupby::detail {
 
@@ -44,6 +48,21 @@ size_type compact_group_offsets(bool* flags,
   auto const end =
     cudf::detail::copy_if(begin, begin + size, flags, offsets, cuda::std::identity{}, stream, mr);
   return static_cast<size_type>(end - offsets);
+}
+
+std::vector<column_view> as_integer_keys(table_view const& keys)
+{
+  std::vector<column_view> columns;
+  columns.reserve(keys.num_columns());
+  std::transform(keys.begin(), keys.end(), std::back_inserter(columns), [](column_view const& col) {
+    if (!cudf::is_chrono(col.type()) && !cudf::is_fixed_point(col.type())) { return col; }
+    switch (cudf::size_of(col.type())) {
+      case sizeof(int32_t): return cudf::bit_cast(col, data_type{type_id::INT32});
+      case sizeof(int64_t): return cudf::bit_cast(col, data_type{type_id::INT64});
+      default: return col;
+    }
+  });
+  return columns;
 }
 
 namespace {
@@ -274,7 +293,7 @@ device_span<size_type const> groupby_helper::group_labels(cuda::stream_ref strea
     if (!labels.empty()) {
       auto const offsets = group_offsets(stream, mr);
       cudf::detail::label_segments(
-        offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream);
+        offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream, mr.as_temporary());
     }
   }
   return *_groups->group_labels;

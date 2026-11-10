@@ -82,8 +82,9 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                                                     FollowingIter following,
                                                     size_type row_offset,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   CUDF_EXPECTS(op == aggregation::LEAD || op == aggregation::LAG,
                "Unexpected aggregation type in compute_lead_lag_for_nested");
   CUDF_EXPECTS(cudf::have_same_types(input, default_outputs),
@@ -169,7 +170,8 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                           cuda::counting_iterator<size_type>{input.size()},
                           scatter_map_storage.begin(),
                           is_null_index_predicate(input.size(), gather_map.begin<size_type>()),
-                          stream);
+                          stream,
+                          mrs.as_temporary());
 
   auto scatter_map = cudf::device_span<size_type>{
     scatter_map_storage.data(),

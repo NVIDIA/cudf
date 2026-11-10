@@ -915,7 +915,7 @@ jobs:
       pure-wheel: true
       matrix_type: pull-request
   wheel-tests-cudf:
-    needs: [wheel-build, changed-files]
+    needs: [wheel-build, wheel-python-build-noarch, changed-files]
     permissions:
       actions: read
       contents: read
@@ -1087,7 +1087,7 @@ jobs:
         build-all -j0 --verbose -DBUILD_BENCHMARKS=ON;
         sccache --show-adv-stats;
   unit-tests-cudf-pandas:
-    needs: [wheel-build, changed-files]
+    needs: [wheel-build, wheel-python-build-noarch, changed-files]
     permissions:
       actions: read
       contents: read
@@ -1177,7 +1177,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
   pandas-tests:
     # run the Pandas unit tests using PR branch, sharded across runners.
-    needs: [wheel-build, changed-files, pandas-tests-shards]
+    needs: [wheel-build, wheel-python-build-noarch, changed-files, pandas-tests-shards]
     strategy:
       fail-fast: false
       matrix:

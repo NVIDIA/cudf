@@ -7,10 +7,20 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
+
+#include <cuda/buffer>
+#include <cuda/std/type_traits>
+#include <cuda/stream>
 
 #include <memory>
+#include <string>
+#include <type_traits>
+#include <utility>
 
 /**
  * @file
@@ -333,6 +343,9 @@ std::unique_ptr<column> binary_operation(
  * @brief Performs a binary operation between two columns using a
  * user-defined PTX function.
  *
+ * @deprecated in release 26.12 and will be removed in a future release. Use `cudf::transform`
+ * instead.
+ *
  * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
  *
  * Regardless of the operator, the validity of the output value is the logical
@@ -352,7 +365,7 @@ std::unique_ptr<column> binary_operation(
  * @throw cudf::logic_error if @p lhs and @p rhs dtypes aren't numeric
  * @throw cudf::logic_error if @p output_type dtype isn't numeric
  */
-std::unique_ptr<column> binary_operation(
+[[deprecated("Use cudf::transform instead")]] std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   column_view const& rhs,
   std::string const& ptx,

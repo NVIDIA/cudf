@@ -17,6 +17,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
@@ -80,7 +81,7 @@ std::unique_ptr<column> make_range_window(
   null_order null_order,
   range_window_type window,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   bool const nulls_at_start = (order == order::ASCENDING && null_order == null_order::BEFORE) ||
@@ -111,7 +112,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (group_keys.num_columns() > 0) {
     using cudf::groupby::detail::groupby_helper;
@@ -164,7 +165,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(

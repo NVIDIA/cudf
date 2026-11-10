@@ -20,7 +20,7 @@ namespace CUDF_EXPORT cudf {
 class mutable_string_view {
  public:
   /** @brief Default constructor represents an empty string. */
-  CUDF_HOST_DEVICE mutable_string_view() {}
+  CUDF_HOST_DEVICE mutable_string_view() = default;
 
   /**
    * @brief Create a view of an existing device char array.
@@ -57,9 +57,10 @@ class mutable_string_view {
  private:
   char* _data{};       ///< Pointer to the device char array
   size_type _bytes{};  ///< Number of bytes in the array
-  [[maybe_unused]] mutable size_type
-    _length{};  ///< Most recently computed UTF-8 character count. Intentionally left unused for
-                ///< ABI-compatibility with string_view
+  [[maybe_unused]] mutable size_type _length =
+    string_view::UNKNOWN_STRING_LENGTH;  ///< Unknown UTF-8 character count, matching string_view's
+                                         ///< sentinel. Intentionally left unused for
+                                         ///< ABI-compatibility with string_view
 };
 
 }  // namespace CUDF_EXPORT cudf

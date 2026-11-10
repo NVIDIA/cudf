@@ -72,7 +72,7 @@ template <typename Op>
 std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        bitmask_type const* mask,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto d_input = column_device_view::create(input, stream);
 
@@ -111,12 +111,12 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
 template std::unique_ptr<column> scan_inclusive<DeviceMin>(column_view const& input,
                                                            bitmask_type const* mask,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cudf::memory_resources mr);
 
 template std::unique_ptr<column> scan_inclusive<DeviceMax>(column_view const& input,
                                                            bitmask_type const* mask,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace strings

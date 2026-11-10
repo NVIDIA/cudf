@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,7 @@
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/datasource.hpp>
 
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
 
 // IO types supported in the benchmarks
 enum class io_type {
@@ -91,7 +91,7 @@ class cuio_source_sink_pair {
   io_type type;
   std::vector<char> h_buffer;
   cudf::detail::host_vector<char> pinned_buffer;
-  rmm::device_uvector<std::byte> d_buffer;
+  cuda::device_buffer<std::byte> d_buffer;
   std::string file_name;
   std::unique_ptr<cudf::io::data_sink> void_sink;
   bool owns_file;

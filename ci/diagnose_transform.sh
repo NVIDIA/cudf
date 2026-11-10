@@ -19,7 +19,10 @@ sccache --stop-server >/dev/null 2>&1 || true
 sccache --dist-status > "${diagnostics_dir}/sccache-dist-status.json"
 python -c 'import json, sys; assert json.load(open(sys.argv[1]))["SchedulerStatus"][1]["servers"], "Distributed sccache has no workers"' \
     "${diagnostics_dir}/sccache-dist-status.json"
-sccache cc -std=c11 -shared -fPIC -g -fno-omit-frame-pointer -Wall -Wextra -Werror \
+# Test images do not include a host compiler; only the recorder needs one.
+apt-get update -qq
+apt-get install -y --no-install-recommends gcc libc6-dev
+sccache gcc -std=c11 -shared -fPIC -g -fno-omit-frame-pointer -Wall -Wextra -Werror \
     ci/utils/crash_trace.c -o "${diagnostics_dir}/crash_trace.so"
 
 python ci/utils/diagnose_transform.py \

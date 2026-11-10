@@ -109,7 +109,7 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   auto const col_id = col_meta.orc_col_map[level][orc_col_id];
   auto& col_buffer  = col_buffers[level][col_id];

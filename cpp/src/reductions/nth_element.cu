@@ -25,7 +25,7 @@ std::unique_ptr<cudf::scalar> nth_element(column_view const& col,
                                           size_type n,
                                           null_policy null_handling,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(n >= -col.size() and n < col.size(), "Index out of bounds");
   auto wrap_n = [n](size_type size) { return (n < 0 ? size + n : n); };

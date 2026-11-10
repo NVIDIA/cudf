@@ -22,6 +22,8 @@ from cudf_polars.utils import dtypes, sorting
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from rmm.pylibrmm.stream import Stream
+
     from cudf_polars.containers import DataFrame
 
 __all__ = ["Cast", "Len", "UnaryFunction"]
@@ -188,6 +190,8 @@ class UnaryFunction(Expr):
         "bit_invert": plc.unary.UnaryOperator.BIT_INVERT,
         "not": plc.unary.UnaryOperator.NOT,
         "negate": plc.unary.UnaryOperator.NEGATE,
+        # Not a polars function, only built by cudf-polars (round half to even)
+        "rint": plc.unary.UnaryOperator.RINT,
     }
     _supported_misc_fns = frozenset(
         {
@@ -451,6 +455,44 @@ class UnaryFunction(Expr):
         return UnaryFunction._validate_top_k(
             k_col.obj_scalar(stream=df.stream).to_py(stream=df.stream)
         )
+
+    @staticmethod
+    def _sorted_top_k(
+        values: plc.Column,
+        by: Column,
+        k: int,
+        order: plc.types.Order,
+        stream: Stream,
+    ) -> plc.Column:
+        """
+        Select the ``top_k`` rows of ``values`` ordered by the sorted column ``by``.
+
+        Parameters
+        ----------
+        values
+            Column to select rows from, with the same number of rows as ``by``.
+        by
+            Column with ``is_sorted == plc.types.Sorted.YES``.
+        k
+            Number of rows to select, at most the number of rows of ``by``.
+        order
+            ``DESCENDING`` to select the largest values, ``ASCENDING`` to select
+            the smallest values.
+        stream
+            CUDA stream on which ``values`` is valid.
+
+        Returns
+        -------
+        The selected rows in ``order`` of ``by``.
+        """
+        valid_begin = by.null_count if sorting.nulls_at_start(by) else 0
+        if by.order == order:
+            begin = min(valid_begin, by.size - k)
+            (result,) = plc.copying.slice(values, [begin, begin + k], stream=stream)
+            return result.copy(stream=stream)
+        begin = max(valid_begin + by.size - by.null_count, k) - k
+        (result,) = plc.copying.slice(values, [begin, begin + k], stream=stream)
+        return plc.copying.reverse(result, stream=stream)
 
     @staticmethod
     def _bound_clip_operand(
@@ -1763,15 +1805,19 @@ class UnaryFunction(Expr):
             column = self.children[0].evaluate(df, context=context)
             (reverse,) = self.options
             k = self._top_k_count(self.children[1], df, context)
+            order = plc.types.Order.ASCENDING if reverse else plc.types.Order.DESCENDING
+            if column.is_sorted == plc.types.Sorted.YES:
+                k = min(k, column.size)
+                return Column(
+                    self._sorted_top_k(column.obj, column, k, order, df.stream),
+                    dtype=self.dtype,
+                ).set_sorted(
+                    is_sorted=plc.types.Sorted.YES,
+                    order=order,
+                    null_order=column.null_order,
+                )
             return Column(
-                plc.sorting.top_k(
-                    column.obj,
-                    k,
-                    plc.types.Order.ASCENDING
-                    if reverse
-                    else plc.types.Order.DESCENDING,
-                    stream=df.stream,
-                ),
+                plc.sorting.top_k(column.obj, k, order, stream=df.stream),
                 dtype=self.dtype,
             )
         elif self.name == "top_k_by":
@@ -1782,14 +1828,18 @@ class UnaryFunction(Expr):
                 by = broadcast(by, target_length=col_value.size, stream=df.stream)[0]
             (descending,) = self.options
             k = self._top_k_count(self.children[1], df, context)
-            indices = plc.sorting.top_k_order(
-                by.obj,
-                k,
+            order = (
                 plc.types.Order.ASCENDING
                 if descending[0]
-                else plc.types.Order.DESCENDING,
-                stream=df.stream,
+                else plc.types.Order.DESCENDING
             )
+            if by.is_sorted == plc.types.Sorted.YES:
+                k = min(k, by.size)
+                return Column(
+                    self._sorted_top_k(col_value.obj, by, k, order, df.stream),
+                    dtype=self.dtype,
+                )
+            indices = plc.sorting.top_k_order(by.obj, k, order, stream=df.stream)
             return Column(
                 plc.copying.gather(
                     plc.Table([col_value.obj]),

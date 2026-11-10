@@ -58,7 +58,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
 table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                               json_reader_options const& reader_opts,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 }  // namespace io::json::detail
 }  // namespace CUDF_EXPORT cudf

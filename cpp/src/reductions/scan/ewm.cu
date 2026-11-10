@@ -158,7 +158,7 @@ template <typename T>
 rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
                                            T const beta,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
   cuda::device_buffer<pair_type<T>> pairs(
@@ -232,7 +232,7 @@ template <typename T>
 rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
                                              T const beta,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
   cuda::device_buffer<pair_type<T>> pairs(
@@ -290,7 +290,7 @@ struct ewma_functor {
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     CUDF_FAIL("Unsupported type for EWMA.");
   }
@@ -299,7 +299,7 @@ struct ewma_functor {
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto const ewma_agg       = dynamic_cast<ewma_aggregation const*>(&agg);
     auto const history        = ewma_agg->history;
@@ -327,7 +327,7 @@ struct ewma_functor {
 std::unique_ptr<column> exponentially_weighted_moving_average(column_view const& input,
                                                               scan_aggregation const& agg,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr)
+                                                              cudf::memory_resources mr)
 {
   return type_dispatcher(input.type(), ewma_functor{}, agg, input, stream, mr);
 }

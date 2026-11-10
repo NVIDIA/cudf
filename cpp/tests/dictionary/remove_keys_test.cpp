@@ -153,6 +153,18 @@ TEST_F(DictionaryRemoveKeysTest, RemoveUnusedAfterDuplicateSetKeys)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(decoded->view(), expected_decoded);
 }
 
+TEST_F(DictionaryRemoveKeysTest, EmptySlice)
+{
+  cudf::test::fixed_width_column_wrapper<int64_t> input{444, 333, 111, 222};
+  auto const dictionary = cudf::dictionary::encode(input);
+  auto const sliced     = cudf::slice(dictionary->view(), {1, 1}).front();
+
+  auto const result = cudf::dictionary::remove_unused_keys(cudf::dictionary_column_view(sliced));
+  EXPECT_EQ(result->size(), 0);
+  auto const decoded = cudf::dictionary::decode(result->view());
+  EXPECT_EQ(decoded->size(), 0);
+}
+
 TEST_F(DictionaryRemoveKeysTest, Errors)
 {
   cudf::test::fixed_width_column_wrapper<int64_t> input{1, 2, 3};

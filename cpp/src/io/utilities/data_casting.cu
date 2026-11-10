@@ -798,7 +798,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
                                             cudf::detail::device_scalar<size_type>& d_null_count,
                                             cudf::io::parse_options_view const& options,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   //  CUDF_FUNC_RANGE();
 
@@ -863,7 +863,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
   auto d_offsets        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // CHARS column
-  rmm::device_uvector<char> chars(bytes, stream, mr);
+  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
   auto d_chars = chars.data();
 
   single_thread_fn.d_chars   = d_chars;
@@ -921,7 +921,7 @@ std::unique_ptr<column> parse_data(
   size_type null_count,
   cudf::io::parse_options_view const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 

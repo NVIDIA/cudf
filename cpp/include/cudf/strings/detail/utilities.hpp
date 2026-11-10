@@ -33,7 +33,7 @@ namespace strings::detail {
 std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
                                                     size_type count,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr);
+                                                    cudf::memory_resources mr);
 
 /**
  * @brief Creates a string_view buffer from a strings column.
@@ -44,9 +44,7 @@ std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
  * @return Device buffer of string_views
  */
 cuda::device_buffer<string_view> create_string_vector_from_column(
-  cudf::strings_column_view const strings,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::strings_column_view const strings, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Return the threshold size for a strings column to use int64 offsets

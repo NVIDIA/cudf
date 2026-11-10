@@ -9,6 +9,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/buffer>
@@ -45,7 +46,7 @@ template <typename ColumnDeviceView, typename HostTableView>
 std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, ColumnDeviceView*>
 create_column_device_views(HostTableView source_view,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cudf::memory_resources mr)
 {
   // First calculate the size of memory needed to hold the
   // table's ColumnDeviceViews. This is done by calling extent()
@@ -70,7 +71,7 @@ create_column_device_views(HostTableView source_view,
   // align both h_ptr, d_ptr
   auto descendant_storage = std::make_unique<cuda::device_buffer<std::byte>>(
     stream,
-    mr,
+    mr.get_output_mr(),
     padded_views_size_bytes,
     cuda::no_init,
     cuda::std::execution::prop{cuda::allocation_alignment, alignof(ColumnDeviceView)});
@@ -88,9 +89,7 @@ create_column_device_views(HostTableView source_view,
 
 template std::pair<std::unique_ptr<cuda::device_buffer<std::byte>>, column_device_view*>
 create_column_device_views<column_device_view, host_span<column_view const>>(
-  host_span<column_view const> source_view,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  host_span<column_view const> source_view, cuda::stream_ref stream, cudf::memory_resources mr);
 
 table_device_view::table_device_view(table_view source_view, column_device_view* columns)
   : detail::table_device_view_base<column_device_view, table_view>(source_view, columns)
@@ -100,7 +99,7 @@ table_device_view::table_device_view(table_view source_view, column_device_view*
 std::unique_ptr<table_device_view, std::function<void(table_device_view*)>>
 table_device_view::create(table_view source_view,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr)
+                          cudf::memory_resources mr)
 {
   auto [descendant_storage, columns] =
     create_column_device_views<column_device_view, table_view>(source_view, stream, mr);
@@ -123,7 +122,7 @@ mutable_table_device_view::mutable_table_device_view(mutable_table_view source_v
 std::unique_ptr<mutable_table_device_view, std::function<void(mutable_table_device_view*)>>
 mutable_table_device_view::create(mutable_table_view source_view,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   auto [descendant_storage, columns] =
     create_column_device_views<mutable_column_device_view, mutable_table_view>(

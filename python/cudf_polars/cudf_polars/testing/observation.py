@@ -59,7 +59,7 @@ class Observation:
 # one item runs at a time; callbacks capture its record before changing context.
 _active: Observation | None = None
 _active_lock = Lock()
-_bound: ContextVar[Observation | None | bool] = ContextVar(
+_bound: ContextVar[Observation | bool | None] = ContextVar(
     "cudf_polars_query_observation", default=False
 )
 

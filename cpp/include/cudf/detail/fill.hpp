@@ -35,7 +35,7 @@ std::unique_ptr<column> fill(column_view const& input,
                              size_type end,
                              scalar const& value,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

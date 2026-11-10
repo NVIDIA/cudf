@@ -1073,14 +1073,15 @@ dst_buf_info* collect_valid_counts(InputIter begin,
  */
 void resolve_valid_counts(cudf::table_view const& input,
                           host_span<dst_buf_info> buf_info,
-                          cuda::stream_ref stream)
+                          cuda::stream_ref stream,
+                          rmm::device_async_resource_ref temp_mr)
 {
   recount_batches batches;
   collect_valid_counts(input.begin(), input.end(), buf_info.data(), batches);
   for (auto const& [range, batch] : batches) {
     auto const [bit_shift, num_rows] = range;
-    auto const null_counts =
-      cudf::batch_null_count(batch.masks, bit_shift, bit_shift + num_rows, stream);
+    auto const null_counts           = cudf::batch_null_count(
+      batch.masks, bit_shift, bit_shift + num_rows, stream, {temp_mr, temp_mr});
     for (std::size_t i = 0; i < batch.infos.size(); ++i) {
       batch.infos[i]->valid_count = num_rows - null_counts[i];
     }
@@ -2271,7 +2272,7 @@ struct contiguous_split_state {
     // The copy descriptors keep their valid count flags; null counts are resolved on a copy.
     auto const& h_dst_buf_info = partition_buf_size_and_dst_buf_info->h_dst_buf_info;
     std::vector<dst_buf_info> buf_info(h_dst_buf_info.begin(), h_dst_buf_info.end());
-    resolve_valid_counts(input, buf_info, stream);
+    resolve_valid_counts(input, buf_info, stream, temp_mr);
     detail::metadata_builder mb{input.num_columns(), std::nullopt};
 
     populate_metadata(input.begin(), input.end(), buf_info.data(), mb);

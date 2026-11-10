@@ -17,17 +17,27 @@
 
 namespace cudf::jit {
 
+/// @brief Describes a column's logical type, children and scalar broadcasting.
+transform_input_spec make_input_spec(column_view const& column, bool is_scalar);
+
+/// @brief Reflects accessor storage types, including dictionary indices and keys.
+std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type);
+
+/// @brief Reflects decoded values, using dictionary keys rather than their indices.
+std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type);
+
+/// @brief Reflects the mutable device-view type for an output specification.
+std::string reflect_output_column(transform_output_spec const& spec);
+
 struct transform_reflection {
   std::string input_accessors;
   std::string output_accessors;
-  std::vector<std::string> ptx_input_value_types;
-  std::vector<std::string> ptx_output_value_types;
 
   [[nodiscard]] bool operator==(transform_reflection const& other) const = default;
 };
 
 /**
- * @brief Reflects input/output accessors and PTX value types.
+ * @brief Reflects input/output accessors.
  *
  * @param source_type The type of the UDF source (either CUDA source or LTO binary).
  * @param inputs The input type specifications.
@@ -41,7 +51,7 @@ struct transform_reflection {
  * @param output_table_indices Optional mapping of output table indices. If empty, the index at
  * position `i` is used.
  *
- * @return A transform_reflection containing the reflected accessors and PTX value types.
+ * @return A transform_reflection containing the reflected accessors.
  */
 transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
                              std::span<transform_input_spec const> inputs,
@@ -51,7 +61,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
                              std::span<int32_t const> output_table_sources = {},
                              std::span<int32_t const> output_table_indices = {});
 
-/** @brief Reflects accessors and PTX value types from column storage.
+/** @brief Reflects accessors from column storage.
  *
  * @param source_type The type of the UDF source (either CUDA source or LTO binary).
  * @param inputs The input columns or scalars.
@@ -65,7 +75,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
  * @param output_table_indices Optional mapping of output table indices. If empty, the index at
  * position `i` is used.
  *
- * @return A transform_reflection containing the reflected accessors and PTX value types.
+ * @return A transform_reflection containing the reflected accessors.
  */
 transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
                              std::span<transform_input const> inputs,

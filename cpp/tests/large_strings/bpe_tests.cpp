@@ -7,8 +7,10 @@
 
 #include <tests/text/bpe_data_generator.hpp>
 
+#include <cudf_test/byte_literals.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/large_memory.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
@@ -78,10 +80,10 @@ TEST_F(BPETest, LargeOutput)
   }
 }
 
-// Disabled since this requires about 40GB of device memory.
-// Run with --gtest_also_run_disabled_tests to verify more than max size_type segments.
-TEST_F(BPETest, DISABLED_ManySegments)
+TEST_F(BPETest, ManySegments)
 {
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(40_GiB);
   // every character is its own (unpairable) segment so the number
   // of segments exceeds max size_type
   auto const mpt = cudf::test::strings_column_wrapper({"a b", "ab c"});

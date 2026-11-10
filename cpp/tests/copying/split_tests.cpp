@@ -6,9 +6,11 @@
 #include <tests/copying/slice_tests.cuh>
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/byte_literals.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/large_memory.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -1817,9 +1819,10 @@ TEST_F(ContiguousSplitUntypedTest, ManyBuffersPreserveValidity)
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.back().table);
 }
 
-// This test requires about 25GB of device memory when used with the arena allocator
-TEST_F(ContiguousSplitUntypedTest, DISABLED_VeryLargeColumnTest)
+TEST_F(ContiguousSplitUntypedTest, VeryLargeColumnTest)
 {
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(16_GiB);
   // tests an edge case where buf.elements * buf.element_size overflows an INT32.
   auto col = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT64}, 400 * 1024 * 1024, cudf::mask_state::UNALLOCATED);
@@ -1827,9 +1830,10 @@ TEST_F(ContiguousSplitUntypedTest, DISABLED_VeryLargeColumnTest)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*col, result[0].table.column(0));
 }
 
-// This test requires about 25GB of device memory when used with the arena allocator
-TEST_F(ContiguousSplitUntypedTest, DISABLED_VeryLargeColumnTestChunked)
+TEST_F(ContiguousSplitUntypedTest, VeryLargeColumnTestChunked)
 {
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(16_GiB);
   // tests an edge case where buf.elements * buf.element_size overflows an INT32.
   auto col = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT64}, 400 * 1024 * 1024, cudf::mask_state::UNALLOCATED);
@@ -1837,10 +1841,11 @@ TEST_F(ContiguousSplitUntypedTest, DISABLED_VeryLargeColumnTestChunked)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*col, result[0].table.column(0));
 }
 
-// Disabled as this test requires about 7GB of device memory.
 // See https://github.com/NVIDIA/cudf/issues/20876 for more info.
-TEST_F(ContiguousSplitUntypedTest, DISABLED_ChunkedPackNextReturnValueOver2GB)
+TEST_F(ContiguousSplitUntypedTest, ChunkedPackNextReturnValueOver2GB)
 {
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(8_GiB);
   auto const mr = cudf::get_current_device_resource_ref();
 
   // 270M INT64 elements = 270 * 1024 * 1024 * 8 = 2,264,924,160 bytes > INT32_MAX

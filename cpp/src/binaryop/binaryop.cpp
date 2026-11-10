@@ -63,6 +63,7 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
     }
     return is_numeric(lhs) && lhs.id() != type_id::BOOL8;
   }
+  if (cudf::binops::compiled::is_string_null_min_max(out, lhs, rhs, op)) { return true; }
   return cudf::binops::compiled::is_supported_operation(out, lhs, rhs, op);
 }
 
@@ -202,9 +203,7 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
       lhs, rhs, op, output_type, error_policy::PROPAGATE, stream, mr);
   }
 
-  if (lhs.type().id() == type_id::STRING and rhs.type().id() == type_id::STRING and
-      output_type.id() == type_id::STRING and
-      (op == binary_operator::NULL_MAX or op == binary_operator::NULL_MIN))
+  if (cudf::binops::compiled::is_string_null_min_max(output_type, lhs.type(), rhs.type(), op))
     return cudf::binops::compiled::string_null_min_max(lhs, rhs, op, output_type, stream, mr);
 
   if (not cudf::binops::compiled::is_supported_operation(output_type, lhs.type(), rhs.type(), op))

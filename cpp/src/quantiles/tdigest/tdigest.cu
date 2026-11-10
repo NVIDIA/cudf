@@ -184,7 +184,7 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
                                                    size_type num_output_values,
                                                    bool output_is_dense,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   tdigest_column_view tdv(input);
 
@@ -266,7 +266,7 @@ std::unique_ptr<column> make_tdigest_column(size_type num_rows,
                                             std::unique_ptr<column>&& min_values,
                                             std::unique_ptr<column>&& max_values,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_EXPECTS(tdigest_offsets->size() == num_rows + 1,
                "Encountered unexpected offset count in make_tdigest_column");
@@ -312,7 +312,7 @@ std::unique_ptr<column> make_tdigest_column(size_type num_rows,
 
 std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   auto offsets = cudf::make_fixed_width_column(
     data_type(type_id::INT32), num_rows + 1, mask_state::UNALLOCATED, stream, mr);
@@ -355,7 +355,7 @@ std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
  * @returns An empty tdigest scalar.
  */
 std::unique_ptr<scalar> make_empty_tdigest_scalar(cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   auto contents = make_empty_tdigests_column(1, stream, mr)->release();
   return std::make_unique<struct_scalar>(
@@ -367,7 +367,7 @@ std::unique_ptr<scalar> make_empty_tdigest_scalar(cuda::stream_ref stream,
 std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
                                           column_view const& percentiles,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   tdigest_column_view tdv(input);
   CUDF_EXPECTS(percentiles.type().id() == type_id::FLOAT64,
@@ -439,7 +439,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
 std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
                                           column_view const& percentiles,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return tdigest::percentile_approx(input, percentiles, stream, mr);

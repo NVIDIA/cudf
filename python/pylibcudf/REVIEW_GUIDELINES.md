@@ -231,7 +231,10 @@ types at runtime. Type `stream` as `CudaStreamLike | None` from
 
 ```python
 # Bad: the .pyx parameter is typed `list`, so passing a tuple raises TypeError
-def concatenate(objects: Sequence[Table], stream: Stream | None = None) -> Table: ...
+def concatenate(
+    objects: Sequence[Table], stream: Stream | None = None
+) -> Table: ...
+
 
 # Good
 def concatenate(

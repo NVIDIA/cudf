@@ -6,59 +6,14 @@ import operator
 
 import numpy as np
 import pytest
-from numba import cuda
-from numba.core.typing import signature as nb_signature
-from numba.core.typing.templates import AbstractTemplate
-from numba.cuda.cudadecl import registry as cuda_decl_registry
-from numba.cuda.cudaimpl import lower as cuda_lower
+from numba_cuda_mlir import cuda
 
 import cudf
 from cudf.core.missing import NA
 from cudf.core.udf._ops import (
     comparison_ops,
 )
-from cudf.core.udf.strings_lowering import (
-    cast_string_view_to_managed_udf_string,
-)
-from cudf.core.udf.strings_typing import (
-    StringView,
-    managed_udf_string,
-    string_view,
-)
 from cudf.testing import assert_eq
-
-
-def sv_to_managed_udf_str(sv):
-    """
-    Cast a string_view object to a managed_udf_string object
-
-    This placeholder function never runs in python
-    It exists only for numba to have something to replace
-    with the typing and lowering code below
-
-    This is similar conceptually to needing a translation
-    engine to emit an expression in target language "B" when
-    there is no equivalent in the source language "A" to
-    translate from. This function effectively defines the
-    expression in language "A" and the associated typing
-    and lowering describe the translation process, despite
-    the expression having no meaning in language "A"
-    """
-    pass
-
-
-@cuda_decl_registry.register_global(sv_to_managed_udf_str)
-class StringViewToUDFStringDecl(AbstractTemplate):
-    def generic(args, kws):
-        if isinstance(args[0], StringView) and len(args) == 1:
-            return nb_signature(managed_udf_string, string_view)
-
-
-@cuda_lower(sv_to_managed_udf_str, string_view)
-def sv_to_udf_str_testing_lowering(context, builder, sig, args):
-    return cast_string_view_to_managed_udf_string(
-        context, builder, sig.args[0], sig.return_type, args[0]
-    )
 
 
 def run_masked_udf_test(func, data, args=(), nullable=True, **kwargs):
@@ -227,7 +182,6 @@ def test_string_udf_count(str_udf_data, substr):
     run_masked_udf_test(func, str_udf_data, check_dtype=False)
 
 
-@pytest.mark.xfail(reason="Identity function not supported.")
 def test_string_udf_return_string(str_udf_data):
     def func(row):
         return row["str_col"]
@@ -775,3 +729,33 @@ def test_masked_udf_scalar_args_binops_multiple(data, binary_op):
     run_masked_udf_test(
         func, data, args=(1, 2), check_dtype=False, nullable=True
     )
+
+
+def test_apply_kernel_instance_not_cached():
+    # Regression: the apply kernel classes must not cache per-instance state at
+    # class scope (previously ``@functools.cache`` on
+    # ``_get_kernel_string_exec_context`` kept every kernel instance -- and thus
+    # its frame's GPU buffers -- alive for the life of the process). Verify the
+    # kernel instance is collectable after use, while the separate compiled
+    # kernel cache still works.
+    import gc
+    import weakref
+
+    from cudf.core.udf.mlir_backend.row_function import DataFrameApplyKernel
+    from cudf.core.udf.mlir_backend.scalar_function import SeriesApplyKernel
+
+    df = cudf.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    row_kr = DataFrameApplyKernel(df, lambda row: row["a"] + row["b"], ())
+    row_kr.get_kernel()
+    row_ref = weakref.ref(row_kr)
+
+    sr = cudf.Series([1, 2, 3])
+    scalar_kr = SeriesApplyKernel(sr, lambda x: x + 1, ())
+    scalar_kr.get_kernel()
+    scalar_ref = weakref.ref(scalar_kr)
+
+    del row_kr, scalar_kr
+    gc.collect()
+
+    assert row_ref() is None
+    assert scalar_ref() is None

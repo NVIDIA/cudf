@@ -49,7 +49,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
                                            StringIterRight rhs_begin,
                                            Filter filter_fn,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   auto strings_count = std::distance(lhs_begin, lhs_end);
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }

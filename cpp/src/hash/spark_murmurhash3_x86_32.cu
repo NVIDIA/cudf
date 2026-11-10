@@ -68,7 +68,7 @@ void check_spark_murmurhash3_compatibility(table_view const& input)
 std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
                                                  uint32_t seed,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   // The hasher works in unsigned; Spark reports a signed `Int`, so the output column is INT32.
   using output_type = int32_t;
@@ -108,7 +108,7 @@ std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
 std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
                                                  uint32_t seed,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::spark_murmurhash3_x86_32(input, seed, stream, mr);

@@ -141,7 +141,7 @@ std::unique_ptr<column> copy_if_else(bool nullable,
                                      FilterFn filter,
                                      cudf::data_type output_type,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   // This is the type of the cuda::std::optional element in the passed iterators
   using Element = typename cuda::std::iter_value_t<LeftIter>::value_type;

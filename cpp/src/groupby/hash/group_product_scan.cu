@@ -16,7 +16,7 @@ std::unique_ptr<column> product_scan(column_view const& values,
                                      size_type num_groups,
                                      cudf::device_span<size_type const> group_labels,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   return type_dispatcher(values.type(),
                          group_scan_dispatcher<aggregation::PRODUCT>{},

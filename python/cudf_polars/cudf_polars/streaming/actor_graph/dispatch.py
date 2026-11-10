@@ -101,8 +101,8 @@ def ir_context_for_node(rec: SubNetGenerator, ir: IR) -> IRExecutionContext:
     Returns
     -------
     ir_context
-        A clone of rec.state["ir_context"] with ``quent_ir_execution_state``
-        bound to the physical Quent operator for the given IR node.
+        A clone of rec.state["ir_context"] with a pre-actor Quent execution
+        state bound to the physical operator for the given IR node.
     """
     import cudf_polars.quent._context
 
@@ -113,7 +113,7 @@ def ir_context_for_node(rec: SubNetGenerator, ir: IR) -> IRExecutionContext:
         operator_id = quent_operator_map[ir]
         return dataclasses.replace(
             ir_context,
-            quent_ir_execution_state=cudf_polars.quent._context.QuentIRExecutionState.from_query_worker_state(
+            unbound_quent_ir_execution_state=cudf_polars.quent._context.UnboundQuentIRExecutionState.from_query_worker_state(
                 query_worker_state=quent_query_worker_state,
                 operator_id=operator_id,
             ),

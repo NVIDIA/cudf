@@ -21,7 +21,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -30,11 +29,11 @@ namespace cudf::io::parquet::detail {
 /**
  * @brief Converts row-group column chunk statistics to device columns.
  *
- * Each output column has one row for every selected row group.
+ * Each output column has one row for every selected row group. The min and max columns are always
+ * returned, followed by the all-null column if `has_is_null_operator` is set.
  */
 struct row_group_stats_caster : public stats_caster_base {
-  using result_type = std::
-    tuple<std::unique_ptr<column>, std::unique_ptr<column>, std::optional<std::unique_ptr<column>>>;
+  using result_type = std::vector<std::unique_ptr<column>>;
 
   template <typename T>
   [[nodiscard]] static constexpr bool can_use_deprecated_minmax()
@@ -50,7 +49,7 @@ struct row_group_stats_caster : public stats_caster_base {
 
   size_type total_row_groups;
   std::vector<metadata> const& per_file_metadata;
-  host_span<std::vector<size_type> const> row_group_indices;
+  std::span<std::vector<size_type> const> row_group_indices;
   bool has_is_null_operator;
 
   template <typename T>
@@ -156,11 +155,14 @@ struct row_group_stats_caster : public stats_caster_base {
           stats_idx++;
         }
       };
-      return {min.to_device(dtype, stream, mr),
-              max.to_device(dtype, stream, mr),
-              has_is_null_operator ? std::make_optional(is_null->to_device(
-                                       data_type{cudf::type_id::BOOL8}, stream, mr))
-                                   : std::nullopt};
+      result_type columns;
+      columns.reserve(stats_cols_per_column);
+      columns.emplace_back(min.to_device(dtype, stream, mr));
+      columns.emplace_back(max.to_device(dtype, stream, mr));
+      if (has_is_null_operator) {
+        columns.emplace_back(is_null->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
+      }
+      return columns;
     }
   }
 };

@@ -922,8 +922,10 @@ class orc_writer_options {
    * A non-UTC file is meant for a reader whose timezone matches; it does not round-trip through
    * the libcudf reader, which has no session timezone and returns the writer's wall clock.
    *
-   * Timestamp statistics hold the input instants, which is what a reader that honors the recorded
-   * timezone materializes from the data stream.
+   * Timestamp statistics hold the wall-clock values that a reader materializes from the data
+   * stream, so that the bounds and the data agree. Apache's writer records them the same way. In a
+   * non-UTC file, the pre-ORC-135 `minimum` and `maximum` fields are omitted, as Apache omits them,
+   * leaving only `minimumUtc` and `maximumUtc`.
    *
    * An empty name, or one that does not resolve to a timezone file, is rejected by the writer,
    * not by this setter.
@@ -1598,8 +1600,8 @@ class orc_chunked_writer {
   /**
    * @brief Writes table to output.
    *
-   * @note If an exception is thrown during encoding or compression, the data from the failing call
-   * is not written to the sink. Data from previous successful calls is unaffected.
+   * @note A call that fails before writing to the sink (e.g. out of memory) may be retried. If it
+   * fails while writing to the sink, the output must be discarded and further writes are rejected.
    *
    * @param[in] table Table that needs to be written
    * @return returns reference of the class object
@@ -1608,6 +1610,9 @@ class orc_chunked_writer {
 
   /**
    * @brief Finishes the chunked/streamed write process.
+   *
+   * Like `write()`, may be retried if it fails before writing to the sink. A failed writer is not
+   * finalized.
    */
   void close();
 

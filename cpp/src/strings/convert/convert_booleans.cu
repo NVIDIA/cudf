@@ -127,7 +127,8 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
   auto d_column = *column;
 
   // copy null mask
-  cuda::device_buffer<std::byte> null_mask = cudf::detail::copy_bitmask(booleans, stream, mr);
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
+    cudf::detail::copy_bitmask(booleans, stream, mr);
 
   auto [offsets, chars] =
     make_strings_children(from_booleans_fn{d_column, d_true, d_false}, strings_count, stream, mr);

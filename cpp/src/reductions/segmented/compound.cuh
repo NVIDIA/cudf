@@ -16,6 +16,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 namespace cudf {
 namespace reduction {
@@ -66,13 +67,27 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
   if (col.has_nulls()) {
     auto nrt = compound_op.template get_null_replacing_element_transformer<ResultType>();
     auto itr = cuda::transform_iterator(d_col->pair_begin<InputType, true>(), nrt);
-    cudf::reduction::detail::segmented_reduce(
-      itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream);
+    cudf::reduction::detail::segmented_reduce(itr,
+                                              offsets.begin(),
+                                              offsets.end(),
+                                              out_itr,
+                                              compound_op,
+                                              ddof,
+                                              counts.data(),
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
   } else {
     auto et  = compound_op.template get_element_transformer<ResultType>();
     auto itr = cuda::transform_iterator(d_col->begin<InputType>(), et);
-    cudf::reduction::detail::segmented_reduce(
-      itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream);
+    cudf::reduction::detail::segmented_reduce(itr,
+                                              offsets.begin(),
+                                              offsets.end(),
+                                              out_itr,
+                                              compound_op,
+                                              ddof,
+                                              counts.data(),
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
   }
 
   // Compute the output null mask
@@ -124,7 +139,7 @@ struct compound_segmented_dispatcher {
   template <typename ElementType>
   static constexpr bool is_supported_v()
   {
-    return std::is_arithmetic_v<ElementType>;
+    return cuda::std::is_arithmetic_v<ElementType>;
   }
 
  public:

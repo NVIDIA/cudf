@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_view.hpp>
@@ -24,12 +25,15 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
     : data{_num_elements * sizeof(T), stream},
       mask{cudf::create_null_mask(_num_elements, cudf::mask_state::UNINITIALIZED, stream)}
   {
-    std::vector<char> h_data(std::max(data.size(), mask.size()));
+    std::vector<char> h_data(std::max(data.size(), mask.size() * sizeof(cudf::bitmask_type)));
     std::iota(h_data.begin(), h_data.end(), 0);
     CUDF_CUDA_TRY(
       cudaMemcpyAsync(data.data(), h_data.data(), data.size(), cudaMemcpyDefault, stream.get()));
-    CUDF_CUDA_TRY(
-      cudaMemcpyAsync(mask.data(), h_data.data(), mask.size(), cudaMemcpyDefault, stream.get()));
+    CUDF_CUDA_TRY(cudaMemcpyAsync(mask.data(),
+                                  h_data.data(),
+                                  mask.size() * sizeof(cudf::bitmask_type),
+                                  cudaMemcpyDefault,
+                                  stream.get()));
   }
 
   cudf::size_type num_elements() { return _num_elements; }
@@ -39,10 +43,11 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   std::uniform_int_distribution<cudf::size_type> distribution{200, 1000};
   cudf::size_type _num_elements{distribution(generator)};
   rmm::device_buffer data{};
-  cuda::device_buffer<std::byte> mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
-  cuda::device_buffer<std::byte> all_valid_mask =
+  cuda::device_buffer<cudf::bitmask_type> mask =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
+  cuda::device_buffer<cudf::bitmask_type> all_valid_mask =
     create_null_mask(num_elements(), cudf::mask_state::ALL_VALID, cudf::test::get_default_stream());
-  cuda::device_buffer<std::byte> all_null_mask =
+  cuda::device_buffer<cudf::bitmask_type> all_null_mask =
     create_null_mask(num_elements(), cudf::mask_state::ALL_NULL, cudf::test::get_default_stream());
 };
 
@@ -91,3 +96,5 @@ TYPED_TEST(TypedColumnTest, CopyConstructorWithMask)
   EXPECT_NE(original_view.head(), copy_view.head());
   EXPECT_NE(original_view.null_mask(), copy_view.null_mask());
 }
+
+CUDF_TEST_PROGRAM_MAIN()

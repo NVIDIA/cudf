@@ -6,6 +6,8 @@
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf_test/column_wrapper.hpp>
+
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -38,10 +40,14 @@ static void bench_normalize(nvbench::state& state)
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { auto result = nvtext::normalize_spaces(input); });
   } else {
-    bool const to_lower = (normalize_type == "to_lower");
+    bool const to_lower = (normalize_type != "characters");
     // we expect the normalizer to be created once and re-used
     // so creating it is not measured
-    auto normalizer = nvtext::create_character_normalizer(to_lower);
+    auto const tokens = cudf::test::strings_column_wrapper({"[BOS]", "[EOS]", "[SEP]", "[PAD]"});
+    auto normalizer =
+      normalize_type == "special_tokens"
+        ? nvtext::create_character_normalizer(to_lower, cudf::strings_column_view(tokens))
+        : nvtext::create_character_normalizer(to_lower);
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       auto result = nvtext::normalize_characters(input, *normalizer);
     });
@@ -56,4 +62,4 @@ NVBENCH_BENCH(bench_normalize)
   .add_int64_axis("min_width", {0})
   .add_int64_axis("max_width", {128, 256})
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
-  .add_string_axis("type", {"spaces", "characters", "to_lower"});
+  .add_string_axis("type", {"spaces", "characters", "to_lower", "special_tokens"});

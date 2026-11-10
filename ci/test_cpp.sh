@@ -14,9 +14,21 @@ RUN_EXAMPLES_TESTS="${RUN_EXAMPLES_TESTS:-true}"
 RUN_LIBCUDF_KAFKA_TESTS="${RUN_LIBCUDF_KAFKA_TESTS:-true}"
 RUN_LIBCUDF_STREAMING_TESTS="${RUN_LIBCUDF_STREAMING_TESTS:-true}"
 
+examples_timeout=30m
+kafka_timeout=30m
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+    examples_timeout=5m
+    kafka_timeout=2m
+fi
+
 EXITCODE=0
 trap "EXITCODE=1" ERR
 set +e
+
+# Run the large-memory tests (skipped by default) in nightlies; they skip themselves on small GPUs
+if [[ "${RAPIDS_BUILD_TYPE:-}" == "nightly" ]]; then
+    export GTEST_CUDF_LARGE_MEMORY_TESTS=1
+fi
 
 # Run gtests from the libcudf-tests and libcudf-streaming-tests packages
 export GTEST_OUTPUT=xml:${RAPIDS_TESTS_DIR}/
@@ -31,13 +43,13 @@ fi
 
 if (( SUITEERROR == 0 )) && [[ "${RUN_EXAMPLES_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf examples"
-    timeout 30m ./ci/run_cudf_examples.sh
+    timeout "${examples_timeout}" ./ci/run_cudf_examples.sh
     SUITEERROR=$?
 fi
 
 if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_KAFKA_TESTS}" == "true" ]]; then
     rapids-logger "Run libcudf_kafka gtests"
-    timeout 30m ./ci/run_cudf_kafka_ctests.sh -j20
+    timeout "${kafka_timeout}" ./ci/run_cudf_kafka_ctests.sh -j20
     SUITEERROR=$?
 fi
 

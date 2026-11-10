@@ -22,6 +22,7 @@ from packaging import version
 from pyarrow import parquet as pq
 
 import cudf
+from cudf.core._compat import PYARROW_GE_26
 from cudf.io.parquet import (
     ParquetDatasetWriter,
     ParquetWriter,
@@ -3069,13 +3070,38 @@ def test_parquet_reader_brotli(datadir):
     assert_eq(expect, got)
 
 
-def test_parquet_reader_one_level_list(datadir):
-    fname = datadir / "one_level_list.parquet"
+@pytest.mark.parametrize(
+    "fname", ["one_level_list.parquet", "one_level_list_in_struct.parquet"]
+)
+def test_parquet_reader_one_level_list(datadir, fname):
+    fname = datadir / fname
 
     expect = pd.read_parquet(fname)
     got = cudf.read_parquet(fname)
 
     assert_eq(expect, got)
+
+    with cudf.option_context("io.parquet.low_memory", True):
+        got = cudf.read_parquet([fname] * 3, _chunk_read_limit=160)
+    assert_eq(pd.concat([expect] * 3, ignore_index=True), got)
+
+
+@pytest.mark.skipif(
+    version.parse(pa.__version__) < version.parse("24"),
+    reason="pyarrow < 24 cannot read a one-level list under a stub",
+)
+def test_parquet_reader_one_level_list_in_stub(datadir):
+    fname = datadir / "one_level_list_in_stub.parquet"
+
+    # pyarrow reads the `repeated group list` stub as a struct; cudf as the
+    # list element
+    expect = [
+        None if row is None else [s["a"].tolist() for s in row]
+        for row in pd.read_parquet(fname)["l"]
+    ]
+    got = cudf.read_parquet(fname)["l"].to_arrow().to_pylist()
+
+    assert expect == got
 
 
 def test_parquet_reader_binary_decimal(datadir):
@@ -3425,6 +3451,120 @@ def test_parquet_columns_and_range_index(columns):
     got = cudf.read_parquet(buffer, columns=columns)
 
     assert_eq(expected, got, check_index_type=True)
+
+
+@pytest.mark.parametrize("low_memory", [True, False])
+@pytest.mark.parametrize("index", [True, False, None])
+@pytest.mark.parametrize(
+    "kwargs, num_rows",
+    [
+        ({}, 12),
+        ({"skip_rows": 3}, 9),
+        ({"nrows": 5}, 5),
+        ({"nrows": 15}, 12),
+        ({"skip_rows": 3, "nrows": 5}, 5),
+        ({"row_groups": [[0, 2], [1]]}, 6),
+    ],
+)
+def test_parquet_empty_columns_num_rows(
+    tmp_path, low_memory, index, kwargs, num_rows
+):
+    paths = []
+    for i in range(2):
+        path = str(tmp_path / f"{i}.parquet")
+        pd.DataFrame({"a": range(6)}).to_parquet(
+            path, index=index, row_group_size=2
+        )
+        paths.append(path)
+
+    with cudf.option_context("io.parquet.low_memory", low_memory):
+        got = cudf.read_parquet(paths, columns=[], **kwargs)
+
+    expected_rows = num_rows if index or PYARROW_GE_26 else 0
+    assert got.shape == (expected_rows, 0)
+    assert len(got.index) == expected_rows
+
+
+@pytest.mark.parametrize("low_memory", [True, False])
+def test_parquet_empty_columns_nrows_exceeds_num_rows(tmp_path, low_memory):
+    path = tmp_path / "file.parquet"
+    pd.DataFrame({"a": range(6)}).to_parquet(path)
+
+    with cudf.option_context("io.parquet.low_memory", low_memory):
+        got = cudf.read_parquet(path, columns=[], nrows=10)
+
+    assert got.shape == (6 if PYARROW_GE_26 else 0, 0)
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        pd.RangeIndex(0, 6),
+        pd.RangeIndex(100, 106, name="a"),
+        pd.RangeIndex(0, 12, 2),
+        pd.RangeIndex(10, -2, -2, name="a"),
+    ],
+)
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"skip_rows": 1}, slice(1, None)),
+        ({"nrows": 2}, slice(0, 2)),
+        ({"skip_rows": 4, "nrows": 5}, slice(4, None)),
+        ({"nrows": 10}, slice(None)),
+    ],
+)
+def test_parquet_skip_rows_nrows_range_index(index, kwargs, rows):
+    pdf = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6]}, index=index)
+    buffer = BytesIO()
+    pdf.to_parquet(buffer, row_group_size=2)
+
+    expected = pdf.iloc[rows]
+    got = cudf.read_parquet(buffer, **kwargs)
+
+    assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"skip_rows": 1}, slice(1, None)),
+        ({"skip_rows": 1, "nrows": 2}, slice(1, 3)),
+        ({"skip_rows": 4, "nrows": 5}, slice(4, 9)),
+        ({"skip_rows": 8, "nrows": 10}, slice(8, None)),
+    ],
+)
+def test_parquet_skip_rows_nrows_multiple_files(tmp_path, kwargs, rows):
+    pdf = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6]})
+    fname = tmp_path / "default_index.parquet"
+    pdf.to_parquet(fname)
+
+    expected = pd.concat([pdf, pdf], ignore_index=True).iloc[rows]
+    got = cudf.read_parquet([fname, fname], **kwargs)
+
+    assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"row_groups": [1]}, [2, 3]),
+        ({"row_groups": [2, 0]}, [4, 5, 0, 1]),
+        ({"filters": [("x", ">", 4)]}, [4, 5]),
+    ],
+)
+def test_parquet_row_groups_stepped_range_index(tmp_path, kwargs, rows):
+    pdf = pd.DataFrame(
+        {"x": [1, 2, 3, 4, 5, 6]}, index=pd.RangeIndex(0, 12, 2)
+    )
+    fname = tmp_path / "stepped_index.parquet"
+    pdf.to_parquet(fname, row_group_size=2)
+
+    # Row groups are indexed by row position, as for a default index
+    expected = pdf.reset_index(drop=True).iloc[rows]
+    got = cudf.read_parquet(fname, **kwargs)
+
+    assert_eq(expected, got)
 
 
 def test_parquet_nested_struct_list():

@@ -56,9 +56,8 @@ table_chunk pack_into_reservation(table_chunk const& chunk,
     // update the provided `reservation`
     br->release(reservation, nbytes);
     // The data leaves device memory here rather than through `BufferResource`, so a
-    // spill is recorded by handing the buffer a token. An empty table packs to a
-    // default-constructed `device_buffer`, which ignores the pinned resource and frees
-    // nothing, so it gets none.
+    // spill is recorded by handing the buffer a token. Empty buffers free no memory,
+    // so they get none.
     auto spill_token =
       spill && nbytes > 0 ? std::make_shared<rapidsmpf::SpillTrackToken>() : nullptr;
     auto host_buffer =

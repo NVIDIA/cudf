@@ -374,7 +374,7 @@ int32_t main(int argc, char const** argv)
   }
 
   // Initialize mr, default stream and stream pool
-  bool constexpr is_pool_used = true;
+  bool constexpr is_pool_used = false;
   auto resource               = create_memory_resource(is_pool_used);
   auto default_stream         = cudf::get_default_stream();
   auto stream_pool = rmm::cuda_stream_pool(thread_count, rmm::cuda_stream::flags::non_blocking);

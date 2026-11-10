@@ -48,7 +48,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-13 evaluation tasks (12 positive, 1 negative), one attempt per task, each run in an isolated k8s sandbox pod and compared against a no-skill baseline. Overall verdict: PASS — recommended for publication (evaluation date 2026-10-08, evaluator version 1.5.6). <br>
+13 evaluation tasks (12 positive, 1 negative), one attempt per task, each run in an isolated k8s sandbox pod and compared against a no-skill baseline. Overall verdict: PASS — recommended for publication (evaluation date 2026-10-15, evaluator version 1.5.6). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -72,15 +72,15 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 81.5% — baseline ran, but no comparable score was available; uplift unavailable | 81.7% — baseline ran, but no comparable score was available; uplift unavailable |
-| Security | 23.1% → 61.5% (+38.4 points) | 69.2% → 53.9% (-15.3 points) |
+| Overall | 76.8% — baseline ran, but no comparable score was available; uplift unavailable | 89.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 23.1% → 38.5% (+15.4 points) | 38.5% → 92.3% (+53.8 points) |
 | Correctness | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Discoverability | 78.8% — baseline ran, but no comparable score was available; uplift unavailable | 77.5% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 95.1% → 94.8% (-0.3 points) | 94.1% → 92.8% (-1.3 points) |
-| Efficiency | 72.6% — baseline ran, but no comparable score was available; uplift unavailable | 84.4% — baseline ran, but no comparable score was available; uplift unavailable |
+| Discoverability | 79.2% — baseline ran, but no comparable score was available; uplift unavailable | 78.8% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 92.5% → 94.9% (+2.4 points) | 88.5% → 92.1% (+3.6 points) |
+| Efficiency | 71.4% — baseline ran, but no comparable score was available; uplift unavailable | 83.3% — baseline ran, but no comparable score was available; uplift unavailable |
 
 ## Skill Version(s): <br>
-26.12.00 development release (source: repo VERSION file and SKILL.md compatibility section; latest CHANGELOG release 26.10.00, git SHA 18f5bd5bf3 committed 2026-10-08) <br>
+26.12.00 development release (source: repo VERSION file and SKILL.md compatibility section; latest CHANGELOG release 26.10.00, git SHA 62921dda53 committed 2026-10-14) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

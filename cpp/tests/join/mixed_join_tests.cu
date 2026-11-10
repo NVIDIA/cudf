@@ -6,16 +6,20 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/errc.hpp>
 #include <cudf/join/conditional_join.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -25,9 +29,14 @@
 #include <thrust/host_vector.h>
 #include <thrust/sort.h>
 
+#include <cudf_test_fragments.hpp>
+
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <numeric>
 #include <random>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
@@ -1013,6 +1022,74 @@ TEST_F(MixedInnerJoinTest2, JitOnlyPredicate)
   //   (1,1): 0b0011^0b0111 = popcount 1 → PASS
   //   (2,2): 0b0111^0b0001 = popcount 2 → FAIL
   //   (3,3): 0b1111^0b0000 = popcount 4 → FAIL
+  auto left_view  = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+                                     result.first->size(),
+                                     result.first->data(),
+                                     nullptr,
+                                     0);
+  auto right_view = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
+                                      result.second->size(),
+                                      result.second->data(),
+                                      nullptr,
+                                      0);
+  auto left_host  = cudf::test::to_host<cudf::size_type>(left_view).first;
+  auto right_host = cudf::test::to_host<cudf::size_type>(right_view).first;
+
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> actual_pairs;
+  for (size_t i = 0; i < left_host.size(); ++i) {
+    actual_pairs.emplace_back(left_host[i], right_host[i]);
+  }
+  std::sort(actual_pairs.begin(), actual_pairs.end());
+
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> expected_pairs{{0, 0}, {1, 1}};
+  EXPECT_EQ(actual_pairs, expected_pairs);
+}
+
+TEST_F(MixedInnerJoinTest2, UdfCallPredicate)
+{
+  // The popcount predicate of JitOnlyPredicate as an AST expression: the device function it calls,
+  // compiled ahead of time to LTO-IR, is linked into the join filter kernel with the comparison
+  // around it.
+  auto left_eq_col  = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3};
+  auto right_eq_col = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2, 3};
+  auto left_cond  = cudf::test::fixed_width_column_wrapper<int32_t>{0b0001, 0b0011, 0b0111, 0b1111};
+  auto right_cond = cudf::test::fixed_width_column_wrapper<int32_t>{0b0000, 0b0111, 0b0001, 0b0000};
+
+  auto left_equality     = cudf::table_view{{left_eq_col}};
+  auto right_equality    = cudf::table_view{{right_eq_col}};
+  auto left_conditional  = cudf::table_view{{left_cond}};
+  auto right_conditional = cudf::table_view{{right_cond}};
+
+  cudf::hash_join hash_joiner(right_equality, cudf::null_equality::EQUAL);
+  auto hash_result = hash_joiner.inner_join(left_equality);
+
+  // transform/fragments/ast_udf_callees.cu
+  auto const range        = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
+  auto const fragments    = std::array{cudf::lto_fragment{
+    cudf::lto_binary_type::FATBIN, cudf_test_fragments::files.subspan(range[0], range[1])}};
+  auto const type         = cudf::data_type{cudf::type_id::INT32};
+  auto const xor_popcount = cudf::ast::jit::udf{"lto_xor_popcount", true, type, {type, type}};
+
+  auto tree       = cudf::ast::tree{};
+  auto left_ref   = cudf::ast::column_reference(0, cudf::ast::table_reference::LEFT);
+  auto right_ref  = cudf::ast::column_reference(0, cudf::ast::table_reference::RIGHT);
+  auto one        = cudf::numeric_scalar<int32_t>(1);
+  auto& one_value = tree.push(cudf::ast::literal(one));
+  auto& popcount  = cudf::ast::jit::call(tree, xor_popcount, {left_ref, right_ref});
+  auto& predicate =
+    tree.push(cudf::ast::operation(cudf::ast::ast_operator::LESS_EQUAL, popcount, one_value));
+
+  auto result =
+    cudf::filter_join_indices_jit(left_conditional,
+                                  right_conditional,
+                                  cudf::device_span<cudf::size_type const>(*hash_result.first),
+                                  cudf::device_span<cudf::size_type const>(*hash_result.second),
+                                  predicate,
+                                  cudf::join_kind::INNER_JOIN,
+                                  fragments,
+                                  cudf::get_default_stream(),
+                                  cudf::get_current_device_resource_ref());
+
   auto left_view  = cudf::column_view(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                      result.first->size(),
                                      result.first->data(),
@@ -2227,3 +2304,135 @@ TEST_F(FilteredFullJoinTest, ManyToManyMixedMatches)
 {
   test({1, 1, 1, 2, 3}, {1, 10, 20, 30, 40}, {1, 1, 1, 2, 4}, {5, 15, 25, 35, 45});
 }
+
+struct FilterJoinJitErrorTest : public FilteredFullJoinTest,
+                                public ::testing::WithParamInterface<cudf::join_kind> {};
+
+TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
+{
+  auto const udf = R"(
+__device__ cudf::errc predicate(bool* output, int a, int b)
+{
+  if (a < 0) { return cudf::errc::ARITHMETIC_OVERFLOW; }
+  if (b == 0) { return cudf::errc::DIVISION_BY_ZERO; }
+  *output = a >= b;
+  return cudf::errc::SUCCESS;
+}
+)";
+  cudf::test::fixed_width_column_wrapper<int> left{1, -1, 3, 4};
+  cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 2};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
+  cudf::column_view const index_view = indices;
+  cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
+
+  // Errors from multiple rows must be aggregated using the maximum code.
+  try {
+    cudf::filter_join_indices_jit(
+      cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps, udf, GetParam());
+    FAIL() << "Expected predicate evaluation to fail";
+  } catch (cudf::evaluation_error const& error) {
+    EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+  }
+
+  cudf::test::fixed_width_column_wrapper<int> valid_left{1, 2, 3, 4};
+  cudf::test::fixed_width_column_wrapper<int> valid_right{1, 1, 2, 2};
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{valid_left}},
+                                                   cudf::table_view{{valid_right}},
+                                                   maps,
+                                                   maps,
+                                                   udf,
+                                                   GetParam())),
+            (std::vector<index_pair>{{0, 0}, {1, 1}, {2, 2}, {3, 3}}));
+
+  // Null inputs and unmatched pairs must not execute the fallible predicate.
+  cudf::test::fixed_width_column_wrapper<int> nullable_left{{1, -1, 3, 4},
+                                                            {true, false, true, true}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> skipped_indices{
+    0, 1, cudf::JoinNoMatch, 3};
+  cudf::column_view const skipped_view = skipped_indices;
+  cudf::device_span<cudf::size_type const> const skipped_maps{skipped_view.data<cudf::size_type>(),
+                                                              4};
+  std::vector<index_pair> expected{{0, 0}, {3, 3}};
+  if (GetParam() != cudf::join_kind::INNER_JOIN) {
+    expected.emplace_back(1, cudf::JoinNoMatch);
+    expected.emplace_back(2, cudf::JoinNoMatch);
+  }
+  if (GetParam() == cudf::join_kind::FULL_JOIN) {
+    expected.emplace_back(cudf::JoinNoMatch, 1);
+    expected.emplace_back(cudf::JoinNoMatch, 2);
+  }
+  std::sort(expected.begin(), expected.end());
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{nullable_left}},
+                                                   cudf::table_view{{right}},
+                                                   skipped_maps,
+                                                   maps,
+                                                   udf,
+                                                   GetParam())),
+            expected);
+}
+
+TEST_P(FilterJoinJitErrorTest, AstErrorHandling)
+{
+  cudf::ast::tree tree;
+  auto const& division = cudf::ast::jit::operation(
+    tree, cudf::ast::jit::op::DIV_OVERFLOW, {col_ref_left_0, col_ref_right_0});
+  auto const predicate =
+    cudf::ast::operation{cudf::ast::ast_operator::EQUAL, division, col_ref_left_0};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
+  cudf::column_view const index_view = indices;
+  cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
+  cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 1};
+  cudf::test::fixed_width_column_wrapper<int> valid_right{1, 1, 1, 1};
+
+  // Exercise generated predicates with and without input nulls.
+  for (bool nullable : {false, true}) {
+    std::vector<bool> validity{true, !nullable, true, true};
+    cudf::test::fixed_width_column_wrapper<int> left{{1, 2, 3, 4}, validity.begin()};
+    try {
+      cudf::filter_join_indices_jit(
+        cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps, predicate, GetParam());
+      FAIL() << "Expected predicate evaluation to fail";
+    } catch (cudf::evaluation_error const& error) {
+      EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+    }
+    std::vector<index_pair> expected{{0, 0}, {2, 2}, {3, 3}};
+    if (!nullable) {
+      expected.emplace_back(1, 1);
+    } else {
+      if (GetParam() != cudf::join_kind::INNER_JOIN) {
+        expected.emplace_back(1, cudf::JoinNoMatch);
+      }
+      if (GetParam() == cudf::join_kind::FULL_JOIN) { expected.emplace_back(cudf::JoinNoMatch, 1); }
+    }
+    std::sort(expected.begin(), expected.end());
+    EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{left}},
+                                                     cudf::table_view{{valid_right}},
+                                                     maps,
+                                                     maps,
+                                                     predicate,
+                                                     GetParam())),
+              expected);
+  }
+
+  cudf::test::fixed_width_column_wrapper<int> null_dividend{{1, 2, 3, 4},
+                                                            {true, true, false, true}};
+  std::vector<index_pair> expected{{0, 0}, {1, 1}, {3, 3}};
+  if (GetParam() != cudf::join_kind::INNER_JOIN) { expected.emplace_back(2, cudf::JoinNoMatch); }
+  if (GetParam() == cudf::join_kind::FULL_JOIN) { expected.emplace_back(cudf::JoinNoMatch, 2); }
+  std::sort(expected.begin(), expected.end());
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{null_dividend}},
+                                                   cudf::table_view{{right}},
+                                                   maps,
+                                                   maps,
+                                                   predicate,
+                                                   GetParam())),
+            expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(JoinKinds,
+                         FilterJoinJitErrorTest,
+                         ::testing::Values(cudf::join_kind::INNER_JOIN,
+                                           cudf::join_kind::LEFT_JOIN,
+                                           cudf::join_kind::FULL_JOIN));
+
+CUDF_TEST_PROGRAM_MAIN()

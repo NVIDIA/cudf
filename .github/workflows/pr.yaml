@@ -888,7 +888,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
+    uses: $/.github/workflows/wheels-build-stage.yaml
     with:
       # Build all non-noarch wheels for each CUDA x ARCH x minimum Python.
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
@@ -905,7 +905,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
+    uses: $/.github/workflows/wheels-build-stage.yaml
     with:
       # This selects amd64 and the latest Python for each CUDA major version.
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
@@ -1236,7 +1236,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: ./.github/workflows/cudf-spark-jni.yaml
+    uses: $/.github/workflows/cudf-spark-jni.yaml
     if: >
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
       fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||

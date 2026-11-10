@@ -19,11 +19,15 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
+#include <cuda/pipeline>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
 #include <cuda/std/utility>
+#include <cuda/warp>
 #include <thrust/transform_scan.h>
 
 #include <bitset>
+#include <cstdint>
 
 namespace cudf::io::parquet::detail {
 
@@ -1071,9 +1075,8 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
 
 namespace {
 
-constexpr int string_offset_warps        = 4;
-constexpr int string_offset_window_bytes = 1024;
-constexpr unsigned full_warp_mask        = 0xffffffffu;
+constexpr int32_t string_offset_warps        = 4;
+constexpr int32_t string_offset_window_bytes = 1024;
 
 // Metadata for a single variable-length string page
 struct string_offset_page {
@@ -1103,21 +1106,25 @@ struct alignas(128) string_offset_window {
  * @param[out] end Page-relative end of the copied data.
  */
 __device__ void prefetch_string_data(string_offset_page const& page,
-                                     int lane,
+                                     int32_t lane,
                                      uint32_t next,
                                      string_offset_window& window,
                                      int32_t& base,
                                      int32_t& end)
 {
-  constexpr int alignment    = alignof(string_offset_window);
-  constexpr int copy_bytes   = sizeof(uint4);
-  constexpr int stride_bytes = cudf::detail::warp_size * copy_bytes;
+  constexpr int32_t alignment    = alignof(string_offset_window);
+  constexpr int32_t copy_bytes   = sizeof(uint4);
+  constexpr int32_t stride_bytes = cudf::detail::warp_size * copy_bytes;
+
+  // Each lane owns its copies; the warp synchronizes after all copies complete.
+  auto pipeline = cuda::make_pipeline();
+  pipeline.producer_acquire();
 
   // NOTE: Changing the window size would require updating the assert and funnel-shift logic.
   static_assert(string_offset_window_bytes == 2 * stride_bytes);
 
-  int const misalignment = (reinterpret_cast<uintptr_t>(page.data) + next) & (alignment - 1);
-  base                   = static_cast<int32_t>(next) - misalignment;
+  int32_t const misalignment = (reinterpret_cast<uintptr_t>(page.data) + next) & (alignment - 1);
+  base                       = static_cast<int32_t>(next) - misalignment;
 
   // Fast path for a full window.
   if (base >= 0 && static_cast<uint32_t>(page.bytes) - base >= string_offset_window_bytes) {
@@ -1125,55 +1132,38 @@ __device__ void prefetch_string_data(string_offset_page const& page,
     auto* dst       = window.data + lane * (copy_bytes / sizeof(uint32_t));
     auto const* src = page.data + base + lane * copy_bytes;
 
-    // Use asynchronous copies to prefetch the data, if supported.
-#if __CUDA_ARCH__ >= 800
-    auto const shared_dst = static_cast<uint32_t>(__cvta_generic_to_shared(dst));
-    asm volatile(
-      "cp.async.cg.shared.global [%0], [%1], 16;\n"
-      "cp.async.cg.shared.global [%0+%2], [%1+%2], 16;"
-      :
-      : "r"(shared_dst), "l"(src), "n"(stride_bytes)
-      : "memory");
-    asm volatile("cp.async.commit_group;" ::: "memory");
-#else
-    // Fall back to scalar loads for architectures that don't support asynchronous copies.
-    *reinterpret_cast<uint4*>(dst) = *reinterpret_cast<uint4 const*>(src);
-    *reinterpret_cast<uint4*>(dst + stride_bytes / sizeof(uint32_t)) =
-      *reinterpret_cast<uint4 const*>(src + stride_bytes);
-#endif
+    cuda::memcpy_async(
+      static_cast<void*>(dst), src, cuda::aligned_size_t<copy_bytes>(copy_bytes), pipeline);
+    cuda::memcpy_async(static_cast<void*>(dst + stride_bytes / sizeof(uint32_t)),
+                       src + stride_bytes,
+                       cuda::aligned_size_t<copy_bytes>(copy_bytes),
+                       pipeline);
+    pipeline.producer_commit();
     // The last word in the window is used for funnel-shift. Initialize it to 0.
     if (lane == 0) { window.data[string_offset_window_bytes / sizeof(uint32_t)] = 0; }
   } else {
     // Slow path for a partial window.
-    int const window_bytes = static_cast<int>(
+    int32_t const window_bytes = static_cast<int32_t>(
       cuda::std::min<int64_t>(string_offset_window_bytes, int64_t{page.bytes} - base));
     end = static_cast<int32_t>(int64_t{base} + window_bytes);
 
     // At an unaligned page start, leave the first alignment unit to the byte loads below.
-    int const copy_begin = base < 0 ? alignment : 0;
-    int const copy_end   = window_bytes & ~(copy_bytes - 1);
+    int32_t const copy_begin = base < 0 ? alignment : 0;
+    int32_t const copy_end   = window_bytes & ~(copy_bytes - 1);
 
-    for (int offset = copy_begin + lane * copy_bytes; offset < copy_end; offset += stride_bytes) {
+    for (int32_t offset = copy_begin + lane * copy_bytes; offset < copy_end;
+         offset += stride_bytes) {
       auto const* src = page.data + base + offset;
       auto* dst       = window.data + offset / sizeof(uint32_t);
-#if __CUDA_ARCH__ >= 800
-      auto const shared_dst = static_cast<uint32_t>(__cvta_generic_to_shared(dst));
-      asm volatile("cp.async.cg.shared.global [%0], [%1], 16;"
-                   :
-                   : "r"(shared_dst), "l"(src)
-                   : "memory");
-#else
-      *reinterpret_cast<uint4*>(dst) = *reinterpret_cast<uint4 const*>(src);
-#endif
+      cuda::memcpy_async(
+        static_cast<void*>(dst), src, cuda::aligned_size_t<copy_bytes>(copy_bytes), pipeline);
     }
-#if __CUDA_ARCH__ >= 800
-    asm volatile("cp.async.commit_group;" ::: "memory");
-#endif
+    pipeline.producer_commit();
 
-    auto const copy_word = [&](int word_index) {
+    auto const copy_word = [&](int32_t word_index) {
       uint32_t word = 0;
 #pragma unroll
-      for (int byte = 0; byte < 4; ++byte) {
+      for (int32_t byte = 0; byte < 4; ++byte) {
         int64_t const index = int64_t{base} + word_index * 4 + byte;
         if (index >= 0 && index < page.bytes) { word |= uint32_t{page.data[index]} << (8 * byte); }
       }
@@ -1181,19 +1171,19 @@ __device__ void prefetch_string_data(string_offset_page const& page,
     };
 
     // Special handling of the head and tail of the window.
-    int const window_words = (window_bytes + 3) / 4;
-    int const head_words   = cuda::std::min(window_words, copy_begin / 4);
+    int32_t const window_words = (window_bytes + 3) / 4;
+    int32_t const head_words   = cuda::std::min(window_words, copy_begin / 4);
     if (lane < head_words) { copy_word(lane); }
 
     // On small pages, the head may already cover the entire window.
-    int const tail_word = cuda::std::max(head_words, copy_end / 4) + lane;
+    int32_t const tail_word = cuda::std::max(head_words, copy_end / 4) + lane;
     if (tail_word < window_words) { copy_word(tail_word); }
 
     if (lane == 0) { window.data[window_words] = 0; }
   }
-#if __CUDA_ARCH__ >= 800
-  asm volatile("cp.async.wait_group 0;" ::: "memory");
-#endif
+  // Drain the single committed batch before any lane reads the window.
+  cuda::pipeline_consumer_wait_prior<0>(pipeline);
+  pipeline.consumer_release();
   __syncwarp();
 }
 
@@ -1206,7 +1196,7 @@ __device__ void prefetch_string_data(string_offset_page const& page,
  * @param next Byte position of the next length prefix to write.
  */
 __device__ void fill_string_offset_tail(string_offset_page const& page,
-                                        int lane,
+                                        int32_t lane,
                                         uint32_t written,
                                         uint32_t next)
 {
@@ -1226,11 +1216,10 @@ __device__ void fill_string_offset_tail(string_offset_page const& page,
  * @param error_code Pointer to the error code to set if string data is corrupted
  */
 __device__ void read_string_offsets_buffered(string_offset_page const& page,
-                                             int lane,
+                                             int32_t lane,
                                              string_offset_window& window,
                                              kernel_error::pointer error_code)
 {
-  if (page.bytes <= 0) { return; }
   uint32_t pos = 0, next = 0;
   if (page.bytes < 4 || page.num_values == 0) {
     fill_string_offset_tail(page, lane, pos, next);
@@ -1239,43 +1228,45 @@ __device__ void read_string_offsets_buffered(string_offset_page const& page,
   int32_t base = 0, end = 0;
   prefetch_string_data(page, lane, next, window, base, end);
 
-  while (true) {
+  bool scanning = true;
+  while (scanning) {
     // A complete prefix inside this window is also inside the page. Keep page-end
     // and refill handling outside the common loop, using a window-relative cursor.
-    uint32_t index =
-      next - static_cast<uint32_t>(base);  // Window-relative index of the next prefix to read.
-    uint32_t const limit = static_cast<uint32_t>(end) - static_cast<uint32_t>(base) -
-                           4;  // Boundary of the current window.
-    uint32_t const remaining = static_cast<uint32_t>(page.bytes) - static_cast<uint32_t>(base) -
-                               4;  // Remaining bytes in the page.
-    uint32_t const bias =
-      static_cast<uint32_t>(base) +
-      4;  // Add to a window-relative prefix index to get the page-relative payload offset.
-    do {
+
+    // Window-relative index of the next prefix to read.
+    uint32_t index = next - static_cast<uint32_t>(base);
+    // Boundary of the current window.
+    uint32_t const limit = static_cast<uint32_t>(end) - static_cast<uint32_t>(base) - 4;
+    // Remaining bytes in the page.
+    uint32_t const remaining = static_cast<uint32_t>(page.bytes) - static_cast<uint32_t>(base) - 4;
+    // Add to a window-relative prefix index to get the page-relative payload offset.
+    uint32_t const bias = static_cast<uint32_t>(base) + 4;
+    while (scanning && index <= limit && pos < page.num_values) {
       uint32_t const len =
         __funnelshift_r(window.data[index / 4], window.data[index / 4 + 1], (index & 3) * 8);
       // Remaining page bytes fit in INT32_MAX, so this also rejects negative lengths.
       if (len > remaining - index) {
-        next = static_cast<uint32_t>(base) + index;
+        scanning = false;
         if (lane == 0) {
           set_error(static_cast<kernel_error::value_type>(decode_error::STRING_DATA_OVERRUN),
                     error_code);
         }
-        goto done;
+      } else {
+        uint32_t const offset = bias + index;
+        index += len + 4;
+        ++pos;
+        if (lane == 0) { page.offsets[pos - 1] = offset; }
       }
-      uint32_t const offset = bias + index;
-      index += len + 4;
-      ++pos;
-      if (lane == 0) { page.offsets[pos - 1] = offset; }
-    } while (index <= limit && pos < page.num_values);
+    }
 
     next = static_cast<uint32_t>(base) + index;
 
-    if (pos == page.num_values || next + 4 > static_cast<uint32_t>(page.bytes)) { break; }
-    __syncwarp();  // All consumers finish before this warp reuses its window.
-    prefetch_string_data(page, lane, next, window, base, end);
+    scanning = scanning && pos < page.num_values && next + 4 <= static_cast<uint32_t>(page.bytes);
+    if (scanning) {
+      __syncwarp();  // All consumers finish before this warp reuses its window.
+      prefetch_string_data(page, lane, next, window, base, end);
+    }
   }
-done:
   fill_string_offset_tail(page, lane, pos, next);
 }
 
@@ -1287,39 +1278,41 @@ done:
  * @param error_code Error code to set if string data is corrupted
  */
 __device__ void read_string_offsets_sequential(string_offset_page const& page,
-                                               int lane,
+                                               int32_t lane,
                                                kernel_error::pointer error_code)
 {
   uint32_t next = 0, written = page.num_values;
   if (lane == 0) {
-    for (uint32_t pos = 0; pos < page.num_values; ++pos) {
+    bool scanning = true;
+    for (uint32_t pos = 0; scanning && pos < page.num_values; ++pos) {
       auto const string_offset = next + sizeof(int32_t);
       if (string_offset > static_cast<uint32_t>(page.bytes)) {
-        written = pos;
-        break;
+        written  = pos;
+        scanning = false;
+      } else {
+        int32_t len;
+        cuda::std::memcpy(&len, page.data + next, sizeof(len));
+        if (len < 0 || static_cast<int64_t>(string_offset) + len > page.bytes) {
+          written  = pos;
+          scanning = false;
+          set_error(static_cast<kernel_error::value_type>(decode_error::STRING_DATA_OVERRUN),
+                    error_code);
+        } else {
+          page.offsets[pos] = string_offset;
+          next              = string_offset + len;
+        }
       }
-      int32_t len;
-      cuda::std::memcpy(&len, page.data + next, sizeof(len));
-      if (len < 0 || static_cast<int64_t>(string_offset) + len > page.bytes) {
-        written = pos;
-        set_error(static_cast<kernel_error::value_type>(decode_error::STRING_DATA_OVERRUN),
-                  error_code);
-        break;
-      }
-      page.offsets[pos] = string_offset;
-      next              = string_offset + len;
     }
   }
-  written = __shfl_sync(full_warp_mask, written, 0);
-  next    = __shfl_sync(full_warp_mask, next, 0);
-  for (uint64_t pos = uint64_t{written} + lane; pos <= page.num_values;
-       pos += cudf::detail::warp_size) {
-    page.offsets[pos] = next + sizeof(int32_t);
-  }
+  written = cuda::device::warp_shuffle_idx(written, 0).data;
+  next    = cuda::device::warp_shuffle_idx(next, 0).data;
+
+  fill_string_offset_tail(page, lane, written, next);
 }
 
 /**
- * @brief Precompute PLAIN string offsets, with one page per warp and string_offset_warps(4) warps per CTA.
+ * @brief Precompute PLAIN string offsets, with one page per warp and string_offset_warps(4) warps
+ * per CTA.
  *
  * Page setup uses CTA-wide barriers, so every thread sets up the pages collectively
  * before the independent warp scans start. Inactive pages and a partial final group
@@ -1335,15 +1328,14 @@ __device__ void read_string_offsets_sequential(string_offset_page const& page,
  * @param error_code Error code to set if string data is corrupted
  * @param stream CUDA stream to use
  */
-CUDF_KERNEL void preprocess_string_offsets_kernel(
-  PageInfo* pages,
-  device_span<ColumnChunkDesc const> chunks,
-  device_span<size_t const> page_string_offset_indices,
-  device_span<bool const> page_mask,
-  int num_pages,
-  size_t min_row,
-  size_t num_rows,
-  kernel_error::pointer error_code)
+CUDF_KERNEL void __launch_bounds__(string_offset_warps* cudf::detail::warp_size)
+  preprocess_string_offsets_kernel(device_span<PageInfo> pages,
+                                   device_span<ColumnChunkDesc const> chunks,
+                                   device_span<size_t const> page_string_offset_indices,
+                                   device_span<bool const> page_mask,
+                                   size_t min_row,
+                                   size_t num_rows,
+                                   kernel_error::pointer error_code)
 {
   constexpr uint32_t string_mask = BitOr(decode_kernel_mask::STRING,
                                          decode_kernel_mask::STRING_NESTED,
@@ -1355,11 +1347,11 @@ CUDF_KERNEL void preprocess_string_offsets_kernel(
   __shared__ string_offset_page pages_to_process[string_offset_warps];
   __shared__ string_offset_window windows[string_offset_warps];
 
-  for (int slot = 0; slot < string_offset_warps; ++slot) {
-    int const page_idx = blockIdx.x * string_offset_warps + slot;
+  for (int32_t slot = 0; slot < string_offset_warps; ++slot) {
+    uint32_t const page_idx = blockIdx.x * string_offset_warps + slot;
     if (threadIdx.x == 0) { pages_to_process[slot] = {nullptr, nullptr, 0, 0, 0, false}; }
-    if (page_idx < num_pages && (page_mask.empty() || page_mask[page_idx])) {
-      auto* const pp    = pages + page_idx;
+    if (page_idx < pages.size() && (page_mask.empty() || page_mask[page_idx])) {
+      auto* const pp    = &pages[page_idx];
       auto const& chunk = chunks[pp->chunk_idx];
       if (chunk.physical_type != Type::FIXED_LEN_BYTE_ARRAY &&
           setup_local_page_info(&state,
@@ -1391,19 +1383,20 @@ CUDF_KERNEL void preprocess_string_offsets_kernel(
     __syncthreads();
   }
 
-  int const warp  = threadIdx.x / cudf::detail::warp_size;
-  int const lane  = threadIdx.x % cudf::detail::warp_size;
-  auto const page = pages_to_process[warp];
+  auto const block   = cg::this_thread_block();
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
+  int32_t const lane = warp.thread_rank();
+  auto const page    = pages_to_process[warp.meta_group_rank()];
   if (!page.active) { return; }
 
-  // Preserve the existing cutoff, including unsigned subtraction for null-heavy pages.
-  auto const avg_string_length = page.bytes / page.num_input_values - sizeof(int32_t);
-  // Use buffered or sequential scan based on if average string length is greater than the threshold
-  // (currently 64 bytes).
-  if (avg_string_length > string_offset_window_bytes / 16) {
+  constexpr int32_t max_avg_string_length_for_buffer = string_offset_window_bytes / 16;
+  // Null-heavy pages can average less than one length prefix.
+  auto const avg_string_length =
+    page.bytes / page.num_input_values - static_cast<int32_t>(sizeof(int32_t));
+  if (avg_string_length > max_avg_string_length_for_buffer) {
     read_string_offsets_sequential(page, lane, error_code);
   } else {
-    read_string_offsets_buffered(page, lane, windows[warp], error_code);
+    read_string_offsets_buffered(page, lane, windows[warp.meta_group_rank()], error_code);
   }
 }
 
@@ -1434,17 +1427,10 @@ void preprocess_string_offsets(cudf::detail::hostdevice_span<PageInfo> pages,
 {
   if (pages.size() == 0) { return; }
 
-  constexpr int block_size = string_offset_warps * cudf::detail::warp_size;
-  auto const num_blocks    = cuda::ceil_div(pages.size(), size_t{string_offset_warps});
+  constexpr int32_t block_size = string_offset_warps * cudf::detail::warp_size;
+  auto const num_blocks        = cuda::ceil_div(pages.size(), size_t{string_offset_warps});
   preprocess_string_offsets_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
-    pages.device_ptr(),
-    chunks,
-    page_string_offset_indices,
-    page_mask,
-    static_cast<int>(pages.size()),
-    min_row,
-    num_rows,
-    error_code);
+    pages, chunks, page_string_offset_indices, page_mask, min_row, num_rows, error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

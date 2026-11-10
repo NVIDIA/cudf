@@ -64,7 +64,7 @@ struct empty_column_constructor {
   column_view values;
   aggregation const& agg;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   template <typename ValuesType, aggregation::Kind k>
   std::unique_ptr<cudf::column> operator()() const
@@ -129,7 +129,7 @@ struct empty_column_constructor {
         dynamic_cast<cudf::detail::host_udf_aggregation const&>(agg).udf_ptr;
       auto const udf_ptr = dynamic_cast<groupby_host_udf const*>(udf_base_ptr.get());
       CUDF_EXPECTS(udf_ptr != nullptr, "Invalid HOST_UDF instance for groupby aggregation.");
-      return udf_ptr->get_empty_output(stream, mr);
+      return udf_ptr->get_empty_output(stream, mr.get_output_mr());
     }
 
     return make_empty_column(target_type(values.type(), k));
@@ -140,7 +140,7 @@ struct empty_column_constructor {
 template <typename RequestType>
 auto empty_results(std::span<RequestType const> requests,
                    cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   cudf::memory_resources mr)
 {
   std::vector<aggregation_result> empty_results;
 

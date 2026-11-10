@@ -452,7 +452,7 @@ aggregate_reader_metadata::read_bloom_filters(
   std::span<int const> column_schemas,
   size_type total_row_groups,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   // Descriptors for all the chunks that make up the selected columns
   auto const num_input_columns = column_schemas.size();

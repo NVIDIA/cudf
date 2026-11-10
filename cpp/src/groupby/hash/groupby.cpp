@@ -22,6 +22,8 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
+#include <cudf/null_mask.hpp>
+#include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -92,21 +94,43 @@ auto column_view_with_common_nulls(column_view const& column_0,
   auto [new_nullmask, null_count] = cudf::bitmask_and(
     table_view{{column_0, column_1}}, stream, cudf::get_current_device_resource_ref());
   if (null_count == 0) { return std::make_tuple(std::move(new_nullmask), column_0, column_1); }
-  auto column_view_with_new_nullmask = [](auto const& col, void* nullmask, auto null_count) {
-    return column_view(col.type(),
-                       col.size(),
-                       col.head(),
-                       static_cast<cudf::bitmask_type const*>(nullmask),
-                       null_count,
-                       col.offset(),
-                       std::vector(col.child_begin(), col.child_end()));
-  };
-  auto new_column_0 = null_count == column_0.null_count()
-                        ? column_0
-                        : column_view_with_new_nullmask(column_0, new_nullmask.data(), null_count);
-  auto new_column_1 = null_count == column_1.null_count()
-                        ? column_1
-                        : column_view_with_new_nullmask(column_1, new_nullmask.data(), null_count);
+  // The new null mask starts at bit 0, so a sliced column is viewed from its first row with no
+  // offset. The view must keep pointing into the input's memory because the result cache keys on
+  // it.
+  auto column_view_with_new_nullmask =
+    [](column_view const& col, bitmask_type const* nullmask, size_type null_count) {
+      if (null_count == col.null_count()) { return col; }
+      auto const data_from_first_row = [](column_view const& c) {
+        return static_cast<char const*>(c.head()) + c.offset() * cudf::size_of(c.type());
+      };
+      if (col.offset() == 0) {
+        return column_view(col.type(),
+                           col.size(),
+                           col.head(),
+                           nullmask,
+                           null_count,
+                           0,
+                           std::vector(col.child_begin(), col.child_end()));
+      }
+      if (col.type().id() == type_id::DICTIONARY32) {
+        auto const dictionary = dictionary_column_view{col};
+        auto const indices    = dictionary.get_indices_annotated();
+        return column_view(
+          col.type(),
+          col.size(),
+          nullptr,
+          nullmask,
+          null_count,
+          0,
+          {column_view(indices.type(), col.size(), data_from_first_row(indices), nullptr, 0),
+           dictionary.keys()});
+      }
+      return column_view(
+        col.type(), col.size(), data_from_first_row(col), nullmask, null_count, 0, {});
+    };
+  auto const nullmask = static_cast<bitmask_type const*>(new_nullmask.data());
+  auto new_column_0   = column_view_with_new_nullmask(column_0, nullmask, null_count);
+  auto new_column_1   = column_view_with_new_nullmask(column_1, nullmask, null_count);
   return std::make_tuple(std::move(new_nullmask), new_column_0, new_column_1);
 }
 
@@ -465,8 +489,9 @@ void aggregate_result_functor::operator()<aggregation::COVARIANCE>(aggregation c
   auto const& cov_agg = dynamic_cast<cudf::detail::covariance_aggregation const&>(agg);
   // Covariance only for valid values in both columns.
   // in non-identical null mask cases, this prevents caching of the results - STD, MEAN, COUNT.
-  auto [_, values_child0, values_child1] =
-    column_view_with_common_nulls(values.child(0), values.child(1), stream);
+  auto const structs_values              = structs_column_view{values};
+  auto [_, values_child0, values_child1] = column_view_with_common_nulls(
+    structs_values.get_sliced_child(0, stream), structs_values.get_sliced_child(1, stream), stream);
 
   auto mean_agg = make_mean_aggregation();
   aggregate_result_functor(values_child0, helper, cache, expose_intermediates, stream, mr)
@@ -516,8 +541,9 @@ void aggregate_result_functor::operator()<aggregation::CORRELATION>(aggregation 
 
   // Correlation only for valid values in both columns.
   // in non-identical null mask cases, this prevents caching of the results - STD, MEAN, COUNT
-  auto [_, values_child0, values_child1] =
-    column_view_with_common_nulls(values.child(0), values.child(1), stream);
+  auto const structs_values              = structs_column_view{values};
+  auto [_, values_child0, values_child1] = column_view_with_common_nulls(
+    structs_values.get_sliced_child(0, stream), structs_values.get_sliced_child(1, stream), stream);
 
   auto std_agg = make_std_aggregation();
   aggregate_result_functor(values_child0, helper, cache, expose_intermediates, stream, mr)

@@ -96,45 +96,32 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, Value)
   EXPECT_TRUE(result.value(cudf::get_default_stream()));
 }
 
-template <bool UseSetRep, typename ScalarDeviceViewType>
+template <typename ScalarDeviceViewType>
 CUDF_KERNEL void test_set_fixed_point_rep(ScalarDeviceViewType s,
                                           typename ScalarDeviceViewType::rep_type value)
 {
-  if constexpr (UseSetRep) {
-    s.set_rep(value);
-  } else {
-    s.set_value(value);
-  }
+  s.set_rep(value);
 }
 
 TYPED_TEST(FixedPointScalarDeviceViewTest, SetRepresentation)
 {
   using rep_type = typename TypeParam::rep;
 
-  auto constexpr initial_value = rep_type{0};
-  auto constexpr value         = rep_type{12'345};
   for (auto const scale : {-2, 0, 3}) {
     SCOPED_TRACE(scale);
     for (auto const valid : {false, true}) {
       SCOPED_TRACE(valid);
-      cudf::fixed_point_scalar<TypeParam> s{initial_value, numeric::scale_type{scale}, valid};
-      auto scalar_device_view = cudf::get_scalar_device_view(s);
-      test_set_fixed_point_rep<true>
-        <<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view, value);
-      CUDF_CHECK_CUDA(0);
+      for (auto const value : {rep_type{12'345}, rep_type{-12'345}}) {
+        cudf::fixed_point_scalar<TypeParam> s{rep_type{0}, numeric::scale_type{scale}, valid};
+        auto scalar_device_view = cudf::get_scalar_device_view(s);
+        test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view,
+                                                                                value);
+        CUDF_CHECK_CUDA(0);
 
-      EXPECT_EQ(s.value(), value);
-      EXPECT_EQ(s.type().scale(), scale);
-      EXPECT_EQ(s.is_valid(), valid);
-
-      // The original representation overload remains compatible with existing callers.
-      test_set_fixed_point_rep<false>
-        <<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view, -value);
-      CUDF_CHECK_CUDA(0);
-
-      EXPECT_EQ(s.value(), -value);
-      EXPECT_EQ(s.type().scale(), scale);
-      EXPECT_EQ(s.is_valid(), valid);
+        EXPECT_EQ(s.value(), value);
+        EXPECT_EQ(s.type().scale(), scale);
+        EXPECT_EQ(s.is_valid(), valid);
+      }
     }
   }
 }

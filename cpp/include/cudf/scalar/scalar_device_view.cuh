@@ -287,12 +287,17 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   /**
    * @brief Stores the underlying representation in the scalar
    *
-   * Equivalent to `set_rep(value)`. Retained for compatibility; prefer `set_rep()`
-   * when assigning a representation.
+   * @deprecated Deprecated in release 26.12 and will be removed in a future release.
+   * Use `set_rep()` instead.
+   *
+   * Equivalent to `set_rep(value)`.
    *
    * @param value The representation to store in the scalar
    */
-  __device__ void set_value(rep_type value) { set_rep(value); }
+  [[deprecated("Use set_rep() instead.")]] __device__ void set_value(rep_type value)
+  {
+    set_rep(value);
+  }
 
   /**
    * @brief Stores the fixed-point value in the scalar

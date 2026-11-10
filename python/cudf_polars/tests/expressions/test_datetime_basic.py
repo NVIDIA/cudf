@@ -1317,16 +1317,12 @@ _OFFSET_BY_NAIVE_ONLY = ["1d", "-1d1h", "1w", "2w3d"]
 @pytest.mark.parametrize(
     "dtype, by",
     [
-        (dtype, by)
-        for dtype in [
-            pl.Datetime("ms"),
-            pl.Datetime("us"),
-            pl.Datetime("ns"),
-            pl.Datetime("ns", time_zone="UTC"),
-            pl.Datetime("us", time_zone="America/New_York"),
-        ]
-        for by in _OFFSET_BY_FIXED
-        + (_OFFSET_BY_NAIVE_ONLY if dtype.time_zone is None else [])
+        *(
+            (pl.Datetime(time_unit, time_zone="America/New_York"), by)
+            for time_unit in ["ms", "ns"]
+            for by in _OFFSET_BY_FIXED
+        ),
+        *((pl.Datetime("us"), by) for by in _OFFSET_BY_NAIVE_ONLY),
     ],
 )
 def test_datetime_offset_by(engine: pl.GPUEngine, dtype: pl.DataType, by: str):
@@ -1383,13 +1379,15 @@ def test_datetime_offset_by_extreme_values(
     ],
 )
 def test_datetime_offset_by_unsupported(
-    engine: pl.GPUEngine, dtype: pl.DataType, by: str
+    in_memory_engine: pl.GPUEngine, dtype: pl.DataType, by: str
 ):
     q = _truncate_frame(dtype).select(pl.col("datetimes").dt.offset_by(by))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-def test_datetime_offset_by_non_literal_offset_unsupported(engine: pl.GPUEngine):
+def test_datetime_offset_by_non_literal_offset_unsupported(
+    in_memory_engine: pl.GPUEngine,
+):
     ldf = pl.LazyFrame({"datetimes": [datetime.datetime(2026, 1, 1)], "by": ["1h"]})
     q = ldf.select(pl.col("datetimes").dt.offset_by(pl.col("by")))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)

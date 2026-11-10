@@ -1,175 +1,193 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Temporary multi-process controls for the intermittent TRANSFORM_TEST crash."""
+"""Repeat normal concurrent CTest runs with a native SIGSEGV recorder."""
 
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
 
 
+def host_metrics():
+    result = {
+        "load": os.getloadavg(),
+        "affinity": sorted(os.sched_getaffinity(0)),
+    }
+    for name in (
+        "memory.max",
+        "memory.current",
+        "memory.peak",
+        "memory.events",
+        "cpu.max",
+        "cpu.stat",
+    ):
+        path = Path("/sys/fs/cgroup") / name
+        if path.exists():
+            result[name] = path.read_text()
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--workers", type=int, default=8)
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--crash-library", type=Path, required=True)
+    parser.add_argument("--trials", type=int, default=4)
+    parser.add_argument(
+        "--ctest-filter", help="Local smoke-test selection only"
+    )
     args = parser.parse_args()
     args.test_dir = args.test_dir.resolve()
     args.output = args.output.resolve()
+    args.crash_library = args.crash_library.resolve(strict=True)
     args.output.mkdir(parents=True, exist_ok=True)
-
     discovery = subprocess.check_output(
         ["ctest", "--show-only=json-v1", "-R", "^TRANSFORM_TEST$"],
         cwd=args.test_dir,
         text=True,
     )
-    (args.output / "ctest.json").write_text(discovery)
+    (args.output / "ctest-before.json").write_text(discovery)
     test = next(
         t
         for t in json.loads(discovery)["tests"]
         if t["name"] == "TRANSFORM_TEST"
     )
     properties = {p["name"]: p["value"] for p in test["properties"]}
-    command = next(
-        arg.removeprefix("-Dcommand_to_run=")
-        for arg in test["command"]
-        if arg.startswith("-Dcommand_to_run=")
+    preload = next(
+        v for v in properties["ENVIRONMENT"] if v.startswith("LD_PRELOAD=")
     )
-    binary = Path(properties["WORKING_DIRECTORY"]) / command
-    binary = binary.resolve(strict=True)
-    overrides = dict(
-        entry.split("=", 1) for entry in properties["ENVIRONMENT"]
+    replacement = preload.replace(
+        "LD_PRELOAD=", f"LD_PRELOAD={args.crash_library}:", 1
     )
-    prefix = (
-        "AssertsTest.*:RuntimeSupportTest.*:UnaryOperationIntegrationTest.*:"
-        "TernaryOperationTest.TransformWithScalar"
-    )
+    originals = {}
+    cost = args.test_dir / "Testing/Temporary/CTestCostData.txt"
+    initial_cost = cost.read_bytes() if cost.exists() else None
     seed = args.output / "cache-seed"
     source_cache = os.environ.get("LIBCUDF_KERNEL_CACHE_PATH")
     if source_cache and Path(source_cache).is_dir():
         shutil.copytree(source_cache, seed)
     else:
         seed.mkdir()
-    hardware = {
-        "cpus": os.cpu_count(),
-        "affinity": sorted(os.sched_getaffinity(0)),
-    }
-    for name in ("memory.max", "memory.peak", "memory.events", "cpu.max"):
-        path = Path("/sys/fs/cgroup") / name
-        if path.exists():
-            hardware[name] = path.read_text()
-    (args.output / "host.json").write_text(json.dumps(hardware, indent=2))
-
     records = []
-    for label, disabled, no_pch in (
-        ("shared-restored", False, False),
-        ("shared-uncached", True, False),
-        ("shared-uncached-no-pch", True, True),
-    ):
-        group = args.output / label
-        group.mkdir()
-        cache = group / "cache"
-        # Preserve the real cross-process RTCX sharing within each group, but
-        # prevent a preceding group from warming the next group's cache.
-        shutil.copytree(seed, cache)
-        jobs = []
-        print(f"::group::{label}", flush=True)
-        for worker in range(args.workers):
-            trial = group / f"worker-{worker}"
+    try:
+        # CTest overrides LD_PRELOAD per test. Update only generated test
+        # configuration, preserving the original commands and GPU slots.
+        for path in args.test_dir.rglob("CTestTestfile.cmake"):
+            text = path.read_text()
+            lines = text.splitlines(keepends=True)
+            updated = "".join(
+                line.replace(preload, replacement)
+                if "set_tests_properties(" in line
+                and re.search(r"\bTRANSFORM_TEST\b", line)
+                else line
+                for line in lines
+            )
+            if updated != text:
+                originals[path] = text
+                path.write_text(updated)
+        if not originals:
+            raise RuntimeError("No generated CTest preload definition found")
+        discovery = subprocess.check_output(
+            ["ctest", "--show-only=json-v1", "-R", "^TRANSFORM_TEST$"],
+            cwd=args.test_dir,
+            text=True,
+        )
+        (args.output / "ctest-instrumented.json").write_text(discovery)
+        assert replacement in discovery
+        for trial_number in range(1, args.trials + 1):
+            trial = args.output / f"native-{trial_number}"
             trial.mkdir()
+            cache = trial / "cache"
+            shutil.copytree(seed, cache)
+            if initial_cost is not None:
+                cost.write_bytes(initial_cost)
+            else:
+                cost.unlink(missing_ok=True)
             env = os.environ.copy()
-            env.update(overrides)
             env.update(
                 GTEST_CUDF_RMM_MODE="async",
                 LIBCUDF_KERNEL_CACHE_PATH=str(cache),
-                LIBCUDF_KERNEL_CACHE_DISABLED="1" if disabled else "0",
-                LIBCUDF_JIT_VERBOSE="1",
+                GTEST_OUTPUT=f"xml:{trial}/gtest-xml/",
             )
-            env.pop("NVRTC_DISABLE_PCH", None)
-            if no_pch:
-                env["NVRTC_DISABLE_PCH"] = "1"
-            test_command = [
-                str(binary),
-                f"--gtest_filter={prefix}",
-                f"--gtest_repeat={args.repeats}",
-                "--gtest_print_time=1",
-                f"--gtest_output=xml:{trial / 'results.xml'}",
-            ]
-            debugger = worker % 2 == 0
-            if debugger:
-                # Leave half the processes uninstrumented so a timing-sensitive
-                # failure can still manifest without debugger perturbation.
-                env["TRANSFORM_GDB_BINARY"] = str(binary)
-                test_command = [
-                    "bash",
-                    str(Path(__file__).with_name("transform_gdb.sh")),
-                    *test_command[1:],
-                ]
-            test_command = [
+            (trial / "gtest-xml").mkdir()
+            command = [
                 "timeout",
                 "--kill-after=30s",
-                "10m",
-                *test_command,
+                "30m",
+                "ctest",
+                "--output-on-failure",
+                "--no-tests=error",
+                "-j20",
+                "--output-junit",
+                str(trial / "ctest.xml"),
             ]
+            if args.ctest_filter:
+                command.extend(["-R", args.ctest_filter])
             record = {
-                "label": label,
-                "worker": worker,
-                "debugger": debugger,
-                "command": test_command,
-                "cwd": properties["WORKING_DIRECTORY"],
+                "trial": trial_number,
+                "command": command,
                 "host_load": os.getloadavg(),
-                "environment": {
-                    k: v
-                    for k, v in env.items()
-                    if k in overrides
-                    or k.startswith(("GTEST_", "LIBCUDF_", "NVRTC_", "CUDA_"))
-                },
+                "preload": replacement,
+                "cache": str(cache),
+                "host_before": host_metrics(),
             }
-            (trial / "manifest.json").write_text(json.dumps(record, indent=2))
-            log = (trial / "run.log").open("w")
-            process = subprocess.Popen(
-                test_command,
-                cwd=properties["WORKING_DIRECTORY"],
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
+            print(f"::group::native-{trial_number}", flush=True)
+            start = time.monotonic()
+            with (trial / "run.log").open("w") as log:
+                result = subprocess.run(
+                    command,
+                    cwd=args.test_dir,
+                    env=env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                )
+            record.update(
+                returncode=result.returncode,
+                seconds=time.monotonic() - start,
+                host_after=host_metrics(),
             )
-            jobs.append((record, process, log, trial, time.monotonic()))
-        for record, process, log, trial, start in jobs:
-            record["returncode"] = process.wait()
-            record["observed_seconds"] = time.monotonic() - start
-            log.close()
-            text = (trial / "run.log").read_text()
-            record["gdb_sigsegv"] = "received signal SIGSEGV" in text
-            record["sigsegv"] = (
-                record["returncode"] in (-11, 139) or record["gdb_sigsegv"]
+            for name in (
+                "LastTest.log",
+                "LastTestsFailed.log",
+                "CTestCostData.txt",
+            ):
+                path = cost.parent / name
+                if path.exists():
+                    shutil.copy2(path, trial / name)
+            last_test = trial / "LastTest.log"
+            record["sigsegv_recorded"] = result.returncode != 0 and (
+                last_test.exists()
+                and "CUDF_DIAGNOSTIC_SIGSEGV" in last_test.read_text()
             )
-            record["pch_incomplete"] = text.count("because it is incomplete")
-            record["pch_delete_errors"] = text.count("error while deleting")
-            record["gtest_pass_summaries"] = text.count(
-                "[  PASSED  ] 13 tests."
-            )
-            (trial / "manifest.json").write_text(json.dumps(record, indent=2))
-            if (
-                trial / "results.xml"
-            ).exists() and "RAPIDS_TESTS_DIR" in os.environ:
+            if (trial / "ctest.xml").exists() and "RAPIDS_TESTS_DIR" in env:
                 shutil.copy2(
-                    trial / "results.xml",
-                    Path(os.environ["RAPIDS_TESTS_DIR"])
-                    / f"{label}-{record['worker']}.xml",
+                    trial / "ctest.xml",
+                    Path(env["RAPIDS_TESTS_DIR"])
+                    / f"native-{trial_number}.xml",
                 )
             records.append(record)
             (args.output / "summary.json").write_text(
                 json.dumps(records, indent=2)
             )
-            print(text, flush=True)
+            print((trial / "run.log").read_text(), flush=True)
             print(json.dumps(record), flush=True)
-        print("::endgroup::", flush=True)
+            print("::endgroup::", flush=True)
+            # A captured crash is the objective; stop spending GPU time once
+            # its register state, mappings, and stack have been saved.
+            if record["sigsegv_recorded"]:
+                break
+    finally:
+        for path, text in originals.items():
+            path.write_text(text)
+        if initial_cost is not None:
+            cost.write_bytes(initial_cost)
+        else:
+            cost.unlink(missing_ok=True)
     raise SystemExit(any(r["returncode"] != 0 for r in records))
 
 

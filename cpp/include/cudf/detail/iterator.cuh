@@ -365,6 +365,8 @@ struct scalar_value_accessor {
  *
  * For `p = *(iter + i)`, `p` is the value stored in the scalar.
  *
+ * For fixed-point scalars, the returned value preserves the scalar's scale.
+ *
  * The behavior is undefined if the scalar is destroyed before iterator dereferencing.
  *
  * @throws cudf::logic_error if scalar datatype and Element type mismatch.
@@ -378,7 +380,7 @@ struct scalar_value_accessor {
 template <typename Element>
 auto inline make_scalar_iterator(scalar const& scalar_value)
 {
-  CUDF_EXPECTS(data_type(type_to_id<Element>()) == scalar_value.type(), "the data type mismatch");
+  CUDF_EXPECTS(type_to_id<Element>() == scalar_value.type().id(), "the data type mismatch");
   CUDF_EXPECTS(scalar_value.is_valid(), "the scalar value must be valid");
   return cuda::transform_iterator(cuda::make_constant_iterator<size_type>(0),
                                   scalar_value_accessor<Element>{scalar_value});

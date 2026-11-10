@@ -14,6 +14,8 @@ conda list --json > "${diagnostics_dir}/environment.json"
 nvidia-smi -q > "${diagnostics_dir}/nvidia-smi.txt"
 git rev-parse HEAD > "${diagnostics_dir}/commit.txt"
 
+source rapids-configure-sccache
+sccache --stop-server >/dev/null 2>&1 || true
 sccache --dist-status > "${diagnostics_dir}/sccache-dist-status.json"
 python -c 'import json, sys; assert json.load(open(sys.argv[1]))["SchedulerStatus"][1]["servers"], "Distributed sccache has no workers"' \
     "${diagnostics_dir}/sccache-dist-status.json"

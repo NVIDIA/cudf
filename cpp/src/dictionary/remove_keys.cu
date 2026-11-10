@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/copy_if.cuh>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/indexalator.cuh>
@@ -172,9 +173,12 @@ std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& diction
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
 {
+  // a sliced empty column may still have keys so return early to avoid
+  // processing keys that cannot be referenced
+  if (dictionary_column.is_empty()) { return cudf::empty_like(dictionary_column.parent()); }
+
   // locate the keys to remove
-  // keys_size() is 0 for an empty column but a sliced empty column may still have keys
-  auto const keys_size     = dictionary_column.keys().size();
+  auto const keys_size     = dictionary_column.keys_size();
   column_view indices_view = dictionary_column.get_indices_annotated();
 
   // search the indices values with key indices to look for any holes

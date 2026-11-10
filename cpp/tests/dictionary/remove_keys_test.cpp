@@ -161,6 +161,8 @@ TEST_F(DictionaryRemoveKeysTest, EmptySlice)
 
   auto const result = cudf::dictionary::remove_unused_keys(cudf::dictionary_column_view(sliced));
   EXPECT_EQ(result->size(), 0);
+  EXPECT_EQ(result->type().id(), cudf::type_id::DICTIONARY32);
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).keys().type().id(), cudf::type_id::INT64);
   auto const decoded = cudf::dictionary::decode(result->view());
   EXPECT_EQ(decoded->size(), 0);
 }

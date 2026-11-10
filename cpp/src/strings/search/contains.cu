@@ -439,7 +439,7 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
 std::unique_ptr<column> contains(strings_column_view const& input,
                                  string_scalar const& target,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto const num_rows = input.size();
   if (num_rows == 0) { return make_empty_column(type_id::BOOL8); }
@@ -500,7 +500,7 @@ std::unique_ptr<column> contains(strings_column_view const& input,
 std::unique_ptr<column> contains(strings_column_view const& strings,
                                  strings_column_view const& targets,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   if (strings.is_empty()) { return make_empty_column(type_id::BOOL8); }
 
@@ -545,7 +545,7 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
 std::unique_ptr<column> contains(strings_column_view const& strings,
                                  string_scalar const& target,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contains(strings, target, stream, mr);
@@ -554,7 +554,7 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
 std::unique_ptr<column> contains(strings_column_view const& strings,
                                  strings_column_view const& targets,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contains(strings, targets, stream, mr);

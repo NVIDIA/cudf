@@ -45,7 +45,7 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
                                             string_scalar const& target,
                                             Predicate predicate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   auto strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::BOOL8);
@@ -106,7 +106,7 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
                                             strings_column_view const& targets,
                                             Predicate predicate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   if (strings.is_empty()) return make_empty_column(type_id::BOOL8);
 
@@ -151,7 +151,7 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     string_scalar const& target,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   auto predicate = [] __device__(string_view d_string, string_view d_target) {
     return (d_target.size_bytes() <= d_string.size_bytes()) &&
@@ -163,7 +163,7 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     strings_column_view const& targets,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   auto predicate = [] __device__(string_view d_string, string_view d_target) {
     return (d_target.size_bytes() <= d_string.size_bytes()) &&
@@ -175,7 +175,7 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   string_scalar const& target,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   auto predicate = [] __device__(string_view d_string, string_view d_target) {
     auto const str_size = d_string.size_bytes();
@@ -190,7 +190,7 @@ std::unique_ptr<column> ends_with(strings_column_view const& strings,
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   strings_column_view const& targets,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   auto predicate = [] __device__(string_view d_string, string_view d_target) {
     auto const str_size = d_string.size_bytes();
@@ -209,7 +209,7 @@ std::unique_ptr<column> ends_with(strings_column_view const& strings,
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     string_scalar const& target,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::starts_with(strings, target, stream, mr);
@@ -218,7 +218,7 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     strings_column_view const& targets,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::starts_with(strings, targets, stream, mr);
@@ -227,7 +227,7 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   string_scalar const& target,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::ends_with(strings, target, stream, mr);
@@ -236,7 +236,7 @@ std::unique_ptr<column> ends_with(strings_column_view const& strings,
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   strings_column_view const& targets,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::ends_with(strings, targets, stream, mr);

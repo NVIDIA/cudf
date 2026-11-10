@@ -10,6 +10,7 @@
 
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/dispatchers.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
@@ -64,16 +65,17 @@ void hash_join<Hasher>::probe(join_kind join,
 }
 
 template <typename Hasher>
-cudf::join_match_context hash_join<Hasher>::make_match_context(
-  join_kind join,
-  table_view const& left,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+cudf::join_match_context hash_join<Hasher>::make_match_context(join_kind join,
+                                                               table_view const& left,
+                                                               cuda::stream_ref stream,
+                                                               cudf::memory_resources mr) const
 {
   validate_hash_join_probe(_right, left, _has_nulls);
 
-  auto match_counts = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
-  cuda::device_buffer<size_type> groups(stream, mr, _is_empty ? 0 : left.num_rows(), cuda::no_init);
+  auto match_counts =
+    std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr.get_output_mr());
+  cuda::device_buffer<size_type> groups(
+    stream, mr.get_output_mr(), _is_empty ? 0 : left.num_rows(), cuda::no_init);
 
   if (_is_empty) {
     thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -100,6 +102,6 @@ template void hash_join<hash_join_hasher>::probe(join_kind,
                                                  cuda::stream_ref) const;
 
 template cudf::join_match_context hash_join<hash_join_hasher>::make_match_context(
-  join_kind, cudf::table_view const&, cuda::stream_ref, rmm::device_async_resource_ref) const;
+  join_kind, cudf::table_view const&, cuda::stream_ref, cudf::memory_resources) const;
 
 }  // namespace cudf::detail

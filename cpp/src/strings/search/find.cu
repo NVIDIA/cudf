@@ -188,7 +188,7 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
                                 size_type start,
                                 size_type stop,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   CUDF_EXPECTS(start >= 0, "Parameter start must be positive integer or zero.");
@@ -233,7 +233,7 @@ std::unique_ptr<column> find(strings_column_view const& input,
                              size_type start,
                              size_type stop,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   return find_fn<true>(input, target, start, stop, stream, mr);
 }
@@ -243,7 +243,7 @@ std::unique_ptr<column> rfind(strings_column_view const& input,
                               size_type start,
                               size_type stop,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   return find_fn<false>(input, target, start, stop, stream, mr);
 }
@@ -253,7 +253,7 @@ std::unique_ptr<column> find(strings_column_view const& input,
                              strings_column_view const& target,
                              size_type start,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   CUDF_EXPECTS(start >= 0, "Parameter start must be positive integer or zero.");
   CUDF_EXPECTS(input.size() == target.size(), "input and target columns must be the same size");
@@ -291,7 +291,7 @@ std::unique_ptr<column> find(strings_column_view const& strings,
                              size_type start,
                              size_type stop,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find(strings, target, start, stop, stream, mr);
@@ -302,7 +302,7 @@ std::unique_ptr<column> rfind(strings_column_view const& strings,
                               size_type start,
                               size_type stop,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::rfind(strings, target, start, stop, stream, mr);
@@ -312,7 +312,7 @@ std::unique_ptr<column> find(strings_column_view const& input,
                              strings_column_view const& target,
                              size_type start,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find<true>(input, target, start, stream, mr);

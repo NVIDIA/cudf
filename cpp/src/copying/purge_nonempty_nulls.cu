@@ -12,6 +12,8 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
+
 namespace cudf {
 namespace detail {
 
@@ -40,7 +42,7 @@ bool has_nonempty_null_rows(cudf::column_view const& input,
     (type == type_id::STRING) ? strings_column_view{input}.offsets()
                               : lists_column_view{input}.offsets(),
     input.offset());
-  auto const d_input      = cudf::column_device_view::create(input, stream, mr.get_temporary_mr());
+  auto const d_input      = cudf::column_device_view::create(input, stream, mr.as_temporary());
   auto const is_dirty_row = [d_input = *d_input, offsets] __device__(size_type const& row_idx) {
     return d_input.is_null_nocheck(row_idx) && (offsets[row_idx] != offsets[row_idx + 1]);
   };
@@ -72,7 +74,7 @@ bool has_nonempty_nulls(cudf::column_view const& input,
 
   // For complex types, check if child columns need purging.
   if ((type == type_id::STRUCT || type == type_id::LIST) &&
-      std::any_of(input.child_begin(), input.child_end(), [stream, mr](auto const& child) {
+      std::ranges::any_of(input.child_begin(), input.child_end(), [stream, mr](auto const& child) {
         return cudf::detail::has_nonempty_nulls(child, stream, mr);
       })) {
     return true;
@@ -86,9 +88,7 @@ std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
                                              cudf::memory_resources mr)
 {
   // If not compound types (LIST/STRING/STRUCT/DICTIONARY) then just copy the input into output.
-  if (!cudf::is_compound(input.type())) {
-    return std::make_unique<column>(input, stream, mr.get_output_mr());
-  }
+  if (!cudf::is_compound(input.type())) { return std::make_unique<column>(input, stream, mr); }
 
   // Implement via identity gather.
   auto gathered_table = cudf::detail::gather(table_view{{input}},

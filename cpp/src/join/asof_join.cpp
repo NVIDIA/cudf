@@ -73,9 +73,11 @@ cuda::device_buffer<size_type> asof_join_impl::join(table_view const& left_by,
 {
   cudf::scoped_range range{"asof_join::join"};
   CUDF_EXPECTS(strategy == asof_join_strategy::BACKWARD,
-               "Only backward as-of joins are currently supported");
+               "Only backward as-of joins are currently supported",
+               std::invalid_argument);
   CUDF_EXPECTS(exact_matches == asof_join_exact_matches::YES,
-               "As-of joins without exact matches are currently unsupported");
+               "As-of joins without exact matches are currently unsupported",
+               std::invalid_argument);
   validate_key_sizes(left_by, left_on, "left");
   CUDF_EXPECTS(left_by.num_columns() == _right_by.num_columns(),
                "As-of join inputs must have the same number of grouping keys",

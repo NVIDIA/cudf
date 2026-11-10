@@ -51,13 +51,12 @@ class asof_join_impl {
                                       cuda::stream_ref stream,
                                       cudf::memory_resources mr) const;
 
-  // NVCC requires the enclosing function of extended device lambdas to be public.
+ private:
   cuda::device_buffer<size_type> probe(table_view const& left_by,
                                        column_view const& left_on,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr) const;
 
- private:
   void build_groups(cuda::stream_ref stream, cudf::memory_resources mr);
 
   table_view _right_by;

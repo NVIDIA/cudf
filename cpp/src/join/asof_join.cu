@@ -16,14 +16,12 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
-#include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_select.cuh>
 #include <cub/device/device_transform.cuh>
-#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/execution>
@@ -37,6 +35,30 @@
 
 namespace cudf::experimental::detail {
 namespace {
+
+struct ungrouped_offset {
+  size_type num_rows;
+
+  __device__ size_type operator()(size_type i) const { return i * num_rows; }
+};
+
+struct to_lhs_index {
+  __device__ cudf::detail::row::lhs_index_type operator()(size_type row) const
+  {
+    return cudf::detail::row::lhs_index_type{row};
+  }
+};
+
+struct always_equal {
+  __device__ bool operator()(cudf::detail::row::lhs_index_type,
+                             cudf::detail::row::rhs_index_type) const
+  {
+    return true;
+  }
+};
+
+template <typename T>
+concept supported_on_type = cudf::is_integral_not_bool<T>() || cudf::is_chrono<T>();
 
 template <typename RowEqual>
 struct is_group_start {
@@ -60,7 +82,7 @@ struct backward_probe {
 
     // A null group_positions pointer means an ungrouped join: every row uses group zero.
     auto const group = group_positions ? group_positions[left_row] : size_type{0};
-    if (group < 0 || group >= num_groups) { return JoinNoMatch; }
+    if (group >= num_groups) { return JoinNoMatch; }
     if (group_positions && !row_equal(cudf::detail::row::lhs_index_type{group_offsets[group]},
                                       cudf::detail::row::rhs_index_type{left_row})) {
       return JoinNoMatch;
@@ -90,8 +112,7 @@ struct probe_dispatch {
   rmm::device_async_resource_ref temp_mr;
   RowEqual row_equal;
 
-  template <typename T>
-    requires(cudf::is_integral_not_bool<T>() || cudf::is_chrono<T>())
+  template <supported_on_type T>
   void operator()() const
   {
     thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
@@ -103,7 +124,6 @@ struct probe_dispatch {
   }
 
   template <typename T>
-    requires(not cudf::is_integral_not_bool<T>() && not cudf::is_chrono<T>())
   void operator()() const
   {
     CUDF_FAIL("Unsupported as-of join ordered-key type");
@@ -130,10 +150,11 @@ void asof_join_impl::build_groups(cuda::stream_ref stream, cudf::memory_resource
   if (_right_by.num_columns() == 0) {
     _right_group_offsets =
       cuda::device_buffer<size_type>{stream, mr.get_output_mr(), 2, cuda::no_init};
-    CUDF_CUDA_TRY(
-      cub::DeviceTransform::Fill(_right_group_offsets.begin(), 1, size_type{0}, stream));
-    CUDF_CUDA_TRY(
-      cub::DeviceTransform::Fill(_right_group_offsets.begin() + 1, 1, num_rows, stream));
+    CUDF_CUDA_TRY(cub::DeviceTransform::Transform(cuda::counting_iterator<size_type>{0},
+                                                  _right_group_offsets.begin(),
+                                                  2,
+                                                  ungrouped_offset{num_rows},
+                                                  stream));
     _num_right_groups = 1;
     return;
   }
@@ -196,8 +217,8 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
     return result;
   }
 
-  auto const left_on_device  = column_device_view::create(left_on, stream, temp_mr);
-  auto const right_on_device = column_device_view::create(_right_on, stream, temp_mr);
+  auto const left_on_device  = column_device_view::create(left_on, stream, mr.as_temporary());
+  auto const right_on_device = column_device_view::create(_right_on, stream, mr.as_temporary());
   // Validate the candidate group and search its ordered keys in the same probe.
   auto const launch_probe = [&](size_type const* group_positions, auto row_equal) {
     cudf::type_dispatcher(left_on.type(),
@@ -220,10 +241,8 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
       left_by, {}, {}, stream, mr.as_temporary());
     auto const row_less = cudf::detail::row::lexicographic::two_table_comparator{
       _right_lex_preprocessed, std::move(left_lex)};
-    auto const right_group_rows = cuda::transform_iterator(
-      _right_group_offsets.begin(),
-      cuda::proclaim_return_type<cudf::detail::row::lhs_index_type>(
-        [] __device__(size_type row) { return cudf::detail::row::lhs_index_type{row}; }));
+    auto const right_group_rows =
+      cuda::transform_iterator(_right_group_offsets.begin(), to_lhs_index{});
     thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
                         right_group_rows,
                         right_group_rows + _num_right_groups,
@@ -241,10 +260,7 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
       row_equal.equal_to<false>(nullate::DYNAMIC{has_nulls}, null_equality::UNEQUAL);
     launch_probe(group_positions.data(), equal);
   } else {
-    launch_probe(
-      nullptr, [] __device__(cudf::detail::row::lhs_index_type, cudf::detail::row::rhs_index_type) {
-        return true;
-      });
+    launch_probe(nullptr, always_equal{});
   }
   return result;
 }

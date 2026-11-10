@@ -131,6 +131,8 @@ class asof_join {
    * keys
    * @throws std::invalid_argument if `left_by` has columns and
    *         `left_by.num_rows() != left_on.size()`
+   * @throws std::invalid_argument if `strategy` is not `asof_join_strategy::BACKWARD` or
+   *         `exact_matches` is not `asof_join_exact_matches::YES`
    * @throws cudf::data_type_error if corresponding left and right key types do not match
    *
    * @param left_by Left-side equality grouping keys

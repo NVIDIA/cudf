@@ -862,8 +862,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(table_view const&
   auto verticalized_t =
     std::get<0>(decompose_structs(struct_offset_removed_table, decompose_lists_column::YES));
 
-  auto d_t =
-    table_device_view_owner(table_device_view::create(verticalized_t, stream, mr.get_output_mr()));
+  auto d_t = table_device_view_owner(table_device_view::create(verticalized_t, stream, mr));
   return std::shared_ptr<preprocessed_table>(new preprocessed_table(
     std::move(d_t), std::move(nullable_data.new_null_masks), std::move(nullable_data.new_columns)));
 }

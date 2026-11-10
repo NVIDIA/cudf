@@ -26,7 +26,6 @@ files:
       - depends_on_libnvcomp
       - depends_on_librapidsmpf
       - depends_on_libucxx
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
       - depends_on_rapids_logger
       - depends_on_rapidsmpf
@@ -98,7 +97,6 @@ files:
       - depends_on_cudf
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
   test_cuml:
     output: none
@@ -114,7 +112,7 @@ files:
       - test_python_pylibcudf
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
   test_python_other:
     output: none
     includes:
@@ -130,7 +128,7 @@ files:
       - depends_on_dask_cuda
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - depends_on_dask_cudf
       - depends_on_cudf_kafka
       - depends_on_custreamz
@@ -238,7 +236,7 @@ files:
     includes:
       - build_base
       - build_python_common
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - depends_on_pylibcudf
       - depends_on_libcudf
       - depends_on_librmm
@@ -259,7 +257,6 @@ files:
       - depends_on_cuda_bindings
       - depends_on_cupy
       - depends_on_libcudf
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
       - depends_on_pylibcudf_pyarrow
       - depends_on_rmm
@@ -274,6 +271,7 @@ files:
       key: test
     includes:
       - cuda_version
+      - depends_on_numba_cuda
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
@@ -393,7 +391,7 @@ files:
       key: test
     includes:
       - depends_on_cupy
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - pyarrow_run
       - test_python_common
       - test_python_cudf_common
@@ -740,6 +738,10 @@ files:
       polars_compat_version: ["2.0", "2.1"]
     includes:
       - test_cudf_polars_compat
+  test_cudf_polars_quent:
+    output: none
+    includes:
+      - depends_on_cudf_polars_quent
 channels:
   - rapidsai-nightly
   - rapidsai
@@ -1199,7 +1201,6 @@ dependencies:
             packages:
               - numba==0.60.0
               - *pandas
-              - numba-cuda==0.30.2
           - matrix: {dependencies: "latest"}
             packages:
               - *pandas
@@ -1392,11 +1393,12 @@ dependencies:
               cuda_suffixed: "false"
             packages: [*libcudf_unsuffixed]
   depends_on_numba_cuda:
+    # Test-only: cuDF's test suite exercises stock ``numba.cuda`` interop (e.g.
+    # the cudf.pandas test running a numba ``@vectorize(target="cuda")`` ufunc).
+    # The numba-cuda package provides that working ``numba.cuda`` (and finds
+    # libNVVM from the nvidia CUDA wheels); cuDF's own device code uses
+    # numba-cuda-mlir instead.
     common:
-      - output_types: [conda, requirements, constraints, pyproject]
-        packages:
-          # TODO: Remove after https://github.com/rapidsai/build-planning/issues/301 is resolved.
-          - numba>=0.60.0,<0.65.0
       - output_types: [conda]
         packages:
           - &numba_cuda numba-cuda>=0.22.2,<0.31.0
@@ -1919,6 +1921,11 @@ dependencies:
       - output_types: conda
         packages:
           - cudf-polars==26.12.*,>=0.0.0a0
+  depends_on_cudf_polars_quent:
+    common:
+      - output_types: conda
+        packages:
+          - cudf-polars-quent==26.12.*,>=0.0.0a0
   depends_on_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

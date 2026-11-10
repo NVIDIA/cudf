@@ -59,6 +59,7 @@ def df():
         pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
         [pl.col("a") * 2, pl.col("b") + pl.col("a")],
         pl.col("d").not_(),
+        pl.col("d") ^ (pl.col("b") > 2),
     ],
 )
 def test_compute_column(expr, df):
@@ -95,6 +96,32 @@ def test_compute_column(expr, df):
     expect = q.collect()
 
     assert_frame_equal(expect, got)
+
+
+def test_boolean_xor_is_converted_to_ast():
+    stream = get_cuda_stream()
+    q = pl.LazyFrame({"a": [True, False], "b": [True, True]}).select(
+        pl.col("a") ^ pl.col("b")
+    )
+    ir = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+    assert isinstance(ir, ir_nodes.Select)
+    (named,) = ir.exprs
+    with_colrefs = insert_colrefs(
+        named.value,
+        table_ref=plc.expressions.TableReference.LEFT,
+        name_to_index={"a": 0, "b": 1},
+    )
+    assert to_ast(with_colrefs, stream=stream) is not None
+    # Integer XOR is still supported.
+    q = pl.LazyFrame({"a": [1, 2], "b": [3, 3]}).select(pl.col("a") ^ pl.col("b"))
+    ir = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+    (named,) = ir.exprs
+    with_colrefs = insert_colrefs(
+        named.value,
+        table_ref=plc.expressions.TableReference.LEFT,
+        name_to_index={"a": 0, "b": 1},
+    )
+    assert to_ast(with_colrefs, stream=stream) is not None
 
 
 def test_invalid_colref_construction_raises():

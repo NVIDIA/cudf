@@ -51,11 +51,10 @@ struct regex_program;
  * @param mr Device memory resource used to allocate the returned table's device memory
  * @return Columns of strings extracted from the input column
  */
-std::unique_ptr<table> extract(
-  strings_column_view const& input,
-  regex_program const& prog,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> extract(strings_column_view const& input,
+                               regex_program const& prog,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a lists column of strings where each string column row corresponds to the
@@ -90,8 +89,8 @@ std::unique_ptr<table> extract(
 std::unique_ptr<column> extract_all_record(
   strings_column_view const& input,
   regex_program const& prog,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a strings column where each column corresponds to the specified
@@ -120,8 +119,8 @@ std::unique_ptr<column> extract_single(
   strings_column_view const& input,
   regex_program const& prog,
   size_type group,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

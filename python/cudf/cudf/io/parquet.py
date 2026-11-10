@@ -2371,7 +2371,9 @@ class ParquetDatasetWriter:
             live = self._live_paths[cw_idx]
             live.discard(path)
             if not live:
-                writer, _, meta_paths = self._chunked_writers[cw_idx]
+                entry = self._chunked_writers[cw_idx]
+                assert entry is not None
+                writer, _, meta_paths = entry
                 self._closed_metadata[cw_idx] = writer.close(
                     metadata_file_path=meta_paths
                 )

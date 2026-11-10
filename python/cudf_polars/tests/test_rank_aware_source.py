@@ -81,6 +81,7 @@ def test_rank_aware_source_multi_chunk(engine: pl.GPUEngine):
 
 
 @pytest.mark.engine_params(["ray"])
+@pytest.mark.parametrize("ray_num_ranks", [2, 3], scope="session")
 def test_set_sorted_uneven_rank_chunks(streaming_engine_factory) -> None:
     class UnevenSource(RankAwareSource):
         def __call__(
@@ -88,11 +89,14 @@ def test_set_sorted_uneven_rank_chunks(streaming_engine_factory) -> None:
         ):
             chunks = [
                 pl.DataFrame({"a": [1, 2], "v": [10, 20]}),
-                pl.DataFrame({"a": [2, 3], "v": [30, 40]}),
-                pl.DataFrame({"a": [4], "v": [50]}),
-                pl.DataFrame({"a": [5], "v": [60]}),
+                pl.DataFrame({"a": [2], "v": [30]}),
+                pl.DataFrame({"a": [2, 3], "v": [40, 50]}),
+                pl.DataFrame({"a": [4], "v": [60]}),
+                pl.DataFrame({"a": [5], "v": [70]}),
             ]
-            if nranks > 1:
+            if nranks > 2:
+                chunks = (chunks[:1], chunks[1:2], chunks[2:])[rank]
+            elif nranks > 1:
                 chunks = chunks[:1] if rank == 0 else chunks[1:]
             for chunk in chunks:
                 yield chunk.select(with_columns) if with_columns is not None else chunk
@@ -102,7 +106,7 @@ def test_set_sorted_uneven_rank_chunks(streaming_engine_factory) -> None:
     )
     source = register_io_source(UnevenSource(), schema={"a": pl.Int64, "v": pl.Int64})
     q = source.set_sorted("a").group_by("a", maintain_order=True).agg(pl.col("v").sum())
-    expected = pl.DataFrame({"a": [1, 2, 3, 4, 5], "v": [10, 50, 40, 50, 60]})
+    expected = pl.DataFrame({"a": [1, 2, 3, 4, 5], "v": [10, 90, 50, 60, 70]})
     assert_frame_equal(q.collect(engine=engine), expected)
 
 

@@ -75,6 +75,7 @@ if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
+    from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
@@ -633,19 +634,72 @@ async def _strictify_chunkwise_groupby(
 
 
 @dataclass
+class _OrderedGroupCursor:
+    """Carry and emit state for one ordered groupby stream."""
+
+    initial: TableChunk | None = None
+    carry: TableChunk | None = None
+    sequence_number: int = 0
+    send_first: bool = False
+
+    async def emit(self, groupby: _OrderedGroupBy, chunk: TableChunk | None) -> None:
+        if chunk is None or chunk.shape[0] == 0:
+            return
+        if groupby.decomposed.select_ir is not None:
+            chunk = await evaluate_chunk(
+                groupby.context,
+                chunk,
+                groupby.decomposed.select_ir,
+                ir_context=groupby.ir_context,
+            )
+        await send_chunk(
+            groupby.context,
+            groupby.ch_out,
+            chunk,
+            self.sequence_number,
+            tracer=groupby.tracer,
+        )
+        self.sequence_number += 1
+
+    async def emit_complete(
+        self,
+        groupby: _OrderedGroupBy,
+        chunk: TableChunk,
+        exchange: SparseExchange,
+        destination: int,
+    ) -> None:
+        if self.send_first:
+            first, chunk = await _split_key_run(
+                groupby.context,
+                groupby.ir_context,
+                chunk,
+                groupby.keys,
+                leading=True,
+            )
+            assert first is not None
+            await exchange.insert_chunk(destination, first)
+            self.send_first = False
+            exchange.start_finish()
+        await self.emit(groupby, chunk)
+
+
+@dataclass(frozen=True)
 class _OrderedGroupBy:
     """
     Stream a groupby whose keys have an ordered prefix.
 
-    The actor calls this after initial local aggregation and strategy selection.
-    Sort partial results on the prefix when the groupby did not maintain order.
-    A batch can end within a prefix run, so retain that trailing run as ``carry``
-    and emit earlier runs. For non-strict rank boundaries, send the leading run
-    to its lower owner and merge incoming runs with the final carry. Without
-    boundaries, gathered first keys choose a conservative owner. Output stays
-    ordered on the prefix. Known inter-rank boundaries become strict, but local
-    chunk boundaries need not be strict.
-    One prefix run may exceed the target partition size.
+    After initial local aggregation and strategy selection:
+
+    1. Sort partial results on the prefix if aggregation did not maintain order.
+    2. Carry the trailing prefix run between batches and emit completed runs.
+    3. Send the leading run to its lower rank when boundaries overlap, then
+       merge incoming runs with the final local run. Without boundaries,
+       gathered first keys choose a conservative owner.
+
+    Output stays ordered on the prefix. Known inter-rank boundaries become
+    strict, but local chunk boundaries need not be. A prefix run may exceed
+    the target partition size or cuDF row limit. Splitting it would require
+    combining equal full keys across the pieces.
     """
 
     context: Context
@@ -661,11 +715,6 @@ class _OrderedGroupBy:
     keys: tuple[OrderKey, ...]
     inter_rank_ordering: Ordering | None
     tracer: ActorTracer | None
-    initial: TableChunk | None
-    sort_ir: Sort | None = None
-    carry: TableChunk | None = None
-    sequence_number: int = 0
-    send_first: bool = False
 
     @staticmethod
     def ordered_prefix(
@@ -709,12 +758,12 @@ class _OrderedGroupBy:
             return keys
         return best
 
-    async def run(self, *, input_drained: bool) -> None:
+    async def run(self, initial: TableChunk, *, input_drained: bool) -> None:
         """Prepare rank ownership and metadata, then stream the reduction."""
-        assert self.initial is not None
-        self.initial = _enforce_schema(
-            self.initial, self.decomposed.reduction_ir.schema, self.context.br()
+        initial = _enforce_schema(
+            initial, self.decomposed.reduction_ir.schema, self.context.br()
         )
+        sort_ir = None
         if (
             isinstance(self.decomposed.ir, GroupBy)
             and not self.decomposed.ir.maintain_order
@@ -724,7 +773,7 @@ class _OrderedGroupBy:
             for key in self.keys:
                 name, dtype = schema_items[key.column_index]
                 by.append(NamedExpr(name, Col(dtype, name)))
-            self.sort_ir = Sort(
+            sort_ir = Sort(
                 self.decomposed.reduction_ir.schema,
                 by,
                 [key.order for key in self.keys],
@@ -734,12 +783,12 @@ class _OrderedGroupBy:
                 self.decomposed.reduction_ir,
             )
 
-        self.initial = await self._sort(self.initial)
+        initial = await self._sort(initial, sort_ir)
         if self.comm.nranks > 1 and (
             self.inter_rank_ordering is None
             or not self.inter_rank_ordering.strict_boundaries
         ):
-            routes = await self._first_key_routes()
+            routes, initial = await self._first_key_routes(initial)
         else:
             routes = {}
 
@@ -781,16 +830,66 @@ class _OrderedGroupBy:
         )
         if self.tracer is not None:
             self.tracer.decision = "ordered"
-        await self._run_cursor(routes, input_drained=input_drained)
+        cursor = _OrderedGroupCursor(initial=initial)
+        del initial
+        await self._run_cursor(cursor, sort_ir, routes, input_drained=input_drained)
 
-    async def _first_key_routes(self) -> dict[int, int]:
+    @staticmethod
+    def _route_first_keys(
+        gathered: plc.Table,
+        keys: tuple[OrderKey, ...],
+        stream: Stream,
+        boundaries: TableChunk | None,
+        context: Context,
+    ) -> dict[int, int]:
+        """Route leading runs using gathered keys and optional rank boundaries."""
+        first_keys = plc.Table(gathered.columns()[1:])
+        orders = [key.order for key in keys]
+        null_orders = [key.null_order for key in keys]
+        if boundaries is None:
+            lower_column = plc.search.lower_bound(
+                first_keys, first_keys, orders, null_orders, stream=stream
+            )
+            stream.synchronize()
+            ranks = gathered.columns()[0].to_pylist()
+            lower = lower_column.to_pylist()
+            return {
+                source: ranks[position - 1] if position else ranks[0]
+                for source, position in zip(ranks, lower, strict=True)
+            }
+
+        with stream_ordered_after(
+            context.br().stream_pool.get_stream,
+            upstreams=(stream, boundaries.stream),
+        ) as search_stream:
+            boundary_table = boundaries.table_view()
+            lower_column = plc.search.lower_bound(
+                boundary_table, first_keys, orders, null_orders, stream=search_stream
+            )
+            upper_column = plc.search.upper_bound(
+                boundary_table, first_keys, orders, null_orders, stream=search_stream
+            )
+            search_stream.synchronize()
+            ranks = gathered.columns()[0].to_pylist()
+            lower = lower_column.to_pylist()
+            upper = upper_column.to_pylist()
+        return {
+            source: first_boundary
+            if first_boundary <= source - 1 < after_last
+            else source
+            for source, first_boundary, after_last in zip(
+                ranks, lower, upper, strict=True
+            )
+        }
+
+    async def _first_key_routes(
+        self, initial: TableChunk
+    ) -> tuple[dict[int, int], TableChunk]:
         """Find the lower owner of each rank's leading prefix run."""
-        assert self.initial is not None
         stream = self.ir_context.get_cuda_stream()
         chunk, extra = await make_table_chunks_available_or_wait(
-            self.context, self.initial, reserve_extra=0, net_memory_delta=0
+            self.context, initial, reserve_extra=0, net_memory_delta=0
         )
-        self.initial = chunk
         with opaque_memory_usage(extra):
             table = chunk.table_view()
             key_table = plc.Table(
@@ -818,22 +917,12 @@ class _OrderedGroupBy:
             await inserter.insert(0, first_chunk)
         gathered = await gather.extract_concatenated(stream, ir_context=self.ir_context)
         if gathered.num_rows() == 0:
-            return {}
-        stream.synchronize()
-        ranks = gathered.columns()[0].to_pylist()
-        first_keys = plc.Table(gathered.columns()[1:])
-        orders = [key.order for key in self.keys]
-        null_orders = [key.null_order for key in self.keys]
+            return {}, chunk
         if self.inter_rank_ordering is None:
-            lower_column = plc.search.lower_bound(
-                first_keys, first_keys, orders, null_orders, stream=stream
+            routes = await self.ir_context.to_thread(
+                self._route_first_keys, gathered, self.keys, stream, None, self.context
             )
-            stream.synchronize()
-            lower = lower_column.to_pylist()
-            return {
-                source: ranks[position - 1] if position else ranks[0]
-                for source, position in zip(ranks, lower, strict=True)
-            }
+            return routes, chunk
 
         boundaries, extra = await make_table_chunks_available_or_wait(
             self.context,
@@ -841,108 +930,65 @@ class _OrderedGroupBy:
             reserve_extra=0,
             net_memory_delta=0,
         )
-        with (
-            opaque_memory_usage(extra),
-            stream_ordered_after(
-                self.context.br().stream_pool.get_stream,
-                upstreams=(stream, boundaries.stream),
-            ) as search_stream,
-        ):
-            boundary_table = boundaries.table_view()
-            lower_column = plc.search.lower_bound(
-                boundary_table, first_keys, orders, null_orders, stream=search_stream
+        with opaque_memory_usage(extra):
+            routes = await self.ir_context.to_thread(
+                self._route_first_keys,
+                gathered,
+                self.keys,
+                stream,
+                boundaries,
+                self.context,
             )
-            upper_column = plc.search.upper_bound(
-                boundary_table, first_keys, orders, null_orders, stream=search_stream
-            )
-            search_stream.synchronize()
-            lower = lower_column.to_pylist()
-            upper = upper_column.to_pylist()
-        return {
-            source: first_boundary
-            if first_boundary <= source - 1 < after_last
-            else source
-            for source, first_boundary, after_last in zip(
-                ranks, lower, upper, strict=True
-            )
-        }
+        return routes, chunk
 
-    async def _sort(self, chunk: TableChunk) -> TableChunk:
+    async def _sort(self, chunk: TableChunk, sort_ir: Sort | None) -> TableChunk:
         return (
             await evaluate_chunk(
-                self.context, chunk, self.sort_ir, ir_context=self.ir_context
+                self.context, chunk, sort_ir, ir_context=self.ir_context
             )
-            if self.sort_ir is not None
+            if sort_ir is not None
             else chunk
         )
 
-    async def _emit(self, chunk: TableChunk | None) -> None:
-        if chunk is None or chunk.shape[0] == 0:
-            return
-        if self.decomposed.select_ir is not None:
-            chunk = await evaluate_chunk(
-                self.context,
-                chunk,
-                self.decomposed.select_ir,
-                ir_context=self.ir_context,
-            )
-        await send_chunk(
-            self.context,
-            self.ch_out,
-            chunk,
-            self.sequence_number,
-            tracer=self.tracer,
-        )
-        self.sequence_number += 1
-
-    async def _emit_complete(
-        self, chunk: TableChunk, exchange: SparseExchange, destination: int
-    ) -> None:
-        if self.send_first:
-            first, chunk = await _split_key_run(
-                self.context, self.ir_context, chunk, self.keys, leading=True
-            )
-            assert first is not None
-            await exchange.insert_chunk(destination, first)
-            self.send_first = False
-            exchange.start_finish()
-        await self._emit(chunk)
-
     async def _consume_local(
         self,
+        cursor: _OrderedGroupCursor,
+        sort_ir: Sort | None,
         exchange: SparseExchange,
         destination: int,
         *,
         input_drained: bool,
     ) -> None:
-        current, self.initial = self.initial, None
+        current, cursor.initial = cursor.initial, None
         assert current is not None
         drained = input_drained
         while True:
             if current.shape[0]:
-                if self.carry is not None:
+                if cursor.carry is not None:
                     first, current = await _split_key_run(
                         self.context, self.ir_context, current, self.keys, leading=True
                     )
                     assert first is not None
                     head = await evaluate_batch(
-                        [self.carry, first],
+                        [cursor.carry, first],
                         self.context,
                         self.decomposed.reduction_ir,
                         ir_context=self.ir_context,
                     )
-                    head = await self._sort(head)
-                    self.carry = None
+                    head = await self._sort(head, sort_ir)
+                    cursor.carry = None
                     if current is not None:
-                        await self._emit_complete(head, exchange, destination)
+                        await cursor.emit_complete(self, head, exchange, destination)
                     else:
                         current = head
                 if current is not None:
-                    complete, self.carry = await _split_key_run(
+                    complete, cursor.carry = await _split_key_run(
                         self.context, self.ir_context, current, self.keys, leading=False
                     )
                     if complete is not None:
-                        await self._emit_complete(complete, exchange, destination)
+                        await cursor.emit_complete(
+                            self, complete, exchange, destination
+                        )
             if drained:
                 break
             current, drained, _ = await _local_aggregation(
@@ -955,10 +1001,12 @@ class _OrderedGroupBy:
             current = _enforce_schema(
                 current, self.decomposed.reduction_ir.schema, self.context.br()
             )
-            current = await self._sort(current)
+            current = await self._sort(current, sort_ir)
 
     async def _run_cursor(
         self,
+        cursor: _OrderedGroupCursor,
+        sort_ir: Sort | None,
         routes: dict[int, int],
         *,
         input_drained: bool,
@@ -970,7 +1018,7 @@ class _OrderedGroupBy:
             if owner == self.comm.rank and source != self.comm.rank
         )
         destinations = (destination,) if destination != self.comm.rank else ()
-        self.send_first = bool(destinations)
+        cursor.send_first = bool(destinations)
 
         async with SparseExchange(
             self.context,
@@ -979,14 +1027,18 @@ class _OrderedGroupBy:
             sources=sources,
             destinations=destinations,
         ) as exchange:
-            if not self.send_first:
+            if not cursor.send_first:
                 exchange.start_finish()
             await self._consume_local(
-                exchange, destination, input_drained=input_drained
+                cursor,
+                sort_ir,
+                exchange,
+                destination,
+                input_drained=input_drained,
             )
-            if self.send_first and self.carry is not None:
-                await exchange.insert_chunk(destination, self.carry)
-                self.carry = None
+            if cursor.send_first and cursor.carry is not None:
+                await exchange.insert_chunk(destination, cursor.carry)
+                cursor.carry = None
                 exchange.start_finish()
             await exchange.finish()
             for source in sources:
@@ -994,33 +1046,21 @@ class _OrderedGroupBy:
                 try:
                     for message in remote:
                         piece = TableChunk.from_message(message, br=self.context.br())
-                        self.carry = (
+                        cursor.carry = (
                             await evaluate_batch(
-                                [self.carry, piece],
+                                [cursor.carry, piece],
                                 self.context,
                                 self.decomposed.reduction_ir,
                                 ir_context=self.ir_context,
                             )
-                            if self.carry is not None
+                            if cursor.carry is not None
                             else piece
                         )
                 finally:
                     remote.clear()
-            if self.carry is not None and sources:
-                self.carry = await self._sort(self.carry)
-            await self._emit(self.carry)
-            if self.sequence_number == 0 and self.comm.rank == 0:
-                await send_chunk(
-                    self.context,
-                    self.ch_out,
-                    empty_table_chunk(
-                        self.decomposed.select_ir or self.decomposed.reduction_ir,
-                        self.context,
-                        self.ir_context.get_cuda_stream(),
-                    ),
-                    0,
-                    tracer=self.tracer,
-                )
+            if cursor.carry is not None and sources:
+                cursor.carry = await self._sort(cursor.carry, sort_ir)
+            await cursor.emit(self, cursor.carry)
         await self.ch_out.drain(self.context)
 
 
@@ -1359,6 +1399,8 @@ async def groupby_actor(
             tracer,
         )
 
+        # RapidsMPF permits ID reuse after AllGather.extract_all completes.
+        # Any strategy-selection AllGather finishes before reduction starts.
         if output_count == 1:
             await _tree_reduce(
                 context,
@@ -1373,7 +1415,11 @@ async def groupby_actor(
                 tracer=tracer,
             )
         elif ordered_keys is not None:
-            local_count = 1 if input_drained else max(1, metadata_in.local_count)
+            local_count = (
+                min(2, max(1, aggregated.shape[0]))
+                if input_drained
+                else max(1, metadata_in.local_count)
+            )
             partial_keys = tuple(
                 OrderKey(index, key.order, key.null_order)
                 for index, key in zip(
@@ -1403,10 +1449,10 @@ async def groupby_actor(
                 keys=partial_keys,
                 inter_rank_ordering=compatible_inter_rank,
                 tracer=tracer,
-                initial=aggregated,
             )
+            ordered_run = ordered.run(aggregated, input_drained=input_drained)
             del aggregated
-            await ordered.run(input_drained=input_drained)
+            await ordered_run
         else:
             await _shuffle_reduce(
                 context,

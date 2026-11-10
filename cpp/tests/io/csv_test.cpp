@@ -34,6 +34,7 @@
 #include <rmm/mr/limiting_resource_adaptor.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/concepts>
 #include <thrust/execution_policy.h>
 
@@ -1123,8 +1124,7 @@ TEST_P(CsvStringStagingTest, AllocationFailureAndRecovery)
   auto const options = builder.build();
   auto const caller  = std::this_thread::get_id();
   // Keep the upstream resource alive while replacing the device-global resource.
-  cuda::mr::any_resource<cuda::mr::device_accessible> upstream{
-    cudf::get_current_device_resource_ref()};
+  cuda::mr::any_device_resource upstream{cudf::get_current_device_resource_ref()};
   auto const stream = cudf::test::get_default_stream();
   cudf::test::strings_column_wrapper const ignored{"skip", "skip"};
   cudf::test::strings_column_wrapper const plain{"alpha", "beta"};

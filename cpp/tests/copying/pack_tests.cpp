@@ -15,6 +15,7 @@
 
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <span>
@@ -622,7 +623,7 @@ TEST_F(PackUnpackTest, EmptyBuffersPreserveStreamAndResource)
   CUDF_CUDA_TRY(cudaGetDevice(&device));
   cuda::stream stream{cuda::device_ref{device}};
   auto output_mr  = rmm::mr::statistics_resource_adaptor{cudf::get_current_device_resource_ref()};
-  auto output_ref = rmm::device_async_resource_ref{output_mr};
+  auto output_ref = cuda::mr::device_resource_ref{output_mr};
 
   auto const verify_buffer = [&](cudf::packed_columns const& packed) {
     EXPECT_EQ(packed.gpu_data->size(), 0);

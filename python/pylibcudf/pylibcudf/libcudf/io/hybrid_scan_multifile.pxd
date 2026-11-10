@@ -22,7 +22,7 @@ from pylibcudf.libcudf.io.types cimport table_with_metadata
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport host_span
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 ctypedef const vector[size_type] const_vector_size_type
 ctypedef host_span[const_uint8_t] host_span_const_uint8_t
@@ -84,14 +84,14 @@ cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
         unique_ptr[column] build_all_true_row_mask(
             host_span[const_vector_size_type] row_group_indices,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         unique_ptr[column] build_row_mask_with_page_index_stats(
             host_span[const_vector_size_type] row_group_indices,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         pair[
@@ -106,7 +106,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
             host_span[const_device_span_const_uint8_t] column_chunk_data,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         pair[vector[byte_range_info], vector[size_type]] payload_pages_byte_ranges(
@@ -124,7 +124,7 @@ cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
             host_span[const_device_span_const_uint8_t] page_data,
             const parquet_reader_options& options,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
 
         table_with_metadata materialize_payload_columns_chunk(

@@ -18,6 +18,8 @@
 #include <cudf/sorting.hpp>
 #include <cudf/utilities/bit.hpp>
 
+#include <cuda/memory_resource>
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -513,13 +515,13 @@ struct m2_after_count_udf : cudf::groupby_host_udf {
     return std::make_unique<m2_after_count_udf>();
   }
   [[nodiscard]] std::unique_ptr<cudf::column> get_empty_output(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
+    cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const override
   {
     return cudf::make_numeric_column(
       cudf::data_type{cudf::type_id::FLOAT64}, 0, cudf::mask_state::UNALLOCATED, stream, mr);
   }
   [[nodiscard]] std::unique_ptr<cudf::column> operator()(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
+    cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const override
   {
     // Separate calls share a cache. Extraction must allow M2 without a new count output.
     static_cast<void>(compute_aggregation(cudf::make_count_aggregation()));

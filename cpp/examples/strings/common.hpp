@@ -58,7 +58,7 @@ int main(int argc, char const** argv)
   }
 
   auto const mr_name = std::string{argc > 2 ? argv[2] : "async"};
-  auto mr            = [&]() -> cuda::mr::any_resource<cuda::mr::device_accessible> {
+  auto mr            = [&]() -> cuda::mr::any_device_resource {
     if (mr_name == "pool") {
       return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
                                            rmm::percent_of_free_device_memory(50)};

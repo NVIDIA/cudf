@@ -17,6 +17,8 @@
 
 #include <rmm/device_buffer.hpp>
 
+#include <cuda/memory_resource>
+
 #include <nvbench/nvbench.cuh>
 
 #include <algorithm>
@@ -266,7 +268,7 @@ void pad_to_equal_size(std::vector<uint8_t>& hit_val, std::vector<uint8_t>& miss
 std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t const>> meta_rows,
                                                    std::span<std::span<uint8_t const>> val_rows,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::mr::device_resource_ref mr)
 {
   auto const n = static_cast<cudf::size_type>(meta_rows.size());
 

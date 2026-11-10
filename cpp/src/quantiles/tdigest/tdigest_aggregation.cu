@@ -35,6 +35,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/span>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -747,8 +748,8 @@ cluster_info generate_group_cluster_info(int delta,
   // CPU.  This specifically addresses customer use cases with large inputs and small numbers of
   // groups, such as just 1. if we're going to be using the CPU, use pinned for a few of the temp
   // buffers
-  rmm::device_async_resource_ref temp_mr =
-    use_cpu ? rmm::device_async_resource_ref{cudf::get_pinned_memory_resource()}
+  cuda::mr::device_resource_ref temp_mr =
+    use_cpu ? cuda::mr::device_resource_ref{cudf::get_pinned_memory_resource()}
             : cudf::get_current_device_resource_ref();
 
   // output from the function

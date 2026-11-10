@@ -11,6 +11,8 @@
 #include <cudf/groupby.hpp>
 #include <cudf/reduction.hpp>
 
+#include <cuda/memory_resource>
+
 #include <random>
 #include <vector>
 
@@ -60,14 +62,14 @@ struct host_udf_groupby_test : cudf::groupby_host_udf {
 
   [[nodiscard]] std::unique_ptr<cudf::column> get_empty_output(
     [[maybe_unused]] cuda::stream_ref stream,
-    [[maybe_unused]] rmm::device_async_resource_ref mr) const override
+    [[maybe_unused]] cuda::mr::device_resource_ref mr) const override
   {
     // Dummy output.
     return cudf::make_empty_column(cudf::data_type{cudf::type_id::INT32});
   }
 
   [[nodiscard]] std::unique_ptr<cudf::column> operator()(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
+    cuda::stream_ref stream, cuda::mr::device_resource_ref mr) const override
   {
     SCOPED_TRACE("Test instance created at line: " + std::to_string(test_location_line));
 

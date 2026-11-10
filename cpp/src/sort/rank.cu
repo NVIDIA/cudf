@@ -23,6 +23,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
@@ -58,7 +59,7 @@ struct unique_functor {
 cuda::device_buffer<size_type> sorted_dense_rank(column_view input_col,
                                                  column_view sorted_order_view,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref temp_mr)
+                                                 cuda::mr::device_resource_ref temp_mr)
 {
   auto const t_input    = table_view{{input_col}};
   auto const comparator = cudf::detail::row::equality::self_comparator{t_input, stream, temp_mr};
@@ -121,7 +122,7 @@ void tie_break_ranks_transform(cudf::device_span<size_type const> dense_rank_sor
                                TieBreaker tie_breaker,
                                Transformer transformer,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref temp_mr)
+                               cuda::mr::device_resource_ref temp_mr)
 {
   auto const input_size = sorted_order_view.size();
   // algorithm: reduce_by_key(dense_rank, 1, n, reduction_tie_breaker)
@@ -154,7 +155,7 @@ template <typename outputType>
 void rank_first(column_view sorted_order_view,
                 mutable_column_view rank_mutable_view,
                 cuda::stream_ref stream,
-                rmm::device_async_resource_ref temp_mr)
+                cuda::mr::device_resource_ref temp_mr)
 {
   // stable sort order ranking (no ties)
   thrust::scatter(rmm::exec_policy_nosync(stream, temp_mr),
@@ -169,7 +170,7 @@ void rank_dense(cudf::device_span<size_type const> dense_rank_sorted,
                 column_view sorted_order_view,
                 mutable_column_view rank_mutable_view,
                 cuda::stream_ref stream,
-                rmm::device_async_resource_ref temp_mr)
+                cuda::mr::device_resource_ref temp_mr)
 {
   // All equal values have same rank and rank always increases by 1 between groups
   thrust::scatter(rmm::exec_policy_nosync(stream, temp_mr),
@@ -184,7 +185,7 @@ void rank_min(cudf::device_span<size_type const> group_keys,
               column_view sorted_order_view,
               mutable_column_view rank_mutable_view,
               cuda::stream_ref stream,
-              rmm::device_async_resource_ref temp_mr)
+              cuda::mr::device_resource_ref temp_mr)
 {
   // min of first in the group
   // All equal values have min of ranks among them.
@@ -204,7 +205,7 @@ void rank_max(cudf::device_span<size_type const> group_keys,
               column_view sorted_order_view,
               mutable_column_view rank_mutable_view,
               cuda::stream_ref stream,
-              rmm::device_async_resource_ref temp_mr)
+              cuda::mr::device_resource_ref temp_mr)
 {
   // max of first in the group
   // All equal values have max of ranks among them.
@@ -229,7 +230,7 @@ void rank_average(cudf::device_span<size_type const> group_keys,
                   column_view sorted_order_view,
                   mutable_column_view rank_mutable_view,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref temp_mr)
+                  cuda::mr::device_resource_ref temp_mr)
 {
   // k, k+1, .. k+n-1
   // average = (n*k+ n*(n-1)/2)/n

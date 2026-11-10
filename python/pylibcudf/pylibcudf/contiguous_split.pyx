@@ -30,6 +30,7 @@ from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.utilities.span cimport device_span
 
 from rmm.pylibrmm.device_buffer cimport DeviceBuffer
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -193,7 +194,7 @@ cdef class ChunkedPack:
         cdef Stream _stream = _get_stream(stream)
         temp_mr = _get_memory_resource(temp_mr)
         cdef unique_ptr[chunked_pack] obj = chunked_pack.create(
-            input.view(), user_buffer_size, _stream.view().get(), temp_mr.get_mr()
+            input.view(), user_buffer_size, _stream.view().get(), to_device_resource_ref(temp_mr.get_mr())
         )
 
         cdef ChunkedPack out = ChunkedPack.__new__(ChunkedPack)
@@ -360,7 +361,7 @@ cpdef PackedColumns pack(Table input, object stream: CudaStreamLike | None = Non
     cdef table_view c_input = input.view()
     with nogil:
         pack = move(make_unique[packed_columns](
-            cpp_pack(c_input, _cs, mr.get_mr())
+            cpp_pack(c_input, _cs, to_device_resource_ref(mr.get_mr()))
         ))
     return PackedColumns.from_libcudf(move(pack), _stream, mr)
 

@@ -7,9 +7,8 @@
 
 #include <cudf/io/types.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/host_vector.h>
 
@@ -39,14 +38,14 @@ enum class io_source_type { FILEPATH, HOST_BUFFER, PINNED_BUFFER, DEVICE_BUFFER 
  *
  * @return Reference to a static pinned memory pool
  */
-rmm::host_async_resource_ref pinned_memory_resource();
+cuda::mr::host_resource_ref pinned_memory_resource();
 
 /**
  * @brief Custom allocator for pinned_buffer via RMM.
  */
 template <typename T>
 struct pinned_allocator : public std::allocator<T> {
-  pinned_allocator(rmm::host_async_resource_ref _mr, cuda::stream_ref _stream)
+  pinned_allocator(cuda::mr::host_resource_ref _mr, cuda::stream_ref _stream)
     : mr{_mr}, stream{_stream}
   {
   }
@@ -64,7 +63,7 @@ struct pinned_allocator : public std::allocator<T> {
   }
 
  private:
-  rmm::host_async_resource_ref mr;
+  cuda::mr::host_resource_ref mr;
   cuda::stream_ref stream;
 };
 

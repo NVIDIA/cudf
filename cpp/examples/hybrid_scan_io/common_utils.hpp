@@ -15,7 +15,6 @@
 
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 #include <cuda/stream>
@@ -42,7 +41,7 @@
  * @param pool Whether to use a pool memory resource.
  * @return Memory resource instance
  */
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used);
+cuda::mr::any_device_resource create_memory_resource(bool is_pool_used);
 
 /**
  * @brief Create a filter expression of the form `column_name == literal` for string type point

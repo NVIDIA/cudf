@@ -10,6 +10,8 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,7 +36,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Read parquet sources with the hybrid scan multifile reader in a single step
@@ -54,7 +56,7 @@ std::unique_ptr<cudf::table> hybrid_scan_multifile_single_step(
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Read parquet sources with the hybrid scan multifile reader using chunked materialization
@@ -77,7 +79,7 @@ chunked_hybrid_scan_multifile(cudf::io::source_info const& source_info,
                               std::optional<std::vector<std::string>> const& payload_column_names,
                               bool case_sensitive_names,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Read parquet sources using chunked materialization and page-level payload I/O
@@ -101,7 +103,7 @@ chunked_sparse_hybrid_scan_multifile(
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);
 
 /**
  * @brief Read parquet sources with the hybrid scan multifile reader in a single step using chunked
@@ -122,4 +124,4 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_multifile_single_step(
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cuda::mr::device_resource_ref mr);

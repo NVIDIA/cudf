@@ -26,6 +26,7 @@
 #include <cuco/pair.cuh>
 #include <cuco/probing_scheme.cuh>
 #include <cuco/types.cuh>
+#include <cuda/memory_resource>
 #include <cuda/std/limits>
 #include <cuda/stream>
 
@@ -188,7 +189,7 @@ class mark_join {
             double load_factor,
             cudf::join_prefilter prefilter,
             cuda::stream_ref stream,
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+            cuda::mr::any_device_resource mr);
 
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(cudf::table_view const& right,
                                                                   cuda::stream_ref stream,

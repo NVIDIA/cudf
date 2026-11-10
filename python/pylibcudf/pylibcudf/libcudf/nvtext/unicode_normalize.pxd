@@ -7,7 +7,7 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table_view cimport table_view
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "nvtext/unicode_normalize.hpp" namespace "nvtext" nogil:
@@ -25,12 +25,12 @@ cdef extern from "nvtext/unicode_normalize.hpp" namespace "nvtext" nogil:
         const table_view &unicode_data,
         unicode_normalization_form form,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] normalize_unicode(
         const column_view &input,
         const unicode_normalizer &normalizer,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

@@ -14,6 +14,7 @@ from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
@@ -199,7 +200,7 @@ cdef class Table:
                     move(dereference(c_schema)),
                     move(dereference(c_array)),
                     _cs,
-                    result.mr.get_mr(),
+                    to_device_resource_ref(result.mr.get_mr()),
                 )
             result.tbl.swap(c_result)
 
@@ -222,7 +223,7 @@ cdef class Table:
                 c_result = make_unique[arrow_table](
                     move(dereference(c_stream)),
                     _cs,
-                    result.mr.get_mr(),
+                    to_device_resource_ref(result.mr.get_mr()),
                 )
             result.tbl.swap(c_result)
 

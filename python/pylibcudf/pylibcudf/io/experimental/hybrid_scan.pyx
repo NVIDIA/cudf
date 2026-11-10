@@ -10,6 +10,7 @@ from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -550,7 +551,7 @@ cdef class HybridScanReader:
             c_result = move(self.c_obj.get()[0].build_all_true_row_mask(
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 _stream.view().get(),
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             ))
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -588,7 +589,7 @@ cdef class HybridScanReader:
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             ))
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -674,7 +675,7 @@ cdef class HybridScanReader:
                 mask_data_pages,
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
@@ -802,7 +803,7 @@ cdef class HybridScanReader:
                 mask_data_pages,
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
@@ -878,7 +879,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
@@ -942,7 +943,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                to_device_resource_ref(self.mr.get_mr())
             )
 
     def materialize_filter_columns_chunk(
@@ -1033,7 +1034,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                to_device_resource_ref(self.mr.get_mr())
             )
 
     def setup_chunking_for_payload_pages(
@@ -1102,7 +1103,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                to_device_resource_ref(self.mr.get_mr())
             )
 
     def materialize_payload_columns_chunk(

@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
 
@@ -25,7 +26,7 @@ struct hash_join<Hasher>::impl {
   impl(cuda::std::uint32_t capacity,
        size_type rows,
        cuda::stream_ref stream,
-       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+       cuda::mr::any_device_resource mr)
     : _mr(std::move(mr)),
       _slots(stream, _mr, capacity, cuda::no_init),
       _offsets(stream, _mr, static_cast<std::size_t>(rows) + 1, cuda::no_init),
@@ -44,7 +45,7 @@ struct hash_join<Hasher>::impl {
 
   csr_ref csr() const { return {_offsets.data(), _values.data()}; }
 
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
+  cuda::mr::any_device_resource _mr;
   cuda::device_buffer<hash_table_slot_type> _slots;
   cuda::device_buffer<size_type> _offsets;
   cuda::device_buffer<size_type> _values;

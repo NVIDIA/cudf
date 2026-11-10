@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
@@ -13,7 +13,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/filling.hpp" namespace "cudf" nogil:
@@ -23,7 +23,7 @@ cdef extern from "cudf/filling.hpp" namespace "cudf" nogil:
         size_type end,
         const scalar & value,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef void fill_in_place(
@@ -38,14 +38,14 @@ cdef extern from "cudf/filling.hpp" namespace "cudf" nogil:
         const table_view & input,
         const column_view & count,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] repeat(
         const table_view & input,
         size_type count,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] sequence(
@@ -53,7 +53,7 @@ cdef extern from "cudf/filling.hpp" namespace "cudf" nogil:
         const scalar & init,
         const scalar & step,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] calendrical_month_sequence(
@@ -61,5 +61,5 @@ cdef extern from "cudf/filling.hpp" namespace "cudf" nogil:
         const scalar& init,
         size_type months,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

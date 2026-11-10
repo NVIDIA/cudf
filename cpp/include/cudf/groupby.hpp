@@ -14,6 +14,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -488,12 +489,12 @@ class streaming_groupby {
    * @throws std::invalid_argument if `max_distinct_keys <= 0`
    * @throws std::invalid_argument if any requested aggregation kind is unsupported
    */
-  explicit streaming_groupby(host_span<size_type const> key_indices,
-                             host_span<streaming_aggregation_request const> requests,
-                             size_type max_distinct_keys,
-                             null_policy null_handling = null_policy::EXCLUDE,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                               cudf::get_current_device_resource_ref());
+  explicit streaming_groupby(
+    host_span<size_type const> key_indices,
+    host_span<streaming_aggregation_request const> requests,
+    size_type max_distinct_keys,
+    null_policy null_handling        = null_policy::EXCLUDE,
+    cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Feed a batch of data into the streaming aggregation.

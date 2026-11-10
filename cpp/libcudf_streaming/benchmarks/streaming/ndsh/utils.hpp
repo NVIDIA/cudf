@@ -267,7 +267,7 @@ ProgramOptions parse_arguments(int argc, char** argv);
  * @return Pair of shared pointer to new streaming context and communicator.
  */
 std::pair<std::shared_ptr<streaming::Context>, std::shared_ptr<Communicator>> create_context(
-  ProgramOptions& arguments, cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+  ProgramOptions& arguments, cuda::mr::any_device_resource mr);
 
 /**
  * @brief Finalize MPI when going out of scope.

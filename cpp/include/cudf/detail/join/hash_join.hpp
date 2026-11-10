@@ -17,6 +17,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/cstdint>
 #include <cuda/stream>
 
@@ -68,11 +69,11 @@ class hash_join {
             bool has_nulls,
             cudf::null_equality compare_nulls,
             cuda::stream_ref stream,
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+            cuda::mr::any_device_resource mr);
 
   /**
    * @copydoc hash_join(cudf::table_view const&, bool, null_equality, cuda::stream_ref,
-   * cuda::mr::any_resource<cuda::mr::device_accessible>)
+   * cuda::mr::any_device_resource)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
    */
@@ -81,7 +82,7 @@ class hash_join {
             cudf::null_equality compare_nulls,
             double load_factor,
             cuda::stream_ref stream,
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+            cuda::mr::any_device_resource mr);
 
   /**
    * @copydoc cudf::hash_join::inner_join

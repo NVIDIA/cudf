@@ -22,11 +22,11 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuco/extent.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/sequence.h>
@@ -104,7 +104,7 @@ filtered_join::filtered_join(cudf::table_view const& right,
                              cudf::null_equality compare_nulls,
                              double load_factor,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                             cuda::mr::any_device_resource mr)
   : _right_mode{select_row_operator_mode(right)},
     _bucket_storage{cuco::extent<std::size_t>{compute_bucket_storage_size(
                       right.num_rows(), checked_load_factor(load_factor), _right_mode)},
@@ -197,7 +197,7 @@ filtered_join::filtered_join(cudf::table_view const& build,
                              null_equality compare_nulls,
                              double load_factor,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                             cuda::mr::any_device_resource mr)
   : _impl{std::make_unique<cudf::detail::filtered_join>(
       build, compare_nulls, load_factor, stream, std::move(mr))}
 {
@@ -206,7 +206,7 @@ filtered_join::filtered_join(cudf::table_view const& build,
 filtered_join::filtered_join(cudf::table_view const& build,
                              null_equality compare_nulls,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                             cuda::mr::any_device_resource mr)
   : filtered_join(
       build, compare_nulls, cudf::detail::CUCO_DESIRED_LOAD_FACTOR, stream, std::move(mr))
 {

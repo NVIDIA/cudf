@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uint32_t
 from libcpp.memory cimport unique_ptr
@@ -8,7 +8,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.types cimport size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "nvtext/generate_ngrams.hpp" namespace "nvtext" nogil:
@@ -18,14 +18,14 @@ cdef extern from "nvtext/generate_ngrams.hpp" namespace "nvtext" nogil:
         size_type ngrams,
         const string_scalar & separator,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] generate_character_ngrams(
         const column_view &strings,
         size_type ngrams,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] hash_character_ngrams(
@@ -33,5 +33,5 @@ cdef extern from "nvtext/generate_ngrams.hpp" namespace "nvtext" nogil:
         size_type ngrams,
         uint32_t seed,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

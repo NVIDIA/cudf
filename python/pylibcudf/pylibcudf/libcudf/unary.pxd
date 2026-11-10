@@ -8,7 +8,7 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.types cimport data_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/unary.hpp" namespace "cudf" nogil:
@@ -45,31 +45,31 @@ cdef extern from "cudf/unary.hpp" namespace "cudf" nogil:
         column_view input,
         unary_operator op,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef extern unique_ptr[column] is_null(
         column_view input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
     cdef extern unique_ptr[column] is_valid(
         column_view input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
     cdef extern unique_ptr[column] cast(
         column_view input,
         data_type out_type,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
     cdef extern bool is_supported_cast(data_type from_, data_type to) noexcept
     cdef extern unique_ptr[column] is_nan(
         column_view input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
     cdef extern unique_ptr[column] is_not_nan(
         column_view input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

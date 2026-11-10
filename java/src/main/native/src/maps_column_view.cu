@@ -13,6 +13,8 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/memory_resource>
+
 namespace cudf::jni {
 
 namespace {
@@ -44,7 +46,7 @@ template <typename KeyT>
 std::unique_ptr<column> get_values_for_impl(maps_column_view const& maps_view,
                                             KeyT const& lookup_keys,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   auto const keys_   = maps_view.keys();
   auto const values_ = maps_view.values();
@@ -67,7 +69,7 @@ std::unique_ptr<column> get_values_for_impl(maps_column_view const& maps_view,
 
 std::unique_ptr<column> maps_column_view::get_values_for(column_view const& lookup_keys,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr) const
+                                                         cuda::mr::device_resource_ref mr) const
 {
   CUDF_EXPECTS(lookup_keys.size() == size(),
                "Lookup keys must have the same size as the map column.");
@@ -77,7 +79,7 @@ std::unique_ptr<column> maps_column_view::get_values_for(column_view const& look
 
 std::unique_ptr<column> maps_column_view::get_values_for(cudf::scalar const& lookup_key,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr) const
+                                                         cuda::mr::device_resource_ref mr) const
 {
   return get_values_for_impl(*this, lookup_key, stream, mr);
 }
@@ -86,7 +88,7 @@ template <typename KeyT>
 std::unique_ptr<column> contains_impl(maps_column_view const& maps_view,
                                       KeyT const& lookup_keys,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::mr::device_resource_ref mr)
 {
   auto const keys = maps_view.keys();
   CUDF_EXPECTS(lookup_keys.type().id() == keys.child().type().id(),
@@ -100,7 +102,7 @@ std::unique_ptr<column> contains_impl(maps_column_view const& maps_view,
 
 std::unique_ptr<column> maps_column_view::contains(column_view const& lookup_keys,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr) const
+                                                   cuda::mr::device_resource_ref mr) const
 {
   CUDF_EXPECTS(lookup_keys.size() == size(),
                "Lookup keys must have the same size as the map column.");
@@ -110,7 +112,7 @@ std::unique_ptr<column> maps_column_view::contains(column_view const& lookup_key
 
 std::unique_ptr<column> maps_column_view::contains(cudf::scalar const& lookup_key,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr) const
+                                                   cuda::mr::device_resource_ref mr) const
 {
   return contains_impl(*this, lookup_key, stream, mr);
 }

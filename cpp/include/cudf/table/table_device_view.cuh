@@ -10,8 +10,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/buffer>
 #include <cuda/stream>
 

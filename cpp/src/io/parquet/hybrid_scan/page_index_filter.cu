@@ -35,6 +35,7 @@
 
 namespace cudf::io::parquet::hybrid_scan::detail {
 
+using parquet::detail::count_filtered_rows;
 using parquet::detail::stats_caster_base;
 using metadata_base = parquet::detail::metadata;
 
@@ -345,7 +346,9 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     std::overflow_error);
 
   // Return an empty vector if all rows are required
-  if (are_all_rows_retained(row_mask, stream)) { return thrust::host_vector<bool>{}; }
+  if (count_filtered_rows(row_mask, null_policy::INCLUDE, stream) == row_mask.size()) {
+    return thrust::host_vector<bool>{};
+  }
 
   // Collect column schema indices from the input columns.
   auto column_schema_indices = std::vector<size_type>(input_columns.size());

@@ -573,16 +573,6 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
   return {std::move(page_row_offsets), max_page_size};
 }
 
-bool are_all_rows_retained(cudf::column_view const& row_mask, cuda::stream_ref stream)
-{
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
-                              cuda::counting_iterator{row_mask.size()},
-                              row_mask_accessor{row_mask},
-                              stream,
-                              mr.as_temporary());
-}
-
 thrust::host_vector<bool> compute_row_range_selection_mask(
   cudf::column_view const& row_mask,
   std::span<cudf::size_type const> page_row_offsets,

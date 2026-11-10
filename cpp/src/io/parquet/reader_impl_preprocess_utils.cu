@@ -6,6 +6,7 @@
 #include "error.hpp"
 #include "reader_impl_preprocess_utils.cuh"
 
+#include <cudf/column/column_factories.hpp>
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
@@ -13,6 +14,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
+#include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -21,6 +23,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
+#include <thrust/copy.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 #include <thrust/scan.h>
@@ -696,6 +699,69 @@ void decode_page_headers(pass_intermediate_data& pass,
 {
   decode_page_headers_impl<page_data_source_type::PAGE_SPANS>(
     pass, unsorted_pages, page_data, stream);
+}
+
+namespace {
+
+/**
+ * @brief Checks if a row is retained by a boolean row mask
+ */
+struct is_row_retained_fn {
+  bool const* row_mask;           ///< Row mask data, adjusted for the column view offset
+  bitmask_type const* null_mask;  ///< Null mask, or nullptr if there are no nulls
+  size_type offset;               ///< Column view offset, needed to index into the null mask
+  null_policy nulls;              ///< Whether null rows are retained
+
+  __device__ bool operator()(size_type row_idx) const noexcept
+  {
+    if (null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx)) {
+      return nulls == null_policy::INCLUDE;
+    }
+    return row_mask[row_idx];
+  }
+};
+
+[[nodiscard]] is_row_retained_fn make_is_row_retained_fn(cudf::column_view const& row_mask,
+                                                         null_policy nulls)
+{
+  CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8, "Row mask must be a boolean column");
+  return {row_mask.begin<bool>(),
+          row_mask.has_nulls() ? row_mask.null_mask() : nullptr,
+          row_mask.offset(),
+          nulls};
+}
+
+}  // namespace
+
+size_type count_filtered_rows(cudf::column_view const& row_mask,
+                              null_policy nulls,
+                              cuda::stream_ref stream)
+{
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  return static_cast<size_type>(cudf::detail::count_if(cuda::counting_iterator<size_type>{0},
+                                                       cuda::counting_iterator{row_mask.size()},
+                                                       make_is_row_retained_fn(row_mask, nulls),
+                                                       stream,
+                                                       mr.as_temporary()));
+}
+
+std::optional<std::unique_ptr<cudf::column>> compute_filtered_row_indices(
+  cudf::column_view const& row_mask,
+  null_policy nulls,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  auto const num_retained = count_filtered_rows(row_mask, nulls, stream);
+  if (num_retained == row_mask.size()) { return std::nullopt; }
+
+  auto indices = cudf::make_numeric_column(
+    data_type{type_to_id<size_type>()}, num_retained, mask_state::UNALLOCATED, stream, mr);
+  thrust::copy_if(rmm::exec_policy_nosync(stream, mr),
+                  cuda::counting_iterator<size_type>{0},
+                  cuda::counting_iterator{row_mask.size()},
+                  indices->mutable_view().begin<size_type>(),
+                  make_is_row_retained_fn(row_mask, nulls));
+  return indices;
 }
 
 }  // namespace cudf::io::parquet::detail

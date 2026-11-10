@@ -1276,8 +1276,8 @@ TEST_F(HybridScanTest, AllRowsPrunedReportsInputRowGroups)
 
   auto const row_groups = reader->all_row_groups(options);
   auto false_iter       = cuda::make_constant_iterator(false);
-  auto valid_iter       = cudf::detail::make_counting_transform_iterator(
-    0, [](auto const row) { return row % 2 == 0; });
+  auto valid_iter =
+    cudf::detail::make_counting_transform_iterator(0, [](auto const row) { return row % 2 == 0; });
   auto row_mask =
     cudf::test::fixed_width_column_wrapper<bool>(false_iter, false_iter + num_rows, valid_iter)
       .release();

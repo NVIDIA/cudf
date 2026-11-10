@@ -88,7 +88,7 @@ __device__ inline void decode(level_t* const output,
   // we are not starting/ending exactly on a run boundary
   uint8_t const* cur;
   if (is_literal_run(level_run)) {
-    int const effective_offset = cudf::util::round_down_safe(run_offset, 8);
+    int const effective_offset = cuda::round_down(run_offset, 8);
     int const lead_values      = (run_offset - effective_offset);
     decode_output_pos -= lead_values;
     remain += lead_values;
@@ -582,7 +582,7 @@ struct rle_stream {
 
       if (chunk_runs == 0) { break; }
 
-      int const per = cudf::util::div_rounding_up_safe(chunk_total, num_warps);
+      int const per = cudf::detail::div_rounding_up_safe(chunk_total, num_warps);
       int const lo  = warp_id * per;
       int const hi  = min(lo + per, chunk_total);
       if (lo < hi) {

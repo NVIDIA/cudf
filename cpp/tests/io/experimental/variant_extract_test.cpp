@@ -8,6 +8,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
@@ -169,8 +170,10 @@ static std::unique_ptr<cudf::column> make_status_buffer(cudf::size_type num_rows
   auto col = cudf::make_numeric_column(
     cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::UNALLOCATED);
   if (num_rows > 0) {
-    CUDF_CUDA_TRY(
-      cudaMemset(col->mutable_view().data<uint8_t>(), 0, static_cast<std::size_t>(num_rows)));
+    CUDF_CUDA_TRY(cudaMemsetAsync(col->mutable_view().data<uint8_t>(),
+                                  0,
+                                  static_cast<std::size_t>(num_rows),
+                                  cudf::test::get_default_stream().get()));
   }
   return col;
 }
@@ -2773,7 +2776,7 @@ TEST_F(CastVariantStatusTest, SqlNullInputProducesRowNullStatus)
                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   // Mask row 1 SQL null
   auto null_mask = cudf::create_null_mask(2, cudf::mask_state::ALL_VALID, stream, cmr());
-  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 1, 2, false);
+  cudf::set_null_mask(null_mask.data(), 1, 2, false);
   stream.sync();
   values_col->set_null_mask(std::move(null_mask), 1);
 
@@ -3042,3 +3045,5 @@ TEST_F(ExtractVariantFieldStatusTest, MissingNestedPathStatus)
   expect_status_values(*status, {ST_MISSING});
   EXPECT_EQ(got->null_count(), 1);
 }
+
+CUDF_TEST_PROGRAM_MAIN()

@@ -11,9 +11,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuco/hyperloglog_ref.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/span>
 #include <cuda/stream>
@@ -34,7 +33,7 @@ namespace detail {
  * non-owning sketch storage modes:
  *
  * - **Owning mode**: Allocates and manages its own sketch storage as an
- *   `rmm::device_uvector<int32_t>`. Used when constructing from a table or when copying
+ *   `cuda::device_buffer<int32_t>`. Used when constructing from a table or when copying
  *   from a span.
  *
  * - **Non-owning mode**: Operates on user-provided `cuda::std::span<int32_t>` sketch
@@ -128,13 +127,11 @@ class approx_distinct_count {
    * @param precision The precision parameter for the sketch (4-18)
    * @param null_handling `INCLUDE` or `EXCLUDE` rows with nulls
    * @param nan_handling `NAN_IS_VALID` or `NAN_IS_NULL`
-   * @param mr Device memory resource (unused in non-owning mode, retained for member consistency)
    */
   approx_distinct_count(cuda::std::span<cuda::std::byte> sketch_span,
                         std::int32_t precision,
                         null_policy null_handling,
-                        nan_policy nan_handling,
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                        nan_policy nan_handling);
 
   approx_distinct_count()                                        = delete;
   ~approx_distinct_count()                                       = default;
@@ -260,19 +257,16 @@ class approx_distinct_count {
   /**
    * @brief Storage type supporting both owning and non-owning modes
    *
-   * - Owning: `device_uvector<register_type>` - allocates and manages storage
+   * - Owning: `device_buffer<register_type>` - allocates and manages storage
    * - Non-owning: `span<byte>` - operates on user-provided storage
    *
    * The public API always exposes storage as `span<byte>` via `sketch()`.
    */
   using storage_type =
-    std::variant<rmm::device_uvector<register_type>,  ///< Owning storage (allocated internally)
+    std::variant<cuda::device_buffer<register_type>,  ///< Owning storage (allocated internally)
                  cuda::std::span<cuda::std::byte>     ///< Non-owning storage (user-provided)
                  >;
 
-  // Declared before `_storage` so it outlives the owning `device_uvector`, which only holds a
-  // reference to this resource. Unused in non-owning (span) mode.
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;  ///< Owns the sketch storage resource
   storage_type _storage;       ///< Sketch register storage (owning or non-owning)
   std::int32_t _precision;     ///< HLL precision parameter (determines 2^p registers)
   null_policy _null_handling;  ///< Null handling policy (immutable after construction)

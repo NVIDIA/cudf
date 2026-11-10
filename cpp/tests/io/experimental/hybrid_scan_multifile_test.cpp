@@ -28,10 +28,12 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -335,9 +337,13 @@ TEST_F(HybridScanMultifileTest, SparseDictionaryEncodedPages)
                                                                        reader_options};
   setup_page_indexes(reader, inputs);
 
+  // Retain only the first data page of every other row group
+  auto const is_row_retained = [](int64_t row) {
+    return row % (2 * page_size_for_ordered_tests) < page_size_for_ordered_tests / 5;
+  };
   auto const row_groups = reader.all_row_groups(reader_options);
-  auto row_mask_values  = cudf::detail::make_counting_transform_iterator(
-    cudf::size_type{0}, [](auto i) { return (i / page_size_for_ordered_tests) % 2 == 0; });
+  auto row_mask_values =
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, is_row_retained);
   auto row_mask = cudf::test::fixed_width_column_wrapper<bool>(
     row_mask_values, row_mask_values + reader.total_rows_in_row_groups(row_groups));
   auto const stream = cudf::get_default_stream();
@@ -345,8 +351,40 @@ TEST_F(HybridScanMultifileTest, SparseDictionaryEncodedPages)
 
   auto const page_ranges =
     reader.payload_pages_byte_ranges(row_groups, row_mask, reader_options, stream);
+
+  // Expect exact page byte ranges: the dictionary page is kept only along with a data page and
+  // pruned pages have empty byte ranges
+  auto expected_ranges = std::vector<std::pair<int64_t, int64_t>>{};
+  auto row_offset      = int64_t{0};
+  for (auto const& metadata : reader.parquet_metadatas()) {
+    for (auto const& row_group : metadata.row_groups) {
+      auto const& column_chunk = row_group.columns[2];
+      ASSERT_TRUE(column_chunk.offset_index.has_value());
+      ASSERT_GT(column_chunk.meta_data.dictionary_page_offset, 0);
+      auto const& page_locations  = column_chunk.offset_index->page_locations;
+      auto const is_page_retained = [&](auto const& page) {
+        return is_row_retained(row_offset + page.first_row_index);
+      };
+      auto const dict_offset = column_chunk.meta_data.dictionary_page_offset;
+      expected_ranges.emplace_back(dict_offset,
+                                   std::ranges::any_of(page_locations, is_page_retained)
+                                     ? column_chunk.meta_data.data_page_offset - dict_offset
+                                     : 0);
+      std::ranges::transform(page_locations, std::back_inserter(expected_ranges), [&](auto page) {
+        return std::pair<int64_t, int64_t>{page.offset,
+                                           is_page_retained(page) ? page.compressed_page_size : 0};
+      });
+      row_offset += row_group.num_rows;
+    }
+  }
+  auto actual_ranges = std::vector<std::pair<int64_t, int64_t>>{};
+  std::ranges::transform(page_ranges.first, std::back_inserter(actual_ranges), [](auto range) {
+    return std::pair{range.offset(), range.size()};
+  });
+  EXPECT_EQ(expected_ranges, actual_ranges);
+
   auto page_data = fetch_multisource_device_data(inputs, page_ranges, stream, mr);
-  reader.setup_chunking_for_payload_columns(
+  reader.setup_chunking_for_payload_pages(
     0, 0, row_groups, row_mask, page_data.flat_spans, reader_options, stream, mr);
 
   ASSERT_TRUE(reader.has_next_table_chunk());
@@ -420,7 +458,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
     auto false_scalar          = cudf::numeric_scalar<bool>{false};
     auto row_mask              = cudf::make_column_from_scalar(false_scalar, 0);
 
-    EXPECT_NO_THROW(reader->setup_chunking_for_payload_columns(
+    EXPECT_NO_THROW(reader->setup_chunking_for_payload_pages(
       0, 0, row_groups, row_mask->view(), empty_page_data, options, stream, mr));
     ASSERT_TRUE(reader->has_next_table_chunk());
     auto const result = reader->materialize_payload_columns_chunk(row_mask->view());
@@ -439,7 +477,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
     auto const row_mask        = reader->build_all_true_row_mask(row_groups, stream, mr);
     auto const empty_page_data = std::vector<cudf::device_span<uint8_t const>>{};
 
-    EXPECT_THROW(reader->setup_chunking_for_payload_columns(
+    EXPECT_THROW(reader->setup_chunking_for_payload_pages(
                    0, 0, row_groups, row_mask->view(), empty_page_data, options, stream, mr),
                  cudf::logic_error);
   }
@@ -463,7 +501,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
                             [](auto const& range) { return range.is_empty(); }));
     auto const all_pruned_page_data =
       std::vector<cudf::device_span<uint8_t const>>(page_ranges.first.size());
-    reader->setup_chunking_for_payload_columns(
+    reader->setup_chunking_for_payload_pages(
       0, 0, row_groups, row_mask->view(), all_pruned_page_data, options, stream, mr);
     ASSERT_TRUE(reader->has_next_table_chunk());
     auto const result = reader->materialize_payload_columns_chunk(row_mask->view());

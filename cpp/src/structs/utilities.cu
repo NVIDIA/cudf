@@ -240,8 +240,7 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                          null_count);
   } else {
     auto current_mask = input->mutable_view().null_mask();
-    std::vector<bitmask_type const*> masks{reinterpret_cast<bitmask_type const*>(null_mask),
-                                           reinterpret_cast<bitmask_type const*>(current_mask)};
+    std::vector<bitmask_type const*> masks{null_mask, current_mask};
     std::vector<size_type> begin_bits{0, 0};
     auto const valid_count = cudf::detail::inplace_bitmask_and(
       device_span<bitmask_type>(current_mask, num_bitmask_words(num_rows)),
@@ -267,11 +266,8 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                "Child columns must have the same number of rows as the Struct column.");
 
   for (auto& child : content.children) {
-    child = superimpose_nulls(reinterpret_cast<bitmask_type const*>(content.null_mask->data()),
-                              new_null_count,
-                              std::move(child),
-                              stream,
-                              mr);
+    child =
+      superimpose_nulls(content.null_mask->data(), new_null_count, std::move(child), stream, mr);
   }
   return std::make_unique<column>(cudf::data_type{type_id::STRUCT},
                                   num_rows,
@@ -421,7 +417,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
     auto parent_child_null_masks =
       std::vector<cudf::bitmask_type const*>{structs_view.null_mask(), child.null_mask()};
 
-    auto [new_child_mask, null_count] = [&] {
+    auto [new_child_mask, null_count] = [&]() -> std::pair<bitmask_type const*, size_type> {
       if (not child.nullable()) {
         // Adopt parent STRUCT's null mask.
         return std::pair{structs_view.null_mask(), 0};
@@ -440,9 +436,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
                                                               stream,
                                                               mr);
       ret_nullable_data.new_null_masks.push_back(std::move(new_mask));
-      return std::pair{
-        reinterpret_cast<bitmask_type const*>(ret_nullable_data.new_null_masks.back().data()),
-        null_count};
+      return std::pair{ret_nullable_data.new_null_masks.back().data(), null_count};
     }();
 
     return column_view(child.type(),
@@ -551,10 +545,11 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
 
   // Helper struct to store and manipulate struct column properties
   struct contents {
-    size_type null_count                                      = 0;        // Number of null values
-    std::unique_ptr<cuda::device_buffer<std::byte>> null_mask = nullptr;  // Null mask buffer
-    size_type num_children                                    = 0;        // Number of child columns
-    size_type num_elements                                    = 0;        // Number of rows
+    size_type null_count = 0;  // Number of null values
+    std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>> null_mask =
+      nullptr;                   // Null mask buffer
+    size_type num_children = 0;  // Number of child columns
+    size_type num_elements = 0;  // Number of rows
   };
 
   std::vector<contents> struct_contents;  // Store properties of each struct column
@@ -573,10 +568,9 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
       struct_contents.back().null_mask = std::move(col_contents.null_mask);
 
       // Add null mask pointers for each child of this struct
-      struct_root_masks.insert(
-        struct_root_masks.end(),
-        col_contents.children.size(),
-        reinterpret_cast<bitmask_type const*>(struct_contents.back().null_mask->data()));
+      struct_root_masks.insert(struct_root_masks.end(),
+                               col_contents.children.size(),
+                               struct_contents.back().null_mask->data());
 
       // Add all child columns from this struct
       for (auto& child : col_contents.children) {

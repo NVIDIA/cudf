@@ -54,14 +54,16 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
     auto typed_mask = mask.data();
     std::vector<char> h_data(data.size());
     std::iota(h_data.begin(), h_data.end(), char{0});
-    std::vector<char> h_mask(mask.size());
+    std::vector<char> h_mask(mask.size() * sizeof(cudf::bitmask_type));
     std::iota(h_mask.begin(), h_mask.end(), char{0});
     CUDF_CUDA_TRY(
       cudaMemcpyAsync(typed_data, h_data.data(), data.size(), cudaMemcpyDefault, stream.get()));
-    CUDF_CUDA_TRY(
-      cudaMemcpyAsync(typed_mask, h_mask.data(), mask.size(), cudaMemcpyDefault, stream.get()));
-    _null_count =
-      cudf::null_count(reinterpret_cast<cudf::bitmask_type*>(mask.data()), 0, _num_elements);
+    CUDF_CUDA_TRY(cudaMemcpyAsync(typed_mask,
+                                  h_mask.data(),
+                                  mask.size() * sizeof(cudf::bitmask_type),
+                                  cudaMemcpyDefault,
+                                  stream.get()));
+    _null_count = cudf::null_count(mask.data(), 0, _num_elements);
     stream.sync();
   }
 
@@ -73,11 +75,12 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   std::uniform_int_distribution<cudf::size_type> distribution{200, 1000};
   cudf::size_type _num_elements{distribution(generator)};
   rmm::device_buffer data{};
-  cuda::device_buffer<std::byte> mask = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
+  cuda::device_buffer<cudf::bitmask_type> mask =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   cudf::size_type _null_count{};
-  cuda::device_buffer<std::byte> all_valid_mask =
+  cuda::device_buffer<cudf::bitmask_type> all_valid_mask =
     create_null_mask(num_elements(), cudf::mask_state::ALL_VALID);
-  cuda::device_buffer<std::byte> all_null_mask =
+  cuda::device_buffer<cudf::bitmask_type> all_null_mask =
     create_null_mask(num_elements(), cudf::mask_state::ALL_NULL);
 };
 
@@ -1750,9 +1753,22 @@ TEST_F(DictionaryConcatTest, AllEmptyViews)
   auto empty1      = cudf::slice(dictionary1->view(), {0, 0}).front();
   auto empty2      = cudf::slice(dictionary2->view(), {1, 1}).front();
   auto result      = cudf::concatenate(std::vector<cudf::column_view>{empty1, empty2});
-  // all-empty inputs short-circuit to an empty (childless) dictionary column
   EXPECT_EQ(result->size(), 0);
   EXPECT_EQ(result->type().id(), cudf::type_id::DICTIONARY32);
+  ASSERT_EQ(result->num_children(), 2);
+  EXPECT_EQ(cudf::dictionary_column_view(result->view()).keys().type().id(), cudf::type_id::INT32);
+}
+
+TEST_F(DictionaryConcatTest, EmptyGatherResult)
+{
+  cudf::test::strings_column_wrapper strings({"aaa", "ddd", "bbb"});
+  auto dictionary = cudf::dictionary::encode(strings);
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_map{};
+  auto empty = cudf::gather(cudf::table_view{{dictionary->view()}}, empty_map)->release();
+  auto result =
+    cudf::concatenate(std::vector<cudf::column_view>{empty.front()->view(), dictionary->view()});
+  auto decoded = cudf::dictionary::decode(result->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*decoded, strings);
 }
 
 TEST_F(DictionaryConcatTest, ErrorsTest)

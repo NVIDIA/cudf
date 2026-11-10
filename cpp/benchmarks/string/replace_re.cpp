@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -57,7 +58,7 @@ static void bench_replace(nvbench::state& state)
       cudf::strings::replace_with_backrefs(input, *program, replacement);
     });
   } else {
-    auto replacement = std::string_view("77");
+    auto replacement = cudf::string_scalar("77");
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::strings::replace_re(input, *program, replacement);
     });

@@ -14,6 +14,8 @@
 #include <cudf/quantiles.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <limits>
 #include <memory>
 #include <type_traits>
@@ -84,7 +86,7 @@ test_case<T> interpolate_center()
   auto max     = std::numeric_limits<T>::max();
   double mid_d = [] {
     if (std::is_floating_point_v<T>) return 0.0;
-    if (std::is_signed_v<T>) return -0.5;
+    if (cuda::std::is_signed_v<T>) return -0.5;
     return static_cast<double>(std::numeric_limits<T>::max()) / 2.0;
   }();
 
@@ -92,7 +94,7 @@ test_case<T> interpolate_center()
   // is float-like.
   double lin_d = [] {
     if (std::is_floating_point_v<T> || std::is_same_v<T, int64_t>) return 0.0;
-    if (std::is_signed_v<T>) return -0.5;
+    if (cuda::std::is_signed_v<T>) return -0.5;
     return static_cast<double>(std::numeric_limits<T>::max()) / 2.0;
   }();
   auto max_d = static_cast<double>(max);
@@ -194,7 +196,7 @@ test_case<T> single()
 
 template <typename T>
 test_case<T> single()
-  requires(std::is_integral_v<T> and not cudf::is_boolean<T>())
+  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1}),
                       {q_expect{0.7, 1, 1, 1, 1, 1, 1}}};
@@ -222,7 +224,7 @@ test_case<T> all_invalid()
 
 template <typename T>
 test_case<T> all_invalid()
-  requires(std::is_integral_v<T> and not cudf::is_boolean<T>())
+  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6},
                                                                 {0, 0, 0, 0, 0, 0, 0, 0, 0}),
@@ -280,7 +282,7 @@ test_case<T> some_invalid()
 
 template <typename T>
 test_case<T> some_invalid()
-  requires(std::is_integral_v<T> and not cudf::is_boolean<T>())
+  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6},
                                                                 {0, 0, 1, 0, 0, 0, 0, 0, 1}),
@@ -318,9 +320,9 @@ test_case<T> unsorted()
 
 template <typename T>
 test_case<T> unsorted()
-  requires(std::is_integral_v<T> and not cudf::is_boolean<T>())
+  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
-  return std::is_signed<T>()
+  return cuda::std::is_signed<T>()
            ? test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6}),
                           {q_expect{0.0, -1, -1, -1, -1, -1, -1}},
                           cudf::test::fixed_width_column_wrapper<cudf::size_type>(

@@ -386,7 +386,7 @@ TYPED_TEST(ScatterListOfStructScalarTest, NullScalar)
   offset_t ex_offsets{0, 0, 0, 1, 1};
 
   auto null_mask = cudf::create_null_mask(4, cudf::mask_state::ALL_NULL);
-  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 2, 3, true);
+  cudf::set_null_mask(null_mask.data(), 2, 3, true);
   auto expected =
     cudf::make_lists_column(4, ex_offsets.release(), ex_child.release(), 3, std::move(null_mask));
 
@@ -412,7 +412,7 @@ TYPED_TEST(ScatterListOfStructScalarTest, NullableTargetRow)
     {1, 1, 1, 0, 1, 1});
   offset_t offsets{0, 2, 2, 3, 6};
   auto null_mask = cudf::create_null_mask(4, cudf::mask_state::ALL_VALID);
-  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(null_mask.data()), 1, 3, false);
+  cudf::set_null_mask(null_mask.data(), 1, 3, false);
   auto col =
     cudf::make_lists_column(4, offsets.release(), child.release(), 2, std::move(null_mask));
 
@@ -428,7 +428,7 @@ TYPED_TEST(ScatterListOfStructScalarTest, NullableTargetRow)
   offset_t ex_offsets{0, 2, 2, 5, 8};
 
   auto ex_null_mask = cudf::create_null_mask(4, cudf::mask_state::ALL_VALID);
-  cudf::set_null_mask(reinterpret_cast<cudf::bitmask_type*>(ex_null_mask.data()), 1, 2, false);
+  cudf::set_null_mask(ex_null_mask.data(), 1, 2, false);
   auto expected = cudf::make_lists_column(
     4, ex_offsets.release(), ex_child.release(), 1, std::move(ex_null_mask));
 

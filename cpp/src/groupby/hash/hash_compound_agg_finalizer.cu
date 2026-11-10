@@ -17,6 +17,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/buffer>
 #include <cuda/stream>
@@ -27,8 +28,18 @@ hash_compound_agg_finalizer::hash_compound_agg_finalizer(column_view const& col,
                                                          cudf::detail::result_cache* cache,
                                                          cuda::stream_ref stream,
                                                          cudf::memory_resources mr)
+  : hash_compound_agg_finalizer(col, cache, col.has_nulls(), stream, mr)
+{
+}
+
+hash_compound_agg_finalizer::hash_compound_agg_finalizer(column_view const& col,
+                                                         cudf::detail::result_cache* cache,
+                                                         bool input_has_nulls,
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr)
   : col{col},
     input_type{is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type()},
+    input_has_nulls{input_has_nulls},
     cache{cache},
     stream{stream},
     mr{mr}
@@ -68,11 +79,10 @@ void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& final
                                         MakeArgAggFn make_arg_agg)
 {
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
-  if (finalizer.input_type.id() == type_id::STRING) {
+  if (finalizer.input_type.id() == type_id::STRING || cudf::is_nested(finalizer.input_type)) {
     auto transformed_agg = make_arg_agg();
     finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
   }  // else: no-op, since this is only relevant for compound aggregations
-  // TODO: support other nested types.
 }
 
 // Specialization for MIN aggregation
@@ -119,39 +129,18 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
   if (sum_result.has_nulls()) {
     result->set_null_mask(cudf::detail::copy_bitmask(sum_result, stream, mr.get_output_mr()),
                           sum_result.null_count());
-  } else if (col.has_nulls()) {  // SUM aggregation is only intermediate result, thus it is
+  } else if (input_has_nulls) {  // SUM aggregation is only intermediate result, thus it is
                                  // forced to be non-nullable
-    auto [null_mask, null_count] =
-      make_mask_from_counts(count_result.begin<size_type>(),
-                            count_result.end<size_type>(),
-                            stream,
-                            cudf::memory_resources{mr.get_temporary_mr(), mr.get_temporary_mr()});
+    auto [null_mask, null_count] = make_mask_from_counts(
+      count_result.begin<size_type>(), count_result.end<size_type>(), stream, mr.as_temporary());
     if (null_count > 0) {
       result->set_null_mask(
-        cuda::device_buffer<std::byte>{
+        cuda::device_buffer<cudf::bitmask_type>{
           stream, mr.get_output_mr(), null_mask.begin(), null_mask.end()},
         null_count);
     }
   }
   cache->add_result(col, agg, std::move(result));
-}
-
-// Specialization for M2 aggregation
-template <>
-void hash_compound_agg_finalizer::operator()<aggregation::M2>(aggregation const& agg) const
-{
-  if (cache->has_result(col, agg)) { return; }
-
-  auto const sum_sqr_agg    = make_sum_of_squares_aggregation();
-  auto const sum_agg        = make_sum_aggregation();
-  auto const count_agg      = make_count_aggregation();
-  auto const sum_sqr_result = cache->get_result(col, *sum_sqr_agg);
-  auto const sum_result     = cache->get_result(col, *sum_agg);
-  auto const count_result   = cache->get_result(col, *count_agg);
-
-  auto output =
-    compute_m2(input_type, sum_sqr_result, sum_result, count_result, stream, mr.get_output_mr());
-  cache->add_result(col, agg, std::move(output));
 }
 
 // Helper for VARIANCE/STD finalization - shared logic for M2-based computations
@@ -164,8 +153,7 @@ void finalize_var_std(hash_compound_agg_finalizer const& finalizer,
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
 
   auto const m2_agg = make_m2_aggregation();
-  // Since M2 is a compound aggregation, we need to "finalize" it using aggregation finalizer.
-  cudf::detail::aggregation_dispatcher(m2_agg->kind, finalizer, *m2_agg);
+  // The producer has already cached M2 and its matching valid count.
   auto const count_agg    = make_count_aggregation();
   auto const m2_result    = finalizer.cache->get_result(finalizer.col, *m2_agg);
   auto const count_result = finalizer.cache->get_result(finalizer.col, *count_agg);

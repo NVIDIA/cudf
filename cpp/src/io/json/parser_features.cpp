@@ -12,7 +12,7 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/io/json.hpp>
 #include <cudf/strings/string_view.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <optional>
@@ -62,13 +62,13 @@ struct empty_column_functor {
   cuda::stream_ref stream;
   rmm::device_async_resource_ref mr;
 
-  template <typename T, CUDF_ENABLE_IF(!cudf::is_nested<T>())>
+  template <typename T>
   std::unique_ptr<column> operator()(schema_element const& schema) const
   {
     return make_empty_column(schema.type);
   }
 
-  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::list_view>)>
+  template <cudf::concepts::list_view T>
   std::unique_ptr<column> operator()(schema_element const& schema) const
   {
     CUDF_EXPECTS(schema.child_types.size() == 1, "List column should have only one child");
@@ -89,7 +89,7 @@ struct empty_column_functor {
                                     std::move(child_columns));
   }
 
-  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::struct_view>)>
+  template <cudf::concepts::struct_view T>
   std::unique_ptr<column> operator()(schema_element const& schema) const
   {
     std::vector<std::unique_ptr<column>> child_columns;
@@ -135,13 +135,13 @@ struct allnull_column_functor {
   }
 
  public:
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_width<T>())>
+  template <cudf::concepts::fixed_width T>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
   {
     return make_fixed_width_column(schema.type, size, mask_state::ALL_NULL, stream, mr);
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_dictionary<T>())>
+  template <cudf::concepts::dictionary T>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
   {
     CUDF_EXPECTS(schema.child_types.size() == 1, "Dictionary column should have only one child");
@@ -153,7 +153,7 @@ struct allnull_column_functor {
     return make_dictionary_column(std::move(child), std::move(indices), std::move(null_mask), size);
   }
 
-  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::string_view>)>
+  template <cudf::concepts::string_view T>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
   {
     auto offsets   = make_zeroed_offsets(size);
@@ -161,7 +161,7 @@ struct allnull_column_functor {
     return make_strings_column(
       size, std::move(offsets), rmm::device_buffer{}, size, std::move(null_mask));
   }
-  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::list_view>)>
+  template <cudf::concepts::list_view T>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
   {
     CUDF_EXPECTS(schema.child_types.size() == 1, "List column should have only one child");
@@ -183,7 +183,7 @@ struct allnull_column_functor {
                                     std::move(child_columns));
   }
 
-  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, cudf::struct_view>)>
+  template <cudf::concepts::struct_view T>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
   {
     std::vector<std::unique_ptr<column>> child_columns;

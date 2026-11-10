@@ -12,13 +12,17 @@
 #include "unbz2.hpp"  // bz2 uncompress
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+
+#include <cuda/buffer>
 
 #include <zlib.h>  // uncompress
 #include <zstd.h>
@@ -567,6 +571,7 @@ void host_decompress(compression_type compression,
   stream.sync();
 
   std::vector<std::future<size_t>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   auto const num_streams =
     std::min<std::size_t>(num_chunks, cudf::detail::host_worker_pool().get_thread_count());
   auto const streams = cudf::detail::fork_streams(stream, num_streams);
@@ -801,8 +806,7 @@ void decompress(compression_type compression,
                                                       default_host_device_decompression_cost_ratio),
                               stream);
 
-  auto tmp_results =
-    cudf::detail::make_device_uvector_async<detail::codec_exec_result>(results, stream, temp_mr);
+  auto tmp_results = cuda::device_buffer<codec_exec_result>(stream, temp_mr, results);
   device_span<codec_exec_result> results_view = tmp_results;
 
   // Chunks [0, split_idx) go to the host engine, [split_idx, end) to the device engine.

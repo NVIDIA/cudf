@@ -45,7 +45,9 @@ main() {
     fi
     # Partition this list when libraries require incompatible dependencies or isolation.
     local test_groups=("${libraries[*]}")
+    local test_timeout=45m
     if [[ $RAPIDS_BUILD_TYPE == pull-request ]]; then
+        test_timeout=15m
         CPP_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
         PYTHON_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
         PYTHON_NOARCH_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_python cudf cudf --pure --cuda "$RAPIDS_CUDA_VERSION" --arch any)")
@@ -70,7 +72,7 @@ main() {
         printf 'Prepare integration environment: %s\n' "$group"
         if prepare_environment "$dependencies_yaml" "$environment" "${group_libraries[@]}"; then
             printf 'Integration tests: %s\n' "$group"
-            if timeout 45m bash "${scripts_dir}/run-library-tests.sh" "$environment" "${group_libraries[@]}"; then
+            if timeout "${test_timeout}" bash "${scripts_dir}/run-library-tests.sh" "$environment" "${group_libraries[@]}"; then
                 test_status=0
             else
                 test_status=$?

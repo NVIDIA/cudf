@@ -4,17 +4,20 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from cudf_streaming import CardinalityEstimator
 from rapidsmpf.streaming.core.actor import define_actor
 
 from cudf_polars.dsl.utils.naming import names_to_indices
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.join import add_prefilter
 from cudf_polars.streaming.actor_graph.prefilter import (
     PrefilterExecution,
+    RuntimePrefilterStatistics,
     choose_prefilter_method,
 )
 from cudf_polars.streaming.actor_graph.utils import (
@@ -115,14 +118,16 @@ async def pushdown_filter_actor(
                 broadcast_limit=executor.broadcast_limit,
                 bloom_filter_max_size=config.bloom_filter_max_size,
             )
-            trace = asdict(decision)
-            trace["placement"] = "standalone"
-            trace["target_on"] = [key.name for key in ir.target_on]
-            trace["domain_on"] = [key.name for key in ir.domain_on]
-            trace_stats = trace if tracer is not None else None
+            prefilter_statistics = None
             if tracer is not None:
                 tracer.decision = decision.method
-                tracer.set_extra("prefilter", trace)
+                prefilter_statistics = (
+                    RuntimePrefilterStatistics.from_decision_pushdown_filter_hint(
+                        decision,
+                        ir,
+                    )
+                )
+                tracer.prefilters.append(prefilter_statistics)
 
             if decision.method == "skip":
                 domain_sample.local_sample.chunks.clear()
@@ -180,7 +185,7 @@ async def pushdown_filter_actor(
                     ch_filtered=ch_out,
                     collective_id=collective_id,
                     ir_context=ir_context,
-                    trace_stats=trace_stats,
+                    prefilter_statistics=prefilter_statistics,
                 )
                 async with shutdown_on_error(
                     context,
@@ -208,7 +213,7 @@ def generate_pushdown_filter_subnetwork(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context_for_node(rec, ir),
             channels[ir].reserve_input_slot(),
             channels[target].reserve_output_slot(),
             channels[domain].reserve_output_slot(),

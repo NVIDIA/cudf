@@ -37,7 +37,8 @@ void in_place_fill(cudf::mutable_column_view& destination,
                    cudf::size_type begin,
                    cudf::size_type end,
                    cudf::scalar const& value,
-                   cuda::stream_ref stream)
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr)
 {
   using ScalarType = cudf::scalar_type_t<T>;
   auto p_scalar    = static_cast<ScalarType const*>(&value);
@@ -48,7 +49,8 @@ void in_place_fill(cudf::mutable_column_view& destination,
                            destination,
                            begin,
                            end,
-                           stream);
+                           stream,
+                           mr);
 }
 
 struct in_place_fill_range_dispatch {
@@ -56,19 +58,25 @@ struct in_place_fill_range_dispatch {
   cudf::mutable_column_view& destination;
 
   template <cudf::concepts::fixed_width T>
-  void operator()(cudf::size_type begin, cudf::size_type end, cuda::stream_ref stream)
+  void operator()(cudf::size_type begin,
+                  cudf::size_type end,
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
   {
-    in_place_fill<T>(destination, begin, end, value, stream);
+    in_place_fill<T>(destination, begin, end, value, stream, mr);
   }
 
   template <cudf::concepts::fixed_point T>
-  void operator()(cudf::size_type begin, cudf::size_type end, cuda::stream_ref stream)
+  void operator()(cudf::size_type begin,
+                  cudf::size_type end,
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
   {
     auto unscaled = static_cast<cudf::fixed_point_scalar<T> const&>(value).value(stream);
     using RepType = typename T::rep;
     auto s        = cudf::numeric_scalar<RepType>(
-      unscaled, value.is_valid(stream), stream, cudf::get_current_device_resource_ref());
-    in_place_fill<RepType>(destination, begin, end, s, stream);
+      unscaled, value.is_valid(stream), stream, mr.get_temporary_mr());
+    in_place_fill<RepType>(destination, begin, end, s, stream, mr);
   }
 
   template <typename T, typename... Args>
@@ -110,7 +118,10 @@ struct out_of_place_fill_range_dispatch {
 
       auto ret_view    = p_ret->mutable_view();
       using DeviceType = cudf::device_storage_type_t<T>;
-      in_place_fill<DeviceType>(ret_view, begin, end, value, stream);
+      // TODO: route through the caller's memory resources once fill is migrated
+      auto const temp_mr = cudf::get_current_device_resource_ref();
+      in_place_fill<DeviceType>(
+        ret_view, begin, end, value, stream, cudf::memory_resources{temp_mr, temp_mr});
       p_ret->set_null_count(ret_view.null_count());
     }
 
@@ -187,7 +198,8 @@ void fill_in_place(mutable_column_view& destination,
                    size_type begin,
                    size_type end,
                    scalar const& value,
-                   cuda::stream_ref stream)
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::is_fixed_width(destination.type()),
                "In-place fill does not support variable-sized types.");
@@ -200,7 +212,7 @@ void fill_in_place(mutable_column_view& destination,
 
   if (end != begin) {  // otherwise no-op
     cudf::type_dispatcher(
-      destination.type(), in_place_fill_range_dispatch{value, destination}, begin, end, stream);
+      destination.type(), in_place_fill_range_dispatch{value, destination}, begin, end, stream, mr);
   }
 
   return;
@@ -225,10 +237,11 @@ void fill_in_place(mutable_column_view& destination,
                    size_type begin,
                    size_type end,
                    scalar const& value,
-                   cuda::stream_ref stream)
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::fill_in_place(destination, begin, end, value, stream);
+  return detail::fill_in_place(destination, begin, end, value, stream, mr);
 }
 
 std::unique_ptr<column> fill(column_view const& input,

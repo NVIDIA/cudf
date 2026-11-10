@@ -15,11 +15,13 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_map.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf::io::orc::detail {
@@ -444,7 +446,7 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
-                              std::map<uint32_t, rmm::device_uvector<uint32_t>>& elem_sizes,
+                              std::map<uint32_t, cuda::device_buffer<uint32_t>>& elem_sizes,
                               cuda::stream_ref stream);
 
 /**
@@ -480,12 +482,15 @@ void orc_init_statistics_buffersize(statistics_merge_group* groups,
  * @param[in,out] groups Statistics merge groups
  * @param[in,out] chunks Statistics data
  * @param[in] statistics_count Number of statistics buffers
+ * @param[in] write_legacy_timestamp_bounds Whether to write the pre-ORC-135 `minimum` and
+ * `maximum` timestamp fields alongside `minimumUtc` and `maximumUtc`
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void orc_encode_statistics(uint8_t* blob_bfr,
                            statistics_merge_group* groups,
                            statistics_chunk const* chunks,
                            uint32_t statistics_count,
+                           bool write_legacy_timestamp_bounds,
                            cuda::stream_ref stream);
 
 /**

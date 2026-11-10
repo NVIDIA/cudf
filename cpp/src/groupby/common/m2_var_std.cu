@@ -7,13 +7,13 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/valid_if.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
-#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/functional>
@@ -24,81 +24,19 @@ namespace cudf::groupby::detail {
 
 namespace {
 
-template <typename Source>
-constexpr bool is_m2_supported()
-{
-  return is_numeric<Source>() && !is_fixed_point<Source>();
-}
-
-struct m2_functor {
-  template <typename Source, typename... Args>
-  void operator()(Args&&...)  //
-    requires(!is_m2_supported<Source>())
+struct is_m2_supported_fn {
+  template <typename T>
+  bool operator()() const
   {
-    CUDF_FAIL("Invalid source type for M2 aggregation.");
-  }
-
-  template <typename Target, typename SumSqrType, typename SumType, typename CountType>
-  void evaluate(Target* target,
-                SumSqrType const* sum_sqr,
-                SumType const* sum,
-                CountType const* count,
-                size_type size,
-                cuda::stream_ref stream) const noexcept
-  {
-    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     target,
-                     target + size,
-                     [sum_sqr, sum, count] __device__(size_type const idx) {
-                       auto const group_count = count[idx];
-                       if (group_count == 0) { return Target{}; }
-                       auto const group_sum_sqr = static_cast<Target>(sum_sqr[idx]);
-                       auto const group_sum     = static_cast<Target>(sum[idx]);
-                       auto const result = group_sum_sqr - group_sum * group_sum / group_count;
-                       return result;
-                     });
-  }
-
-  template <typename Source>
-  void operator()(mutable_column_view const& target,
-                  column_view const& sum_sqr,
-                  column_view const& sum,
-                  column_view const& count,
-                  cuda::stream_ref stream) const noexcept  //
-    requires(is_m2_supported<Source>())
-  {
-    using Target     = cudf::detail::target_type_t<Source, aggregation::M2>;
-    using SumSqrType = cudf::detail::target_type_t<Source, aggregation::SUM_OF_SQUARES>;
-    using SumType    = cudf::detail::target_type_t<Source, aggregation::SUM>;
-    using CountType  = cudf::detail::target_type_t<Source, aggregation::COUNT_VALID>;
-
-    // Separate the implementation into another function, which has fewer instantiations since
-    // the data types (target/sum/count etc) are mostly the same.
-    evaluate(target.begin<Target>(),
-             sum_sqr.begin<SumSqrType>(),
-             sum.begin<SumType>(),
-             count.begin<CountType>(),
-             target.size(),
-             stream);
+    return is_numeric<T>() && !is_fixed_point<T>();
   }
 };
 
 }  // namespace
 
-std::unique_ptr<column> compute_m2(data_type source_type,
-                                   column_view const& sum_sqr,
-                                   column_view const& sum,
-                                   column_view const& count,
-                                   cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+bool is_m2_supported(data_type type)
 {
-  auto output = make_numeric_column(cudf::detail::target_type(source_type, aggregation::M2),
-                                    sum.size(),
-                                    mask_state::UNALLOCATED,
-                                    stream,
-                                    mr);
-  type_dispatcher(source_type, m2_functor{}, output->mutable_view(), sum_sqr, sum, count, stream);
-  return output;
+  return type.id() != type_id::EMPTY && type_dispatcher(type, is_m2_supported_fn{});
 }
 
 namespace {
@@ -131,7 +69,8 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
 
   // Since we may have new null rows depending on the group count, we need to generate a new null
   // mask from scratch.
-  rmm::device_uvector<bool> validity(size, stream);
+  cuda::device_buffer<bool> validity(
+    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
 
   auto const out_it =
     cuda::make_zip_iterator(output->mutable_view().begin<TargetType>(), validity.begin());

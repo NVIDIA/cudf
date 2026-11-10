@@ -11,6 +11,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
@@ -160,18 +161,18 @@ struct duration_to_string_fn : public duration_to_string_size_fn<T> {
  * The template function declaration ensures only duration types are used.
  */
 struct dispatch_from_durations_fn {
-  template <typename T>
+  template <cudf::concepts::duration T>
   std::unique_ptr<column> operator()(column_view const& durations,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(cudf::is_duration<T>())
   {
     size_type strings_count = durations.size();
     auto column             = column_device_view::create(durations, stream);
     auto d_column           = *column;
 
     // copy null mask
-    cuda::device_buffer<std::byte> null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
+    cuda::device_buffer<cudf::bitmask_type> null_mask =
+      cudf::detail::copy_bitmask(durations, stream, mr);
 
     // build offsets column
     auto offsets_transformer_itr =
@@ -202,7 +203,6 @@ struct dispatch_from_durations_fn {
   std::unique_ptr<column> operator()(column_view const&,
                                      cuda::stream_ref,
                                      rmm::device_async_resource_ref) const
-    requires(not cudf::is_duration<T>())
   {
     CUDF_FAIL("Values for from_durations function must be a duration type.");
   }

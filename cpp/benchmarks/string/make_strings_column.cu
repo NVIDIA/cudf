@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -67,8 +68,8 @@ static void BM_make_strings_column_batch(nvbench::state& state)
     auto batch_input      = cuda::device_buffer<string_index_pair>(
       stream, cudf::get_current_device_resource_ref(), cv.size(), cuda::no_init);
     thrust::tabulate(rmm::exec_policy_nosync(stream),
-                     batch_input.data(),
-                     batch_input.data() + batch_input.size(),
+                     batch_input.begin(),
+                     batch_input.end(),
                      [data_col = *d_data_ptr] __device__(auto const idx) {
                        if (data_col.is_null(idx)) { return string_index_pair{nullptr, 0}; }
                        auto const row = data_col.element<cudf::string_view>(idx);
@@ -79,9 +80,12 @@ static void BM_make_strings_column_batch(nvbench::state& state)
   }
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     [[maybe_unused]] auto const output = make_strings_columns<true>(input, stream);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(BM_make_strings_column_batch)

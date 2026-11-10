@@ -16,6 +16,7 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/cudftable.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
@@ -25,6 +26,8 @@
 #include <cuda_runtime.h>
 
 #include <fstream>
+#include <memory>
+#include <utility>
 #include <vector>
 
 // Global environment for temporary files
@@ -589,14 +592,14 @@ TEST_F(CudftableTest, LongStringColumns)
 TEST_F(CudftableTest, ManyColumns)
 {
   constexpr int num_cols = 1'234;
-  std::vector<cudf::column_view> columns;
+  std::vector<std::unique_ptr<cudf::column>> columns;
   for (int i = 0; i < num_cols; ++i) {
     cudf::test::fixed_width_column_wrapper<int32_t> col({i % 10, (i + 1) % 10, (i + 2) % 10});
-    columns.push_back(col);
+    columns.push_back(col.release());
   }
 
-  cudf::table_view expected(columns);
-  run_test(expected);
+  cudf::table expected(std::move(columns));
+  run_test(expected.view());
 }
 
 TEST_F(CudftableTest, FileTooSmallForHeader)

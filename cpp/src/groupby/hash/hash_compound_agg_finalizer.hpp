@@ -18,12 +18,23 @@ namespace cudf::groupby::detail::hash {
 struct hash_compound_agg_finalizer {
   column_view const col;
   data_type const input_type;
+  bool const input_has_nulls;
   cudf::detail::result_cache* const cache;
   cuda::stream_ref const stream;
   cudf::memory_resources const mr;
 
   hash_compound_agg_finalizer(column_view const& col,
                               cudf::detail::result_cache* cache,
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
+
+  /**
+   * @param input_has_nulls Whether the aggregated input had nulls. Callers that pass
+   * intermediate results as `col` must provide it because those results carry no input nulls.
+   */
+  hash_compound_agg_finalizer(column_view const& col,
+                              cudf::detail::result_cache* cache,
+                              bool input_has_nulls,
                               cuda::stream_ref stream,
                               cudf::memory_resources mr);
 
@@ -43,9 +54,6 @@ void hash_compound_agg_finalizer::operator()<aggregation::MAX>(aggregation const
 
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation const& agg) const;
-
-template <>
-void hash_compound_agg_finalizer::operator()<aggregation::M2>(aggregation const& agg) const;
 
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::VARIANCE>(aggregation const& agg) const;

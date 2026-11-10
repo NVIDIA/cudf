@@ -48,10 +48,6 @@ def _parse_remote_io_backend(value: str) -> kvikio.RemoteIOBackend:
     return kvikio.RemoteIOBackend[value.upper()]
 
 
-def _parse_reactor_dispatch(value: str) -> kvikio.RemoteReactorDispatch:
-    return kvikio.RemoteReactorDispatch[value.upper()]
-
-
 def _opt(
     category: str,
     env_var: str | None = None,
@@ -145,7 +141,7 @@ class StreamingOptions:
     num_streaming_threads
         Threads used to execute coroutines.
         Env: ``RAPIDSMPF_NUM_STREAMING_THREADS``.
-        Default: ``1``.
+        Default: ``4``.
         Category: rapidsmpf.
     num_streams
         CUDA streams for concurrent GPU execution.
@@ -176,7 +172,8 @@ class StreamingOptions:
     pinned_memory
         Enable pinned host memory.
         Env: ``RAPIDSMPF_PINNED_MEMORY``.
-        Default: ``True``.
+        Default: ``True`` if the system supports pinned memory resources,
+        otherwise ``False``.
         Category: rapidsmpf.
     pinned_initial_pool_size
         Initial pinned memory pool size (bytes).
@@ -213,12 +210,17 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_DISK_SPILL_DIR``.
         Default: disabled.
         Category: rapidsmpf.
-    unbounded_file_read_cache
+    experimental_unbounded_file_read_cache
         Cache file-read results in the Context's message storage.
         Accepts a memory type (``"host"``, ``"pinned"``, ``"device"``) or
-        ``"disabled"``. Primarily for benchmarking. Each file slice must be
-        read with identical parameters (see rapidsmpf docs).
-        Env: ``RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE``.
+        ``"disabled"``. The first read of a file slice is cached in the given
+        memory type and later reads of the exact same slice reuse the copy.
+        The cache is unbounded and lives as long as the Engine. Primarily for
+        benchmarking. Each file slice must always be read with identical
+        parameters, such as filters and schemas. This is not validated, and
+        differing parameters may return incorrect data.
+        Experimental: may be changed or removed without a deprecation period.
+        Env: ``CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE``.
         Default: ``"disabled"``.
         Category: rapidsmpf.
     ucxx_progress_mode
@@ -261,12 +263,6 @@ class StreamingOptions:
         Number of reactor threads used by the ``MULTI_POLL`` remote I/O backend.
         Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT``.
         Default: ``24``.
-        Category: executor.
-    kvikio_reactor_dispatch
-        How sub-ranges of one read are distributed across reactor threads under
-        the ``MULTI_POLL`` remote I/O backend.
-        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH``.
-        Default: ``kvikio.RemoteReactorDispatch.PER_CHUNK``.
         Category: executor.
     kvikio_request_ceiling
         Maximum number of concurrent in-flight requests across all reactor
@@ -402,8 +398,8 @@ class StreamingOptions:
         "rapidsmpf", "RAPIDSMPF_PERIODIC_SPILL_CHECK"
     )
     disk_spill_dir: str | Unspecified = _opt("rapidsmpf", "RAPIDSMPF_DISK_SPILL_DIR")
-    unbounded_file_read_cache: str | Unspecified = _opt(
-        "rapidsmpf", "RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE"
+    experimental_unbounded_file_read_cache: str | Unspecified = _opt(
+        "rapidsmpf", "CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE"
     )
     ucxx_progress_mode: (
         Literal["polling", "thread-blocking", "thread-polling"] | Unspecified
@@ -432,11 +428,6 @@ class StreamingOptions:
     kvikio_reactor_count: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT", int
     )
-    kvikio_reactor_dispatch: kvikio.RemoteReactorDispatch | Unspecified = _opt(
-        "executor",
-        "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_DISPATCH",
-        _parse_reactor_dispatch,
-    )
     kvikio_request_ceiling: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING", int
     )
@@ -457,11 +448,11 @@ class StreamingOptions:
     target_partition_size: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", int
     )
-    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | None | Unspecified = (
+    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | Unspecified | None = (
         _opt("executor")
     )
     join_filter_pushdown: (
-        dict[str, Any] | JoinFilterPushdownOptions | None | Unspecified
+        dict[str, Any] | JoinFilterPushdownOptions | Unspecified | None
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
@@ -469,7 +460,7 @@ class StreamingOptions:
     parallel_sink_batches: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", parse_boolean
     )
-    quent_context: QuentConfig | None | Unspecified = _opt(
+    quent_context: QuentConfig | Unspecified | None = _opt(
         "executor",
     )
 
@@ -685,7 +676,7 @@ class StreamingOptions:
             type=int,
             help=textwrap.dedent("""\
                 Number of threads used to execute coroutines. Must be > 0.
-                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 1."""),
+                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 4."""),
         )
         g.add_argument(
             "--num-streams",
@@ -740,7 +731,7 @@ class StreamingOptions:
             action=argparse.BooleanOptionalAction,
             help=textwrap.dedent("""\
                 Enable pinned host memory if available on the system.
-                Env: RAPIDSMPF_PINNED_MEMORY. Default: true."""),
+                Env: RAPIDSMPF_PINNED_MEMORY. Default: true if supported."""),
         )
         g.add_argument(
             "--pinned-initial-pool-size",
@@ -801,14 +792,14 @@ class StreamingOptions:
                 Env: RAPIDSMPF_DISK_SPILL_DIR. Built-in default: disabled."""),
         )
         g.add_argument(
-            "--unbounded-file-read-cache",
-            dest="unbounded_file_read_cache",
+            "--experimental-unbounded-file-read-cache",
+            dest="experimental_unbounded_file_read_cache",
             default=None,
             type=str,
             help=textwrap.dedent("""\
                 Cache file-read results in the Context's message storage.
                 One of "host", "pinned", "device", or "disabled".
-                Env: RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE. Built-in default: disabled."""),
+                Env: CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE. Built-in default: disabled."""),
         )
         g.add_argument(
             "--hardware-binding",

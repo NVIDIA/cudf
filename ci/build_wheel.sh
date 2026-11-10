@@ -116,7 +116,6 @@ export RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
   add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
 ) &
 wait_for_builds "$!" pylibcudf-serial-build.log
-# NOTE: cudf is now a pure-Python (noarch) wheel built in ci/build_wheel_noarch.sh.
 (
   setup_build_log cudf-streaming-parallel-build.log
   export SCCACHE_SERVER_PORT=4228
@@ -136,5 +135,4 @@ wait_for_builds "$!" pylibcudf-serial-build.log
     2M \
     "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 ) &
-streaming_pid=$!
-wait_for_builds "${streaming_pid}" cudf-streaming-parallel-build.log
+wait_for_builds "$!" cudf-streaming-parallel-build.log

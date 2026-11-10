@@ -9,13 +9,13 @@ source ./ci/build_wheel_common.sh
 
 # Build pure-Python wheels independently of the non-noarch wheel chain.
 
-SCCACHE_SERVER_PORT=4227 run_logged_build dask-cudf-parallel-build.log \
-  build_noarch_wheel dask_cudf dask-cudf python/dask_cudf 1M &
-dask_pid=$!
-SCCACHE_SERVER_PORT=4228 run_logged_build cudf-polars-parallel-build.log \
-  build_noarch_wheel cudf_polars cudf-polars python/cudf_polars 2M &
-polars_pid=$!
-SCCACHE_SERVER_PORT=4229 run_logged_build cudf-parallel-build.log \
+SCCACHE_SERVER_PORT=4227 run_logged_build cudf-parallel-build.log \
   build_noarch_wheel cudf cudf python/cudf 5M &
 cudf_pid=$!
-wait_for_builds "${dask_pid}" dask-cudf-parallel-build.log "${polars_pid}" cudf-polars-parallel-build.log "${cudf_pid}" cudf-parallel-build.log
+SCCACHE_SERVER_PORT=4228 run_logged_build dask-cudf-parallel-build.log \
+  build_noarch_wheel dask_cudf dask-cudf python/dask_cudf 1M &
+dask_pid=$!
+SCCACHE_SERVER_PORT=4229 run_logged_build cudf-polars-parallel-build.log \
+  build_noarch_wheel cudf_polars cudf-polars python/cudf_polars 2M &
+polars_pid=$!
+wait_for_builds "${cudf_pid}" cudf-parallel-build.log "${dask_pid}" dask-cudf-parallel-build.log "${polars_pid}" cudf-polars-parallel-build.log

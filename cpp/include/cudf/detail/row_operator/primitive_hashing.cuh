@@ -43,7 +43,8 @@ class element_hasher {
    * @param row_index The index of the row to hash
    * @return The hash value of the given element
    */
-  template <typename T, CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+  template <typename T>
+    requires(column_device_view::has_element_accessor<T>())
   __device__ result_type operator()(result_type seed,
                                     column_device_view const& col,
                                     size_type row_index) const
@@ -52,7 +53,7 @@ class element_hasher {
   }
 
   // @cond
-  template <typename T, CUDF_ENABLE_IF(not column_device_view::has_element_accessor<T>())>
+  template <typename T>
   __device__ result_type operator()(result_type, column_device_view const&, size_type) const
   {
     CUDF_UNREACHABLE("Unsupported type in hash.");

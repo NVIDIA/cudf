@@ -37,7 +37,7 @@ struct find_index_fn {
   std::unique_ptr<scalar> operator()(dictionary_column_view const& input,
                                      scalar const& key,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
     requires(not cudf::concepts::dictionary<Element> and not cudf::concepts::nested<Element>)
   {
     auto const num_keys = input.keys_size();
@@ -72,7 +72,7 @@ struct find_index_fn {
   std::unique_ptr<scalar> operator()(dictionary_column_view const&,
                                      scalar const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
+                                     cudf::memory_resources) const
     requires(cudf::concepts::dictionary<Element> or cudf::concepts::nested<Element>)
   {
     CUDF_FAIL(
@@ -85,7 +85,7 @@ struct find_index_fn {
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   if (dictionary.is_empty()) {
     return std::make_unique<numeric_scalar<int32_t>>(0, false, stream, mr);
@@ -101,7 +101,7 @@ std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::get_index(dictionary, key, stream, mr);

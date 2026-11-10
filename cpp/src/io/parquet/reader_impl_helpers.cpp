@@ -24,6 +24,7 @@
 #include <cudf/logger.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -645,6 +646,7 @@ void metadata::setup_page_index(std::span<uint8_t const> page_index_bytes, int64
     auto const remainder              = total_column_chunks % num_tasks;
 
     std::vector<std::future<void>> tasks;
+    cudf::detail::futures_wait_guard tasks_guard{tasks};
     tasks.reserve(num_tasks);
 
     std::size_t start_idx = 0;
@@ -1455,7 +1457,7 @@ aggregate_reader_metadata::get_column_chunk_metadata() const
 std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   std::span<std::string const> column_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_EXPECTS(column_names.empty() or not per_file_metadata.empty(),
                "Cannot decode parquet column-chunk bounds without source metadata",

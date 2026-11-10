@@ -9,9 +9,11 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -23,7 +25,7 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
                               strings_column_view const& rhs,
                               cudf::detail::index_vector const& row_order,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   using cudf::detail::side;
   if (row_order.is_empty()) { return make_empty_column(type_id::STRING); }
@@ -37,7 +39,8 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
   auto const begin = row_order.begin();
 
   // build vector of strings
-  rmm::device_uvector<string_index_pair> indices(strings_count, stream);
+  cuda::device_buffer<string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},

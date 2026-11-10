@@ -93,8 +93,8 @@ class distinct_hash_join {
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(cudf::table_view const& left,
-             cuda::stream_ref stream           = cudf::get_default_stream(),
-             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+             cuda::stream_ref stream   = cudf::get_default_stream(),
+             cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns the right table indices that can be used to construct the result of performing
@@ -115,8 +115,8 @@ class distinct_hash_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> left_join(
     cudf::table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   using impl_type = cudf::detail::distinct_hash_join;  ///< Implementation type

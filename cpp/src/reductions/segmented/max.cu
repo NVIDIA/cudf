@@ -19,7 +19,7 @@ std::unique_ptr<cudf::column> segmented_max(
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(col.type() == output_dtype,
                "segmented_max() operation requires matching output type");

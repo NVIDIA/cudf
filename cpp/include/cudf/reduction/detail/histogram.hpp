@@ -35,7 +35,7 @@ namespace reduction::detail {
 compute_row_frequencies(table_view const& input,
                         std::optional<column_view> const& partial_counts,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr);
+                        cudf::memory_resources mr);
 
 /**
  * @brief Create an empty histogram column.

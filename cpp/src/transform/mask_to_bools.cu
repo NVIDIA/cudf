@@ -25,7 +25,7 @@ std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                                       size_type begin_bit,
                                       size_type end_bit,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   auto const length = end_bit - begin_bit;
   CUDF_EXPECTS(length >= 0, "begin_bit should be less than or equal to end_bit");
@@ -53,7 +53,7 @@ std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                                       size_type begin_bit,
                                       size_type end_bit,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mask_to_bools(bitmask, begin_bit, end_bit, stream, mr);

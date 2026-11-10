@@ -37,10 +37,10 @@
 namespace cudf {
 
 // Copy ctor w/ optional stream/mr
-column::column(column const& other, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+column::column(column const& other, cuda::stream_ref stream, cudf::memory_resources mr)
   : _type{other._type},
     _size{other._size},
-    _data{other._data, stream, mr},
+    _data{other._data, stream, mr.get_output_mr()},
     _null_mask{cudf::detail::copy_bitmask(other._null_mask.data(), 0, other.size(), stream, mr)},
     _null_count{other._null_count}
 {
@@ -152,7 +152,7 @@ namespace {
 struct create_column_from_view {
   cudf::column_view view;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   template <typename ColumnType>
   std::unique_ptr<column> operator()()
@@ -180,7 +180,7 @@ struct create_column_from_view {
     }
     return std::make_unique<column>(view.type(),
                                     view.size(),
-                                    rmm::device_buffer{0, stream, mr},
+                                    rmm::device_buffer{0, stream, mr.get_output_mr()},
                                     cudf::detail::copy_bitmask(view, stream, mr),
                                     view.null_count(),
                                     std::move(children));
@@ -201,7 +201,7 @@ struct create_column_from_view {
         static_cast<char const*>(view.head()) + (view.offset() * cudf::size_of(view.type())),
         view.size() * cudf::size_of(view.type()),
         stream,
-        mr},
+        mr.get_output_mr()},
       cudf::detail::copy_bitmask(view, stream, mr),
       view.null_count(),
       std::move(children));
@@ -247,7 +247,7 @@ struct create_column_from_view {
 }  // anonymous namespace
 
 // Copy from a view
-column::column(column_view view, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+column::column(column_view view, cuda::stream_ref stream, cudf::memory_resources mr)
   :  // Move is needed here because the dereference operator of unique_ptr returns
      // an lvalue reference, which would otherwise dispatch to the copy constructor
     column{std::move(*type_dispatcher(view.type(), create_column_from_view{view, stream, mr}))}

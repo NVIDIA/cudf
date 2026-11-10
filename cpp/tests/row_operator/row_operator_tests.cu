@@ -400,15 +400,15 @@ struct RowPreprocessingMemoryResourceTest : public RowOperatorTest,
 
 TEST_P(RowPreprocessingMemoryResourceTest, EqualityPreprocessingMemoryResources)
 {
-  auto const stream = this->stream();
-  auto const dirty  = GetParam();
-  auto& resources   = this->harness();
-  auto const setup  = cudf::memory_resources{resources.setup_mr(), resources.setup_mr()};
+  auto const stream             = this->stream();
+  auto const has_nonempty_nulls = GetParam();
+  auto& resources               = this->harness();
+  auto const setup = cudf::memory_resources{resources.setup_mr(), resources.setup_mr()};
   auto strings =
     cudf::test::strings_column_wrapper{
       {"", "a", "b"}, cudf::test::iterators::null_at(0), stream, setup}
       .release();
-  if (dirty) {
+  if (has_nonempty_nulls) {
     cudf::set_null_mask(strings->mutable_view().null_mask(), 1, 2, false, stream);
     strings->set_null_count(2);
   }
@@ -416,12 +416,12 @@ TEST_P(RowPreprocessingMemoryResourceTest, EqualityPreprocessingMemoryResources)
     cudf::test::strings_column_wrapper{
       {"", "", "b"}, cudf::test::iterators::nulls_at({0, 1}), stream, setup}
       .release();
-  // The device table owns its column views; only dirty input needs an owning sanitized column.
+  // The device table owns its column views; nonempty null rows require an owning sanitized column.
   auto constexpr alignment     = alignof(cudf::column_device_view);
   auto const padded_view_bytes = cudf::column_device_view::extent(strings->view()) + alignment - 1;
   // device_buffer rounds the padded allocation up to its requested alignment.
   auto const retained_bytes = ((padded_view_bytes + alignment - 1) / alignment) * alignment +
-                              (dirty ? expected->alloc_size() : 0);
+                              (has_nonempty_nulls ? expected->alloc_size() : 0);
   cudf::test::expect_api_uses_memory_resources(
     resources,
     [&](cudf::memory_resources mr) {
@@ -439,7 +439,12 @@ TEST_P(RowPreprocessingMemoryResourceTest, EqualityPreprocessingMemoryResources)
     stream);
 }
 
-INSTANTIATE_TEST_SUITE_P(CleanAndDirty, RowPreprocessingMemoryResourceTest, ::testing::Bool());
+INSTANTIATE_TEST_SUITE_P(NullRowContents,
+                         RowPreprocessingMemoryResourceTest,
+                         ::testing::Bool(),
+                         [](auto const& info) {
+                           return info.param ? "NonEmptyNullRows" : "EmptyNullRows";
+                         });
 
 TEST_F(RowOperatorTest, TestTwoTableComparatorColumnCountCheck)
 {

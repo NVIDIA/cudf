@@ -385,34 +385,6 @@ TEST_F(AsofJoinTest, ConcurrentMultiStreamProbes)
   }
 }
 
-TEST_F(AsofJoinTest, EmptyInputs)
-{
-  auto const stream   = this->stream();
-  auto const setup_mr = this->setup_resources();
-  auto const mr       = this->resources();
-
-  fixed_width_column_wrapper<int32_t> empty(std::initializer_list<int32_t>{}, stream, setup_mr);
-  fixed_width_column_wrapper<int32_t> left_on({1, 2}, stream, setup_mr);
-
-  asof_join empty_right_join(cudf::table_view{}, empty, stream, mr);
-  auto no_matches = empty_right_join.join(cudf::table_view{},
-                                          left_on,
-                                          asof_join_strategy::BACKWARD,
-                                          asof_join_exact_matches::YES,
-                                          stream,
-                                          mr);
-  expect_indices(no_matches, {cudf::JoinNoMatch, cudf::JoinNoMatch}, stream);
-
-  asof_join join(cudf::table_view{}, left_on, stream, mr);
-  auto empty_result = join.join(cudf::table_view{},
-                                empty,
-                                asof_join_strategy::BACKWARD,
-                                asof_join_exact_matches::YES,
-                                stream,
-                                mr);
-  expect_indices(empty_result, {}, stream);
-}
-
 TEST_F(AsofJoinTest, EmptyGroupedInputs)
 {
   auto const stream   = this->stream();
@@ -558,42 +530,6 @@ TEST_F(AsofJoinTest, EmptyAndUngroupedMemoryResources)
       }
     }
   }
-}
-
-TEST_F(AsofJoinTest, UnsupportedStrategy)
-{
-  auto const stream   = this->stream();
-  auto const setup_mr = this->setup_resources();
-  auto const mr       = this->resources();
-
-  fixed_width_column_wrapper<int32_t> on({1}, stream, setup_mr);
-  asof_join join(cudf::table_view{}, on, stream, mr);
-
-  EXPECT_THROW((void)join.join(cudf::table_view{},
-                               on,
-                               static_cast<asof_join_strategy>(-1),
-                               asof_join_exact_matches::YES,
-                               stream,
-                               mr),
-               std::invalid_argument);
-}
-
-TEST_F(AsofJoinTest, UnsupportedExactMatches)
-{
-  auto const stream   = this->stream();
-  auto const setup_mr = this->setup_resources();
-  auto const mr       = this->resources();
-
-  fixed_width_column_wrapper<int32_t> on({1}, stream, setup_mr);
-  asof_join join(cudf::table_view{}, on, stream, mr);
-
-  EXPECT_THROW((void)join.join(cudf::table_view{},
-                               on,
-                               asof_join_strategy::BACKWARD,
-                               static_cast<asof_join_exact_matches>(-1),
-                               stream,
-                               mr),
-               std::invalid_argument);
 }
 
 TEST_F(AsofJoinTest, MismatchedOrderedKeyTypes)

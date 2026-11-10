@@ -80,6 +80,10 @@
 - Owning vectors passed by copy/reference instead of being moved (transferring ownership)
 - Missing `[[nodiscard]]` on side-effect-free functions returning non-void results
 
+### Code Reuse
+- New code that reimplements logic already available in CUB, Thrust, libcu++, cuco, or libcudf (public API, `cudf::detail`, `cudf_test`, or benchmark helpers) without a measured performance, build-time, or binary-size justification stated in the PR
+- New code beyond what the change needs: dead code, unused parameters, template flexibility with a single user, or a second code path for a special case without a measurement
+
 ### Concurrency & Stream Safety
 - Stream and MR parameters not propagated across all internal APIs
 - Implicit CUDA default stream use outside tests, benchmarks, and public API default parameters
@@ -116,7 +120,7 @@
 - Prefer `cuda::std` / libcudacxx utilities in device-callable code and C++ standard library algorithms for host-only code
 - Prefer kernel fusion when multiple outputs depend on the same input traversal
 - Treat each kernel launch and memory pass as expensive; minimize redundant global memory reads and writes when operations can be combined without sacrificing clarity or reuse
-- Treat custom kernels and raw loops as justified only when existing CUB, Thrust, STL, or libcudf utilities cannot express the operation without a correctness or substantial performance cost
+- Treat custom kernels and raw loops as justified only when existing CUB, Thrust, STL, or libcudf utilities cannot express the operation without a correctness cost or a measured performance, build-time, or binary-size cost
 
 ## Quality Threshold
 

@@ -66,11 +66,45 @@ For each new test:
 - Check whether the case belongs in an existing type list (`TYPED_TEST_SUITE`), `INSTANTIATE_TEST_SUITE_P` list, or `@pytest.mark.parametrize` list instead of a new test function.
 - Report a duplicate only when you can cite the covering test by name and `file:line`, and say what, if anything, the new test adds beyond it (keep that part, drop the rest).
 
-6. **Analyze the changes** against the checklist below, reading relevant source files as needed for context. Apply the recurring themes from step 4.
+6. **Check that new code is necessary and minimal.** cudf introduces new code only when nothing existing does the job, and keeps what it adds concise and clean. Most new kernels, loops, and helpers in a diff already have an equivalent in libcudf or CCCL.
 
-7. **Produce a structured review** using the output format at the bottom.
+```bash
+# Leads: new files, kernels, functions, and types in the diff. Read the diff itself for lambdas and loops.
+gh pr diff <PR_NUMBER> --repo NVIDIA/cudf | grep -nE '^\+\+\+ b/|^\+\s*(CUDF_KERNEL|__global__|template|struct|class|inline|constexpr|def )'
 
-8. **Dump the structured review** to `.agents/reviews/<PR_NUMBER>/review.md`
+# Where the existing code lives. rapids-cmake fetches CCCL and cuco during the CMake configure;
+# without a build, clone them shallowly or use the docs at https://nvidia.github.io/cccl/.
+ls cpp/build/_deps/cccl-src cpp/build/_deps/cuco-src
+grep -rn "<operation or symbol>" cpp/include/cudf/detail cpp/include/cudf/utilities cpp/include/cudf_test cpp/benchmarks/common
+grep -rln "<operation or symbol>" cpp/build/_deps/cccl-src/cub/cub/device cpp/build/_deps/cccl-src/thrust/thrust cpp/build/_deps/cccl-src/libcudacxx/include/cuda
+```
+
+For each new code unit, name the operation it performs and look for an existing implementation, starting with:
+
+| New code does | Look first in |
+|---|---|
+| Reduce, scan, select or partition, histogram, sort, merge, run-length encode, top-k, segmented versions, batched copies | CUB `cub/device/device_*.cuh`, then Thrust `thrust/*.h` |
+| Block- or warp-level cooperation inside a kernel | CUB `cub/block/`, `cub/warp/`, libcu++ `cuda/warp` |
+| Integer math, rounding, overflow, bit tricks, popcount | libcu++ `cuda/cmath`, `cuda/numeric`, `cuda/std/bit`; cudf `detail/utilities/integer_utils.hpp`, `detail/integral_math.cuh`, `utilities/bit.hpp` |
+| Atomics, iterators, functors | libcu++ `cuda/atomic`, `cuda/iterator`, `cuda/functional`; cudf `detail/utilities/device_atomics.cuh`, `detail/iterator.cuh`, `detail/indexalator.cuh`, `detail/offsets_iterator.cuh`, `detail/utilities/device_operators.cuh` |
+| Counting, building, or copying null masks | cudf `detail/null_mask.hpp` and `.cuh`, `detail/valid_if.cuh` |
+| Hash tables, filters, hash functions | cuco `cuco/static_{set,map,multiset,multimap}.cuh`, `cuco/hash_functions.cuh`; cudf `detail/cuco_helpers.hpp`, `hashing/detail/` |
+| Gather, scatter, conditional copy, sizes to offsets | cudf `detail/gather.cuh`, `scatter.cuh`, `copy_if.cuh`, `copy_if_else.cuh`, `copy_range.cuh`, `sizes_to_offsets_iterator.cuh` |
+| Buffers, host-device copies, grid sizing | cudf `detail/utilities/vector_factories.hpp`, `buffer_factories.hpp`, `cuda_memcpy.hpp`, `batched_memcpy.hpp`, `batched_memset.hpp`, `grid_1d.cuh` |
+| Strings, lists, text parsing | cudf `strings/detail/`, `lists/detail/`, `cpp/src/io/utilities/` |
+| Test and benchmark helpers | `cudf_test/type_lists.hpp`, `column_wrapper.hpp`, `iterator_utilities.hpp`, `random.hpp`; `cpp/benchmarks/common/generate_input.hpp`, `random_distribution_factory.cuh`, `nvbench_utilities.hpp` |
+| Python helpers | `python/cudf/cudf/utils/`, `python/cudf/cudf/core/_internals/`, `python/cudf_polars/cudf_polars/utils/`; pylibcudf usually already binds the libcudf API |
+
+Rules:
+- New code is acceptable only when nothing in CCCL or cudf does the job. A duplicate or near-duplicate (a copy with small changes) of existing logic is acceptable only for a measured performance gain, build-time reduction, or binary-size reduction, and the PR must show the measurement. A claim without numbers is not a justification; ask for the A/B.
+- Code that is needed should be the smallest clean version: no dead code, no unused parameters or speculative generality, no second derivation of a value computed elsewhere, no extra code path for a special case without a measurement.
+- Report with the existing API named. An unjustified duplicate of a kernel, algorithm, or helper is Critical; a few duplicated lines are a Suggestion. Prior reviews on these files (step 4) often show what reviewers asked to reuse before.
+
+7. **Analyze the changes** against the checklist below, reading relevant source files as needed for context. Apply the recurring themes from step 4.
+
+8. **Produce a structured review** using the output format at the bottom.
+
+9. **Dump the structured review** to `.agents/reviews/<PR_NUMBER>/review.md`
 
 ---
 
@@ -119,6 +153,7 @@ Structure your review as follows:
 
 #### Critical
 - **[file:line]** Description of issue that must be fixed before merge.
+- **[file:line]** Unjustified duplicate: `<new symbol>` reimplements `<existing API>` (`<header>`) with no measured perf, build-time, or binary-size gain stated; use the existing one.
 
 #### Suggestions
 - **[file:line]** Description of improvement to consider.

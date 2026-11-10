@@ -8,13 +8,11 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/json.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_copy.cuh>
@@ -325,7 +323,7 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
 }
 
 std::
-  tuple<rmm::device_uvector<char>, rmm::device_uvector<size_type>, rmm::device_uvector<size_type>>
+  tuple<cuda::device_buffer<char>, cuda::device_buffer<size_type>, cuda::device_buffer<size_type>>
   normalize_whitespace(device_span<char const> d_input,
                        device_span<size_type const> col_offsets,
                        device_span<size_type const> col_lengths,
@@ -342,15 +340,19 @@ std::
     4. Remove characters at output indices from concatenated buffer.
     5. Return updated buffer, segment lengths and updated segment offsets
    */
-  auto inbuf_lengths = cudf::detail::make_device_uvector_async(
-    col_lengths, stream, cudf::get_current_device_resource_ref());
+  cuda::device_buffer<size_type> inbuf_lengths(
+    stream, cudf::get_current_device_resource_ref(), col_lengths.size(), cuda::no_init);
+  CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+    inbuf_lengths.data(), col_lengths.data(), col_lengths.size_bytes(), stream));
   std::size_t inbuf_lengths_size = inbuf_lengths.size();
   size_type inbuf_size =
     thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    inbuf_lengths.begin(),
                    inbuf_lengths.end());
-  rmm::device_uvector<char> inbuf(inbuf_size, stream);
-  rmm::device_uvector<size_type> inbuf_offsets(inbuf_lengths_size, stream);
+  cuda::device_buffer<char> inbuf(
+    stream, cudf::get_current_device_resource_ref(), inbuf_size, cuda::no_init);
+  cuda::device_buffer<size_type> inbuf_offsets(
+    stream, cudf::get_current_device_resource_ref(), inbuf_lengths_size, cuda::no_init);
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          inbuf_lengths.begin(),
                          inbuf_lengths.end(),
@@ -437,7 +439,9 @@ std::
                     inbuf.end(),
                     stencil.begin(),
                     cuda::std::identity{});
-  inbuf.resize(inbuf_size - num_deletions, stream);
+  // inbuf keeps `num_deletions` stale bytes at the tail; the returned offsets and lengths bound
+  // the normalized data.
+  // TODO: Resize again once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
 
   thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          inbuf_lengths.begin(),

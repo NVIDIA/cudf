@@ -614,45 +614,142 @@ def test_parquet_reader_spark_decimals(datadir):
 
 
 def test_parquet_reader_file_logical_type(datadir):
-    # Written with arrow-rs: a `file` FILE group and a legacy `repeated group
-    # files (FILE)`. pyarrow cannot open FILE groups yet, so read from a buffer
-    # to skip its dataset discovery.
+    # Written with arrow-rs (parquet 60.1.0), one column per way a FILE value
+    # can appear: inline_only {inline, content_type}, external_whole {uri,
+    # content_type, checksum}, external_prefix {uri, size}, external_range
+    # {uri, offset, size}, inline_and_locator (all six fields, inline first),
+    # repeated_file (legacy `repeated group (FILE)`), file_list (list<FILE>),
+    # nested {id, file: FILE} and required_file (a REQUIRED FILE group).
+    # pyarrow cannot open FILE groups yet, so read from a buffer to skip its
+    # dataset discovery.
     fname = datadir / "file_logical_type.parquet"
     got = cudf.read_parquet(BytesIO(fname.read_bytes()))
 
     # FILE groups read as structs with the `inline` child read as binary
-    inline_type = pa.list_(pa.uint8())
-    file_type = pa.struct(
-        [
-            ("uri", pa.string()),
-            ("offset", pa.int64()),
-            ("size", pa.int64()),
-            ("inline", inline_type),
-        ]
-    )
-    files_type = pa.list_(
-        pa.struct([("uri", pa.string()), ("inline", inline_type)])
-    )
+    field_types = {
+        "uri": pa.string(),
+        "offset": pa.int64(),
+        "size": pa.int64(),
+        "content_type": pa.string(),
+        "checksum": pa.string(),
+        "inline": pa.list_(pa.uint8()),
+    }
+
+    def file_type(*names):
+        return pa.struct([(name, field_types[name]) for name in names])
+
+    sha = "SHA-256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    archive = "s3://bucket/archive.tar"
+    columns = {
+        "inline_only": (
+            file_type("inline", "content_type"),
+            [
+                {"inline": list(b"hello"), "content_type": "text/plain"},
+                {"inline": [], "content_type": "application/octet-stream"},
+                None,
+                {"inline": [0x89, 0x50, 0x4E, 0x47]},
+            ],
+        ),
+        "external_whole": (
+            file_type("uri", "content_type", "checksum"),
+            [
+                {
+                    "uri": "s3://bucket/a.png",
+                    "content_type": "image/png",
+                    "checksum": sha,
+                },
+                {"uri": ""},
+                {
+                    "uri": "https://example.com/b.pdf",
+                    "content_type": "application/pdf",
+                },
+                None,
+            ],
+        ),
+        "external_prefix": (
+            file_type("uri", "size"),
+            [
+                {"uri": "file:///data/blob.bin", "size": 1024},
+                {"uri": "file:///data/empty.bin", "size": 0},
+                None,
+                {"uri": "s3://bucket/c.bin"},
+            ],
+        ),
+        "external_range": (
+            file_type("uri", "offset", "size"),
+            [
+                {"uri": archive, "offset": 0, "size": 512},
+                {"uri": archive, "offset": 512, "size": 2048},
+                {"uri": archive, "offset": 4096, "size": 0},
+                None,
+            ],
+        ),
+        "inline_and_locator": (
+            file_type(
+                "inline", "checksum", "size", "content_type", "offset", "uri"
+            ),
+            [
+                {
+                    "inline": list(b"hello"),
+                    "checksum": sha,
+                    "size": 5,
+                    "content_type": "text/plain",
+                    "offset": 0,
+                    "uri": "s3://bucket/hello.txt",
+                },
+                None,
+                {
+                    "inline": [],
+                    "size": 0,
+                    "offset": 0,
+                    "uri": "s3://bucket/empty.txt",
+                },
+                {"inline": [0xFF]},
+            ],
+        ),
+        "repeated_file": (
+            pa.list_(file_type("uri", "inline")),
+            [
+                [{"uri": "s3://x/1"}, {"inline": list(b"a")}],
+                [],
+                [{"inline": [0xFE]}],
+                [{"uri": "s3://x/2"}],
+            ],
+        ),
+        "file_list": (
+            pa.list_(file_type("uri", "size")),
+            [
+                [{"uri": "s3://l/1", "size": 10}, None],
+                None,
+                [],
+                [{"uri": "s3://l/2"}],
+            ],
+        ),
+        "nested": (
+            pa.struct(
+                [("id", pa.int32()), ("file", file_type("uri", "inline"))]
+            ),
+            [
+                {"id": 1, "file": {"uri": "s3://n/1"}},
+                {"id": 2, "file": None},
+                None,
+                {"id": 4, "file": {"inline": list(b"xyz")}},
+            ],
+        ),
+        "required_file": (
+            file_type("uri", "inline"),
+            [
+                {"uri": "s3://r/0"},
+                {"inline": list(b"r1")},
+                {"uri": "s3://r/2"},
+                {"uri": "", "inline": []},
+            ],
+        ),
+    }
     expect = pa.table(
         {
-            "file": pa.array(
-                [
-                    {"uri": "s3://bucket/a.png", "offset": 0, "size": 3},
-                    {"inline": [0xFF, 0x00, 0x01]},
-                    None,
-                    {"uri": "s3://bucket/b.bin", "offset": 16, "size": 4},
-                ],
-                type=file_type,
-            ),
-            "files": pa.array(
-                [
-                    [{"uri": "s3://x/1"}, {"inline": [0x61]}],
-                    [],
-                    [{"inline": [0xFE]}],
-                    [{"uri": "s3://x/2"}],
-                ],
-                type=files_type,
-            ),
+            name: pa.array(rows, type=type_)
+            for name, (type_, rows) in columns.items()
         }
     )
 

@@ -54,7 +54,6 @@ test = [
     "fastavro>=0.22.9",
     "hypothesis>=6.131.7",
     "msgpack",
-    "numba-cuda>=0.22.2,<0.31.0",
     "pytest-benchmark",
     "pytest-cases>=3.8.2",
     "pytest-cov",

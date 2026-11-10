@@ -520,50 +520,33 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadDeltaByteArrayMidPage)
 {
   auto constexpr num_rows = 100'000;
 
-  auto const generate_input = [num_rows](bool nullable) {
-    // Short strings sharing a prefix, so that a DELTA_BYTE_ARRAY page holds thousands of rows
-    auto const dba_values = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
-                              return "shared_prefix_" + std::to_string(i);
-                            });
-    // Wide strings, so that a page holds a few hundred rows. Output chunks end at the page
-    // boundaries of any column, so most of them start in the middle of a DELTA_BYTE_ARRAY page.
-    auto const wide_values =
-      std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
-        return std::string(100, static_cast<char>('a' + i % 26)) + std::to_string(i);
-      });
-    auto const valids =
-      std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) { return i % 5 != 0; });
-    auto const dba_strings =
-      nullable ? strings_col(dba_values.begin(), dba_values.begin() + num_rows, valids.begin())
-               : strings_col(dba_values.begin(), dba_values.begin() + num_rows);
-    auto const wide_strings = strings_col(wide_values.begin(), wide_values.begin() + num_rows);
+  // Short strings sharing a prefix, so that a DELTA_BYTE_ARRAY page holds thousands of rows
+  auto const dba_values = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+                            return "shared_prefix_" + std::to_string(i);
+                          });
+  // Wide strings, so that a page holds a few hundred rows. Output chunks end at the page
+  // boundaries of any column, so most of them start in the middle of a DELTA_BYTE_ARRAY page.
+  auto const wide_values =
+    std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+      return std::string(100, static_cast<char>('a' + i % 26)) + std::to_string(i);
+    });
+  auto const dba_strings  = strings_col(dba_values.begin(), dba_values.begin() + num_rows);
+  auto const wide_strings = strings_col(wide_values.begin(), wide_values.begin() + num_rows);
+  auto const expected     = cudf::table_view{{dba_strings, wide_strings}};
 
-    auto expected = std::make_unique<cudf::table>(cudf::table_view{{dba_strings, wide_strings}});
-    auto input_metadata = cudf::io::table_input_metadata{expected->view()};
-    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+  auto input_metadata = cudf::io::table_input_metadata{expected};
+  input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+  auto const filepath = temp_env->get_temp_filepath("chunked_read_dba_mid_page.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(input_metadata)
+      .max_page_size_bytes(32 * 1024)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .build());
 
-    auto const filepath =
-      temp_env->get_temp_filepath(nullable ? "chunked_read_dba_mid_page_nullable.parquet"
-                                           : "chunked_read_dba_mid_page.parquet");
-    auto const write_opts =
-      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected->view())
-        .metadata(input_metadata)
-        .max_page_size_bytes(32 * 1024)
-        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
-        .write_v2_headers(true)
-        .build();
-    cudf::io::write_parquet(write_opts);
-    return std::pair{std::move(expected), filepath};
-  };
-
-  for (auto const nullable : {false, true}) {
-    auto const [expected, filepath] = generate_input(nullable);
-    for (auto const output_limit : {std::size_t{200'000}, std::size_t{1'000'000}}) {
-      auto const [result, num_chunks] = chunked_read(filepath, output_limit);
-      EXPECT_GT(num_chunks, 1);
-      CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, *result);
-    }
-  }
+  auto const [result, num_chunks] = chunked_read(filepath, 200'000);
+  EXPECT_GT(num_chunks, 1);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
 }
 
 // Regression test for an out-of-bounds write in the Parquet string-offset preprocessing

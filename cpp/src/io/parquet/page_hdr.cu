@@ -988,6 +988,8 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
   }
 
   while (state.parsed < num_entries) {
+    // Read the shared parser state before the sync below; the parser lane updates it later.
+    int32_t const first      = state.parsed;
     int32_t const cursor     = state.cursor;
     bool const refill_window = cursor > state.window_start + state.window_bytes - 4;
     warp.sync();
@@ -1021,8 +1023,6 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
       });
       warp.sync();
     }
-
-    int32_t const first = state.parsed;
 
     // One lane computes the offsets and lengths for the batch
     cg::invoke_one(warp, [&] {

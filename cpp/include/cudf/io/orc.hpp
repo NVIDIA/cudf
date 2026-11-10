@@ -470,10 +470,9 @@ class orc_reader_options_builder {
  *
  * @return The set of columns
  */
-table_with_metadata read_orc(
-  orc_reader_options const& options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+table_with_metadata read_orc(orc_reader_options const& options,
+                             cuda::stream_ref stream   = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief The chunked orc reader class to read an ORC file iteratively into a series of
@@ -537,13 +536,12 @@ class chunked_orc_reader {
    *
    * @throw cudf::logic_error if `output_row_granularity` is non-positive
    */
-  explicit chunked_orc_reader(
-    std::size_t chunk_read_limit,
-    std::size_t pass_read_limit,
-    size_type output_row_granularity,
-    orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  explicit chunked_orc_reader(std::size_t chunk_read_limit,
+                              std::size_t pass_read_limit,
+                              size_type output_row_granularity,
+                              orc_reader_options const& options,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct the reader from input/output size limits along with other ORC reader options.
@@ -559,12 +557,11 @@ class chunked_orc_reader {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource to use for device memory allocation
    */
-  explicit chunked_orc_reader(
-    std::size_t chunk_read_limit,
-    std::size_t pass_read_limit,
-    orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  explicit chunked_orc_reader(std::size_t chunk_read_limit,
+                              std::size_t pass_read_limit,
+                              orc_reader_options const& options,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct the reader from output size limits along with other ORC reader options.
@@ -578,11 +575,10 @@ class chunked_orc_reader {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource to use for device memory allocation
    */
-  explicit chunked_orc_reader(
-    std::size_t chunk_read_limit,
-    orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  explicit chunked_orc_reader(std::size_t chunk_read_limit,
+                              orc_reader_options const& options,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor, destroying the internal reader instance.

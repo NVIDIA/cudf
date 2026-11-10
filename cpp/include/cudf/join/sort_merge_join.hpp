@@ -88,8 +88,8 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   inner_join(table_view const& left,
-             cuda::stream_ref stream           = cudf::get_default_stream(),
-             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+             cuda::stream_ref stream   = cudf::get_default_stream(),
+             cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns the row indices that can be used to construct the result of performing
@@ -109,8 +109,8 @@ class sort_merge_join {
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
   left_join(table_view const& left,
-            cuda::stream_ref stream           = cudf::get_default_stream(),
-            rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+            cuda::stream_ref stream   = cudf::get_default_stream(),
+            cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -138,8 +138,8 @@ class sort_merge_join {
    */
   std::unique_ptr<join_match_context> inner_join_match_context(
     table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Performs an inner join between a partition of the left table and the right table.
@@ -198,10 +198,9 @@ class sort_merge_join {
    */
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  partitioned_inner_join(
-    cudf::join_partition_context const& context,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+  partitioned_inner_join(cudf::join_partition_context const& context,
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   using impl_type = cudf::detail::sort_merge_join;  ///< Implementation type

@@ -371,19 +371,19 @@ __device__ __forceinline__ bool is_valid_and_true(column_device_view const& col,
 }
 
 /**
- * @brief Computes the updated row mask value such that out_row_mask[i + out_row_mask_offset] =
- * true, iff both in_row_mask[i] and out_row_mask[i + out_row_mask_offset] are valid and true. This
- * is inline with the masking behavior of cudf::apply_retention_mask.
+ * @brief Computes the updated row mask value such that it is true iff both predicate_row_mask[i]
+ * and input_row_mask[i + input_row_mask_offset] are valid and true. This is inline with the
+ * masking behavior of cudf::apply_retention_mask.
  */
-struct row_mask_update_fn {
-  column_device_view in_row_mask;
-  column_device_view out_row_mask;
-  cudf::size_type out_row_mask_offset;
+struct row_masks_and_fn {
+  column_device_view predicate_row_mask;
+  column_device_view input_row_mask;
+  cudf::size_type input_row_mask_offset;
 
   __device__ bool operator()(cudf::size_type row_idx) const noexcept
   {
-    return is_valid_and_true(in_row_mask, row_idx) and
-           is_valid_and_true(out_row_mask, out_row_mask_offset + row_idx);
+    return is_valid_and_true(predicate_row_mask, row_idx) and
+           is_valid_and_true(input_row_mask, input_row_mask_offset + row_idx);
   }
 };
 
@@ -450,7 +450,7 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
     cuda::counting_iterator<cudf::size_type>{0},
     out_row_mask.begin<bool>() + out_row_mask_offset,
     total_rows,
-    row_mask_update_fn{*d_in_row_mask, *d_out_row_mask, out_row_mask_offset},
+    row_masks_and_fn{*d_in_row_mask, *d_out_row_mask, out_row_mask_offset},
     stream.get()));
 
   // Null rows are pruned above so mark the updated range of the output row mask as all valid

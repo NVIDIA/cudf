@@ -6,7 +6,7 @@ files:
   all:
     output: conda
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       arch: [x86_64, aarch64]
     includes:
       - build_base
@@ -18,6 +18,7 @@ files:
       - cuda_version
       - depends_on_cupy
       - depends_on_cuda_bindings
+      - depends_on_cuda_bindings_build
       - depends_on_dask_cuda
       - depends_on_kvikio
       - depends_on_libkvikio
@@ -25,7 +26,6 @@ files:
       - depends_on_libnvcomp
       - depends_on_librapidsmpf
       - depends_on_libucxx
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
       - depends_on_rapids_logger
       - depends_on_rapidsmpf
@@ -54,9 +54,13 @@ files:
       - test_python_cudf_common
       - test_python_pylibcudf
       - test_python_cudf_pandas
-      - test_cudf_pandas_pandas_tests
       - test_python_cudf_polars
       - test_python_s3
+  pandas_tests:
+    output: none
+    includes:
+      - run_common
+      - test_python_pandas_tests
   test_static_build:
     output: none
     includes:
@@ -93,7 +97,6 @@ files:
       - depends_on_cudf
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
   test_cuml:
     output: none
@@ -109,7 +112,7 @@ files:
       - test_python_pylibcudf
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
   test_python_other:
     output: none
     includes:
@@ -125,7 +128,7 @@ files:
       - depends_on_dask_cuda
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - depends_on_dask_cudf
       - depends_on_cudf_kafka
       - depends_on_custreamz
@@ -136,11 +139,6 @@ files:
     output: none
     includes:
       - depends_on_pytorch
-  build_cudf_polars_quent:
-    output: none
-    includes:
-      - py_version
-      - build_cudf_polars_quent
   build_java:
     # Toolchain for building static libcudf from source and packaging the cuDF
     # Java JAR. `depends_on_libcudf` is excluded because the Java build links
@@ -189,6 +187,19 @@ files:
       - develop
       - iwyu
       - py_version
+  test_cpp_debug:
+    output: none
+    includes:
+      - build_all
+      - build_base
+      - build_cpp
+      - cuda
+      - cuda_version
+      - depends_on_libkvikio
+      - depends_on_libnvcomp
+      - depends_on_librmm
+      - depends_on_rapids_logger
+      - test_cpp
   docs:
     output: none
     includes:
@@ -225,7 +236,7 @@ files:
     includes:
       - build_base
       - build_python_common
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - depends_on_pylibcudf
       - depends_on_libcudf
       - depends_on_librmm
@@ -246,7 +257,6 @@ files:
       - depends_on_cuda_bindings
       - depends_on_cupy
       - depends_on_libcudf
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
       - depends_on_pylibcudf_pyarrow
       - depends_on_rmm
@@ -261,6 +271,7 @@ files:
       key: test
     includes:
       - cuda_version
+      - depends_on_numba_cuda
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
@@ -330,6 +341,7 @@ files:
     includes:
       - build_base
       - build_python_common
+      - depends_on_cuda_bindings_build
       - depends_on_libcudf
       - depends_on_librmm
       - depends_on_rmm
@@ -380,6 +392,7 @@ files:
     includes:
       - depends_on_cupy
       - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - pyarrow_run
       - test_python_common
       - test_python_cudf_common
@@ -394,7 +407,7 @@ files:
       table: project.optional-dependencies
       key: pandas-tests
     includes:
-      - test_python_pandas_cudf
+      - test_python_pandas_tests
   py_test_cudf_pandas:
     output: pyproject
     matrix:
@@ -479,6 +492,14 @@ files:
       - depends_on_dask_cuda
       - test_python_common
       - test_python_cudf_polars
+  py_tpch_cudf_polars:
+    output: pyproject
+    pyproject_dir: python/cudf_polars
+    extras:
+      table: project.optional-dependencies
+      key: tpch
+    includes:
+      - test_cudf_polars_tpch
   py_build_dask_cudf:
     output: pyproject
     matrix:
@@ -708,16 +729,20 @@ files:
   test_cudf_pandas_compat:
     output: none
     matrix:
-      cuda: ["12.9", "13.3"]
+      cuda: ["12.9", "13.4"]
       pandas_compat_version: ["3.0"]
     includes:
       - test_cudf_pandas_compat
   test_cudf_polars_compat:
     output: none
     matrix:
-      polars_compat_version: ["2.0"]
+      polars_compat_version: ["2.0", "2.1"]
     includes:
       - test_cudf_polars_compat
+  test_cudf_polars_quent:
+    output: none
+    includes:
+      - depends_on_cudf_polars_quent
 channels:
   - rapidsai-nightly
   - rapidsai
@@ -870,6 +895,10 @@ dependencies:
               cuda: "13.3"
             packages:
               - cuda-version=13.3
+          - matrix:
+              cuda: "13.4"
+            packages:
+              - cuda-version=13.4
       - output_types: [requirements, constraints]
         matrices:
           # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
@@ -931,6 +960,11 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit==13.3.*
+          - matrix:
+              cuda: "13.4"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.4.*
   cuda:
     common:
       - output_types: [conda]
@@ -968,7 +1002,7 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit[nvrtc]==13.*
-              - &nvjitlink_cu13 nvidia-nvjitlink>=13.3,<14
+              - &nvjitlink_cu13 nvidia-nvjitlink>=13.4,<14
           # if no matching matrix selectors passed, list the CUDA 13 requirement
           # (just as a source of documentation, as this populates pyproject.toml in source control)
           - matrix:
@@ -1079,6 +1113,23 @@ dependencies:
           - matrix:
             packages:
               - cuda-bindings>=13.0.2,<14.0
+  # https://github.com/NVIDIA/cuda-python/blob/main/cuda_bindings_13/docs/source/support.rst
+  # The Cython layer of cuda.bindings must be built against CTK headers of the
+  # same or newer major.minor version, so cap the version at what the CUDA 13.4
+  # headers support. The runtime requirement (depends_on_cuda_bindings) is
+  # intentionally looser.
+  depends_on_cuda_bindings_build:
+    specific:
+      - output_types: [conda, requirements, pyproject]
+        matrices:
+          - matrix:
+              cuda: "12.*"
+            packages:
+              - cuda-bindings>=12.9.3,<13.0
+          # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
+          - matrix:
+            packages:
+              - cuda-bindings>=13.0.2,<13.5
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1095,7 +1146,7 @@ dependencies:
           # 'nvidia-ml-py' provides the 'pynvml' module
           - &nvidia_ml_py nvidia-ml-py>=12
           - packaging
-          - polars>=2.0,<2.1
+          - polars>=2.0,<2.2
           - typing_extensions>=4.0.0
   run_cudf_polars_dask:
     common:
@@ -1151,7 +1202,6 @@ dependencies:
             packages:
               - numba==0.60.0
               - *pandas
-              - numba-cuda==0.30.2
           - matrix: {dependencies: "latest"}
             packages:
               - *pandas
@@ -1284,16 +1334,34 @@ dependencies:
           # Used by ci/timeout_with_stack.py utility
           - psutil
           - *pandas
+          # cudf-polars unit tests for iceberg/delta IO
+          - deltalake>=1.6.0
+          - pyiceberg>=0.12.0
+          - sqlalchemy>=2.0.18
+          - pyarrow>=19.0.0
+      - output_types: [requirements, pyproject]
+        packages:
+          - polars[iceberg]
+      - output_types: constraints
+        packages:
+          - polars
       - output_types: conda
         packages:
           # Used by timeout_with_stack.py utility
           - gdb
-  build_cudf_polars_quent:
+          # TODO: Use the conda-forge package once polars-iceberg is available there
+          - pip:
+              - polars-iceberg>=0.1.0
+  test_cudf_polars_tpch:
     common:
-      - output_types: conda
+      - output_types: [conda, requirements, pyproject]
         packages:
-          - maturin>=1.14,<2
-          - rust=1.97
+          - duckdb
+          # duckdb's ``.pl()`` needs pyarrow to hand results to polars
+          - pyarrow>=19.0.0
+          # added lower bound pinning to get pytest-subtests for free
+          - pytest>=9
+          - tpchgen-cli>=3.0.0
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1326,11 +1394,11 @@ dependencies:
               cuda_suffixed: "false"
             packages: [*libcudf_unsuffixed]
   depends_on_numba_cuda:
+    # Test-only: pylibcudf's transform UDF test uses stock ``numba.cuda`` to
+    # compile a device function to PTX. The numba-cuda package provides that
+    # working ``numba.cuda`` (and finds libNVVM from the nvidia CUDA wheels);
+    # cuDF's runtime device code uses numba-cuda-mlir instead.
     common:
-      - output_types: [conda, requirements, constraints, pyproject]
-        packages:
-          # TODO: Remove after https://github.com/rapidsai/build-planning/issues/301 is resolved.
-          - numba>=0.60.0,<0.65.0
       - output_types: [conda]
         packages:
           - &numba_cuda numba-cuda>=0.22.2,<0.31.0
@@ -1746,22 +1814,56 @@ dependencies:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - rapids-logger==0.3.*
-  test_python_pandas_cudf:
+  test_python_pandas_tests:
     common:
-      - output_types: [requirements, constraints, pyproject]
+      - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # dependencies to run pandas tests
-          # https://github.com/pandas-dev/pandas/blob/main/environment.yml
-          # pandas[...] includes all of the required dependencies.
-          # Intentionally excluding `postgresql` because of
-          # installation issues with `psycopg2`.
-          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
-          # Pinned until pandas 3.0.4 releases with matplotlib 3.11 compat fix
-          # (https://github.com/pandas-dev/pandas/pull/65742)
-          - matplotlib<3.11
-          - pytest-reportlog
+          # not in an extra but used in pandas tests
           - ipython
+          # Used in cudf/ci/cudf_pandas_scripts/pandas-tests/run.sh
+          - pytest-reportlog
+      - output_types: [pyproject]
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, clipboard, compression]
+      # Excludes `clipboard` from above because pip builds its PyQt5
+      # dependency from source on arm64, which fails without qmake.
+      - output_types: requirements
+        packages:
+          - pandas[test, pyarrow, performance, computation, fss, excel, parquet, feather, hdf5, spss, html, xml, plot, output-formatting, compression]
+      # constraints do not support extras
+      - output_types: constraints
+        packages:
+          - *pandas
+      # mimics pandas extras for conda
+      - output_types: [conda]
+        packages:
+          - beautifulsoup4
+          - bottleneck
+          - fsspec
+          - html5lib
           - hypothesis>=6.131.7
+          - jinja2
+          - lxml
+          - matplotlib-base
+          - *numba
+          - numexpr
+          - odfpy
+          - openpyxl
+          - pyarrow
+          - pyqt
+          - pyreadstat
+          - pytables
+          - pytest<9.1.0
+          - pytest-xdist
+          - python-calamine
+          - pyxlsb
+          - qtpy
+          - scipy
+          - tabulate
+          - xarray
+          - xlrd
+          - xlsxwriter
+          - zstandard
   test_python_cudf_pandas:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1774,23 +1876,6 @@ dependencies:
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0
-  # Additional dependencies for running the pandas test suite under cudf.pandas.
-  # Unlike test_python_pandas_cudf (which uses pip extras like pandas[excel]),
-  # conda environments need these listed explicitly.
-  test_cudf_pandas_pandas_tests:
-    common:
-      - output_types: [conda]
-        packages:
-          # Pinned until pandas 3.0.4 releases with matplotlib 3.11 compat fix
-          # (https://github.com/pandas-dev/pandas/pull/65742)
-          - matplotlib-base<3.11
-          - numexpr
-          - odfpy
-          - pyxlsb
-          - python-calamine
-          - pytables
-          - xlrd
-          - xlsxwriter
   depends_on_dask_cuda:
     common:
       - output_types: conda
@@ -1836,11 +1921,16 @@ dependencies:
       - output_types: conda
         packages:
           - cudf-polars==26.12.*,>=0.0.0a0
+  depends_on_cudf_polars_quent:
+    common:
+      - output_types: conda
+        packages:
+          - cudf-polars-quent==26.12.*,>=0.0.0a0
   depends_on_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - narwhals==2.24.0
+          - narwhals==2.28.0
   test_cudf_pandas_compat:
     specific:
       - output_types: [requirements, constraints]
@@ -1860,5 +1950,9 @@ dependencies:
               polars_compat_version: "2.0"
             packages:
               - polars==2.0.*
+          - matrix:
+              polars_compat_version: "2.1"
+            packages:
+              - polars==2.1.*
           - matrix:
             packages:

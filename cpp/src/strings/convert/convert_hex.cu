@@ -12,9 +12,9 @@
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -83,11 +83,10 @@ struct hex_to_integer_fn {
  * The output_column is expected to be one of the integer types only.
  */
 struct dispatch_hex_to_integers_fn {
-  template <typename IntegerType>
+  template <cudf::concepts::integral_not_bool IntegerType>
   void operator()(column_device_view const& strings_column,
                   mutable_column_view& output_column,
                   cuda::stream_ref stream) const
-    requires(cudf::is_integral_not_bool<IntegerType>())
   {
     auto d_results = output_column.data<IntegerType>();
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -99,7 +98,7 @@ struct dispatch_hex_to_integers_fn {
   // non-integer types throw an exception
   template <typename T, typename... Args>
   void operator()(Args&&...) const
-    requires(not cudf::is_integral_not_bool<T>())
+    requires(not cudf::concepts::integral_not_bool<T>)
   {
     CUDF_FAIL("Output for hex_to_integers must be an integer type.");
   }
@@ -164,11 +163,10 @@ struct integer_to_hex_fn {
 };
 
 struct dispatch_integers_to_hex_fn {
-  template <typename IntegerType>
+  template <cudf::concepts::integral_not_bool IntegerType>
   std::unique_ptr<column> operator()(column_view const& input,
                                      cuda::stream_ref stream,
                                      rmm::device_async_resource_ref mr) const
-    requires(cudf::is_integral_not_bool<IntegerType>())
   {
     auto const d_column = column_device_view::create(input, stream);
 
@@ -184,7 +182,7 @@ struct dispatch_integers_to_hex_fn {
   // non-integer types throw an exception
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args...) const
-    requires(not cudf::is_integral_not_bool<T>())
+    requires(not cudf::concepts::integral_not_bool<T>)
   {
     CUDF_FAIL("integers_to_hex only supports integer type columns");
   }

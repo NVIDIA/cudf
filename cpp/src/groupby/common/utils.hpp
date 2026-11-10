@@ -82,7 +82,6 @@ constexpr bool is_hash_aggregation(aggregation::Kind k)
     case aggregation::ARGMIN:
     case aggregation::ARGMAX:
     case aggregation::MEAN:
-    case aggregation::MEAN_SUM:
     case aggregation::M2:
     case aggregation::STD:
     case aggregation::VARIANCE: return true;

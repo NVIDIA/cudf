@@ -195,59 +195,43 @@ std::unique_ptr<cudf::column> by_key(cudf::table_view const& keys, cudf::column_
 
 }  // namespace
 
-TEST_F(groupby_mean_overflow_test, int64)
+template <typename V>
+struct groupby_mean_overflow_typed_test : public cudf::test::BaseFixture {};
+
+using int64_types = cudf::test::Types<int64_t, uint64_t>;
+TYPED_TEST_SUITE(groupby_mean_overflow_typed_test, int64_types);
+
+// Each group's SUM overflows V, but its MEAN fits in double. Nulls are skipped, and a group with
+// only null values has a null MEAN.
+TYPED_TEST(groupby_mean_overflow_typed_test, overflowing_sum)
 {
-  auto constexpr max = std::numeric_limits<int64_t>::max();
-  auto constexpr min = std::numeric_limits<int64_t>::min();
+  using V            = TypeParam;
+  auto constexpr max = std::numeric_limits<V>::max();
+  auto constexpr min = std::numeric_limits<V>::lowest();
 
-  cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 1, 1, 1};
-  cudf::test::fixed_width_column_wrapper<int64_t> vals{max, max, min, min, min};
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys{0,   0,   1,   1,   1,   2,   2,    2,   3};
+  cudf::test::fixed_width_column_wrapper<V> vals{{max, max, min, min, min, max, V{5}, max, V{7}},
+                                                 {1,   1,   1,   1,   1,   1,   0,    1,   0}};
 
-  cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1};
-  cudf::test::fixed_width_column_wrapper<double> expect_vals{static_cast<double>(max),
-                                                             static_cast<double>(min)};
-
-  test_single_agg(
-    keys, vals, expect_keys, expect_vals, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
-}
-
-TEST_F(groupby_mean_overflow_test, uint64)
-{
-  auto constexpr max = std::numeric_limits<uint64_t>::max();
-
-  cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 1};
-  cudf::test::fixed_width_column_wrapper<uint64_t> vals{max, max, uint64_t{7}};
-
-  cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1};
-  cudf::test::fixed_width_column_wrapper<double> expect_vals{static_cast<double>(max), 7.};
-
-  test_single_agg(
-    keys, vals, expect_keys, expect_vals, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
-}
-
-TEST_F(groupby_mean_overflow_test, int64_with_nulls)
-{
-  auto constexpr max = std::numeric_limits<int64_t>::max();
-
-  cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 0, 1, 1};
-  cudf::test::fixed_width_column_wrapper<int64_t> vals{
-    {max, max, int64_t{5}, int64_t{7}, int64_t{7}}, {1, 1, 0, 0, 0}};
-
-  cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1};
-  cudf::test::fixed_width_column_wrapper<double> expect_vals{{static_cast<double>(max), 0.},
-                                                             {1, 0}};
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<double> expect_vals{
+    {static_cast<double>(max), static_cast<double>(min), static_cast<double>(max), 0.},
+    {1,                        1,                        1,                        0}};
+  // clang-format on
 
   test_single_agg(
     keys, vals, expect_keys, expect_vals, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
 }
 
 // Groupby MEAN of a single group matches reduction MEAN, which also accumulates in double.
-TEST_F(groupby_mean_overflow_test, matches_reduction)
+TYPED_TEST(groupby_mean_overflow_typed_test, matches_reduction)
 {
-  auto constexpr max = std::numeric_limits<int64_t>::max();
+  using V            = TypeParam;
+  auto constexpr max = std::numeric_limits<V>::max();
 
   cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 0, 0};
-  cudf::test::fixed_width_column_wrapper<int64_t> vals{max, max, max, int64_t{-3}};
+  cudf::test::fixed_width_column_wrapper<V> vals{max, max, max, V{3}};
 
   auto const reduced = cudf::reduce(vals,
                                     *cudf::make_mean_aggregation<cudf::reduce_aggregation>(),
@@ -302,7 +286,7 @@ TEST_F(groupby_mean_overflow_test, sum_and_mean_of_same_column)
                                  *by_key(result_keys_view, *results[1].results[0]));
 }
 
-// Decimal MEAN keeps the decimal type and shares its accumulator with a requested SUM.
+// Decimal MEAN keeps the decimal type when it is requested together with SUM.
 TEST_F(groupby_mean_overflow_test, decimal_sum_and_mean)
 {
   using decimal64  = numeric::decimal64;

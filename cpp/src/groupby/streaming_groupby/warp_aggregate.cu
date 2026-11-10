@@ -31,13 +31,14 @@ namespace cg   = cooperative_groups;
 
 template <typename T, aggregation::Kind K>
 constexpr bool is_warp_aggregation_supported = [] {
-  if constexpr (cuda::std::same_as<T, numeric::decimal128> && K == aggregation::SUM) {
-    return true;  // This kind has a dedicated existing 128-bit atomic addition.
+  if constexpr (cuda::std::same_as<T, numeric::decimal128> &&
+                (K == aggregation::SUM || K == aggregation::MEAN)) {
+    return true;  // These sums have a dedicated existing 128-bit atomic addition.
   }
   if constexpr (hash::is_reduction_supported<T>(K) &&
-                (K == aggregation::SUM || K == aggregation::SUM_OF_SQUARES ||
-                 K == aggregation::MEAN_SUM || K == aggregation::PRODUCT || K == aggregation::MIN ||
-                 K == aggregation::MAX)) {
+                (K == aggregation::SUM || K == aggregation::MEAN ||
+                 K == aggregation::SUM_OF_SQUARES || K == aggregation::PRODUCT ||
+                 K == aggregation::MIN || K == aggregation::MAX)) {
     using Result = hash::rep_type_t<cudf::detail::target_type_t<T, K>>;
     return sizeof(hash::rep_type_t<T>) <= sizeof(int64_t) && sizeof(Result) <= sizeof(int64_t) &&
            cudf::has_atomic_support<Result>();
@@ -51,17 +52,17 @@ struct aggregation_column {
 };
 
 struct aggregation_columns {
-  aggregation_column sum, min, max, product, sum_of_squares, mean_sum, count_valid, count_all;
+  aggregation_column sum, mean, min, max, product, sum_of_squares, count_valid, count_all;
 
   aggregation_column& operator[](aggregation::Kind kind)
   {
     switch (kind) {
       case aggregation::SUM: return sum;
+      case aggregation::MEAN: return mean;
       case aggregation::MIN: return min;
       case aggregation::MAX: return max;
       case aggregation::PRODUCT: return product;
       case aggregation::SUM_OF_SQUARES: return sum_of_squares;
-      case aggregation::MEAN_SUM: return mean_sum;
       case aggregation::COUNT_VALID: return count_valid;
       case aggregation::COUNT_ALL: return count_all;
       default: CUDF_FAIL("Unsupported kind for warp aggregation");
@@ -176,22 +177,22 @@ CUDF_KERNEL void __launch_bounds__(partial_aggregation_block_size)
   auto const thread_group = cg::labeled_partition(cg::coalesced_threads(), target);
   aggregate_count(thread_group, target, outputs.count_valid);
   if constexpr (is_warp_aggregation_supported<T, aggregation::SUM> ||
+                is_warp_aggregation_supported<T, aggregation::MEAN> ||
                 is_warp_aggregation_supported<T, aggregation::MIN> ||
                 is_warp_aggregation_supported<T, aggregation::MAX> ||
                 is_warp_aggregation_supported<T, aggregation::PRODUCT> ||
-                is_warp_aggregation_supported<T, aggregation::SUM_OF_SQUARES> ||
-                is_warp_aggregation_supported<T, aggregation::MEAN_SUM>) {
+                is_warp_aggregation_supported<T, aggregation::SUM_OF_SQUARES>) {
     // Count-only requests do not need to read or decode the input value.
-    if (outputs.sum.output || outputs.min.output || outputs.max.output || outputs.product.output ||
-        outputs.sum_of_squares.output || outputs.mean_sum.output) {
+    if (outputs.sum.output || outputs.mean.output || outputs.min.output || outputs.max.output ||
+        outputs.product.output || outputs.sum_of_squares.output) {
       auto const value = values(row);
       aggregate_value<T, aggregation::SUM>(value, thread_group, target, outputs.sum);
+      aggregate_value<T, aggregation::MEAN>(value, thread_group, target, outputs.mean);
       aggregate_value<T, aggregation::MIN>(value, thread_group, target, outputs.min);
       aggregate_value<T, aggregation::MAX>(value, thread_group, target, outputs.max);
       aggregate_value<T, aggregation::PRODUCT>(value, thread_group, target, outputs.product);
       aggregate_value<T, aggregation::SUM_OF_SQUARES>(
         value, thread_group, target, outputs.sum_of_squares);
-      aggregate_value<T, aggregation::MEAN_SUM>(value, thread_group, target, outputs.mean_sum);
     }
   }
 }
@@ -206,12 +207,12 @@ struct aggregation_dispatch {
   {
     CUDF_EXPECTS(
       (!outputs.sum.output || is_warp_aggregation_supported<T, aggregation::SUM>) &&
+        (!outputs.mean.output || is_warp_aggregation_supported<T, aggregation::MEAN>) &&
         (!outputs.min.output || is_warp_aggregation_supported<T, aggregation::MIN>) &&
         (!outputs.max.output || is_warp_aggregation_supported<T, aggregation::MAX>) &&
         (!outputs.product.output || is_warp_aggregation_supported<T, aggregation::PRODUCT>) &&
         (!outputs.sum_of_squares.output ||
-         is_warp_aggregation_supported<T, aggregation::SUM_OF_SQUARES>) &&
-        (!outputs.mean_sum.output || is_warp_aggregation_supported<T, aggregation::MEAN_SUM>),
+         is_warp_aggregation_supported<T, aggregation::SUM_OF_SQUARES>),
       "Unsupported type and aggregation kind for warp aggregation");
     auto const values   = column_device_view::create(input, stream, mr.get_temporary_mr());
     auto const num_rows = static_cast<size_type>(targets.size());

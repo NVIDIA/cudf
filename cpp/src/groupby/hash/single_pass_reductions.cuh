@@ -172,9 +172,8 @@ template <aggregation::Kind K>
 struct grouped_reduction_fn {
   template <typename T>
     requires(is_reduction_supported<T>(K) &&
-             (K == aggregation::SUM || K == aggregation::PRODUCT ||
-              K == aggregation::SUM_OF_SQUARES || K == aggregation::MEAN_SUM ||
-              K == aggregation::MIN || K == aggregation::MAX))
+             (K == aggregation::SUM || K == aggregation::MEAN || K == aggregation::PRODUCT ||
+              K == aggregation::SUM_OF_SQUARES || K == aggregation::MIN || K == aggregation::MAX))
   std::unique_ptr<column> operator()(reduction_context const& ctx,
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const

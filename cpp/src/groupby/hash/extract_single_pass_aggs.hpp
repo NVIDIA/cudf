@@ -23,7 +23,8 @@ enum class aggregation_mode { GROUPED_REDUCTION, STREAMING_ATOMIC };
  *
  * During extraction, compound (i.e., multi-pass) aggregations will be replaced by their
  * corresponding single pass aggregations dependencies. For example, a MEAN aggregation will be
- * replaced by a SUM and a COUNT_VALID aggregation.
+ * replaced by a single-pass MEAN, which sums the values in the MEAN result type, and a COUNT_VALID
+ * aggregation. Dividing the sum by the count then finalizes the MEAN in place.
  *
  * For some single-pass aggregations, we also try to reduce overhead by forcing their results
  * columns to be non-nullable. For example, a SUM aggregation needed only as the intermediate result
@@ -50,18 +51,6 @@ std::tuple<table_view,
 extract_single_pass_aggs(std::span<aggregation_request const> requests,
                          cuda::stream_ref stream,
                          aggregation_mode mode = aggregation_mode::GROUPED_REDUCTION);
-
-/**
- * @brief Make the aggregation that accumulates the numerator of a MEAN over `values_type`
- *
- * MEAN accumulates its sum in its own target type, as reduction MEAN does. This is SUM when SUM
- * already accumulates in that type (e.g. decimal, duration, double), so that a requested SUM is
- * shared, and the internal MEAN_SUM otherwise (e.g. integers accumulate in double, not int64).
- *
- * @param values_type The data type of the values, or of the keys for dictionary values
- * @return The aggregation computing the numerator of the MEAN
- */
-std::unique_ptr<aggregation> make_mean_numerator_aggregation(data_type values_type);
 
 /**
  * @brief Get simple aggregations from groupby aggregation

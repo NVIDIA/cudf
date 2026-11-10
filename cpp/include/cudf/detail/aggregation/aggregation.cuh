@@ -65,10 +65,6 @@ struct corresponding_operator<aggregation::SUM> {
   using type = DeviceSum;
 };
 template <>
-struct corresponding_operator<aggregation::MEAN_SUM> {
-  using type = DeviceSum;
-};
-template <>
 struct corresponding_operator<aggregation::SUM_OVERFLOW> {
   using type = DeviceSum;
 };
@@ -127,7 +123,7 @@ CUDF_HOST_DEVICE constexpr bool is_identity_supported()
 {
   return cudf::is_fixed_width<T>() and
          ((k == aggregation::SUM) or (k == aggregation::SUM_OF_SQUARES) or
-          (k == aggregation::MEAN_SUM) or (k == aggregation::MIN) or (k == aggregation::MAX) or
+          (k == aggregation::MEAN) or (k == aggregation::MIN) or (k == aggregation::MAX) or
           (k == aggregation::COUNT_VALID) or (k == aggregation::COUNT_ALL) or
           (k == aggregation::ARGMIN) or (k == aggregation::ARGMAX) or (k == aggregation::STD) or
           (k == aggregation::VARIANCE) or (k == aggregation::M2) or

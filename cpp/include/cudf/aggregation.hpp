@@ -118,7 +118,6 @@ class aggregation {
     MERGE_HISTOGRAM,  ///< merge partial values of HISTOGRAM aggregation
     BITWISE_AGG,      ///< bitwise aggregation on numeric columns
     TOP_K,            ///< top k elements in a group
-    MEAN_SUM,         ///< internal: numerator of MEAN, accumulated in MEAN's target type
     INVALID           ///< invalid aggregation, used as a placeholder when default-constructed
   };
 

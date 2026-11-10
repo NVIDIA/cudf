@@ -139,14 +139,15 @@ struct is_atomic_aggregation_supported {
   {
     if constexpr (cudf::is_nested<T>()) {
       return false;
-    } else if constexpr (std::is_same_v<T, numeric::decimal128> && K == aggregation::SUM) {
+    } else if constexpr (std::is_same_v<T, numeric::decimal128> &&
+                         (K == aggregation::SUM || K == aggregation::MEAN)) {
       // The existing decimal128 SUM implementation provides its own atomic addition.
       return true;
     } else {
       using Target = cudf::detail::target_type_t<T, K>;
       constexpr auto uses_storage =
-        cudf::is_fixed_point<T>() &&
-        (K == aggregation::MIN || K == aggregation::MAX || K == aggregation::SUM);
+        cudf::is_fixed_point<T>() && (K == aggregation::MIN || K == aggregation::MAX ||
+                                      K == aggregation::SUM || K == aggregation::MEAN);
       using DeviceTarget =
         std::conditional_t<uses_storage, cudf::device_storage_type_t<Target>, Target>;
       if constexpr (!std::is_void_v<DeviceTarget>) {
@@ -540,6 +541,8 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
   // The stored aggregation objects already match the physical result order. Re-extracting
   // them here can reorder results or duplicate intermediates shared with explicit requests.
   cudf::detail::result_cache cache(_agg_kinds.size());
+  detail::hash::finalize_means(
+    table_view{cache_keys}, _agg_kinds, agg_gathered->mutable_view(), nullptr, stream);
   detail::hash::finalize_output(table_view{cache_keys}, _agg_objects, agg_gathered, &cache, stream);
 
   // Preserve the user's request order while sharing cached simple and compound results.
@@ -552,9 +555,8 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
       dynamic_cast<groupby_aggregation*>(_requests_clone[i].aggregation->clone().release())});
     auto const& agg = *ar.aggregations.front();
     if (_has_compound_aggs && !cache.has_result(ar.values, agg)) {
-      // Gathered intermediates may lack null masks, so MEAN derives nulls from the counts.
       auto const finalizer =
-        detail::hash::hash_compound_agg_finalizer(ar.values, &cache, true, stream, mr);
+        detail::hash::hash_compound_agg_finalizer(ar.values, &cache, stream, mr);
       // Streaming accumulates raw moments, while ordinary HashCSR caches stable M2 directly.
       if (agg.kind == aggregation::M2 || agg.kind == aggregation::VARIANCE ||
           agg.kind == aggregation::STD) {

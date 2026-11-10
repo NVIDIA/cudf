@@ -6,21 +6,22 @@
 #include "binaryop/compiled/binary_ops.hpp"
 #include "binaryop/compiled/operation.cuh"
 #include "groupby/common/m2_var_std.hpp"
-#include "groupby/common/utils.hpp"
 #include "hash_compound_agg_finalizer.hpp"
 
-#include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
 #include <cudf/detail/gather.hpp>
-#include <cudf/detail/null_mask.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <cuda/buffer>
 #include <cuda/stream>
+
+#include <algorithm>
+#include <ranges>
 
 namespace cudf::groupby::detail::hash {
 
@@ -28,22 +29,45 @@ hash_compound_agg_finalizer::hash_compound_agg_finalizer(column_view const& col,
                                                          cudf::detail::result_cache* cache,
                                                          cuda::stream_ref stream,
                                                          cudf::memory_resources mr)
-  : hash_compound_agg_finalizer(col, cache, col.has_nulls(), stream, mr)
-{
-}
-
-hash_compound_agg_finalizer::hash_compound_agg_finalizer(column_view const& col,
-                                                         cudf::detail::result_cache* cache,
-                                                         bool input_has_nulls,
-                                                         cuda::stream_ref stream,
-                                                         cudf::memory_resources mr)
   : col{col},
     input_type{is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type()},
-    input_has_nulls{input_has_nulls},
     cache{cache},
     stream{stream},
     mr{mr}
 {
+}
+
+void finalize_means(table_view const& values,
+                    host_span<aggregation::Kind const> kinds,
+                    mutable_table_view const& results,
+                    cudf::detail::result_cache const* cache,
+                    cuda::stream_ref stream)
+{
+  auto const columns   = std::views::iota(size_type{0}, results.num_columns());
+  auto const count_agg = make_count_aggregation();
+  for (auto const i : columns) {
+    auto const mean = results.column(i);
+    if (kinds[i] != aggregation::MEAN || mean.is_empty()) { continue; }
+    auto const count = std::ranges::find_if(columns, [&](size_type j) {
+      return kinds[j] == aggregation::COUNT_VALID &&
+             cudf::detail::is_shallow_equivalent(values.column(i), values.column(j));
+    });
+    // An earlier call may have cached the count, e.g. the STD that CORRELATION computes first,
+    // in which case the extraction skipped it.
+    auto const has_cached_count =
+      cache != nullptr && cache->has_result(values.column(i), *count_agg);
+    CUDF_EXPECTS(count != columns.end() || has_cached_count,
+                 "MEAN requires the valid count of its values.");
+    auto const counts = count != columns.end()
+                          ? column_view{results.column(*count)}
+                          : cache->get_result(values.column(i), *count_agg);
+    // The sums already carry the MEAN validity, so divide only their values in place.
+    auto const sums = column_view{mean.type(), mean.size(), mean.head(), nullptr, 0, mean.offset()};
+    auto out =
+      mutable_column_view{mean.type(), mean.size(), mean.head(), nullptr, 0, mean.offset()};
+    cudf::binops::compiled::apply_binary_op<cudf::binops::compiled::ops::Div>(
+      out, sums, counts, false, false, stream);
+  }
 }
 
 // Enables conversion of ARGMIN/ARGMAX into MIN/MAX
@@ -97,56 +121,6 @@ template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MAX>(aggregation const& agg) const
 {
   finalize_minmax_for_compound_types(*this, agg, make_argmax_aggregation<>);
-}
-
-// Specialization for MEAN aggregation
-template <>
-void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation const& agg) const
-{
-  if (cache->has_result(col, agg)) { return; }
-
-  // The numerator is MEAN_SUM when SUM accumulates in a different type than MEAN, and SUM
-  // otherwise (see `make_mean_numerator_aggregation`).
-  auto const mean_sum_agg      = cudf::detail::mean_sum_aggregation{};
-  auto const sum_agg           = make_sum_aggregation();
-  auto const& numerator_agg    = cache->has_result(col, mean_sum_agg)
-                                   ? static_cast<aggregation const&>(mean_sum_agg)
-                                   : *sum_agg;
-  auto const count_agg         = make_count_aggregation();
-  auto const sum_result        = cache->get_result(col, numerator_agg);
-  auto const count_result      = cache->get_result(col, *count_agg);
-  auto const sum_without_nulls = column_view{
-    sum_result.type(), sum_result.size(), sum_result.head(), nullptr, 0, sum_result.offset()};
-
-  // Perform division without any null masks, and generate the null mask for the result later.
-  // This is because the null mask (if exists) is just needed to be copied from the sum result,
-  // and copying is faster than running the `bitmask_and` kernel.
-  auto result = make_fixed_width_column(cudf::detail::target_type(input_type, aggregation::MEAN),
-                                        sum_result.size(),
-                                        mask_state::UNALLOCATED,
-                                        stream,
-                                        mr.get_output_mr());
-  if (result->size() > 0) {
-    auto out = result->mutable_view();
-    cudf::binops::compiled::apply_binary_op<cudf::binops::compiled::ops::Div>(
-      out, sum_without_nulls, count_result, false, false, stream);
-  }
-  // SUM result only has nulls if it is an input aggregation, not intermediate-only aggregation.
-  if (sum_result.has_nulls()) {
-    result->set_null_mask(cudf::detail::copy_bitmask(sum_result, stream, mr.get_output_mr()),
-                          sum_result.null_count());
-  } else if (input_has_nulls) {  // SUM aggregation is only intermediate result, thus it is
-                                 // forced to be non-nullable
-    auto [null_mask, null_count] = make_mask_from_counts(
-      count_result.begin<size_type>(), count_result.end<size_type>(), stream, mr.as_temporary());
-    if (null_count > 0) {
-      result->set_null_mask(
-        cuda::device_buffer<cudf::bitmask_type>{
-          stream, mr.get_output_mr(), null_mask.begin(), null_mask.end()},
-        null_count);
-    }
-  }
-  cache->add_result(col, agg, std::move(result));
 }
 
 // Helper for VARIANCE/STD finalization - shared logic for M2-based computations

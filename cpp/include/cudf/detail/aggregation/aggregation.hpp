@@ -81,18 +81,6 @@ class sum_aggregation final
 };
 
 /**
- * @brief Derived class for the internal numerator of a groupby mean aggregation
- *
- * Accumulates the sum of the values in MEAN's target type. It has no public factory: groupby
- * extracts it from a MEAN request when SUM would accumulate in a different type.
- */
-class mean_sum_aggregation final
-  : public clonable<mean_sum_aggregation>::derived_from<groupby_aggregation> {
- public:
-  mean_sum_aggregation() : aggregation(MEAN_SUM) {}
-};
-
-/**
  * @brief Derived class for specifying a sum_overflow aggregation
  */
 class sum_overflow_aggregation final
@@ -904,13 +892,6 @@ struct target_type_impl<Source, k> {
   using type = Source;
 };
 
-// MEAN's numerator accumulates in MEAN's target type, matching reduction MEAN.
-template <typename Source, aggregation::Kind k>
-  requires(k == aggregation::MEAN_SUM)
-struct target_type_impl<Source, k> {
-  using type = typename target_type_impl<Source, aggregation::MEAN>::type;
-};
-
 constexpr bool is_sum_product_agg(aggregation::Kind k)
 {
   return (k == aggregation::SUM) || (k == aggregation::PRODUCT) ||
@@ -1177,8 +1158,6 @@ CUDF_HOST_DEVICE inline decltype(auto) aggregation_dispatcher(aggregation::Kind 
       return f.template operator()<aggregation::SUM_OF_SQUARES>(std::forward<Ts>(args)...);
     case aggregation::MEAN:
       return f.template operator()<aggregation::MEAN>(std::forward<Ts>(args)...);
-    case aggregation::MEAN_SUM:
-      return f.template operator()<aggregation::MEAN_SUM>(std::forward<Ts>(args)...);
     case aggregation::M2: return f.template operator()<aggregation::M2>(std::forward<Ts>(args)...);
     case aggregation::VARIANCE:
       return f.template operator()<aggregation::VARIANCE>(std::forward<Ts>(args)...);

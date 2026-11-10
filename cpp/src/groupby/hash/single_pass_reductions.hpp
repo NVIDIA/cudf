@@ -28,6 +28,15 @@
 
 namespace cudf::groupby::detail::hash {
 
+/**
+ * @brief Returns whether `kind` can be computed by the fused sums reduction
+ *
+ * The single-pass MEAN is a sum in the MEAN result type, so it fuses like SUM. Fused runs must
+ * still share one accumulator type, which the caller checks.
+ *
+ * @param kind The single-pass aggregation kind
+ * @return `true` if `kind` is one of the fusable additive aggregations
+ */
 constexpr bool is_fusable_sum(aggregation::Kind kind)
 {
   return kind == aggregation::SUM || kind == aggregation::MEAN ||

@@ -88,6 +88,19 @@ struct split_fused_sums_fn {
 /// Computes additive aggregations on one column, including the dependencies of MEAN, M2, VARIANCE
 /// and STD, with a single grouped reduction. The fused aggregations share one accumulator type.
 struct fused_sums_fn {
+  /**
+   * @brief Computes the fused sums of `ctx.values` in the accumulator type of `kinds`
+   *
+   * A run with MEAN accumulates in the MEAN result type (e.g. double for integers), and any other
+   * run in the SUM result type. The caller only fuses kinds that share this accumulator type.
+   *
+   * @param ctx The values and their grouped rows
+   * @param kinds The fused aggregations, each at most once
+   * @param is_intermediate Whether each aggregation is only an intermediate result
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resources used to allocate the returned columns
+   * @return One result column per element of `kinds`, in the same order
+   */
   template <typename T>
     requires(cudf::detail::is_product_supported<T>())
   std::vector<std::unique_ptr<column>> operator()(reduction_context const& ctx,
@@ -99,7 +112,7 @@ struct fused_sums_fn {
     static_assert(
       cuda::std::is_same_v<cudf::detail::target_type_t<T, aggregation::SUM>,
                            cudf::detail::target_type_t<T, aggregation::SUM_OF_SQUARES>>);
-    if (std::find(kinds.begin(), kinds.end(), aggregation::MEAN) != kinds.end()) {
+    if (std::ranges::find(kinds, aggregation::MEAN) != kinds.end()) {
       return compute<T, rep_type_t<cudf::detail::target_type_t<T, aggregation::MEAN>>>(
         ctx, kinds, is_intermediate, stream, mr);
     }
@@ -119,6 +132,17 @@ struct fused_sums_fn {
   }
 
  private:
+  /**
+   * @brief Reduces each group to its sum, sum of squares and valid count in `Result`, then
+   * splits the requested ones into result columns
+   *
+   * Each result except COUNT_VALID is nullable when the values have nulls and it is requested,
+   * with a null for each group without valid values.
+   *
+   * @tparam T The values type
+   * @tparam Result The accumulator type shared by the fused sums
+   * @copydetails operator()
+   */
   template <typename T, typename Result>
   static std::vector<std::unique_ptr<column>> compute(reduction_context const& ctx,
                                                       host_span<aggregation::Kind const> kinds,

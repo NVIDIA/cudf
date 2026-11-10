@@ -375,6 +375,23 @@ TEST_F(StringsContainsTests, Errors)
   EXPECT_THROW(cudf::strings::regex_program::create("[a-C]"), cudf::logic_error);
 }
 
+TEST_F(StringsContainsTests, EmptyInput)
+{
+  auto const input = cudf::test::strings_column_wrapper();
+  auto const sv    = cudf::strings_column_view(input);
+  auto const prog  = cudf::strings::regex_program::create("\\d+");
+
+  auto expected_bool = cudf::test::fixed_width_column_wrapper<bool>{};
+  auto results       = cudf::strings::contains_re(sv, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_bool);
+  results = cudf::strings::matches_re(sv, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_bool);
+
+  auto expected_count = cudf::test::fixed_width_column_wrapper<cudf::size_type>{};
+  results             = cudf::strings::count_re(sv, *prog);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_count);
+}
+
 TEST_F(StringsContainsTests, CountTest)
 {
   std::vector<char const*> h_strings{

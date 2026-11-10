@@ -79,6 +79,23 @@ TEST_F(StringsReplaceRegexTest, WithEmptyPattern)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, strings);
 }
 
+TEST_F(StringsReplaceRegexTest, EmptyInput)
+{
+  auto const input = cudf::test::strings_column_wrapper();
+  auto const sv    = cudf::strings_column_view(input);
+
+  auto prog    = cudf::strings::regex_program::create("\\d+");
+  auto results = cudf::strings::replace_re(sv, *prog, cudf::string_scalar("#"));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, input);
+
+  results = cudf::strings::replace_re(sv, *prog, cudf::string_scalar("#"), 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, input);
+
+  prog    = cudf::strings::regex_program::create("(\\d+)");
+  results = cudf::strings::replace_with_backrefs(sv, *prog, "<\\1>");
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, input);
+}
+
 TEST_F(StringsReplaceRegexTest, MultiReplacement)
 {
   cudf::test::strings_column_wrapper input({"aba bcd aba", "abababa abababa"});

@@ -52,9 +52,9 @@ namespace strings {
  */
 std::unique_ptr<column> capitalize(
   strings_column_view const& input,
-  string_scalar const& delimiters   = string_scalar("", true, cudf::get_default_stream()),
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiters = string_scalar("", true, cudf::get_default_stream()),
+  cuda::stream_ref stream         = cudf::get_default_stream(),
+  cudf::memory_resources mr       = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Modifies first character of each word to upper-case and lower-cases the rest.
@@ -83,11 +83,10 @@ std::unique_ptr<column> capitalize(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Column of titled strings
  */
-std::unique_ptr<column> title(
-  strings_column_view const& input,
-  string_character_types sequence_type = string_character_types::ALPHA,
-  cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> title(strings_column_view const& input,
+                              string_character_types sequence_type = string_character_types::ALPHA,
+                              cuda::stream_ref stream              = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Checks if the strings in the input column are title formatted.
@@ -115,8 +114,8 @@ std::unique_ptr<column> title(
  */
 std::unique_ptr<column> is_title(
   strings_column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

@@ -123,7 +123,7 @@ template <typename index_t>
 std::unique_ptr<column> extract_list_element_impl(lists_column_view lists_column,
                                                   index_t const& index,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   auto const num_lists = lists_column.size();
   if (num_lists == 0) { return empty_like(lists_column.child()); }
@@ -179,7 +179,7 @@ std::unique_ptr<column> extract_list_element_impl(lists_column_view lists_column
 std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              size_type const index,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   return detail::extract_list_element_impl(lists_column, index, stream, mr);
 }
@@ -187,7 +187,7 @@ std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
 std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              column_view const& indices,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   return detail::extract_list_element_impl(lists_column, indices, stream, mr);
 }
@@ -197,12 +197,12 @@ std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
 /**
  * @copydoc cudf::lists::extract_list_element(lists_column_view const&,
  *                                            size_type,
- *                                            rmm::device_async_resource_ref)
+ *                                            cudf::memory_resources)
  */
 std::unique_ptr<column> extract_list_element(lists_column_view const& lists_column,
                                              size_type index,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::extract_list_element(lists_column, index, stream, mr);
@@ -211,12 +211,12 @@ std::unique_ptr<column> extract_list_element(lists_column_view const& lists_colu
 /**
  * @copydoc cudf::lists::extract_list_element(lists_column_view const&,
  *                                            column_view const&,
- *                                            rmm::device_async_resource_ref)
+ *                                            cudf::memory_resources)
  */
 std::unique_ptr<column> extract_list_element(lists_column_view const& lists_column,
                                              column_view const& indices,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(indices.size() == lists_column.size(),

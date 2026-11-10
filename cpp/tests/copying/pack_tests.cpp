@@ -726,6 +726,14 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
     EXPECT_EQ(is_raw, block % 2 == 1) << block;
   }
   expect_materializes_to(input, packed.view());
+
+  // Regions under 4 KiB all stay uncompressed, so the plan uses the uncompressed format.
+  auto const small        = cudf::slice(input, {0, 256}).front();
+  auto const small_plan   = cx::prepare_pack(small, make_options(cx::pack_compression::automatic));
+  auto const small_packed = pack_to_device(small_plan);
+  EXPECT_EQ(small_packed.result.metadata, *cudf::pack(small).metadata);
+  EXPECT_EQ(small_plan.sizes().payload_bytes, small_plan.sizes().uncompressed_payload_bytes);
+  expect_materializes_to(small, small_packed.view());
 }
 
 TEST_F(ExperimentalPackUnpackTest, PerRegionCompression)

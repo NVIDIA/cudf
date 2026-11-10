@@ -3405,18 +3405,24 @@ class pack_plan::impl {
     : input(std::move(source))
   {
     auto const uncompressed_bytes = input.state->get_total_contiguous_size();
-    auto const uses_compression_metadata =
-      configured_regions.empty() ? options.compression != pack_compression::none
-                                 : std::ranges::any_of(configured_regions, [](auto const& region) {
-                                     return region.codec != pack_compression::none;
-                                   });
+    auto const may_compress       = configured_regions.empty()
+                                      ? options.compression != pack_compression::none
+                                      : std::ranges::any_of(configured_regions, [](auto const& region) {
+                                    return region.codec != pack_compression::none;
+                                  });
+    // `automatic` may resolve every region to `none`, which then uses the uncompressed format.
+    std::vector<pack_compression> codecs;
+    if (uncompressed_bytes > 0 && may_compress) {
+      if (layouts.empty()) { layouts = input.state->compute_compression_regions(); }
+      codecs = resolve_codecs(layouts, configured_regions, options.compression);
+    }
 
     auto destination_bytes = uncompressed_bytes;
-    if (uncompressed_bytes > 0 && !uses_compression_metadata) {
+    if (uncompressed_bytes > 0 &&
+        std::ranges::none_of(codecs, [](auto codec) { return codec != pack_compression::none; })) {
       plan_copy_windows(options.staging_buffer_bytes);
     } else if (uncompressed_bytes > 0) {
-      if (layouts.empty()) { layouts = input.state->compute_compression_regions(); }
-      plan_regions(layouts, configured_regions, options);
+      plan_regions(layouts, codecs, configured_regions, options);
       plan_compression_blocks();
       // The capacity bound: the block size table, then a worst-case slot per block.
       auto const table_bytes =
@@ -3601,24 +3607,19 @@ class pack_plan::impl {
   }
 
   /// Resolves the codec and block size of each region, staging the input when needed.
-  void plan_regions(std::span<compression_region_layout const> layouts,
-                    std::span<pack_region const> configured_regions,
-                    pack_options const& options)
+  /// Resolves the codec of each region, selecting a concrete codec for `automatic`.
+  [[nodiscard]] static std::vector<pack_compression> resolve_codecs(
+    std::span<compression_region_layout const> layouts,
+    std::span<pack_region const> configured_regions,
+    pack_compression compression)
   {
     CUDF_EXPECTS(configured_regions.empty() || configured_regions.size() == layouts.size(),
                  "Region configuration does not match the prepared layout");
-    auto const uncompressed_bytes = input.state->get_total_contiguous_size();
-    auto const window_budget      = options.staging_buffer_bytes;
-    auto const raw_block_bytes =
-      std::min(max_raw_block_bytes, window_budget) / split_align * split_align;
-
-    auto const configured_codec = [&](std::size_t index) {
-      return configured_regions.empty() ? options.compression : configured_regions[index].codec;
-    };
     std::vector<pack_compression> codecs(layouts.size());
     std::ranges::transform(
       std::views::iota(std::size_t{0}, layouts.size()), codecs.begin(), [&](auto index) {
-        auto const codec     = configured_codec(index);
+        auto const codec =
+          configured_regions.empty() ? compression : configured_regions[index].codec;
         auto const requested = codec == pack_compression::automatic
                                  ? select_automatic_compression(layouts[index])
                                  : codec;
@@ -3627,6 +3628,22 @@ class pack_plan::impl {
                      std::invalid_argument);
         return requested;
       });
+    return codecs;
+  }
+
+  void plan_regions(std::span<compression_region_layout const> layouts,
+                    std::span<pack_compression const> codecs,
+                    std::span<pack_region const> configured_regions,
+                    pack_options const& options)
+  {
+    auto const uncompressed_bytes = input.state->get_total_contiguous_size();
+    auto const window_budget      = options.staging_buffer_bytes;
+    auto const raw_block_bytes =
+      std::min(max_raw_block_bytes, window_budget) / split_align * split_align;
+
+    auto const configured_codec = [&](std::size_t index) {
+      return configured_regions.empty() ? options.compression : configured_regions[index].codec;
+    };
     // Codecs read their input with aligned loads, so a misaligned source must be staged.
     auto const is_direct = [&](std::size_t index) {
       auto const source = reinterpret_cast<std::uintptr_t>(layouts[index].direct_source);

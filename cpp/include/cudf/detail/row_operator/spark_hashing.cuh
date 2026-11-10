@@ -15,8 +15,8 @@
 #include <cudf/structs/structs_column_device_view.cuh>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/export.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/functional>
@@ -92,7 +92,6 @@ class spark_device_row_hasher {
     }
 
     template <typename T>
-      requires(not cudf::is_nested<T>())
     __device__ result_type operator()(column_device_view const& col,
                                       size_type row_index) const noexcept
     {
@@ -100,8 +99,7 @@ class spark_device_row_hasher {
       return hasher.template operator()<T>(col, row_index);
     }
 
-    template <typename T>
-      requires(cudf::is_nested<T>())
+    template <cudf::concepts::nested T>
     __device__ result_type operator()(column_device_view const& col,
                                       size_type row_index) const noexcept
     {

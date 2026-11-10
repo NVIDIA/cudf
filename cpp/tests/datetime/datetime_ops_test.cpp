@@ -1138,4 +1138,73 @@ TYPED_TEST(TypedDatetimeOpsTest, TestRoundDatetime)
                                  expected_nanosecond);
 }
 
+namespace {
+// Checks rounding of timestamps `count * unit` ticks away from the epoch where `count` does not fit
+// in int32_t; `unit` is the number of ticks in one `freq` and `count` must be even so that ties
+// round (half-to-even) towards the base value.
+template <typename T>
+void test_rounding_large_counts(cudf::datetime::rounding_frequency freq,
+                                int64_t unit,
+                                int64_t count)
+{
+  using namespace cudf::test;
+  using namespace cudf::datetime;
+  using wrapper = fixed_width_column_wrapper<T, int64_t>;
+
+  auto const base = count * unit;
+  auto const half = unit / 2;
+
+  auto const input = wrapper{
+    base, base + 1, base + half, base + unit - 1, -base, -base - 1, -base - half, -base - unit + 1};
+  auto const floored =
+    wrapper{base, base, base, base, -base, -base - unit, -base - unit, -base - unit};
+  auto const ceiled =
+    wrapper{base, base + unit, base + unit, base + unit, -base, -base, -base, -base};
+  auto const rounded = wrapper{base, base, base, base + unit, -base, -base, -base, -base - unit};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*floor_datetimes(input, freq), floored);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*ceil_datetimes(input, freq), ceiled);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*round_datetimes(input, freq), rounded);
+}
+}  // namespace
+
+TEST_F(BasicDatetimeOpsTest, TestRoundingLargeTimestamps)
+{
+  using namespace cudf::datetime;
+
+  // years beyond ~6053 have more than 2^31 minutes since the epoch
+  test_rounding_large_counts<cudf::timestamp_s>(rounding_frequency::MINUTE, 60L, 3'000'000'000L);
+  test_rounding_large_counts<cudf::timestamp_s>(rounding_frequency::HOUR, 3600L, 3'000'000'000L);
+  test_rounding_large_counts<cudf::timestamp_s>(rounding_frequency::DAY, 86400L, 3'000'000'000L);
+
+  test_rounding_large_counts<cudf::timestamp_ms>(
+    rounding_frequency::MINUTE, 60'000L, 3'000'000'000L);
+  test_rounding_large_counts<cudf::timestamp_ms>(
+    rounding_frequency::HOUR, 3'600'000L, 3'000'000'000L);
+  test_rounding_large_counts<cudf::timestamp_ms>(
+    rounding_frequency::DAY, 86'400'000L, 3'000'000'000L);
+
+  test_rounding_large_counts<cudf::timestamp_us>(
+    rounding_frequency::MINUTE, 60'000'000L, 3'000'000'000L);
+  test_rounding_large_counts<cudf::timestamp_us>(
+    rounding_frequency::HOUR, 3'600'000'000L, 2'200'000'000L);
+}
+
+TEST_F(BasicDatetimeOpsTest, TestRoundingLargeTimestampDays)
+{
+  using namespace cudf::test;
+  using namespace cudf::datetime;
+
+  // whole days are already multiples of these frequencies but their minute and hour counts
+  // overflow int32_t
+  auto const input = fixed_width_column_wrapper<cudf::timestamp_D, int32_t>{
+    1'837'000, -1'837'000, 100'000'000, -100'000'000};
+  for (auto freq :
+       {rounding_frequency::MINUTE, rounding_frequency::HOUR, rounding_frequency::DAY}) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*floor_datetimes(input, freq), input);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*ceil_datetimes(input, freq), input);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*round_datetimes(input, freq), input);
+  }
+}
+
 CUDF_TEST_PROGRAM_MAIN()

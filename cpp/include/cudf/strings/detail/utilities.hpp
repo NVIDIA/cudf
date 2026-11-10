@@ -11,8 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
@@ -37,14 +36,14 @@ std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
                                                     rmm::device_async_resource_ref mr);
 
 /**
- * @brief Creates a string_view vector from a strings column.
+ * @brief Creates a string_view buffer from a strings column.
  *
  * @param strings Strings column instance.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned vector's device memory.
- * @return Device vector of string_views
+ * @param mr Device memory resource used to allocate the returned buffer's device memory.
+ * @return Device buffer of string_views
  */
-rmm::device_uvector<string_view> create_string_vector_from_column(
+cuda::device_buffer<string_view> create_string_vector_from_column(
   cudf::strings_column_view const strings,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);

@@ -132,6 +132,15 @@ class BooleanFunction(Expr):
             and plc.traits.is_nested(children[1].dtype.plc_type)
         ):
             raise NotImplementedError("is_in with a nested column haystack")
+        if (
+            self.name is BooleanFunction.Name.IsIn
+            and len(children) == 2
+            and isinstance(children[1], LiteralColumn)
+            and isinstance(children[1].value.dtype, pl.List)
+            and len(children[1].value) > 1
+        ):
+            # One list per row, rather than a single list to test membership of.
+            raise NotImplementedError("is_in with a per-row list haystack")
         if self.name is BooleanFunction.Name.IsClose:
             abs_tol, rel_tol, _ = self.options
             if abs_tol < 0.0:
@@ -573,6 +582,18 @@ class BooleanFunction(Expr):
                 ).astype(needles.dtype, stream=df.stream)
             else:
                 haystack_size = haystack.size
+            if haystack_size and haystack.obj.type().id() == plc.TypeId.EMPTY:
+                # The haystack only contains nulls (e.g. ``is_in([None])``) and
+                # libcudf cannot search a column of type EMPTY.
+                if nulls_equal:
+                    out = plc.unary.is_null(needles.obj, stream=df.stream)
+                else:
+                    out = plc.Column.from_scalar(
+                        plc.Scalar.from_py(py_val=False, stream=df.stream),
+                        needles.size,
+                        stream=df.stream,
+                    ).with_mask(needles.obj.null_mask(), needles.null_count)
+                return Column(out, dtype=self.dtype)
             if haystack_size:
                 result = plc.search.contains(
                     haystack.obj,

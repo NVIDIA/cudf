@@ -23,11 +23,13 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <src/io/parquet/parquet_gpu.hpp>
 
 #include <algorithm>
 #include <bit>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -36,6 +38,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Base test fixture for tests
@@ -799,7 +802,7 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
     // Half the pages (unsigned) or 3/4th the pages (signed) should be filtered out by the page
     // index filter
     auto constexpr expected_surviving_rows =
-      (num_concat * num_ordered_rows) / (std::is_signed_v<T> ? 4 : 2);
+      (num_concat * num_ordered_rows) / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 
@@ -813,7 +816,7 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
     // Half the pages (unsigned) or 3/4th the pages (signed) should be filtered out by the page
     // index filter
     auto constexpr expected_surviving_rows =
-      (num_concat * num_ordered_rows) / (std::is_signed_v<T> ? 4 : 2);
+      (num_concat * num_ordered_rows) / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 
@@ -1714,7 +1717,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterFewLiteralsTyped)
     } else {
       // table[0] == 0 or 100u
       return cudf::numeric_scalar<T>(
-        (100 - 100 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (100 - 100 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 
@@ -1848,7 +1851,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else {
       // table[0] == -100 or 100u
       return cudf::numeric_scalar<T>(
-        (100 - 200 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (100 - 200 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 
@@ -1870,7 +1873,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else {
       // table[0] == -50 or 50u
       return cudf::numeric_scalar<T>(
-        (50 - 100 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (50 - 100 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 
@@ -1892,7 +1895,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
     } else {
       // table[0] == -25 or 25u
       return cudf::numeric_scalar<T>(
-        (25 - 50 * std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
+        (25 - 50 * cuda::std::is_signed_v<T>), true, stream);  // i/100 (-100-100/ 0-200)
     }
   }();
 
@@ -2448,5 +2451,137 @@ TYPED_TEST(ByteArrayDecimalDictTest, FilterRowGroups)
     EXPECT_EQ(
       filter_row_groups_with_dictionaries(*datasources.front(), *reader, options, stream, mr),
       std::vector<cudf::size_type>{1});
+  }
+}
+
+// Dropping the upper-bound ranges from dictionary_pages_byte_ranges_include_unbounded() must give
+// back exactly what dictionary_pages_byte_ranges() returns, whatever the footer leaves out.
+TEST_F(HybridScanFiltersTest, DictionaryPagesByteRangesIncludeUnboundedMatchesExact)
+{
+  auto constexpr num_rows_per_row_group = 20'000;
+  // RG 0 holds a single distinct value so it is dict encoded
+  // RG 1 holds all distinct values so it falls back
+  auto const strings = cudf::detail::make_counting_transform_iterator(0, [](auto const i) {
+    return i < num_rows_per_row_group ? std::string{"dict_value"}
+                                      : "plain_value_" + std::to_string(i - num_rows_per_row_group);
+  });
+
+  auto const column =
+    cudf::test::strings_column_wrapper(strings, strings + 2 * num_rows_per_row_group);
+  auto const table = cudf::table_view{{column}};
+
+  auto const filepath = temp_env->get_temp_filepath("DictionaryIncludeUnbounded.parquet");
+  auto const write_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, table)
+      .row_group_size_rows(num_rows_per_row_group)
+      .dictionary_policy(cudf::io::dictionary_policy::ADAPTIVE)
+      .max_dictionary_size(1024)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .write_v2_headers(false)
+      .build();
+  cudf::io::write_parquet(write_opts);
+
+  auto stream = cudf::get_default_stream();
+
+  auto const datasource = cudf::io::datasource::create(filepath);
+  auto const col0_ref   = cudf::ast::column_name_reference("_col0");
+
+  auto literal_value = cudf::string_scalar("dict_value", true, stream);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto const filter_expression =
+    cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, literal);
+  auto const options =
+    cudf::io::parquet_reader_options::builder().filter(filter_expression).build();
+
+  auto absent_literal_value = cudf::string_scalar("absent_value", true, stream);
+  auto absent_literal       = cudf::ast::literal(absent_literal_value);
+  auto const absent_filter_expression =
+    cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col0_ref, absent_literal);
+  auto const absent_options =
+    cudf::io::parquet_reader_options::builder().filter(absent_filter_expression).build();
+
+  // Footer metadata that a reader built from an edited copy of it can still resolve columns with,
+  // and without the page index. A raw thrift parse leaves the derived schema fields unset, and
+  // `read_parquet_footers` also loads the offset index, so go through a reader built from the
+  // footer bytes instead.
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const footer_reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+    *footer_buffer, cudf::io::parquet_reader_options::builder().build());
+  auto const footer_metadata = footer_reader->parquet_metadata();
+
+  for (auto const drop_stats : {false, true}) {
+    for (auto const hide_offsets : {false, true}) {
+      SCOPED_TRACE("drop_stats=" + std::to_string(drop_stats) +
+                   " hide_offsets=" + std::to_string(hide_offsets));
+
+      auto metadata = footer_metadata;
+      if (drop_stats) {
+        for (auto& row_group : metadata.row_groups) {
+          for (auto& column : row_group.columns) {
+            column.meta_data.encoding_stats.reset();
+          }
+        }
+      }
+      // Leave dictionary_page_offset unset with data_page_offset pointing at the dictionary page,
+      // as some writers do. cudf's writer always sets it, so this is the only way to get such a
+      // footer.
+      if (hide_offsets) {
+        for (auto& row_group : metadata.row_groups) {
+          for (auto& column : row_group.columns) {
+            auto& col_meta = column.meta_data;
+            if (col_meta.dictionary_page_offset <= 0) { continue; }
+            col_meta.data_page_offset       = col_meta.dictionary_page_offset;
+            col_meta.dictionary_page_offset = 0;
+          }
+        }
+      }
+
+      // Never call setup_page_index(), so there is no offset index to bound a page with either
+      auto const reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
+        metadata, cudf::io::parquet_reader_options::builder().build());
+
+      auto const row_group_indices = reader->all_row_groups(options);
+      ASSERT_EQ(row_group_indices.size(), 2);
+
+      auto const exact = reader->dictionary_pages_byte_ranges(row_group_indices, options);
+      auto const unbounded =
+        reader->dictionary_pages_byte_ranges_include_unbounded(row_group_indices, options);
+
+      // RG 0's range is only a bound once its dictionary_page_offset is hidden. RG 1 fell back, so
+      // it has nothing to prune with either way.
+      ASSERT_EQ(unbounded.size(), 2);
+      EXPECT_EQ(unbounded[0].is_exact, not hide_offsets);
+      EXPECT_GT(unbounded[0].byte_range.size(), 0);
+      EXPECT_EQ(unbounded[1].byte_range.size(), 0);
+
+      // Empty the upper-bound ranges in place, since each entry maps to a column chunk, and expect
+      // no ranges at all when nothing is left
+      auto bounded = std::vector<cudf::io::text::byte_range_info>{};
+      std::ranges::transform(unbounded, std::back_inserter(bounded), [](auto const& r) {
+        return r.is_exact ? r.byte_range : cudf::io::text::byte_range_info{};
+      });
+      if (std::ranges::all_of(bounded, [](auto const& r) { return r.size() == 0; })) {
+        bounded.clear();
+      }
+
+      EXPECT_TRUE(std::ranges::equal(bounded, exact, [](auto const& lhs, auto const& rhs) {
+        return lhs.offset() == rhs.offset() and lhs.size() == rhs.size();
+      }));
+
+      // With hidden offsets there are no exact ranges, so there is nothing to prune with
+      if (hide_offsets) {
+        EXPECT_TRUE(exact.empty());
+        continue;
+      }
+
+      // Prune with the exact ranges. RG 1 has no dictionary to prune with, so only an absent
+      // literal prunes RG 0.
+      auto const mr = cudf::get_current_device_resource_ref();
+      EXPECT_EQ(filter_row_groups_with_dictionaries(*datasource, *reader, options, stream, mr),
+                (std::vector<cudf::size_type>{0, 1}));
+      EXPECT_EQ(
+        filter_row_groups_with_dictionaries(*datasource, *reader, absent_options, stream, mr),
+        (std::vector<cudf::size_type>{1}));
+    }
   }
 }

@@ -11,8 +11,7 @@
 #include <cub/device/dispatch/tuning/tuning_reduce.cuh>
 #include <cub/device/dispatch/tuning/tuning_segmented_reduce.cuh>
 #include <cuda/devices>
-
-#include <type_traits>
+#include <cuda/std/type_traits>
 
 namespace cudf {
 namespace reduction {
@@ -31,7 +30,7 @@ struct variance_reduce_policy {
   {
     // TODO: Update to public CUB facilities using policy transformers once that exists.
     auto policy = cub::detail::reduce::
-      policy_selector_from_types<State, std::make_unsigned_t<size_type>, BinaryOp>{}(cc);
+      policy_selector_from_types<State, cuda::std::make_unsigned_t<size_type>, BinaryOp>{}(cc);
     // Combining the states for variance is quite expensive. By using raking block reduce,
     // we use significantly less collective FP64 arithmetic than CUB's default policy.
     policy.multi_tile.reduce_algorithm  = cub::BLOCK_REDUCE_RAKING;

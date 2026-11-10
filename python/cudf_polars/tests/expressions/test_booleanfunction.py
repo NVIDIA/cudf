@@ -303,6 +303,20 @@ def test_expr_is_in_empty_list_with_nulls(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize("needles", [[1, 2, None, 4], [None, None], [1, 2]])
+def test_expr_is_in_only_null(engine: pl.GPUEngine, needles, nulls_equal):
+    ldf = pl.LazyFrame({"a": pl.Series(needles, dtype=pl.Int64())})
+    q = ldf.select(pl.col("a").is_in([None], nulls_equal=nulls_equal))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_expr_is_in_only_nulls_string(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": ["x", None, "y"]})
+    q = ldf.select(pl.col("a").is_in([None, None], nulls_equal=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "needles,haystack",
     [
@@ -467,3 +481,9 @@ def test_boolean_is_sorted(
     )
 
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_boolean_is_in_per_row_list_literal_raises(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"x": [1, 2, 3, 4]})
+    q = ldf.select(pl.col("x").is_in(pl.Series([[1], [2], [3], [4]])))
+    assert_ir_translation_raises(q, engine, NotImplementedError)

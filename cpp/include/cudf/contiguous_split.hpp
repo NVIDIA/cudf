@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <span>
 #include <vector>
@@ -34,7 +35,7 @@ namespace CUDF_EXPORT cudf {
  * The memory for the output views is allocated in a single contiguous `rmm::device_buffer` returned
  * in the `packed_table`. There is no top-level owning table.
  *
- * The returned views of `input` are constructed from a vector of indices, that indicate
+ * The returned views of `input` are constructed from a span of indices, that indicate
  * where each split should occur. The `i`th returned `table_view` is sliced as
  * `[0, splits[i])` if `i`=0, else `[splits[i], input.size())` if `i` is the last view and
  * `[splits[i-1], splits[i]]` otherwise.
@@ -64,15 +65,49 @@ namespace CUDF_EXPORT cudf {
  * @throws std::invalid_argument When the values in the `splits` are 'strictly decreasing'.
  *
  * @param input View of a table to split
- * @param splits A vector of indices where the view will be split
+ * @param splits Span of indices where the view will be split
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr An optional memory resource to use for all returned device allocations
+ * @param mr Memory resource to allocate all returned device memory
  * @return The set of requested views of `input` indicated by the `splits` and the viewed memory
  * buffer
  */
 std::vector<packed_table> contiguous_split(
   cudf::table_view const& input,
+  std::span<size_type const> splits,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Splits a table using a vector of split points.
+ *
+ * @deprecated in 26.12 and will be removed in a future release. Use the std::span overload instead.
+ *
+ * @param input View of a table to split
+ * @param splits Vector of indices where the view will be split
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resource to allocate all returned device memory
+ * @return The set of requested views of `input` indicated by the `splits` and the viewed memory
+ * buffer
+ */
+[[deprecated("Use the std::span overload instead.")]]
+std::vector<packed_table> contiguous_split(
+  cudf::table_view const& input,
   std::vector<size_type> const& splits,
+  cuda::stream_ref stream           = cudf::get_default_stream(),
+  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Splits a table using a list of split points.
+ *
+ * @param input View of a table to split
+ * @param splits Indices where the view will be split
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resource used for returned device allocations
+ * @return Packed tables containing the requested partitions
+ */
+std::vector<packed_table> contiguous_split(
+  cudf::table_view const& input,
+  std::initializer_list<size_type> splits,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

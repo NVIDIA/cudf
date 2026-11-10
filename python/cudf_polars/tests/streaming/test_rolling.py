@@ -3,25 +3,33 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
+from unittest.mock import Mock
 
 import pytest
 
 import polars as pl
-from polars import polars as plrs  # type: ignore[attr-defined]
 from polars.testing import assert_frame_equal
 
 from cudf_streaming.channel_metadata import OrderScheme
 
 from cudf_polars import Translator
+from cudf_polars.engine.core import all_gather_host_data
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
+from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
+from cudf_polars.streaming.actor_graph.collectives.overlap import (
+    OverlapInput,
+    RowCountOverlapPolicy,
+)
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import warns_on_spmd
+from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import ConfigOptions
 
 
@@ -30,6 +38,22 @@ def engine(streaming_engine_factory):
     return streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=2, fallback_mode="warn"),
     )
+
+
+def test_multirank_overlap_input_requires_preparation() -> None:
+    async def run() -> None:
+        rolling_input = OverlapInput(
+            Mock(),
+            Mock(nranks=2),
+            Mock(),
+            RowCountOverlapPolicy(1, 1),
+            duplicated=False,
+            collective_id=0,
+        )
+        with pytest.raises(RuntimeError, match="async context manager"):
+            await anext(aiter(rolling_input))
+
+    asyncio.run(run())
 
 
 def test_rolling_datetime(engine):
@@ -110,10 +134,6 @@ def test_rolling_preserves_index_ordering_metadata(spmd_engine_factory) -> None:
     assert ordering.strict_boundaries is True
 
 
-@pytest.mark.skipif(
-    not hasattr(plrs._expr_nodes, "RollingFunction"),
-    reason="RollingFunction not available in this polars version",
-)
 def test_fixed_size_rolling_with_ordered_passthrough_metadata(
     spmd_engine_factory,
 ) -> None:
@@ -223,10 +243,6 @@ def test_rolling_unsorted_across_chunks_raises(
         q.collect(engine=engine)
 
 
-@pytest.mark.skipif(
-    not hasattr(plrs._expr_nodes, "RollingFunction"),
-    reason="RollingFunction not available in this polars version",
-)
 @pytest.mark.parametrize("center", [False, True])
 def test_fixed_size_rolling_mean(engine, center) -> None:
     df = pl.LazyFrame({"x": [1.0, 2.0, 4.0, 8.0, 16.0]})
@@ -235,10 +251,135 @@ def test_fixed_size_rolling_mean(engine, center) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    not hasattr(plrs._expr_nodes, "RollingFunction"),
-    reason="RollingFunction not available in this polars version",
+@pytest.mark.parametrize(
+    "kind,offset,closed",
+    [
+        *(("range", "-4i", closed) for closed in ("left", "right", "both", "none")),
+        ("range", "0i", "right"),
+        ("count", None, None),
+    ],
+    ids=[
+        "range-left",
+        "range-right",
+        "range-both",
+        "range-none",
+        "range-leading",
+        "count",
+    ],
 )
+@pytest.mark.engine_params(["dask", "ray"])
+def test_rolling_multirank(engine, tmp_path, kind, offset, closed) -> None:
+    source = tmp_path / "rolling.parquet"
+    _write_rolling_source(source)
+    _assert_rolling_result(engine, source, kind, offset, closed)
+
+
+def _write_rolling_source(source, *, orderby_dtype=None) -> None:
+    orderby: list[int] | pl.Series = [0, 1, 2, 3, 3, 4, 5, 6]
+    if orderby_dtype is not None:
+        orderby = pl.Series(orderby, dtype=orderby_dtype)
+    make_partitioned_source(
+        pl.DataFrame(
+            {
+                "orderby": orderby,
+                "values": [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0],
+            }
+        ),
+        source,
+        "parquet",
+        row_group_size=2,
+    )
+
+
+def _assert_rolling_result(engine, source, kind, offset, closed="right") -> None:
+    q = pl.scan_parquet(source)
+    if kind == "range":
+        q = (
+            q.sort("orderby")
+            .rolling("orderby", period="4i", offset=offset, closed=closed)
+            .agg(pl.col("values").sum())
+        )
+    else:
+        q = q.select(pl.col("values").rolling_mean(window_size=3, center=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def _share_source_path(spmd_engine, source) -> str:
+    path = str(source).encode() if spmd_engine.rank == 0 else b""
+    with reserve_op_id() as op_id:
+        return all_gather_host_data(
+            spmd_engine.comm, spmd_engine.context.br(), op_id, path
+        )[0].decode()
+
+
+@pytest.mark.spmd
+@pytest.mark.parametrize(
+    "kind",
+    ["range", "count"],
+)
+def test_rolling_multirank_spmd(spmd_engine, tmp_path, kind) -> None:
+    source = tmp_path / "rolling.parquet"
+    if spmd_engine.rank == 0:
+        _write_rolling_source(source)
+    source = _share_source_path(spmd_engine, source)
+    _assert_rolling_result(spmd_engine, source, kind, "-2i")
+
+
+@pytest.mark.engine_params(["ray"])
+@pytest.mark.parametrize("kind", ["range", "count"])
+def test_rolling_multirank_ray(streaming_engine_factory, tmp_path, kind) -> None:
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, target_partition_size=32)
+    )
+    source = tmp_path / "rolling.parquet"
+    _write_rolling_source(source)
+    _assert_rolling_result(engine, source, kind, "-2i")
+
+
+@pytest.mark.spmd
+def test_rolling_multirank_uint64(spmd_engine, tmp_path) -> None:
+    source = tmp_path / "rolling-uint64.parquet"
+    if spmd_engine.rank == 0:
+        _write_rolling_source(source, orderby_dtype=pl.UInt64)
+    source = _share_source_path(spmd_engine, source)
+    _assert_rolling_result(spmd_engine, source, "range", "-2i")
+
+
+@pytest.mark.spmd
+def test_rolling_uint64_out_of_bounds(spmd_engine, tmp_path) -> None:
+    if spmd_engine.comm.nranks != 2:
+        pytest.skip("This test expects exactly two ranks.")
+
+    source = tmp_path / "rolling-uint64.parquet"
+    if spmd_engine.rank == 0:
+        make_partitioned_source(
+            pl.DataFrame(
+                {
+                    "orderby": pl.Series([2**63, 2**63 + 1], dtype=pl.UInt64),
+                    "values": [1, 2],
+                }
+            ),
+            source,
+            "parquet",
+            row_group_size=1,
+        )
+    source = _share_source_path(spmd_engine, source)
+    q = (
+        pl.scan_parquet(source)
+        .sort("orderby")
+        .rolling("orderby", period="2i")
+        .agg(sum=pl.sum("values"))
+    )
+
+    with pytest.RaisesGroup(
+        pytest.RaisesExc(
+            NotImplementedError,
+            match="outside the signed 64-bit range",
+        )
+    ):
+        q.collect(engine=spmd_engine)
+
+
 def test_fixed_size_rolling_mean_after_drop_nulls(engine) -> None:
     df = pl.LazyFrame({"x": [None, 1.0, 2.0, None, 4.0, 8.0, 16.0]})
     q = df.select(pl.col("x").drop_nulls().rolling_mean(window_size=2))
@@ -246,10 +387,6 @@ def test_fixed_size_rolling_mean_after_drop_nulls(engine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    not hasattr(plrs._expr_nodes, "RollingFunction"),
-    reason="RollingFunction not available in this polars version",
-)
 @pytest.mark.parametrize(
     "within_expression", [False, True], ids=["select", "expression"]
 )
@@ -771,8 +908,7 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
     ).filter(pl.len().over("k") == 2)
     if not isinstance(engine, SPMDEngine):
         # On Dask/Ray the fallback warning fires on worker processes and is
-        # invisible to ``pytest.warns``; the multi-rank fallback also
-        # doesn't preserve row order.
+        # invisible to ``pytest.warns``.
         request.applymarker(
             pytest.mark.xfail(
                 reason="https://github.com/NVIDIA/cudf/issues/22405",
@@ -785,3 +921,19 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
         match=r"over\(...\) inside filter is not supported for multiple partitions.*",
     ):
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.spmd
+def test_over_in_filter_after_concat_preserves_order(streaming_engine_factory) -> None:
+    # https://github.com/NVIDIA/cudf/issues/22405: row order from an ordered
+    # concat must survive the over(...)-in-filter fallback on multi-rank engines.
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, fallback_mode="silent"),
+    )
+    q = pl.concat(
+        [
+            pl.LazyFrame({"k": ["x", "y"], "v": [3, 2]}),
+            pl.LazyFrame({"k": ["x", "y"], "v": [5, 7]}),
+        ]
+    ).filter(pl.len().over("k") == 2)
+    assert_gpu_result_equal(q, engine=engine)

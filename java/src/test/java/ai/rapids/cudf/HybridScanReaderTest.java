@@ -53,7 +53,57 @@ public class HybridScanReaderTest extends CudfTestBase {
   @Test
   void testNullFooterThrows() {
     assertThrows(IllegalArgumentException.class,
-        () -> new HybridScanReader(null, optsForColumns("id")));
+        () -> new HybridScanReader((HostMemoryBuffer) null, optsForColumns("id")));
+  }
+
+  /** Verifies that passing null metadata to the constructor throws IllegalArgumentException. */
+  @Test
+  void testNullMetadataThrows() {
+    assertThrows(IllegalArgumentException.class,
+        () -> new HybridScanReader((HybridScanMetadata) null, optsForColumns("id")));
+  }
+
+  /**
+   * Verifies a reader built from a parsed HybridScanMetadata sees the same footer as one built
+   * from the footer bytes, and keeps the footer alive after the metadata is closed.
+   */
+  @Test
+  void testReaderFromMetadataMatchesReaderFromFooter(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.standard(tmp)) {
+      HybridScanReader fromMetadata;
+      try (HybridScanMetadata metadata =
+               new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS))) {
+        fromMetadata = new HybridScanReader(metadata, optsForColumns(DEFAULT_COLS));
+      }
+      try (HybridScanReader reader = fromMetadata) {
+        assertArrayEquals(open.reader.allRowGroups(), reader.allRowGroups());
+        assertEquals(open.reader.totalRowsInRowGroups(ALL_ROW_GROUPS),
+            reader.totalRowsInRowGroups(ALL_ROW_GROUPS));
+      }
+    }
+  }
+
+  /** Verifies getParquetMetadataAddress() returns a non-null address. */
+  @Test
+  void testParquetMetadataAddress(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.standard(tmp);
+         HybridScanMetadata metadata =
+             new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS))) {
+      assertTrue(metadata.getParquetMetadataAddress() != 0);
+    }
+  }
+
+  /** Verifies a closed HybridScanMetadata rejects further use. */
+  @Test
+  void testClosedMetadataThrows(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.standard(tmp)) {
+      HybridScanMetadata metadata =
+          new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS));
+      metadata.close();
+      assertThrows(IllegalStateException.class, () -> metadata.getParquetMetadataAddress());
+      assertThrows(IllegalStateException.class,
+          () -> new HybridScanReader(metadata, optsForColumns(DEFAULT_COLS)));
+    }
   }
 
   // --------------------------------------------------------------------
@@ -1367,6 +1417,127 @@ public class HybridScanReaderTest extends CudfTestBase {
             HybridScanReader.ReadColumnsMode.ALL_COLUMNS, new int[]{0}, 0L)),
         invocation("setFilter", r -> r.setFilter(null))
     );
+  }
+
+  // --------------------------------------------------------------------
+  // Tests: dictionaryPagesByteRangesIncludeUnbounded() / dictionaryPageLengths()
+  // --------------------------------------------------------------------
+
+  // Cap for how much of an upper-bound range to read while looking for a dictionary page.
+  private static final long MAX_DICT_PAGE_READ = 1L << 20;
+
+  /**
+   * A writer that sets dictionary_page_offset (every cudf-written file) yields only exact ranges,
+   * so the included-unbounded result matches dictionaryPagesByteRanges() one-for-one.
+   */
+  @Test
+  void testIncludeUnboundedMatchesExactForModernWriter(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      int[] rgs = reader.allRowGroups();
+      ByteRange[] exact = reader.dictionaryPagesByteRanges(rgs);
+      DictionaryByteRange[] unbounded = reader.dictionaryPagesByteRangesIncludeUnbounded(rgs);
+      assertEquals(exact.length, unbounded.length, "one range per dict column chunk either way");
+      assertTrue(exact.length > 0, "low-cardinality num_units has dictionary pages");
+      for (int i = 0; i < exact.length; i++) {
+        assertTrue(unbounded[i].isExact(),
+            "cudf sets dictionary_page_offset, so the range is the page itself");
+        assertEquals(exact[i], unbounded[i].byteRange(), "same range as the exact API");
+      }
+    }
+  }
+
+  /**
+   * dictionaryPageLengths() measures the page in each exact range buffer as the whole buffer, since
+   * an exact range is already exactly one dictionary page.
+   */
+  @Test
+  void testDictionaryPageLengthsMeasuresExactPage(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      DictionaryByteRange[] ranges =
+          reader.dictionaryPagesByteRangesIncludeUnbounded(reader.allRowGroups());
+      assertTrue(ranges.length > 0, "expected dictionary pages");
+      HostMemoryBuffer[] host = new HostMemoryBuffer[ranges.length];
+      try {
+        for (int i = 0; i < ranges.length; i++) {
+          ByteRange r = ranges[i].byteRangeToRead(MAX_DICT_PAGE_READ);
+          host[i] = open.file.slice(r.offset(), r.size());
+        }
+        long[] lengths = HybridScanReader.dictionaryPageLengths(host);
+        for (int i = 0; i < ranges.length; i++) {
+          assertEquals(ranges[i].byteRange().size(), lengths[i],
+              "an exact range is exactly one dictionary page");
+        }
+      } finally {
+        for (HostMemoryBuffer b : host) {
+          if (b != null) b.close();
+        }
+      }
+    }
+  }
+
+  /** Bytes that do not begin with a dictionary-page header measure as 0 (nothing to prune with). */
+  @Test
+  void testDictionaryPageLengthsZeroForNonPageBytes() {
+    try (HostMemoryBuffer buf = HostMemoryBuffer.allocate(64)) {
+      for (int i = 0; i < 64; i++) {
+        buf.setByte(i, (byte) 0);
+      }
+      long[] lengths = HybridScanReader.dictionaryPageLengths(new HostMemoryBuffer[]{buf});
+      assertEquals(1, lengths.length);
+      assertEquals(0L, lengths[0], "zeroed bytes are not a dictionary page header");
+    }
+  }
+
+  /**
+   * End-to-end included-unbounded pruning: cap each range, cut it down to its page with
+   * dictionaryPageLengths(), stage the page on the device, and prune. Matches the exact-path result
+   * for this cudf-written fixture (all exact ranges).
+   */
+  @Test
+  void testIncludeUnboundedPrunesSubsetOfGroups(@TempDir Path tmp) throws IOException {
+    try (OpenReader open = OpenReader.pageIndex(tmp).withFilter("num_units", BinaryOperator.EQUAL, 2)) {
+      open.withPageIndex();
+      HybridScanReader reader = open.reader;
+      int[] rgs = reader.allRowGroups();
+      DictionaryByteRange[] ranges = reader.dictionaryPagesByteRangesIncludeUnbounded(rgs);
+      assertTrue(ranges.length > 0, "expected dictionary pages");
+
+      // Cap each range and measure the page in it on the host.
+      ByteRange[] toRead = new ByteRange[ranges.length];
+      for (int i = 0; i < ranges.length; i++) {
+        toRead[i] = ranges[i].byteRangeToRead(MAX_DICT_PAGE_READ);
+      }
+      long[] lengths;
+      HostMemoryBuffer[] host = new HostMemoryBuffer[ranges.length];
+      try {
+        for (int i = 0; i < ranges.length; i++) {
+          host[i] = open.file.slice(toRead[i].offset(), toRead[i].size());
+        }
+        lengths = HybridScanReader.dictionaryPageLengths(host);
+      } finally {
+        for (HostMemoryBuffer b : host) {
+          if (b != null) b.close();
+        }
+      }
+
+      // Trim each range to its measured page (empty when there is none), then stage on the device.
+      ByteRange[] trimmed = new ByteRange[ranges.length];
+      for (int i = 0; i < ranges.length; i++) {
+        trimmed[i] = new ByteRange(toRead[i].offset(), lengths[i]);
+      }
+      DeviceMemoryBuffer[] dictBufs = copyRangesToDevice(open.file, trimmed);
+      try {
+        int[] result = reader.filterRowGroupsWithDictionaryPages(dictBufs, rgs);
+        assertArrayEquals(new int[]{0, 1}, result,
+            "num_units == 2 in g0 dict {1,2} and g1 dict {2,3}, not in g2 dict {3,4}");
+      } finally {
+        closeAll(dictBufs);
+      }
+    }
   }
 
   // --------------------------------------------------------------------

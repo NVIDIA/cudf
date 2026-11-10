@@ -78,7 +78,7 @@ std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cudf::size_type keep_threshold,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto keys_view = input.select(keys);
   if (keys_view.num_columns() == 0 || keys_view.num_rows() == 0) {
@@ -106,7 +106,7 @@ std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cudf::size_type keep_threshold,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::drop_nans(input, keys, keep_threshold, stream, mr);
@@ -117,7 +117,7 @@ std::unique_ptr<table> drop_nans(table_view const& input,
 std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::drop_nans(input, keys, keys.size(), stream, mr);

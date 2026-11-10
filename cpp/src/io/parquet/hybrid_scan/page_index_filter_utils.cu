@@ -58,8 +58,7 @@ namespace {
 /**
  * @brief Functor to read the row mask, i.e. the zeroth Fenwick tree level
  *
- * Nulls are read as retained rows here so that pages aren't accidentally pruned due to
- * unavailable page-level statistics
+ * Null rows are treated as pruned
  */
 struct row_mask_accessor {
   bool const* data;               ///< Row mask data, adjusted for the column view offset
@@ -80,7 +79,7 @@ struct row_mask_accessor {
 
   __device__ bool inline operator()(cudf::size_type row_idx) const noexcept
   {
-    if (null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx)) { return true; }
+    if (null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx)) { return false; }
     return data[row_idx];
   }
 };

@@ -115,6 +115,10 @@ character_flags_table_type const* get_character_flags_table(cuda::stream_ref str
                                           cudaMemcpyDefault,
                                           stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_codepoint_flags));
+    // The copy above is asynchronous and the cached pointer is shared across
+    // callers/streams; synchronize so the table is fully populated before it is
+    // handed out (first-use only).
+    stream.sync();
     return table;
   });
 }
@@ -133,6 +137,10 @@ character_cases_table_type const* get_character_cases_table(cuda::stream_ref str
                                           cudaMemcpyDefault,
                                           stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_cases_table));
+    // The copy above is asynchronous and the cached pointer is shared across
+    // callers/streams; synchronize so the table is fully populated before it is
+    // handed out (first-use only).
+    stream.sync();
     return table;
   });
 }
@@ -151,6 +159,10 @@ special_case_mapping const* get_special_case_mapping_table(cuda::stream_ref stre
                                           cudaMemcpyDefault,
                                           stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_special_case_mappings));
+    // The copy above is asynchronous and the cached pointer is shared across
+    // callers/streams; synchronize so the table is fully populated before it is
+    // handed out (first-use only).
+    stream.sync();
     return table;
   });
 }

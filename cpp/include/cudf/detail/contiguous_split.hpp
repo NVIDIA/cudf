@@ -22,7 +22,7 @@ namespace detail {
  * @copydoc cudf::contiguous_split
  **/
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
-                                           std::vector<size_type> const& splits,
+                                           std::span<size_type const> splits,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr);
 

@@ -90,7 +90,7 @@ void bench_groupby_max_cardinality(nvbench::state& state, nvbench::type_list<Typ
   auto const is_streaming     = state.get_string("api") == "streaming";
 
   // TODO: streaming groupby has no decimal128 MIN/MAX atomic specialization.
-  // The stateless `normal` path falls back to sort-based aggregation, but streaming
+  // The stateless `normal` path uses segmented aggregation, but streaming
   // has no fallback and rejects the request. Re-enable once MIN/MAX are supported.
   if (is_streaming && std::is_same_v<Type, numeric::decimal128>) {
     state.skip("streaming groupby does not support decimal128 MAX/MIN");

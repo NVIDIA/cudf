@@ -212,7 +212,7 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
           auto col_content      = string_col->release();
 
           // convert to uint8 column, strings are currently stored as int8
-          auto data      = col_content.data.release();
+          auto data      = std::move(col_content.data);
           auto char_size = data->size();
 
           CUDF_EXPECTS(char_size < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),

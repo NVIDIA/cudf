@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 import cupy as cp
 import numpy as np
-from numba import cuda
+from numba_cuda_mlir import cuda
 
 from cudf.core._internals import binaryop
 from cudf.core.column import as_column

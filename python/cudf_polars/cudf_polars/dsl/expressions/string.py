@@ -18,6 +18,7 @@ from polars.exceptions import InvalidOperationError
 import pylibcudf as plc
 
 from cudf_polars.containers import Column
+from cudf_polars.containers.column import with_mask_from
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
 from cudf_polars.dsl.utils.reshape import broadcast
@@ -285,10 +286,14 @@ class StringFunction(Expr):
                     "for empty strings"
                 )
         elif self.name is StringFunction.Name.Slice:
-            if not all(
-                isinstance(child, Literal) and not isinstance(child.value, float)
-                for child in self.children[1:]
-            ):
+            offsets = [
+                child for child in self.children[1:] if isinstance(child, Literal)
+            ]
+            if len(offsets) != len(self.children) - 1:
+                raise NotImplementedError(
+                    "Slice only supports literal start and stop values"
+                )
+            if any(isinstance(child.value, float) for child in offsets):
                 raise NotImplementedError(
                     "Slice does not support float literal start and stop values"
                 )
@@ -495,10 +500,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                if column.obj.null_mask():
-                    result = result.with_mask(
-                        column.obj.null_mask(), column.obj.null_count()
-                    )
+                result = with_mask_from(result, column, df.stream)
                 return Column(result, dtype=self.dtype)
             else:
                 return Column(
@@ -575,9 +577,8 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Find:
             literal, _ = self.options
             (child, expr) = self.children
-            plc_column = child.evaluate(df, context=context).obj
-            input_null_mask = plc_column.null_mask()
-            input_null_count = plc_column.null_count()
+            column = child.evaluate(df, context=context)
+            plc_column = column.obj
             if literal:
                 assert isinstance(expr, Literal)
                 plc_column = plc.strings.find.find(
@@ -600,8 +601,9 @@ class StringFunction(Expr):
                     plc_column.size(),
                     stream=df.stream,
                 )
-                plc_column = plc_column.with_mask(input_null_mask, input_null_count)
-                return Column(plc_column, dtype=self.dtype)
+                return Column(
+                    with_mask_from(plc_column, column, df.stream), dtype=self.dtype
+                )
             else:
                 plc_column = plc.strings.findall.find_re(
                     plc_column, self._regex_program, stream=df.stream
@@ -995,10 +997,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                if column.obj.null_mask():
-                    result = result.with_mask(
-                        column.obj.null_mask(), column.obj.null_count()
-                    )
+                result = with_mask_from(result, column, df.stream)
                 return Column(result, self.dtype)
 
             if self.name is StringFunction.Name.Tail:

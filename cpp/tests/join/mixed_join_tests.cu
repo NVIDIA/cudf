@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/ast/expressions.hpp>
@@ -2483,3 +2484,5 @@ TEST_F(MixedJoinNanSemanticsTest, InnerJoinLessEqual)
     sorted_index_pairs(cudf::mixed_inner_join(left_eq, right_eq, left_cond, right_cond, predicate)),
     (pairs{{0, 0}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}));
 }
+
+CUDF_TEST_PROGRAM_MAIN()

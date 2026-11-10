@@ -19,7 +19,7 @@ rmm::device_uvector<size_type> segmented_counts(bitmask_type const* null_mask,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   auto const num_segments = offsets.size() - 1;
 
@@ -33,7 +33,7 @@ rmm::device_uvector<size_type> segmented_counts(bitmask_type const* null_mask,
                                               mr);
   }
 
-  rmm::device_uvector<size_type> valid_counts(num_segments, stream, mr);
+  rmm::device_uvector<size_type> valid_counts(num_segments, stream, mr.get_output_mr());
   thrust::adjacent_difference(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     offsets.begin() + 1,

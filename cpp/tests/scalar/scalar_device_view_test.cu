@@ -118,9 +118,12 @@ TYPED_TEST(FixedPointScalarDeviceViewTest, SetRepresentation)
                                                                                 value);
         CUDF_CHECK_CUDA(0);
 
-        EXPECT_EQ(s.value(), value);
+        ASSERT_EQ(s.is_valid(), valid);
         EXPECT_EQ(s.type().scale(), scale);
-        EXPECT_EQ(s.is_valid(), valid);
+
+        // Reading the stored representation requires a valid scalar.
+        s.set_valid_async(true);
+        EXPECT_EQ(s.value(), value);
       }
     }
   }

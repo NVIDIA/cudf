@@ -517,12 +517,14 @@ void reader_impl::load_next_stripe_data(read_mode mode)
   std::vector<std::future<std::unique_ptr<datasource::buffer>>> host_read_tasks;
   std::vector<std::size_t> host_read_sizes;
   std::vector<uint8_t*> host_read_dsts;
+
   host_read_buffers.reserve(num_reads);
   device_read_tasks.reserve(num_reads);
   device_read_sizes.reserve(num_reads);
   host_read_tasks.reserve(num_reads);
   host_read_sizes.reserve(num_reads);
   host_read_dsts.reserve(num_reads);
+
   cudf::detail::futures_wait_guard device_read_tasks_guard{device_read_tasks};
   cudf::detail::futures_wait_guard host_read_tasks_guard{host_read_tasks};
 

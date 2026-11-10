@@ -1705,6 +1705,29 @@ TEST_F(CsvReaderTest, QuotedValuesInference)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{"abc", "def"}, view.column(4));
 }
 
+TEST_F(CsvReaderTest, MixedBooleanNumbersInference)
+{
+  std::string const buffer =
+    "\"true\",true,\"false\",false\n"
+    "1,1,1.5,1.5\n";
+  cudf::io::csv_reader_options const in_opts =
+    cudf::io::csv_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.c_str()), buffer.size()}})
+      .compression(cudf::io::compression_type::NONE)
+      .header(-1);
+  auto const result = cudf::io::read_csv(in_opts);
+  auto const view   = result.tbl->view();
+
+  ASSERT_EQ(view.num_columns(), 4);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{"true", "1"}, view.column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{"true", "1"}, view.column(1));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{"false", "1.5"},
+                                 view.column(2));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::strings_column_wrapper{"false", "1.5"},
+                                 view.column(3));
+}
+
 TEST_F(CsvReaderTest, UnpairedQuotesInference)
 {
   // Quotes that do not enclose the field are part of the value

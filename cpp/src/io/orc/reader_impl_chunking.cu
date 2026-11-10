@@ -503,19 +503,28 @@ void reader_impl::load_next_stripe_data(read_mode mode)
   // Load stripe data into memory:
   //
 
-  // Storing futures and metadata for device and host reads
-  std::vector<std::future<std::size_t>> device_read_tasks;
-  cudf::detail::futures_wait_guard device_read_tasks_guard{device_read_tasks};
-  std::vector<std::size_t> device_read_expected_sizes;
-
-  std::vector<std::future<std::unique_ptr<datasource::buffer>>> host_read_tasks;
-  cudf::detail::futures_wait_guard host_read_tasks_guard{host_read_tasks};
-  std::vector<std::size_t> host_read_expected_sizes;
-  std::vector<uint8_t*> host_read_dev_dsts;
-
   // Range of the read info (offset, length) to read for the current being loaded stripes.
   auto const [read_begin, read_end] =
     merge_selected_ranges(_file_itm_data.stripe_data_read_ranges, load_stripe_range);
+  auto const num_reads = read_end - read_begin;
+
+  // Storing futures and metadata for device and host reads
+  std::vector<std::unique_ptr<datasource::buffer>> host_read_buffers;
+  std::vector<std::future<std::size_t>> device_read_tasks;
+  std::vector<std::size_t> device_read_expected_sizes;
+  std::vector<std::future<std::unique_ptr<datasource::buffer>>> host_read_tasks;
+  std::vector<std::size_t> host_read_expected_sizes;
+  std::vector<uint8_t*> host_read_dev_dsts;
+
+  host_read_buffers.reserve(num_reads);
+  device_read_tasks.reserve(num_reads);
+  device_read_expected_sizes.reserve(num_reads);
+  host_read_tasks.reserve(num_reads);
+  host_read_expected_sizes.reserve(num_reads);
+  host_read_dev_dsts.reserve(num_reads);
+
+  cudf::detail::futures_wait_guard device_read_tasks_guard{device_read_tasks};
+  cudf::detail::futures_wait_guard host_read_tasks_guard{host_read_tasks};
 
   bool stream_synchronized{false};
 
@@ -542,13 +551,16 @@ void reader_impl::load_next_stripe_data(read_mode mode)
       host_read_dev_dsts.push_back(dst_base + read_info.dst_pos);
     }
   }
-  std::vector<std::unique_ptr<cudf::io::datasource::buffer>> host_read_buffers;
-  host_read_buffers.reserve(host_read_tasks.size());
+
+  // Complete and check all host reads before queuing any copy, so that a failed read cannot
+  // release host buffers that a queued copy still reads from.
   for (std::size_t idx = 0; idx < host_read_tasks.size(); ++idx) {  // if there were host reads
     host_read_buffers.emplace_back(host_read_tasks[idx].get());
-    auto* host_buffer = host_read_buffers.back().get();
-    CUDF_EXPECTS(host_buffer->size() == host_read_expected_sizes[idx],
+    CUDF_EXPECTS(host_read_buffers.back()->size() == host_read_expected_sizes[idx],
                  "Unexpected discrepancy in bytes read.");
+  }
+  for (std::size_t idx = 0; idx < host_read_buffers.size(); ++idx) {
+    auto const& host_buffer = host_read_buffers[idx];
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
       host_read_dev_dsts[idx], host_buffer->data(), host_buffer->size(), _stream));
   }

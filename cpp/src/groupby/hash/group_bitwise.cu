@@ -34,7 +34,7 @@ struct bitwise_group_reduction_functor {
                                      device_span<size_type const> group_labels,
                                      size_type num_groups,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
 
   {
     auto result =
@@ -101,7 +101,7 @@ std::unique_ptr<column> group_bitwise(bitwise_op bit_op,
                                       device_span<size_type const> group_labels,
                                       size_type num_groups,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   return cudf::type_dispatcher(values.type(),
                                bitwise_group_reduction_functor{},

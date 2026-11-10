@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from decimal import localcontext
+from decimal import Decimal, localcontext
 from functools import partial, reduce, singledispatch
 from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
@@ -527,6 +527,10 @@ def _converts_exactly_to_float64(operand: expr.Expr, scale: int) -> bool:
     if isinstance(operand, expr.Literal):
         if operand.value is None:
             return True
+        # Polars gives a Decimal for a decimal literal, but Literal.value is
+        # untyped, so leave anything else to the fallback.
+        if not isinstance(operand.value, Decimal):
+            return False
         with localcontext(prec=2 * _MAX_DECIMAL_DIGITS):
             unscaled = operand.value.scaleb(scale)
             return unscaled == int(float(unscaled))

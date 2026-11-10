@@ -10,7 +10,9 @@ import pytest
 
 import polars as pl
 
-from cudf_polars.dsl import ir
+from cudf_polars.containers import DataType
+from cudf_polars.dsl import expr, ir
+from cudf_polars.dsl.to_ast import _converts_exactly_to_float64
 from cudf_polars.dsl.translate import Translator
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.testing.asserts import (
@@ -392,3 +394,19 @@ def test_ratios_of_decimals_with_a_scale_too_large_for_float64(
         (pl.col("w") / pl.col("y")) > pl.col("a") / pl.col("b")
     )
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (Decimal("1.50"), True),
+        (None, True),
+        (Decimal("90071992547409.93"), False),
+        (150, False),
+        (1.5, False),
+    ],
+)
+def test_decimal_literal_converts_exactly_to_float64(value, expected):
+    # Only a Decimal literal is converted. Any other value is left to the fallback.
+    literal = expr.Literal(DataType(pl.Decimal(38, 2)), value)
+    assert _converts_exactly_to_float64(literal, 2) is expected

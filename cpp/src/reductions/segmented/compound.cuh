@@ -45,7 +45,7 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
                                                      null_policy null_handling,
                                                      size_type ddof,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
   auto d_col              = cudf::column_device_view::create(col, stream);
   auto compound_op        = Op{};
@@ -114,7 +114,7 @@ struct compound_float_output_dispatcher {
                                      null_policy null_handling,
                                      size_type ddof,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ResultType>())
   {
     return compound_segmented_reduction<ElementType, ResultType, Op>(
@@ -127,7 +127,7 @@ struct compound_float_output_dispatcher {
                                      null_policy,
                                      size_type,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref)
+                                     cudf::memory_resources)
     requires(not is_supported_v<ResultType>())
   {
     CUDF_FAIL("Unsupported output data type");
@@ -151,7 +151,7 @@ struct compound_segmented_dispatcher {
                                      null_policy null_handling,
                                      size_type ddof,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ElementType>())
   {
     return cudf::type_dispatcher(output_dtype,
@@ -171,7 +171,7 @@ struct compound_segmented_dispatcher {
                                      null_policy,
                                      size_type,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref)
+                                     cudf::memory_resources)
     requires(not is_supported_v<ElementType>())
   {
     CUDF_FAIL("Compound operators are not supported for non-arithmetic types");

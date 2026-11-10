@@ -19,7 +19,7 @@ std::unique_ptr<cudf::column> segmented_sum_of_squares(column_view const& col,
                                                        cudf::data_type const output_dtype,
                                                        null_policy null_handling,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cudf::memory_resources mr)
 {
   using reducer = simple::detail::column_type_dispatcher<op::sum_of_squares>;
   return cudf::type_dispatcher(

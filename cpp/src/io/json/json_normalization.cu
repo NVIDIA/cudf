@@ -295,7 +295,7 @@ namespace detail {
 void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& indata,
                              char delimiter,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   static constexpr std::int32_t min_out = 0;
@@ -307,8 +307,8 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
       normalize_quotes::TransduceToNormalizedQuotes{}),
     stream);
 
-  rmm::device_buffer outbuf(indata.size() * 2, stream, mr);
-  cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr);
+  rmm::device_buffer outbuf(indata.size() * 2, stream, mr.get_output_mr());
+  cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr.get_output_mr());
   parser.Transduce(reinterpret_cast<SymbolT const*>(indata.data()),
                    static_cast<SymbolOffsetT>(indata.size()),
                    static_cast<SymbolT*>(outbuf.data()),
@@ -328,7 +328,7 @@ std::
                        device_span<size_type const> col_offsets,
                        device_span<size_type const> col_lengths,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cudf::memory_resources mr)
 {
   /*
    * Algorithm:
@@ -397,9 +397,10 @@ std::
                             normalize_whitespace::TransduceToNormalizedWS{}),
                           stream);
 
-  cuda::device_buffer<size_type> outbuf_indices_storage(stream, mr, inbuf.size(), cuda::no_init);
+  cuda::device_buffer<size_type> outbuf_indices_storage(
+    stream, mr.get_output_mr(), inbuf.size(), cuda::no_init);
   auto outbuf_indices = device_span<size_type>{outbuf_indices_storage};
-  cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr);
+  cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr.get_output_mr());
   parser.Transduce(inbuf.data(),
                    static_cast<SymbolOffsetT>(inbuf.size()),
                    cuda::make_discard_iterator(),

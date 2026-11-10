@@ -38,7 +38,7 @@ cuda::device_buffer<size_type> segmented_counts(bitmask_type const* null_mask,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace reduction

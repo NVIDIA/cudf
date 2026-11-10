@@ -42,8 +42,8 @@ namespace CUDF_EXPORT cudf {
  */
 cuda::device_buffer<cudf::bitmask_type> concatenate_masks(
   std::span<column_view const> views,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Concatenates multiple columns into a single column
@@ -59,8 +59,8 @@ cuda::device_buffer<cudf::bitmask_type> concatenate_masks(
  */
 std::unique_ptr<column> concatenate(
   std::span<column_view const> columns_to_concat,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Columns of `tables_to_concat` are concatenated vertically to return a
@@ -88,8 +88,8 @@ std::unique_ptr<column> concatenate(
  */
 std::unique_ptr<table> concatenate(
   std::span<table_view const> tables_to_concat,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

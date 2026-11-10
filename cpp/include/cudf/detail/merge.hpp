@@ -36,7 +36,7 @@ using index_vector = cuda::device_buffer<index_type>;
  *            std::vector<cudf::order> const& column_order,
  *            std::vector<cudf::null_order> const& null_precedence,
  *            cuda::stream_ref stream,
- *            rmm::device_async_resource_ref mr)
+ *            cudf::memory_resources mr)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
@@ -45,7 +45,7 @@ std::unique_ptr<cudf::table> merge(std::vector<table_view> const& tables_to_merg
                                    std::vector<cudf::order> const& column_order,
                                    std::vector<cudf::null_order> const& null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

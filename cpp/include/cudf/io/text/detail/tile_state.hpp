@@ -8,6 +8,7 @@
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -75,12 +76,10 @@ struct scan_tile_state {
   cuda::device_buffer<T> tile_state_partial;
   cuda::device_buffer<T> tile_state_inclusive;
 
-  scan_tile_state(cudf::size_type num_tiles,
-                  cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
-    : tile_status(stream, mr, num_tiles, cuda::no_init),
-      tile_state_partial(stream, mr, num_tiles, cuda::no_init),
-      tile_state_inclusive(stream, mr, num_tiles, cuda::no_init)
+  scan_tile_state(cudf::size_type num_tiles, cuda::stream_ref stream, cudf::memory_resources mr)
+    : tile_status(stream, mr.get_output_mr(), num_tiles, cuda::no_init),
+      tile_state_partial(stream, mr.get_output_mr(), num_tiles, cuda::no_init),
+      tile_state_inclusive(stream, mr.get_output_mr(), num_tiles, cuda::no_init)
   {
   }
 

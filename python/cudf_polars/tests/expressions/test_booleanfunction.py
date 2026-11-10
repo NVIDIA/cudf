@@ -276,6 +276,20 @@ def test_expr_is_in_empty_list_with_nulls(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize("needles", [[1, 2, None, 4], [None, None], [1, 2]])
+def test_expr_is_in_only_null(engine: pl.GPUEngine, needles, nulls_equal):
+    ldf = pl.LazyFrame({"a": pl.Series(needles, dtype=pl.Int64())})
+    q = ldf.select(pl.col("a").is_in([None], nulls_equal=nulls_equal))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_expr_is_in_only_nulls_string(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": ["x", None, "y"]})
+    q = ldf.select(pl.col("a").is_in([None, None], nulls_equal=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "needles,haystack",
     [

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,8 +21,10 @@ from cudf_polars.streaming.benchmarks.utils import (
     RunConfig,
     SQLQueries,
     SQLQueryFiles,
+    drop_file_page_cache_recursively,
     parse_args,
 )
+from tests.streaming.conftest import tpc_streaming_options
 
 
 @pytest.mark.parametrize("query_id", [1, PDSHQueries.num_queries])
@@ -80,6 +84,34 @@ def test_tpcds_cli_parse(query_id: int, tmp_path: Path) -> None:
     assert run_config.qualification
     assert run_config.frontend == "spmd"
     assert run_config.io_mode == "lukewarm"
+
+
+@pytest.mark.parametrize("io_mode", ["cold", "lukewarm"])
+def test_remote_path_single_iteration(
+    io_mode: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = parse_args(
+        [
+            "1",
+            "--path",
+            "s3://bucket/tpcds/scale-1",
+            "--scale",
+            "1",
+            "--frontend",
+            "duckdb",
+            "--iterations",
+            "1",
+            "--io-mode",
+            io_mode,
+        ],
+        num_queries=PDSDSPolarsQueries.num_queries,
+    )
+    vars(args).update({"query_set": PDSDSPolarsQueries.name})
+    run_config = RunConfig.from_args(args)
+    assert run_config.iterations == 1
+    assert run_config.io_mode == io_mode
+    monkeypatch.setitem(sys.modules, "kvikio", None)
+    drop_file_page_cache_recursively(run_config.dataset_path)
 
 
 def test_sql_cli_parse(tmp_path: Path) -> None:
@@ -160,3 +192,19 @@ def test_sql_query_files_path_prefers_padded(tmp_path: Path) -> None:
 def test_sql_queries_duckdb_queries(tmp_path: Path) -> None:
     benchmark = SQLQueries("pdsh", tmp_path)
     assert benchmark().duckdb_queries == SQLQueryFiles(name="pdsh", directory=tmp_path)
+
+
+@pytest.mark.parametrize("given,expected", [(None, True), (True, True), (False, False)])
+def test_tpc_fixture_raise_on_fail(
+    given: bool | None,  # noqa: FBT001
+    expected: bool,  # noqa: FBT001
+) -> None:
+    defaults = {"raise_on_fail": given}
+
+    class Config:
+        def getoption(self, name: str) -> object:
+            return defaults.get(name)
+
+    request = SimpleNamespace(config=Config())
+    options = tpc_streaming_options.__wrapped__(request)  # type: ignore[attr-defined]
+    assert options.to_engine_options()["raise_on_fail"] is expected

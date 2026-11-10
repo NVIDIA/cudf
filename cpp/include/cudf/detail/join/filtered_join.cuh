@@ -181,7 +181,8 @@ class filtered_join {
     cudf::table_view const& left,
     std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
     cudf::device_span<bool> contains_map,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   enum class row_operator_mode : uint8_t { PRIMITIVE, FLAT, NESTED };
 

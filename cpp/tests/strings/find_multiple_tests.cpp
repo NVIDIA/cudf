@@ -94,10 +94,12 @@ TEST_F(StringsFindMultipleTest, ErrorTest)
   // targets must have at least one string
   EXPECT_THROW(cudf::strings::find_multiple(strings_view, empty_view), std::invalid_argument);
   EXPECT_THROW(cudf::strings::contains_multiple(strings_view, empty_view), std::invalid_argument);
+  EXPECT_THROW(cudf::strings::contains_multiple(empty_view, empty_view), std::invalid_argument);
 
   // targets cannot have nulls
   EXPECT_THROW(cudf::strings::find_multiple(strings_view, strings_view), std::invalid_argument);
   EXPECT_THROW(cudf::strings::contains_multiple(strings_view, strings_view), std::invalid_argument);
+  EXPECT_THROW(cudf::strings::contains_multiple(empty_view, strings_view), std::invalid_argument);
 }
 
 TEST_F(StringsFindMultipleTest, MultiContains)

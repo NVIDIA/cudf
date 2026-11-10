@@ -8,15 +8,19 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/stream>
 
+#include <cstdint>
 #include <memory>
-#include <string>
+#include <optional>
+#include <span>
 #include <utility>
+#include <variant>
 
 namespace cudf {
 namespace detail {
@@ -31,9 +35,11 @@ namespace detail {
  * @param right The right table for predicate evaluation
  * @param left_indices Device span of row indices in left table from join
  * @param right_indices Device span of row indices in right table from join
- * @param predicate_code String containing CUDA device code for predicate
+ * @param udf The predicate as CUDA source, PTX (NUL-terminated), or an LTO binary
+ * @param udf_type The source language or LTO binary type of `udf`
+ * @param is_null_aware Whether the predicate receives row inputs as optional values
+ * @param user_data Caller-owned device data passed to the predicate
  * @param join_kind The type of join operation
- * @param is_ptx Whether predicate_code contains PTX assembly
  * @param stream CUDA stream for operations
  * @param mr Device memory resource
  *
@@ -45,9 +51,11 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::table_view const& right,
                         cudf::device_span<size_type const> left_indices,
                         cudf::device_span<size_type const> right_indices,
-                        std::string const& predicate_code,
+                        std::span<uint8_t const> udf,
+                        std::variant<udf_source_type, lto_binary_type> udf_type,
+                        null_aware is_null_aware,
+                        std::optional<void*> user_data,
                         join_kind join_kind,
-                        bool is_ptx,
                         cuda::stream_ref stream,
                         cudf::memory_resources mr);
 

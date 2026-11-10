@@ -18,6 +18,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -2319,56 +2320,108 @@ __device__ cudf::errc predicate(bool* output, int a, int b)
   return cudf::errc::SUCCESS;
 }
 )";
-  cudf::test::fixed_width_column_wrapper<int> left{1, -1, 3, 4};
-  cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 2};
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
+
+  // The same predicate as precompiled LTO IR, reading its overflow limit from user_data.
+  auto const lto_udf = cudf::compile_cuda_to_lto_ir(R"(
+extern "C" __device__ int transform(void* user_data, int row, bool* output, int a, int b)
+{
+  if (a < *static_cast<int const*>(user_data)) { return 1; }  // ARITHMETIC_OVERFLOW
+  if (b == 0) { return 2; }                                    // DIVISION_BY_ZERO
+  *output = a >= b;
+  return 0;
+}
+)",
+                                                    {},
+                                                    {},
+                                                    {});
+  cudf::test::fixed_width_column_wrapper<int> limit{0};
+  auto* const limit_ptr = const_cast<int*>(cudf::column_view{limit}.data<int>());
+
+  for (bool lto : {false, true}) {
+    auto run = [&](cudf::table_view const& l,
+                   cudf::table_view const& r,
+                   cudf::device_span<cudf::size_type const> li,
+                   cudf::device_span<cudf::size_type const> ri) {
+      return lto ? cudf::filter_join_indices_jit_lto(l,
+                                                     r,
+                                                     li,
+                                                     ri,
+                                                     lto_udf.view().data,
+                                                     lto_udf.view().type,
+                                                     cudf::null_aware::NO,
+                                                     limit_ptr,
+                                                     GetParam())
+                 : cudf::filter_join_indices_jit(l, r, li, ri, udf, GetParam());
+    };
+    cudf::test::fixed_width_column_wrapper<int> left{1, -1, 3, 4};
+    cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 2};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
+    cudf::column_view const index_view = indices;
+    cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
+
+    // Errors from multiple rows must be aggregated using the maximum code.
+    try {
+      run(cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps);
+      FAIL() << "Expected predicate evaluation to fail";
+    } catch (cudf::evaluation_error const& error) {
+      EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+    }
+
+    cudf::test::fixed_width_column_wrapper<int> valid_left{1, 2, 3, 4};
+    cudf::test::fixed_width_column_wrapper<int> valid_right{1, 1, 2, 2};
+    EXPECT_EQ(
+      to_pairs(run(cudf::table_view{{valid_left}}, cudf::table_view{{valid_right}}, maps, maps)),
+      (std::vector<index_pair>{{0, 0}, {1, 1}, {2, 2}, {3, 3}}));
+
+    // Null inputs and unmatched pairs must not execute the fallible predicate.
+    cudf::test::fixed_width_column_wrapper<int> nullable_left{{1, -1, 3, 4},
+                                                              {true, false, true, true}};
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> skipped_indices{
+      0, 1, cudf::JoinNoMatch, 3};
+    cudf::column_view const skipped_view = skipped_indices;
+    cudf::device_span<cudf::size_type const> const skipped_maps{
+      skipped_view.data<cudf::size_type>(), 4};
+    std::vector<index_pair> expected{{0, 0}, {3, 3}};
+    if (GetParam() != cudf::join_kind::INNER_JOIN) {
+      expected.emplace_back(1, cudf::JoinNoMatch);
+      expected.emplace_back(2, cudf::JoinNoMatch);
+    }
+    if (GetParam() == cudf::join_kind::FULL_JOIN) {
+      expected.emplace_back(cudf::JoinNoMatch, 1);
+      expected.emplace_back(cudf::JoinNoMatch, 2);
+    }
+    std::sort(expected.begin(), expected.end());
+    EXPECT_EQ(to_pairs(run(
+                cudf::table_view{{nullable_left}}, cudf::table_view{{right}}, skipped_maps, maps)),
+              expected);
+  }
+}
+
+TEST_F(FilteredFullJoinTest, NullAwareUdf)
+{
+  // A null-aware predicate sees null inputs, so it can pass rows that a plain one would reject.
+  auto const udf = R"(
+__device__ void predicate(cuda::std::optional<bool>* output,
+                          cuda::std::optional<int> a,
+                          cuda::std::optional<int> b)
+{
+  *output = !a.has_value() || !b.has_value() || *a >= *b;
+}
+)";
+  cudf::test::fixed_width_column_wrapper<int> left{{1, 0, 3}, {true, false, true}};
+  cudf::test::fixed_width_column_wrapper<int> right{1, 1, 5};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2};
   cudf::column_view const index_view = indices;
-  cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
-
-  // Errors from multiple rows must be aggregated using the maximum code.
-  try {
-    cudf::filter_join_indices_jit(
-      cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps, udf, GetParam());
-    FAIL() << "Expected predicate evaluation to fail";
-  } catch (cudf::evaluation_error const& error) {
-    EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
-  }
-
-  cudf::test::fixed_width_column_wrapper<int> valid_left{1, 2, 3, 4};
-  cudf::test::fixed_width_column_wrapper<int> valid_right{1, 1, 2, 2};
-  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{valid_left}},
-                                                   cudf::table_view{{valid_right}},
-                                                   maps,
-                                                   maps,
-                                                   udf,
-                                                   GetParam())),
-            (std::vector<index_pair>{{0, 0}, {1, 1}, {2, 2}, {3, 3}}));
-
-  // Null inputs and unmatched pairs must not execute the fallible predicate.
-  cudf::test::fixed_width_column_wrapper<int> nullable_left{{1, -1, 3, 4},
-                                                            {true, false, true, true}};
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> skipped_indices{
-    0, 1, cudf::JoinNoMatch, 3};
-  cudf::column_view const skipped_view = skipped_indices;
-  cudf::device_span<cudf::size_type const> const skipped_maps{skipped_view.data<cudf::size_type>(),
-                                                              4};
-  std::vector<index_pair> expected{{0, 0}, {3, 3}};
-  if (GetParam() != cudf::join_kind::INNER_JOIN) {
-    expected.emplace_back(1, cudf::JoinNoMatch);
-    expected.emplace_back(2, cudf::JoinNoMatch);
-  }
-  if (GetParam() == cudf::join_kind::FULL_JOIN) {
-    expected.emplace_back(cudf::JoinNoMatch, 1);
-    expected.emplace_back(cudf::JoinNoMatch, 2);
-  }
-  std::sort(expected.begin(), expected.end());
-  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{nullable_left}},
+  cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 3};
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(cudf::table_view{{left}},
                                                    cudf::table_view{{right}},
-                                                   skipped_maps,
+                                                   maps,
                                                    maps,
                                                    udf,
-                                                   GetParam())),
-            expected);
+                                                   cudf::join_kind::INNER_JOIN,
+                                                   cudf::udf_source_type::CUDA,
+                                                   cudf::null_aware::YES)),
+            (std::vector<index_pair>{{0, 0}, {1, 1}}));
 }
 
 TEST_P(FilterJoinJitErrorTest, AstErrorHandling)

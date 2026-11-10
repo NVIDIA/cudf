@@ -4,8 +4,7 @@
  */
 #pragma once
 
-#include <cudf/column/column.hpp>
-#include <cudf/column/column_device_view.cuh>
+#include <cudf/column/column_view.hpp>
 #include <cudf/column/scalar_column_view.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -13,14 +12,19 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
-#include <cuda/iterator>
+#include <cuda/stream>
 
 #include <jit/cache.hpp>
 
 #include <algorithm>
+#include <functional>
+#include <iterator>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -43,16 +47,12 @@ get_transform_base_column(std::vector<column_view> const& inputs);
 size_type get_projection_size(
   std::span<std::variant<column_view, scalar_column_view> const> inputs);
 
-std::map<uint32_t, std::string> build_ptx_params(std::span<std::string const> output_typenames,
-                                                 std::span<std::string const> input_typenames,
-                                                 bool has_user_data);
-
 template <typename DeviceView, typename ColumnView>
 std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>>,
            cuda::device_buffer<DeviceView>>
 column_views_to_device(std::span<ColumnView const> views,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cudf::memory_resources mr)
 {
   std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>> handles;
 
@@ -67,7 +67,8 @@ column_views_to_device(std::span<ColumnView const> views,
     host_array.push_back(*h);
   }
 
-  cuda::device_buffer<DeviceView> device_array{stream, mr, handles.size(), cuda::no_init};
+  cuda::device_buffer<DeviceView> device_array{
+    stream, mr.get_output_mr(), handles.size(), cuda::no_init};
   cudf::detail::cuda_memcpy<DeviceView>(device_array, host_array, stream);
 
   return std::make_tuple(std::move(handles), std::move(device_array));
@@ -97,6 +98,14 @@ rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
 std::string define_operation(std::string const& cuda_source,
                              std::string_view operation_macro,
                              std::string_view function_name);
+
+/**
+ * @brief Convert an LTO binary type to an RTCX binary type.
+ *
+ * @param type The LTO binary type to convert
+ * @return The corresponding RTCX binary type
+ */
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type);
 
 }  // namespace jit
 }  // namespace cudf

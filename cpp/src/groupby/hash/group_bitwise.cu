@@ -34,13 +34,14 @@ struct bitwise_group_reduction_functor {
                                      device_span<size_type const> group_labels,
                                      size_type num_groups,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
 
   {
     auto result =
       make_fixed_width_column(values.type(), num_groups, mask_state::UNALLOCATED, stream, mr);
     if (values.is_empty()) { return result; }
 
+    cudf::memory_resources mrs{mr};
     auto const do_reduction = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
       cudf::detail::reduce_by_key_async(group_labels.data(),
                                         group_labels.data() + group_labels.size(),
@@ -48,7 +49,8 @@ struct bitwise_group_reduction_functor {
                                         cuda::make_discard_iterator(),
                                         out_iter,
                                         binop,
-                                        stream);
+                                        stream,
+                                        mrs.as_temporary());
     };
 
     auto const d_values_ptr       = column_device_view::create(values, stream);
@@ -99,7 +101,7 @@ std::unique_ptr<column> group_bitwise(bitwise_op bit_op,
                                       device_span<size_type const> group_labels,
                                       size_type num_groups,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   return cudf::type_dispatcher(values.type(),
                                bitwise_group_reduction_functor{},

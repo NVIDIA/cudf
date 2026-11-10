@@ -513,14 +513,14 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
   string_view delimiter,
   size_type max_tokens,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 template <bool Forward>
 std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_ws_per_row(
   column_device_view const& d_strings,
   size_type max_tokens,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 // These non-template overloads prevent callers from emitting the same fixed helper kernels in
 // multiple TUs. split.cu owns the forward explicit-delimiter variant; split_record.cu owns the
@@ -530,28 +530,28 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
   rsplit_tokenizer_fn tokenizer,
   string_delimiter_fn delimiter_fn,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   split_ws_tokenizer_fn tokenizer,
   whitespace_delimiter_fn delimiter_fn,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   rsplit_ws_tokenizer_fn tokenizer,
   whitespace_delimiter_fn delimiter_fn,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_helper(
   strings_column_view const& input,
   split_tokenizer_fn tokenizer,
   string_delimiter_fn delimiter_fn,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @brief Helper function used by split/rsplit and split_record/rsplit_record
@@ -575,8 +575,9 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
   Tokenizer tokenizer,
   DelimiterFn delimiter_fn,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto delimiter_positions = [&] {
     if constexpr (std::is_same_v<DelimiterFn, string_delimiter_fn>) {
       return find_string_delimiter_positions(
@@ -609,7 +610,8 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
                                   cuda::counting_iterator<int64_t>{chars_bytes},
                                   positions.begin(),
                                   delimiter_fn,
-                                  stream);
+                                  stream,
+                                  mrs.as_temporary());
       return positions;
     }
   }();

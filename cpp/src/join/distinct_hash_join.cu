@@ -20,6 +20,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
+#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
 
@@ -214,7 +215,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 distinct_hash_join::inner_join(cudf::table_view const& left,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr) const
+                               cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"distinct_hash_join::inner_join"};
 
@@ -222,14 +223,15 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
 
   // If output size is zero, return immediately
   if (left_table_num_rows == 0) {
-    return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                     std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
+    return std::pair(
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
   }
 
-  auto right_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left_table_num_rows, stream, mr);
-  auto left_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left_table_num_rows, stream, mr);
+  auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    left_table_num_rows, stream, mr.get_output_mr());
+  auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    left_table_num_rows, stream, mr.get_output_mr());
 
   auto found_indices = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), left_table_num_rows, cuda::no_init);
@@ -297,6 +299,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
         return cuda::std::tuple{*(found_iter + idx), idx};
       }));
   auto const output_begin = cuda::make_zip_iterator(right_indices->begin(), left_indices->begin());
+  cudf::memory_resources mrs{mr};
   auto const output_end =
     cudf::detail::copy_if(tuple_iter,
                           tuple_iter + left_table_num_rows,
@@ -304,7 +307,8 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                           output_begin,
                           cuda::proclaim_return_type<bool>(
                             [] __device__(size_type idx) { return idx != cudf::JoinNoMatch; }),
-                          stream);
+                          stream,
+                          mrs.as_temporary());
   auto const actual_size = std::distance(output_begin, output_end);
 
   right_indices->resize(actual_size, stream);
@@ -314,7 +318,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
-  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"distinct_hash_join::left_join"};
 
@@ -322,11 +326,11 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
 
   // If output size is zero, return empty
   if (left_table_num_rows == 0) {
-    return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);
+    return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr());
   }
 
-  auto right_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left_table_num_rows, stream, mr);
+  auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    left_table_num_rows, stream, mr.get_output_mr());
   auto const output_begin =
     cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
@@ -413,13 +417,13 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 distinct_hash_join::inner_join(cudf::table_view const& left,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr) const
+                               cudf::memory_resources mr) const
 {
   return _impl->inner_join(left, stream, mr);
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
-  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   return _impl->left_join(left, stream, mr);
 }

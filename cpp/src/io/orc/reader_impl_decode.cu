@@ -297,7 +297,7 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
 void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
                       host_span<column_buffer> out_buffers,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr)
+                      cudf::memory_resources mr)
 {
   auto const num_stripes = chunks.size().first;
   auto const num_columns = chunks.size().second;
@@ -317,8 +317,9 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
       auto parent_mask_len = chunks[0][col_idx].column_num_rows;
 
       if (child_valid_map_base != nullptr) {
-        cuda::device_buffer<uint32_t> dst_idx(
-          stream, cudf::get_current_device_resource_ref(), child_mask_len, cuda::no_init);
+        cudf::memory_resources mrs(mr);
+        auto temp_mr = mrs.get_temporary_mr();
+        cuda::device_buffer<uint32_t> dst_idx(stream, temp_mr, child_mask_len, cuda::no_init);
         // Copy indexes at which the parent has valid value.
         cudf::detail::copy_if_async(
           cuda::counting_iterator<int64_t>{0},
@@ -327,7 +328,8 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
           [parent_valid_map_base] __device__(auto idx) -> bool {
             return bit_is_set(parent_valid_map_base, idx);
           },
-          stream);
+          stream,
+          mrs.as_temporary());
 
         auto merged_null_mask = cudf::detail::create_null_mask(
           parent_mask_len, mask_state::ALL_NULL, cuda::stream_ref(stream), mr);
@@ -391,7 +393,7 @@ void decode_stream_data(int64_t num_dicts,
                         cudf::detail::device_2dspan<row_group> row_groups,
                         std::vector<column_buffer>& out_buffers,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cudf::memory_resources mr)
 {
   auto const num_stripes = chunks.size().first;
   auto const num_columns = chunks.size().second;
@@ -950,7 +952,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
       stripe_data[stripe_start - load_stripe_start] = std::move(decomp_data);
       for (std::size_t i = 1; i < stripe_count; ++i) {
         stripe_data[i + stripe_start - load_stripe_start] =
-          cuda::device_buffer<std::uint8_t>(_stream, _mr);
+          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
       }
 
     } else {
@@ -1050,11 +1052,11 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
     auto& stripe_data = _file_itm_data.lvl_stripe_data[level];
     if (_metadata.per_file_metadata[0].ps.compression != orc::NONE) {
       stripe_data[stripe_start - load_stripe_start] =
-        cuda::device_buffer<std::uint8_t>(_stream, _mr);
+        cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
     } else {
       for (std::size_t i = 0; i < stripe_count; ++i) {
         stripe_data[i + stripe_start - load_stripe_start] =
-          cuda::device_buffer<std::uint8_t>(_stream, _mr);
+          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
       }
     }
   }

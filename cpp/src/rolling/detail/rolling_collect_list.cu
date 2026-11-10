@@ -88,7 +88,8 @@ size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
                             cuda::stream_ref stream)
 {
-  auto input_device_view = column_device_view::create(input, stream);
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto input_device_view    = column_device_view::create(input, stream);
 
   auto input_row_is_null = [d_input = *input_device_view] __device__(auto i) {
     return d_input.is_null_nocheck(i);
@@ -97,7 +98,8 @@ size_type count_child_nulls(column_view const& input,
   return cudf::detail::count_if(gather_map->view().begin<size_type>(),
                                 gather_map->view().end<size_type>(),
                                 input_row_is_null,
-                                stream);
+                                stream,
+                                mr.as_temporary());
 }
 
 /**
@@ -109,8 +111,9 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& offsets,
   size_type num_child_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto input_device_view = column_device_view::create(input, stream);
 
   auto input_row_not_null = [d_input = *input_device_view] __device__(auto i) -> bool {
@@ -127,7 +130,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
                               gather_map.template end<size_type>(),
                               new_gather_map->mutable_view().template begin<size_type>(),
                               input_row_not_null,
-                              stream);
+                              stream,
+                              mrs.as_temporary());
 
   // Recalculate offsets after null entries are purged.
   auto new_sizes = make_fixed_width_column(data_type{type_to_id<size_type>()},

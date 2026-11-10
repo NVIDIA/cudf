@@ -418,13 +418,13 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
   cudf::device_span<size_type const> input_slice_bounds,
   cudf::device_span<size_type const> segment_row_offsets,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_inputs   = input_slice_bounds.size() - 1;
   auto const num_segments = segment_row_offsets.size() - 1;
 
-  auto page_maps =
-    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
+  auto page_maps = cuda::device_buffer<size_type>(
+    stream, mr.get_output_mr(), num_inputs * num_segments, cuda::no_init);
 
   // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
   // built from the union of all page boundaries, so containment is guaranteed.
@@ -575,10 +575,12 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
 
 bool are_all_rows_retained(cudf::column_view const& row_mask, cuda::stream_ref stream)
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
                               cuda::counting_iterator{row_mask.size()},
                               row_mask_accessor{row_mask},
-                              stream);
+                              stream,
+                              mr.as_temporary());
 }
 
 thrust::host_vector<bool> compute_row_range_selection_mask(
@@ -784,7 +786,8 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
                                segment_row_offsets.end(),
                                row_segment_indices.begin(),
                                row_segment_indices.end(),
-                               stream);
+                               stream,
+                               mr.as_temporary());
 
   // Gather segment-level mask to row-level mask
   auto row_mask = cudf::detail::gather(cudf::table_view{{segment_mask->view()}},

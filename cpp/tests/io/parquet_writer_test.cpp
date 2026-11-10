@@ -1836,6 +1836,41 @@ TEST_P(ParquetCompressionTest, SkipCompression)
             cudf::io::parquet::Compression::UNCOMPRESSED);
 }
 
+TEST_P(ParquetCompressionTest, V2AllNullPages)
+{
+  auto const compression_type = std::get<1>(GetParam());
+  SKIP_IF_NVCOMP_GZIP_UNSUPPORTED();
+
+  // One-row V2 pages, so that pages with no data to compress are followed by pages of the same
+  // column chunk and of the next one
+  column_wrapper<double> all_nulls_col({1., 2.}, cudf::test::iterators::all_nulls());
+  column_wrapper<double> first_null_col({1., 2.}, cudf::test::iterators::null_at(0));
+  // A repeated value, so that ALWAYS writes a dictionary page
+  column_wrapper<double> repeated_col({3., 3.});
+  table_view expected({all_nulls_col, first_null_col, repeated_col});
+
+  for (auto const dict_policy :
+       {cudf::io::dictionary_policy::NEVER, cudf::io::dictionary_policy::ALWAYS}) {
+    SCOPED_TRACE(dict_policy == cudf::io::dictionary_policy::NEVER ? "NEVER" : "ALWAYS");
+    std::vector<char> buffer;
+    cudf::io::parquet_writer_options out_opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .compression(compression_type)
+        .write_v2_headers(true)
+        .dictionary_policy(dict_policy)
+        .max_page_size_rows(1)
+        .max_page_fragment_size(1);
+    cudf::io::write_parquet(out_opts);
+
+    cudf::io::parquet_reader_options in_opts = cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}});
+    auto result = cudf::io::read_parquet(in_opts);
+
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  }
+}
+
 INSTANTIATE_TEST_CASE_P(Nvcomp,
                         ParquetCompressionTest,
                         ::testing::Combine(::testing::Values("NVCOMP"),

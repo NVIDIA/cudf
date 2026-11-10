@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 47."""
@@ -172,7 +172,10 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 .rank(method="ordinal")
                 .over(
                     ["i_category", "i_brand", "s_store_name", "s_company_name"],
-                    order_by=["d_year", "d_moy"],
+                    # One struct key, not a list: Polars 2.1 plans a list of keys with a
+                    # row_encode expression that cudf-polars cannot see, so the query
+                    # would run on the CPU. See https://github.com/NVIDIA/cudf/issues/24936
+                    order_by=pl.struct("d_year", "d_moy"),
                 )
                 .alias("rn"),
             ]

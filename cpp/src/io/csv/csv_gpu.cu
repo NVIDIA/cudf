@@ -192,6 +192,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     field_start = cudf::io::gpu::skip_leading_delimiter_run(field_start, row_end, opts);
     if (field_start >= row_end) break;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, opts);
+    // Trailing whitespace before the record terminator does not start another field
+    if (opts.multi_delimiter and next_delimiter == field_start) { break; }
 
     // Checking if this is a column that the user wants --- user can filter columns
     if (column_flags[col] & column_parse::inferred) {
@@ -288,6 +290,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       }
       actual_col++;
     }
+    // Row offsets can span skipped comments or blank lines. Only a delimiter
+    // starts another field; a record terminator must leave missing fields null.
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, opts)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     col++;
@@ -345,6 +351,8 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     if (field_start >= row_end) break;
     next_field          = field_start;
     auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, options);
+    // Trailing whitespace before the record terminator does not start another field
+    if (options.multi_delimiter and next_delimiter == field_start) { break; }
 
     if (column_flags[col] & column_parse::enabled) {
       // check if the entire field is a NaN string - consistent with pandas
@@ -429,6 +437,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
       }
       ++actual_col;
     }
+    // Row offsets can span skipped comments or blank lines. Only a delimiter
+    // starts another field; a record terminator must leave missing fields null.
+    // TODO: Trim row_end at the record terminator instead (#24642).
+    if (not cudf::io::gpu::is_field_delimiter(next_delimiter, row_end, options)) { break; }
     next_field  = next_delimiter + 1;
     field_start = next_field;
     ++col;
@@ -892,7 +904,7 @@ void decode_row_column_data(cudf::io::parse_options_view const& options,
   // Calculate actual block count to use based on records count
   auto const block_size = csvparse_block_dim;
   auto const num_rows   = row_offsets.size() - 1;
-  auto const grid_size  = cudf::util::div_rounding_up_safe<size_t>(num_rows, block_size);
+  auto const grid_size  = cudf::detail::div_rounding_up_safe<size_t>(num_rows, block_size);
 
   convert_csv_to_cudf<OffsetT><<<grid_size, block_size, 0, stream.get()>>>(
     options, data, column_flags, row_offsets, dtypes, columns, valids, valid_counts);

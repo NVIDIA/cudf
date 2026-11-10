@@ -673,11 +673,14 @@ TEST_F(ExperimentalPackUnpackTest, StagingIsBoundedByStagingBudget)
 
 TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
 {
-  constexpr cudf::size_type rows = 32 * 1024;
+  constexpr cudf::size_type rows = 256 * 1024;
   std::vector<int32_t> values(rows, 7);
   std::vector<std::string> words(rows, "automatic-region-selection");
-  // Full-width hashed values leave no codec anything to save.
-  auto const noise = cudf::detail::make_counting_transform_iterator(0, [](int64_t i) {
+  // Each 64 KiB block of INT64 values alternates between one repeated value and full-width hashed
+  // values, which leave no codec anything to save.
+  constexpr int64_t block_values = 64 * 1024 / sizeof(int64_t);
+  auto const mixed               = cudf::detail::make_counting_transform_iterator(0, [](int64_t i) {
+    if ((i / block_values) % 2 == 0) { return int64_t{42}; }
     auto x = static_cast<uint64_t>(i) * 0x9E3779B97F4A7C15ULL;
     x      = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
     x      = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
@@ -685,21 +688,42 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
   });
   cudf::test::fixed_width_column_wrapper<int32_t> numbers(values.begin(), values.end());
   cudf::test::strings_column_wrapper strings(words.begin(), words.end());
-  cudf::test::fixed_width_column_wrapper<int64_t> hashes(noise, noise + rows);
+  cudf::test::fixed_width_column_wrapper<int64_t> hashes(mixed, mixed + rows);
   auto const input = cudf::table_view{{numbers, strings, hashes}};
 
-  auto const packed =
-    pack_to_device(cx::prepare_pack(input, make_options(cx::pack_compression::automatic)));
+  // A 1 MiB staging budget spreads the 32 INT64 blocks over several windows.
+  auto options                 = make_options(cx::pack_compression::automatic);
+  options.staging_buffer_bytes = 1024 * 1024;
+  auto const packed            = pack_to_device(cx::prepare_pack(input, options));
+  auto const entries           = read_region_entries(packed.result.metadata);
   // Data and string offsets are INT32 regions.
-  for (auto const& entry : read_region_entries(packed.result.metadata)) {
+  for (auto const& entry : entries) {
     auto const expected =
       std::map<cudf::type_id, cx::pack_compression>{
         {cudf::type_id::INT32, cx::pack_compression::cascaded},
         {cudf::type_id::STRING, cx::pack_compression::none},
-        {cudf::type_id::INT64, cx::pack_compression::none}}
+        {cudf::type_id::INT64, cx::pack_compression::cascaded}}
         .at(static_cast<cudf::type_id>(entry.type));
     EXPECT_EQ(static_cast<cx::pack_compression>(entry.compression), expected)
       << static_cast<int>(entry.type);
+  }
+
+  // The payload starts with the block size table; raw blocks have the top bit set.
+  auto const num_blocks = std::accumulate(
+    entries.begin(), entries.end(), std::size_t{0}, [](auto sum, auto const& entry) {
+      return sum + entry.num_blocks;
+    });
+  std::vector<uint64_t> table(num_blocks);
+  CUDF_CUDA_TRY(cudaMemcpy(
+    table.data(), packed.view().payload.data(), num_blocks * sizeof(uint64_t), cudaMemcpyDefault));
+  auto const int64_entry = std::ranges::find_if(entries, [](auto const& entry) {
+    return static_cast<cudf::type_id>(entry.type) == cudf::type_id::INT64;
+  });
+  ASSERT_NE(int64_entry, entries.end());
+  ASSERT_EQ(int64_entry->num_blocks, rows / block_values);
+  for (std::size_t block = 0; block < int64_entry->num_blocks; ++block) {
+    auto const is_raw = (table[int64_entry->block_begin + block] >> 63) != 0;
+    EXPECT_EQ(is_raw, block % 2 == 1) << block;
   }
   expect_materializes_to(input, packed.view());
 }

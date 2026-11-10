@@ -516,10 +516,6 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithString)
   }
 }
 
-// Regression test for a crash in chunked reads of DELTA_BYTE_ARRAY columns. An output chunk that
-// starts in the middle of a DELTA_BYTE_ARRAY page needs temporary space to rebuild the strings it
-// skips. That space was released after decoding each output chunk in a way that left it unusable
-// for the next output chunk of the same subpass.
 TEST_F(ParquetChunkedReaderTest, TestChunkedReadDeltaByteArrayMidPage)
 {
   auto constexpr num_rows = 100'000;

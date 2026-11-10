@@ -468,8 +468,33 @@ async def _shuffle_reduce(
     await ch_out.drain(context)
 
 
+def _key_run_split(
+    chunk: TableChunk, keys: tuple[OrderKey, ...], *, leading: bool
+) -> int:
+    """Find the split after the first or before the last key run."""
+    table = chunk.table_view()
+    key_table = plc.Table([table.columns()[key.column_index] for key in keys])
+    row = 0 if leading else chunk.shape[0] - 1
+    boundary = plc.copying.slice(key_table, [row, row + 1], stream=chunk.stream)[0]
+    search = plc.search.upper_bound if leading else plc.search.lower_bound
+    split = (
+        search(
+            key_table,
+            boundary,
+            [key.order for key in keys],
+            [key.null_order for key in keys],
+            stream=chunk.stream,
+        )
+        .to_scalar(stream=chunk.stream)
+        .to_py(stream=chunk.stream)
+    )
+    assert isinstance(split, int)
+    return split
+
+
 async def _split_key_run(
     context: Context,
+    ir_context: IRExecutionContext,
     chunk: TableChunk,
     keys: tuple[OrderKey, ...],
     *,
@@ -482,28 +507,11 @@ async def _split_key_run(
         context, chunk, reserve_extra=0, net_memory_delta=0
     )
     with opaque_memory_usage(extra):
-        table = chunk.table_view()
-        key_table = plc.Table([table.columns()[key.column_index] for key in keys])
-        row = 0 if leading else nrows - 1
-        boundary = plc.copying.slice(key_table, [row, row + 1], stream=chunk.stream)[0]
-        search = plc.search.upper_bound if leading else plc.search.lower_bound
-        split = (
-            search(
-                key_table,
-                boundary,
-                [key.order for key in keys],
-                [key.null_order for key in keys],
-                stream=chunk.stream,
-            )
-            .to_scalar(stream=chunk.stream)
-            .to_py(stream=chunk.stream)
-        )
-        assert isinstance(split, int)
+        split = await ir_context.to_thread(_key_run_split, chunk, keys, leading=leading)
         if split == 0:
             return None, chunk
         if split == nrows:
             return chunk, None
-    del table, key_table, boundary
     chunk, extra = await make_table_chunks_available_or_wait(
         context, chunk, reserve_extra=chunk.data_alloc_size(), net_memory_delta=0
     )
@@ -892,7 +900,7 @@ class _OrderedGroupBy:
     ) -> None:
         if self.send_first:
             first, chunk = await _split_key_run(
-                self.context, chunk, self.keys, leading=True
+                self.context, self.ir_context, chunk, self.keys, leading=True
             )
             assert first is not None
             await exchange.insert_chunk(destination, first)
@@ -914,7 +922,7 @@ class _OrderedGroupBy:
             if current.shape[0]:
                 if self.carry is not None:
                     first, current = await _split_key_run(
-                        self.context, current, self.keys, leading=True
+                        self.context, self.ir_context, current, self.keys, leading=True
                     )
                     assert first is not None
                     head = await evaluate_batch(
@@ -931,7 +939,7 @@ class _OrderedGroupBy:
                         current = head
                 if current is not None:
                     complete, self.carry = await _split_key_run(
-                        self.context, current, self.keys, leading=False
+                        self.context, self.ir_context, current, self.keys, leading=False
                     )
                     if complete is not None:
                         await self._emit_complete(complete, exchange, destination)

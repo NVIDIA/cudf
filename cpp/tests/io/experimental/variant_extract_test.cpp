@@ -170,8 +170,10 @@ static std::unique_ptr<cudf::column> make_status_buffer(cudf::size_type num_rows
   auto col = cudf::make_numeric_column(
     cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::UNALLOCATED);
   if (num_rows > 0) {
-    CUDF_CUDA_TRY(
-      cudaMemset(col->mutable_view().data<uint8_t>(), 0, static_cast<std::size_t>(num_rows)));
+    CUDF_CUDA_TRY(cudaMemsetAsync(col->mutable_view().data<uint8_t>(),
+                                  0,
+                                  static_cast<std::size_t>(num_rows),
+                                  cudf::test::get_default_stream().get()));
   }
   return col;
 }

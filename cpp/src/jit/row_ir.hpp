@@ -4,8 +4,6 @@
  */
 
 #pragma once
-#include "ast/jit/expressions.hpp"
-
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -20,6 +18,8 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/stream>
+
+#include <ast/jit/expressions.hpp>
 
 #include <cstdint>
 #include <functional>

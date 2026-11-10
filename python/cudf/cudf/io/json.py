@@ -116,7 +116,7 @@ def read_json(
         "zstd",
     ]
     | None = "infer",
-    byte_range: None | list[int] = None,
+    byte_range: list[int] | None = None,
     keep_quotes: bool = False,
     storage_options=None,
     mixed_types_as_string: bool = False,

@@ -548,8 +548,8 @@ std::unique_ptr<cudf::column> make_structs_column(
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
   cuda::device_buffer<cudf::bitmask_type>&& null_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Construct a STRUCT column using specified child columns as members
@@ -582,8 +582,8 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
   std::vector<std::unique_ptr<column>>&& child_columns,
   size_type null_count,
   cuda::device_buffer<cudf::bitmask_type>&& null_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Construct a column with size elements that are all equal to the given scalar.

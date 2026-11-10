@@ -19,4 +19,4 @@ exec gdb --batch --return-child-result \
     -ex run \
     -ex "thread apply all bt full" \
     -ex "info sharedlibrary" \
-    --args "${BASH_SOURCE[0]}.diagnostic-real" "$@"
+    --args "${TRANSFORM_GDB_BINARY:-${BASH_SOURCE[0]}.diagnostic-real}" "$@"

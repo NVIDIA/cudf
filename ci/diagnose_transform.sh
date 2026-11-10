@@ -4,7 +4,9 @@
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-source ./ci/test_cpp_common.sh
+# Only the harness changes between iterations; reuse the exact original
+# package build to avoid rebuilding or introducing build-environment drift.
+GITHUB_RUN_ID=42678089596 source ./ci/test_cpp_common.sh
 
 diagnostics_dir="${RAPIDS_ARTIFACTS_DIR}/transform-diagnostics"
 mkdir -p "${diagnostics_dir}"

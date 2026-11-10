@@ -55,7 +55,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
+    uses: $/.github/workflows/wheels-build-stage.yaml
     with:
       # Same as build.yaml, but amd64 only: a wheel for each CUDA x minimum supported Python version.
       matrix_filter: map(select(.ARCH == "amd64")) | group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
@@ -72,7 +72,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
+    uses: $/.github/workflows/wheels-build-stage.yaml
     with:
       # Same as build.yaml: amd64 + the latest supported Python + CUDA, per CUDA major.
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))

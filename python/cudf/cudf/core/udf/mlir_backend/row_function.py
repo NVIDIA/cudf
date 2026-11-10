@@ -1,29 +1,77 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import math
-from functools import cache
 
 import numpy as np
-from numba import cuda
-from numba.np import numpy_support
+from numba_cuda_mlir import cuda, types
+from numba_cuda_mlir.extending import lowering_registry, typing_registry
+from numba_cuda_mlir.numba_cuda.np import numpy_support
+from numba_cuda_mlir.numba_cuda.typing.templates import AbstractTemplate
+from numba_cuda_mlir.typing import signature as nb_signature
 
 from cudf.core.udf.api import Masked, pack_return
-from cudf.core.udf.masked_typing import MaskedType
-from cudf.core.udf.strings_typing import string_view
+from cudf.core.udf.mlir_backend.masked_typing import MaskedType
+from cudf.core.udf.mlir_backend.strings_typing import mlir_string
+from cudf.core.udf.mlir_backend.templates import row_kernel_template
+from cudf.core.udf.mlir_backend.udf_kernel_base import ApplyKernelBase
 from cudf.core.udf.templates import (
     masked_input_initializer_template,
     row_initializer_template,
-    row_kernel_template,
     unmasked_input_initializer_template,
 )
-from cudf.core.udf.udf_kernel_base import ApplyKernelBase
 from cudf.core.udf.utils import (
     Row,
     _all_dtypes_from_frame,
     _get_extensionty_size,
-    _mask_get,
     _supported_cols_from_frame,
 )
+
+
+def _row_slot():
+    """Device-only: return a pointer to a single row-sized slot. Do not call from Python."""
+    raise NotImplementedError("_row_slot is only for JIT")
+
+
+_row_slot_cases: list[Row] = []
+
+
+class RowSlotTemplate(AbstractTemplate):
+    key = _row_slot
+
+    def generic(self, args, kws):
+        if len(args) != 0 or kws:
+            return None
+        for row_type in _row_slot_cases:
+            return nb_signature(row_type)
+        return None
+
+
+def _lower_row_slot(builder, target, args, kwargs):
+    """Lowering for ``_row_slot()``: allocate record_size bytes and store the
+    pointer in target (Record = ptr to bytes).
+
+    The row ``Record`` type is the target's numba type, so we derive the slot
+    size from it. Registered once at import time (released numba-cuda-mlir
+    snapshots the lowering registry into the target context at setup, so
+    per-kernel late registration would never be installed).
+    """
+    row_type = builder.get_numba_type(target.name)
+    i8 = builder.get_mlir_type(types.uint8)
+    ptr = builder.alloca(i8, count=row_type.size)
+    builder.store_var(target, ptr)
+
+
+def register_row_slot(row_type):
+    """Record this kernel's row_type for _row_slot() typing (lowering is
+    registered once at import via _register_row_slot).
+    """
+    global _row_slot_cases
+    _row_slot_cases = [row_type]
+
+
+def _register_row_slot():
+    typing_registry.register_global(_row_slot, types.Function(RowSlotTemplate))
+    lowering_registry.lower(_row_slot)(_lower_row_slot)
 
 
 def _get_frame_row_type(dtype):
@@ -42,7 +90,7 @@ def _get_frame_row_type(dtype):
     offset = 0
 
     sizes = [
-        _get_extensionty_size(string_view)
+        _get_extensionty_size(mlir_string)
         if val[0] == np.dtype("O")
         else val[0].itemsize
         for val in dtype.fields.values()
@@ -57,8 +105,7 @@ def _get_frame_row_type(dtype):
         title = info[2] if len(info) == 3 else None
 
         ty = (
-            # columns of dtype string start life as string_view
-            string_view
+            mlir_string
             if elemdtype == np.dtype("O")
             else numpy_support.from_dtype(elemdtype)
         )
@@ -71,7 +118,7 @@ def _get_frame_row_type(dtype):
 
         # increment offset by itemsize plus one byte for validity
         itemsize = (
-            _get_extensionty_size(string_view)
+            _get_extensionty_size(mlir_string)
             if elemdtype == np.dtype("O")
             else elemdtype.itemsize
         )
@@ -83,9 +130,8 @@ def _get_frame_row_type(dtype):
             next_itemsize = sizes[i + 1]
             offset = int(math.ceil(offset / next_itemsize) * next_itemsize)
 
-    # Numba requires that structures are aligned for the CUDA target
-    _is_aligned_struct = True
-    return Row(fields, offset, _is_aligned_struct)
+    # Numba requires that structures are aligned for the CUDA target.
+    return Row(fields, offset, aligned=True)
 
 
 class DataFrameApplyKernel(ApplyKernelBase):
@@ -109,16 +155,16 @@ class DataFrameApplyKernel(ApplyKernelBase):
         )
 
     def _get_kernel_string(self):
-        row_type = self._get_frame_type()
-
-        # Create argument list for kernel
         frame = _supported_cols_from_frame(self.frame)
 
-        input_columns = self._format_arg_list("input_col", len(frame))
-        input_offsets = self._format_arg_list("offset", len(frame))
-        extra_args = self._format_arg_list("extra_arg", len(self.args))
+        input_columns = ", ".join(
+            [f"input_col_{i}" for i in range(len(frame))]
+        )
+        input_offsets = ", ".join([f"offset_{i}" for i in range(len(frame))])
+        extra_args = ", ".join(
+            [f"extra_arg_{i}" for i in range(len(self.args))]
+        )
 
-        # Generate the initializers for each device function argument
         initializers = []
         row_initializers = []
         for i, (colname, col) in enumerate(frame.items()):
@@ -137,22 +183,20 @@ class DataFrameApplyKernel(ApplyKernelBase):
             extra_args=extra_args,
             masked_input_initializers="\n".join(initializers),
             row_initializers="\n".join(row_initializers),
-            numba_rectype=row_type,
         )
 
-    @cache
     def _get_kernel_string_exec_context(self):
-        # This is the global execution context that will be used
-        # to compile the kernel. It contains the function being
-        # compiled and the cuda module.
-
         row_type = self._get_frame_type()
+        register_row_slot(row_type)
         col_names = tuple(_supported_cols_from_frame(self.frame).keys())
         return {
             "cuda": cuda,
             "Masked": Masked,
-            "_mask_get": _mask_get,
             "pack_return": pack_return,
             "row_type": row_type,
+            "_row_slot": _row_slot,
             "_col_names": col_names,
         }
+
+
+_register_row_slot()

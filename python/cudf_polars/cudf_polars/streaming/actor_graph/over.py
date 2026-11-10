@@ -541,6 +541,7 @@ async def _distribute_by_group(
 
 async def _evaluate_and_route_to_origin(
     context: Context,
+    comm: Communicator,
     ir: Over,
     ir_context: IRExecutionContext,
     forward_shuffle: ShuffleManager,
@@ -548,7 +549,7 @@ async def _evaluate_and_route_to_origin(
     stamps: OriginStamps,
     *,
     sort_by_input_order: bool,
-    broadcast_to_ranks: int = 0,
+    duplicated_origin: bool,
 ) -> None:
     """Window-evaluate each local forward partition, then ship rows back to their origin."""
     async with return_shuffle.inserting() as inserter:
@@ -572,16 +573,16 @@ async def _evaluate_and_route_to_origin(
                 _split_off_origin_rank, evaluated, context.br()
             )
             if routed is not None:
-                if broadcast_to_ranks:
+                if duplicated_origin:
                     # Duplicated input was inserted by rank 0 only. Every
                     # input owner needs the window result, with the same
                     # chunk/row stamps for local reassembly and HConcat.
                     payload, _ = routed
                     nrows = payload.shape[0]
-                    for rank in range(broadcast_to_ranks):
+                    for rank in range(comm.nranks):
                         await inserter.insert_split(
                             payload,
-                            [0] * rank + [nrows] * (broadcast_to_ranks - rank - 1),
+                            [0] * rank + [nrows] * (comm.nranks - rank - 1),
                         )
                 else:
                     await inserter.insert_index(*routed)
@@ -716,13 +717,14 @@ async def _shuffle_and_reassemble(
 
     await _evaluate_and_route_to_origin(
         context,
+        comm,
         ir,
         ir_context,
         forward_shuffle,
         return_shuffle,
         stamps,
         sort_by_input_order=sort_by_input_order,
-        broadcast_to_ranks=comm.nranks if metadata_in.duplicated else 0,
+        duplicated_origin=metadata_in.duplicated,
     )
     await _reassemble_input_chunks(
         context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer

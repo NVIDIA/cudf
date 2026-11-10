@@ -316,8 +316,8 @@ std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& 
                             stream);
 
   // the output offset of each row is the number of kept bytes before the row
-  auto offsets = cudf::strings::detail::create_offsets_child_column(
-    total_size, input.size() + 1, stream, mr.get_output_mr());
+  auto offsets =
+    cudf::strings::detail::create_offsets_child_column(total_size, input.size() + 1, stream, mr);
   auto d_offsets =
     cudf::detail::offsetalator_factory::make_output_iterator(offsets->mutable_view());
   thrust::transform(policy,

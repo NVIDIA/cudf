@@ -36,43 +36,54 @@ def _summary(**overrides: Any) -> dict[str, Any]:
     }
 
 
-def _record(**overrides: Any) -> dict[str, Any]:
+def _record(
+    *,
+    query: int = 1,
+    iteration: int = 0,
+    io_summaries: object | None = None,
+) -> dict[str, Any]:
     """One successful iteration."""
+    extra_info: dict[str, Any] = {"iteration": iteration}
+    if io_summaries is not None:
+        extra_info["io_summaries"] = io_summaries
     return {
-        "query": 1,
-        "iteration": 0,
-        "duration": 0.25,
+        "query_name": str(query),
+        "execution_order": 0,
+        "runtime_ms": 250,
         "status": "success",
-        **overrides,
+        "extra_info": extra_info,
     }
 
 
-def _failed(**overrides: Any) -> dict[str, Any]:
+def _failed(*, query: int = 1, iteration: int = 0) -> dict[str, Any]:
     """One failed iteration."""
     return {
-        "query": 1,
-        "iteration": 0,
+        "query_name": str(query),
+        "execution_order": 0,
         "status": "error",
-        "traceback": "boom",
-        **overrides,
+        "extra_info": {"iteration": iteration, "traceback": "boom"},
     }
 
 
-def _run(*records: dict[str, Any], **overrides: Any) -> dict[str, Any]:
-    """A run holding ``records``, grouped by query as the runners write them."""
-    by_query: dict[str, list[dict[str, Any]]] = {}
-    for record in records:
-        by_query.setdefault(str(record["query"]), []).append(record)
+def _run(*query_logs: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    """A schema-v2 run holding one query log per iteration."""
+    for execution_order, query_log in enumerate(query_logs):
+        query_log["execution_order"] = execution_order
     return {
+        "schema_version": 2,
         "run_id": "abc",
-        "timestamp": "2026-01-01T00:00:00+00:00",
-        "engine_name": "cudf-polars",
-        "frontend": "ray",
-        "dataset_path": "/data",
-        "scale_factor": 10,
-        "n_workers": 2,
-        "iterations": 1,
-        "records": by_query,
+        "run_at": "2026-01-01T00:00:00+00:00",
+        "query_engine": {"engine_name": "cudf-polars"},
+        "extra_info": {
+            "benchmark": {
+                "frontend": "ray",
+                "dataset_path": "/data",
+                "scale_factor": 10,
+                "n_workers": 2,
+                "iterations": 1,
+            }
+        },
+        "query_logs": list(query_logs),
         **overrides,
     }
 

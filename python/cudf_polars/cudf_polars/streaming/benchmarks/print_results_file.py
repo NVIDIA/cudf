@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING, Any
 
 from rapidsmpf.utils.string import format_bytes
 
-from cudf_polars.streaming.benchmarks.utils import SuccessRecord, record_from_dict
+from cudf_polars.streaming.benchmarks.utils import (
+    FailedRecord,
+    SuccessRecord,
+)
 
 _DESCRIPTION = (
     "Read a saved benchmark results file and print the query timings, and the "
@@ -30,8 +33,6 @@ _DESCRIPTION = (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from cudf_polars.streaming.benchmarks.utils import FailedRecord
 
 
 def load_runs(path: Path) -> list[dict[str, Any]]:
@@ -72,8 +73,27 @@ def iter_records(run: dict[str, Any]) -> Iterator[SuccessRecord | FailedRecord]:
     ------
     The run's per-iteration records.
     """
-    for _, records in sorted(run["records"].items(), key=lambda kv: int(kv[0])):
-        yield from map(record_from_dict, records)
+    query_logs = sorted(
+        run["query_logs"],
+        key=lambda log: (int(log["query_name"]), log["execution_order"]),
+    )
+    for query_log in query_logs:
+        query = int(query_log["query_name"])
+        extra_info = query_log.get("extra_info") or {}
+        if query_log.get("status", "success") == "success":
+            yield SuccessRecord(
+                query=query,
+                iteration=extra_info.get("iteration", 0),
+                duration=query_log["runtime_ms"] / 1000,
+                statistics=extra_info.get("statistics"),
+                io_summaries=extra_info.get("io_summaries"),
+            )
+        else:
+            yield FailedRecord(
+                query=query,
+                iteration=extra_info.get("iteration", 0),
+                traceback=extra_info.get("traceback", ""),
+            )
 
 
 def print_header(run: dict[str, Any]) -> None:
@@ -85,10 +105,20 @@ def print_header(run: dict[str, Any]) -> None:
     run
         A single run, as returned by :func:`load_runs`.
     """
-    print(f"run       : {run.get('run_id')}  ({run.get('timestamp')})")
-    print(f"engine    : {run.get('engine_name')}  frontend={run.get('frontend')}")
-    print(f"dataset   : {run.get('dataset_path')}  scale={run.get('scale_factor')}")
-    print(f"workers   : {run.get('n_workers')}  iterations={run.get('iterations')}")
+    benchmark = run.get("extra_info", {}).get("benchmark", {})
+    engine = run.get("query_engine", {})
+    print(f"run       : {run.get('run_id')}  ({run.get('run_at')})")
+    print(
+        f"engine    : {engine.get('engine_name')}  frontend={benchmark.get('frontend')}"
+    )
+    print(
+        f"dataset   : {benchmark.get('dataset_path')}  "
+        f"scale={benchmark.get('scale_factor')}"
+    )
+    print(
+        f"workers   : {benchmark.get('n_workers')}  "
+        f"iterations={benchmark.get('iterations')}"
+    )
 
 
 def print_timings(run: dict[str, Any]) -> None:
@@ -103,18 +133,17 @@ def print_timings(run: dict[str, Any]) -> None:
     print("\nTimings")
     print(f"  {'query':>6}  {'iters':>5}  {'min':>9}  {'max':>9}  {'mean':>9}")
     total = 0.0
-    for query, records in sorted(run["records"].items(), key=lambda kv: int(kv[0])):
-        durations = [
-            r.duration
-            for r in map(record_from_dict, records)
-            if isinstance(r, SuccessRecord)
-        ]
+    by_query: dict[int, list[SuccessRecord | FailedRecord]] = {}
+    for record in iter_records(run):
+        by_query.setdefault(record.query, []).append(record)
+    for query, records in sorted(by_query.items()):
+        durations = [r.duration for r in records if isinstance(r, SuccessRecord)]
         if not durations:
-            print(f"  {query:>6}  {'-':>5}  {'no successful iterations':>31}")
+            print(f"  {query!s:>6}  {'-':>5}  {'no successful iterations':>31}")
             continue
         total += mean(durations)
         print(
-            f"  {query:>6}  {len(durations):>5}  {min(durations):>8.4f}s  "
+            f"  {query!s:>6}  {len(durations):>5}  {min(durations):>8.4f}s  "
             f"{max(durations):>8.4f}s  {mean(durations):>8.4f}s"
         )
     if total > 0:

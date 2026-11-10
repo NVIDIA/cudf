@@ -372,7 +372,7 @@ class VersionInfo:
 class PackageVersions:
     """Information about the versions of the software used to run the query."""
 
-    cudf_polars: str | VersionInfo
+    cudf_polars: VersionInfo
     polars: str
     python: str
     rapidsmpf: str | VersionInfo | None
@@ -635,6 +635,10 @@ class RunConfig:
     command_line: str
     capture_env_vars: str
     roles: list[Role] = dataclasses.field(default_factory=list)
+    sku_name: str | None = None
+    storage_configuration_name: str | None = None
+    benchmark_definition_name: str | None = None
+    node_count: int | None = None
 
     def __post_init__(self) -> None:  # noqa: D105
         if self.io_mode == "hot" and self.iterations < 2:
@@ -647,7 +651,8 @@ class RunConfig:
         self.extra_info.setdefault("environment", {})
         for var in self.capture_env_vars.split(","):
             var_ = var.strip()
-            self.extra_info["environment"][var_] = os.environ.get(var_)
+            if var_:
+                self.extra_info["environment"][var_] = os.environ.get(var_)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunConfig:
@@ -761,6 +766,10 @@ class RunConfig:
             duckdb_temp_dir=args.duckdb_temp_dir,
             command_line=shlex.join(sys.argv),
             capture_env_vars=args.capture_env_vars,
+            sku_name=args.sku_name,
+            storage_configuration_name=args.storage_configuration_name,
+            benchmark_definition_name=args.benchmark_definition_name,
+            node_count=args.node_count,
             hardware=HardwareInfo.collect(
                 collect_gpus=args.frontend not in _CPU_ENGINES
             ),
@@ -768,10 +777,14 @@ class RunConfig:
         )
 
     def serialize(
-        self, engine: pl.GPUEngine | None, quent_archive: Path | None
+        self,
+        engine: pl.GPUEngine | None,
+        quent_archive: Path | None,
+        *,
+        output_path: Path | None = None,
     ) -> dict:
         """
-        Serialize the run config to a dictionary.
+        Serialize this run in the version-2 benchmark interchange format.
 
         Parameters
         ----------
@@ -779,17 +792,116 @@ class RunConfig:
             The engine that was used to run the benchmark.
         quent_archive
             The path to the Quent archive that was written during the benchmark, if any.
-            This path will be inserted in ``extra_info.quent-archive``.
+        output_path
+            Results file receiving this record. Artifact paths are made relative to
+            its directory when supplied.
         """
         opts = self.streaming_options
-        extra_info = dict(self.extra_info)
-        if quent_archive is not None:
-            extra_info["quent-archive"] = str(quent_archive.absolute())
+        user_extra_info = dict(self.extra_info)
+        environment = user_extra_info.pop("environment", {})
         roles = list(self.roles)
+        artifacts: list[dict[str, Any]] = []
         if quent_archive is not None:
             roles.append(QuentRole(filename=quent_archive.name))
-        result: dict[str, Any] = {
-            "engine_name": self.engine_name,
+            archive_path = quent_archive.resolve()
+            if output_path is not None:
+                artifact_path = os.path.relpath(
+                    archive_path, start=output_path.resolve().parent
+                )
+            else:
+                artifact_path = str(archive_path)
+            artifacts.append(
+                {
+                    "path": artifact_path,
+                    "filename": quent_archive.name,
+                    "title": "Quent Archive",
+                    "description": "ZIP archive containing Quent execution traces.",
+                    "media_type": "application/zip",
+                }
+            )
+
+        query_logs: list[dict[str, Any]] = []
+        for execution_order, (query, record) in enumerate(
+            (query, record)
+            for query, records in self.records.items()
+            for record in records
+        ):
+            record_extra_info: dict[str, Any] = {"iteration": record.iteration}
+            query_log: dict[str, Any] = {
+                "query_name": str(query),
+                "execution_order": execution_order,
+                "status": record.status,
+                "extra_info": record_extra_info,
+            }
+            if isinstance(record, SuccessRecord):
+                query_log["runtime_ms"] = record.duration * 1000
+                if record.validation_result is not None:
+                    validation_result = dataclasses.asdict(record.validation_result)
+                    validation_result["status"] = validation_result["status"].lower()
+                    query_log["validation_result"] = validation_result
+                else:
+                    query_log["validation_result"] = None
+                if record.statistics is not None:
+                    record_extra_info["statistics"] = record.statistics
+                    query_log["engine_metrics"] = {
+                        f"{statistic}.{field}": value
+                        for statistic, values in record.statistics.items()
+                        for field, value in values.items()
+                        if isinstance(value, int | float)
+                        and not isinstance(value, bool)
+                    }
+                if record.io_summaries is not None:
+                    record_extra_info["io_summaries"] = record.io_summaries
+            else:
+                record_extra_info["traceback"] = record.traceback
+                query_log["validation_result"] = None
+            query_logs.append(query_log)
+
+        validation_results = [
+            record.validation_result
+            for records in self.records.values()
+            for record in records
+            if isinstance(record, SuccessRecord)
+        ]
+        records = [record for records in self.records.values() for record in records]
+        if any(
+            result is not None and result.status == "Failed"
+            for result in validation_results
+        ):
+            validation_status = "failed"
+        elif (
+            records
+            and all(isinstance(record, SuccessRecord) for record in records)
+            and all(result is not None for result in validation_results)
+        ):
+            validation_status = "passed"
+        else:
+            validation_status = "not-validated"
+
+        if self.engine_name == "cudf-polars":
+            version = self.versions.cudf_polars.version
+            commit_hash = self.versions.cudf_polars.commit
+        elif self.engine_name == "polars-cpu":
+            version = self.versions.polars
+            commit_hash = "N/A"
+        else:
+            version = self.versions.duckdb or "unknown"
+            commit_hash = "N/A"
+
+        engine_config: dict[str, Any] = {}
+        if engine is not None:
+            config_options = ConfigOptions.from_polars_engine(engine)
+            config_options = config_options.drop_unserializable()
+            engine_config["config_options"] = dataclasses.asdict(
+                config_options, dict_factory=ConfigOptions.dict_factory
+            )
+            if isinstance(engine, StreamingEngine):
+                engine_config["rapidsmpf_options"] = (
+                    engine.rapidsmpf_options.get_strings()
+                )
+            engine_config["config_options"]["executor"].pop("quent_context", None)
+
+        benchmark_info = {
             "queries": self.queries,
             "query_set": self.query_set,
             "dataset_path": str(self.dataset_path),
@@ -804,46 +916,61 @@ class RunConfig:
             ),
             "frontend": self.frontend,
             "iterations": self.iterations,
-            "io_mode": self.io_mode,
             "collect_traces": self.collect_traces,
             "n_workers": self.n_workers,
-            "extra_info": extra_info,
-            "run_id": str(self.run_id),
-            "timestamp": self.timestamp,
-            "command_line": self.command_line,
             "streaming_options": {
                 "rapidsmpf": opts.to_rapidsmpf_options().get_strings(),
                 "executor": opts.to_executor_options(),
                 "engine": {k: str(v) for k, v in opts.to_engine_options().items()},
             },
-            "records": {
-                k: [dataclasses.asdict(r) for r in v] for k, v in self.records.items()
-            },
-            "versions": dataclasses.asdict(self.versions),
-            "hardware": dataclasses.asdict(self.hardware),
-            "validation_method": dataclasses.asdict(self.validation_method)
-            if self.validation_method
-            else None,
-            "roles": [dataclasses.asdict(r) for r in roles],
         }
-        if engine is not None:
-            config_options = ConfigOptions.from_polars_engine(engine)
-            config_options = config_options.drop_unserializable()
-            extra = {
-                "config_options": dataclasses.asdict(
-                    config_options, dict_factory=ConfigOptions.dict_factory
+        result: dict[str, Any] = {
+            "schema_version": 2,
+            "run_id": str(self.run_id),
+            "run_at": self.timestamp,
+            "cache_state": self.io_mode,
+            "gpu_count": 0 if self.frontend in _CPU_ENGINES else self.n_workers,
+            "query_engine": {
+                "engine_name": self.engine_name,
+                "version": version,
+                "commit_hash": commit_hash,
+            },
+            "query_logs": query_logs,
+            "concurrency_streams": 1,
+            "engine_config": engine_config,
+            "extra_info": {
+                "benchmark": benchmark_info,
+                "versions": dataclasses.asdict(self.versions),
+                "hardware": dataclasses.asdict(self.hardware),
+                "validation_method": (
+                    dataclasses.asdict(self.validation_method)
+                    if self.validation_method
+                    else None
                 ),
+                "user": user_extra_info,
+            },
+            "validation_status": validation_status,
+            "command_line": self.command_line,
+            "environment": [
+                {"key": key, "value": "" if value is None else str(value)}
+                for key, value in environment.items()
+            ],
+            "roles": [dataclasses.asdict(role) for role in roles],
+            "artifacts": artifacts,
+        }
+        optional_submission_fields = {
+            "sku_name": self.sku_name,
+            "storage_configuration_name": self.storage_configuration_name,
+            "benchmark_definition_name": self.benchmark_definition_name,
+            "node_count": self.node_count,
+        }
+        result.update(
+            {
+                key: value
+                for key, value in optional_submission_fields.items()
+                if value is not None
             }
-
-            if isinstance(engine, StreamingEngine):
-                extra["rapidsmpf_options"] = engine.rapidsmpf_options.get_strings()
-
-            result["config_options"] = extra
-            # discard unserializable / unnecessary UUIDs
-            result["config_options"]["config_options"]["executor"].pop(
-                "quent_context", None
-            )
-
+        )
         return result
 
     def summarize(self) -> None:
@@ -1583,7 +1710,7 @@ def run_polars_cpu(
         validation_failures,
         query_failures,
         serializable_engine_config=run_config.serialize(
-            engine=None, quent_archive=None
+            engine=None, quent_archive=None, output_path=run_options.output
         ),
         startup_duration_ms=None,
         shutdown_duration_ms=None,
@@ -1626,7 +1753,7 @@ def run_polars_in_memory(
         validation_failures,
         query_failures,
         serializable_engine_config=run_config.serialize(
-            engine=engine, quent_archive=None
+            engine=engine, quent_archive=None, output_path=run_options.output
         ),
         startup_duration_ms=startup_duration_ms,
         shutdown_duration_ms=None,
@@ -1694,7 +1821,9 @@ def run_polars_spmd(
         else:
             quent_archive = None
         serializable_engine_config = run_config.serialize(
-            engine=engine, quent_archive=quent_archive
+            engine=engine,
+            quent_archive=quent_archive,
+            output_path=run_options.output,
         )
         shutdown_time_begin = time.monotonic()
 
@@ -1767,7 +1896,9 @@ def run_polars_ray(
             quent_archive = None
 
         serializable_engine_config = run_config.serialize(
-            engine=engine, quent_archive=quent_archive
+            engine=engine,
+            quent_archive=quent_archive,
+            output_path=run_options.output,
         )
         shutdown_time_begin = time.monotonic()
 
@@ -1843,7 +1974,9 @@ def run_polars_dask(
             else:
                 quent_archive = None
             serializable_engine_config = run_config.serialize(
-                engine=engine, quent_archive=quent_archive
+                engine=engine,
+                quent_archive=quent_archive,
+                output_path=run_options.output,
             )
             shutdown_time_begin = time.monotonic()
 
@@ -2065,13 +2198,17 @@ def run_duckdb(duckdb_queries_cls: Any, args: argparse.Namespace) -> None:
                 result.write_parquet(expected_dir / f"q_{q_id:02d}.parquet")
 
     run_config = dataclasses.replace(run_config, records=dict(records))
-    if run_options.summarize:
-        run_config.summarize()
-
-    if run_options.output is not None:
-        with run_options.output.open("a") as f:
-            f.write(json.dumps(run_config.serialize(engine=None, quent_archive=None)))
-            f.write("\n")
+    _finalize_benchmark_run(
+        run_options,
+        run_config,
+        validation_failures=[],
+        query_failures=[],
+        serializable_engine_config=run_config.serialize(
+            engine=None, quent_archive=None, output_path=run_options.output
+        ),
+        startup_duration_ms=None,
+        shutdown_duration_ms=None,
+    )
 
 
 def check_input_data_type(
@@ -2387,6 +2524,27 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
         type=json.loads,
         default={},
         help="Extra information to add to the output file (must be JSON-serializable).",
+    )
+    parser.add_argument(
+        "--sku-name",
+        default=None,
+        help="Optional hardware SKU name to include in the output.",
+    )
+    parser.add_argument(
+        "--storage-configuration-name",
+        default=None,
+        help="Optional storage configuration name to include in the output.",
+    )
+    parser.add_argument(
+        "--benchmark-definition-name",
+        default=None,
+        help="Optional benchmark definition name to include in the output.",
+    )
+    parser.add_argument(
+        "--node-count",
+        type=int,
+        default=None,
+        help="Optional number of participating nodes to include in the output.",
     )
 
     parser.add_argument(

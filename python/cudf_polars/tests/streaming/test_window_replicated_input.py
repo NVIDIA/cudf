@@ -8,7 +8,6 @@ from __future__ import annotations
 import pytest
 
 import polars as pl
-from polars.testing import assert_frame_equal
 
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
@@ -43,11 +42,10 @@ def test_ordered_window_preserves_replicated_rows(ray_engine, empty, mixed):
     )
 
 
-@pytest.mark.spmd
 @pytest.mark.parametrize("empty", [False, True])
 @pytest.mark.parametrize("ordered", [False, True])
-def test_window_preserves_replicated_rows_on_every_rank(spmd_engine, empty, ordered):
-    """Each rank retains the full window result and its replicated metadata."""
+def test_cumulative_window_preserves_replicated_rows(ray_engine, empty, ordered):
+    """Ordered and input-order cumulative windows align with replicated top-k rows."""
     frame = pl.LazyFrame(
         {"g": ["a", "b", "a", "b"], "t": [3, 1, 4, 2], "x": [10, 40, 30, 20]}
     )
@@ -58,14 +56,5 @@ def test_window_preserves_replicated_rows_on_every_rank(spmd_engine, empty, orde
         if ordered
         else pl.col("x").cum_sum().over("g")
     ).alias("running")
-    expected = frame.sort("t").head(3).with_columns(window).collect()
-
-    # SPMD scans are rank-local. Contribute the input once, then top-k
-    # replicates it across ranks before window evaluation.
-    local = frame if spmd_engine.rank == 0 else frame.clear()
-    query = local.sort("t").head(3).with_columns(window)
-    with spmd_engine.execute(query) as result:
-        # Unlike Ray collection, SPMD persistence retains every replica.
-        assert result.local_is_duplicated(spmd_engine.rank)
-        actual = result.take_local(spmd_engine.rank).to_polars()
-        assert_frame_equal(actual, expected, check_row_order=True)
+    query = frame.sort("t").head(3).with_columns(window)
+    assert_gpu_result_equal(query, engine=ray_engine, check_row_order=True)

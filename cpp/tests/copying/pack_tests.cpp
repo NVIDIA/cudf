@@ -98,7 +98,20 @@ struct packed_output {
   }
 };
 
-packed_output pack_to(cx::pack_plan const& plan, destination_kind kind)
+/// Runs `work` while the current device resource throws, so it may only allocate from the harness
+/// resources it is given.
+template <typename Work>
+auto without_current_resource(cudf::test::memory_resource_test_harness& harness, Work&& work)
+{
+  auto const scope = harness.fail_on_current_device_resource_use();
+  auto result      = work(harness.resources());
+  harness.synchronize(cudf::get_default_stream());
+  return result;
+}
+
+packed_output pack_to(cx::pack_plan const& plan,
+                      destination_kind kind,
+                      cudf::test::memory_resource_test_harness* harness = nullptr)
 {
   auto const stream = cudf::get_default_stream();
   auto const bytes  = plan.sizes().payload_bytes;
@@ -121,8 +134,12 @@ packed_output pack_to(cx::pack_plan const& plan, destination_kind kind)
       break;
     }
   }
-  output.result = cx::pack_into(plan, destination);
-  output.data   = destination.data();
+  output.result =
+    harness != nullptr
+      ? without_current_resource(
+          *harness, [&](cudf::memory_resources mr) { return cx::pack_into(plan, destination, mr); })
+      : cx::pack_into(plan, destination);
+  output.data = destination.data();
   stream.sync();
   return output;
 }
@@ -132,9 +149,17 @@ packed_output pack_to_device(cx::pack_plan const& plan)
   return pack_to(plan, destination_kind::device);
 }
 
-void expect_materializes_to(cudf::table_view const& expected, cx::packed_data_view packed)
+void expect_materializes_to(cudf::table_view const& expected,
+                            cx::packed_data_view packed,
+                            cudf::test::memory_resource_test_harness* harness = nullptr)
 {
-  auto const materialized = cx::materialize(packed);
+  auto const materialized =
+    harness != nullptr
+      ? without_current_resource(*harness,
+                                 [&](cudf::memory_resources mr) {
+                                   return cx::materialize(packed, cudf::get_default_stream(), mr);
+                                 })
+      : cx::materialize(packed);
   EXPECT_EQ(materialized->num_rows(), expected.num_rows());
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, materialized->view());
 }
@@ -605,14 +630,13 @@ TEST_F(ExperimentalPackUnpackTest, StagingIsBoundedByStagingBudget)
     SCOPED_TRACE(static_cast<int>(compression));
     auto options                 = make_options(compression);
     options.staging_buffer_bytes = 1024 * 1024;
-    rmm::mr::statistics_resource_adaptor output_mr(cudf::get_current_device_resource_ref());
-    auto const plan = cx::prepare_pack(input,
-                                       options,
-                                       cudf::get_default_stream(),
-                                       {output_mr, cudf::get_current_device_resource_ref()});
-    EXPECT_LE(output_mr.get_bytes_counter().value, options.staging_buffer_bytes);
+    cudf::test::memory_resource_test_harness harness;
+    auto const plan = without_current_resource(harness, [&](cudf::memory_resources mr) {
+      return cx::prepare_pack(input, options, cudf::get_default_stream(), mr);
+    });
+    EXPECT_LE(harness.output_mr().get_bytes_counter().value, options.staging_buffer_bytes);
     for (auto const kind : {destination_kind::device, destination_kind::pinned}) {
-      expect_materializes_to(input, pack_to(plan, kind).view());
+      expect_materializes_to(input, pack_to(plan, kind, &harness).view(), &harness);
     }
   }
 

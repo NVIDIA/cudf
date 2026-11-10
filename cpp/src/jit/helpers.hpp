@@ -99,5 +99,13 @@ std::string define_operation(std::string const& cuda_source,
                              std::string_view operation_macro,
                              std::string_view function_name);
 
+/**
+ * @brief Convert an LTO binary type to an RTCX binary type.
+ *
+ * @param type The LTO binary type to convert
+ * @return The corresponding RTCX binary type
+ */
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type);
+
 }  // namespace jit
 }  // namespace cudf

@@ -222,18 +222,18 @@ kernel get_linked_kernel(
   std::vector<rtcx::memory_fragment> memory_fragments = {
     {
       .data = kernel_fragment,
-      .type = as_rtcx_binary_type(kernel_fragment_binary_type),
+      .type = jit::as_rtcx_binary_type(kernel_fragment_binary_type),
       .name = kernel_fragment_id.c_str(),
     },
     {
       .data = udf_binary,
-      .type = as_rtcx_binary_type(source_type),
+      .type = jit::as_rtcx_binary_type(source_type),
       .name = nullptr  // nullptr = unnamed fragment: the binary will be used to hash the UDF
     }};
 
   for (auto const& fragment : link_fragments) {
     memory_fragments.push_back(
-      {.data = fragment.data, .type = as_rtcx_binary_type(fragment.type), .name = nullptr});
+      {.data = fragment.data, .type = jit::as_rtcx_binary_type(fragment.type), .name = nullptr});
   }
 
   return get_lto_linked_kernel("cudf/cpp/src/transform/jit/kernel.cu", {}, memory_fragments);

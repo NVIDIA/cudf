@@ -10,6 +10,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -561,4 +562,30 @@ TEST_F(StringsReplaceRegexTest, AlternationPriorityFirstWins)
     cudf::test::strings_column_wrapper expected({"X", "Xch", "Xfish", "dog", ""});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
+}
+
+TEST_F(StringsReplaceRegexTest, SlicedWithNulls)
+{
+  // rows 0 and 7 are outside the slice and would match if the offset were ignored
+  auto const input = cudf::test::strings_column_wrapper(
+    {"a1 outside", "", "b22 c333", "", "", "d4", "no digits", "e5 outside"},
+    cudf::test::iterators::nulls_at({1, 4}));
+  auto const sliced = cudf::slice(input, {1, 7}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+  auto const nulls  = cudf::test::iterators::nulls_at({0, 3});
+
+  auto prog    = cudf::strings::regex_program::create("\\d+");
+  auto results = cudf::strings::replace_re(sv, *prog, cudf::string_scalar("#"));
+  auto expected =
+    cudf::test::strings_column_wrapper({"", "b# c#", "", "", "d#", "no digits"}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  results  = cudf::strings::replace_re(sv, *prog, cudf::string_scalar("#"), 1);
+  expected = cudf::test::strings_column_wrapper({"", "b# c333", "", "", "d#", "no digits"}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  prog     = cudf::strings::regex_program::create("([a-z])(\\d+)");
+  results  = cudf::strings::replace_with_backrefs(sv, *prog, "\\2\\1");
+  expected = cudf::test::strings_column_wrapper({"", "22b 333c", "", "", "4d", "no digits"}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }

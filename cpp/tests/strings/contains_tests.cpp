@@ -10,6 +10,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/contains.hpp>
@@ -1468,4 +1469,30 @@ TEST_F(StringsContainsTests, WhitespaceControlCharacters)
   auto results = cudf::strings::contains_re(sv, *prog);
   cudf::test::fixed_width_column_wrapper<bool> expected({1, 1, 1, 1, 1, 0});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(StringsContainsTests, SlicedWithNulls)
+{
+  // rows 0 and 7 are outside the slice and would match if the offset were ignored
+  auto const input = cudf::test::strings_column_wrapper(
+    {"a1 outside", "", "b22 c333", "", "", "d4", "no digits", "e5 outside"},
+    cudf::test::iterators::nulls_at({1, 4}));
+  auto const sliced = cudf::slice(input, {1, 7}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+  auto const nulls  = cudf::test::iterators::nulls_at({0, 3});
+
+  auto prog              = cudf::strings::regex_program::create("\\d+");
+  auto results           = cudf::strings::contains_re(sv, *prog);
+  auto expected_contains = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 1, 0}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_contains);
+
+  results = cudf::strings::count_re(sv, *prog);
+  auto expected_count =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 2, 0, 0, 1, 0}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_count);
+
+  prog                  = cudf::strings::regex_program::create("[a-c]\\d+");
+  results               = cudf::strings::matches_re(sv, *prog);
+  auto expected_matches = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 0, 0}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_matches);
 }

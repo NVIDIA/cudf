@@ -127,20 +127,4 @@ pair_buffers sort_by_label(pair_buffers input,
                            cuda::stream_ref stream,
                            cudf::memory_resources mr);
 
-/**
- * @brief Moves out whichever of two buffers holds `data`.
- *
- * @param data Data of either buffer, such as a buffer `sort_pairs` returns
- * @param first Buffer returned if it holds `data`
- * @param second Buffer returned otherwise
- * @return The buffer holding `data`
- */
-[[nodiscard]] inline cuda::device_buffer<size_type> take_buffer(
-  size_type const* data,
-  cuda::device_buffer<size_type>& first,
-  cuda::device_buffer<size_type>& second)
-{
-  return data == first.data() ? std::move(first) : std::move(second);
-}
-
 }  // namespace cudf::groupby::detail::hash

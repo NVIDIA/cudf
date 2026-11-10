@@ -126,7 +126,8 @@ void stabilize_rows(hash::grouped_keys& groups,
   }
   // The sorted labels are the group of each grouped row; keep them for group_labels().
   if (store_labels) {
-    auto labels = hash::take_buffer(sorted.keys, input_labels, ordered_labels);
+    auto labels =
+      sorted.keys == input_labels.data() ? std::move(input_labels) : std::move(ordered_labels);
     if (labels.size() != static_cast<std::size_t>(size)) {
       labels = cuda::device_buffer<size_type>{
         stream, mr.get_temporary_mr(), labels.begin(), labels.begin() + size};

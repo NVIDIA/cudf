@@ -223,13 +223,15 @@ stable_grouped_rows(size_type num_rows,
                                     filtered,
                                     stream,
                                     mr);
-  auto grouped_rows = take_buffer(sorted.values, input_rows, ordered_rows);
+  auto grouped_rows =
+    sorted.values == input_rows.data() ? std::move(input_rows) : std::move(ordered_rows);
   if (filtered) {
     grouped_rows = cuda::device_buffer<size_type>{
       stream, mr.get_output_mr(), grouped_rows.data(), grouped_rows.data() + num_grouped_rows};
   }
   if (!keep_labels) { return {std::move(grouped_rows), std::nullopt}; }
-  auto group_labels = take_buffer(sorted.keys, input_labels, ordered_labels);
+  auto group_labels =
+    sorted.keys == input_labels.data() ? std::move(input_labels) : std::move(ordered_labels);
   if (filtered) {
     group_labels = cuda::device_buffer<size_type>{
       stream, mr.get_output_mr(), group_labels.data(), group_labels.data() + num_grouped_rows};

@@ -187,8 +187,8 @@ std::unique_ptr<table> drop_nans(
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied to the corresponding output column
- * if the corresponding element `i` in the mask is `true`. Rows with null mask elements are
- * dropped unless `null_policy::INCLUDE` is specified.
+ * if the corresponding element `i` in the mask is `true`. Rows with null mask
+ * elements are dropped unless `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p retention_mask is empty, or @p input has zero rows, an empty table is returned.
@@ -248,8 +248,8 @@ std::unique_ptr<table> apply_retention_mask(
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied from the corresponding output column
- * if the corresponding element `i` in the mask is `false`. Rows with null mask elements are
- * dropped unless `null_policy::INCLUDE` is specified.
+ * if the corresponding element `i` in the mask is `false`. Rows with null mask
+ * elements are dropped unless `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p deletion_mask is empty, a copy of @p input is returned. If @p input has zero rows,

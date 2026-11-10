@@ -431,6 +431,10 @@ packed_metadata_view::packed_metadata_view(std::span<uint8_t const> buffer)
   // Walk the top-level columns once to validate two things: every top-level column's size agrees
   // with the recorded row count and the column tree exactly fills the buffer.
   auto const* ptr = entries;
+  auto const num_entries =
+    (buffer.size() - sizeof(detail::serialized_table_header)) / sizeof(detail::serialized_column);
+  CUDF_EXPECTS(std::cmp_less_equal(_num_columns, num_entries),
+               "packed metadata header has more columns than column entries");
   _column_offsets.reserve(_num_columns);
   for (size_type i = 0; i < _num_columns; ++i) {
     auto const entry = detail::read_entry(ptr, end);

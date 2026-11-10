@@ -1625,21 +1625,24 @@ TEST_F(PackUnpackTest, MetadataViewRejectsCorruptedChildCount)
   EXPECT_THROW(cudf::packed_metadata_view{corrupted}, cudf::logic_error);
 }
 
-TEST_F(PackUnpackTest, MetadataRejectsNegativeColumnCount)
+TEST_F(PackUnpackTest, MetadataRejectsInvalidColumnCount)
 {
   cudf::test::fixed_width_column_wrapper<int> col{1, 2, 3};
   auto packed = cudf::pack(cudf::table_view({col}));
 
-  auto corrupted = *packed.metadata;
-  // num_columns follows the leading version field in the header.
-  auto constexpr num_columns_offset = sizeof(std::int32_t);
-  cudf::size_type const negative    = -1;
-  std::memcpy(corrupted.data() + num_columns_offset, &negative, sizeof(negative));
+  // A count beyond the serialized entries must fail validation before anything is sized by it.
+  for (cudf::size_type const num_columns : {-1, std::numeric_limits<cudf::size_type>::max()}) {
+    SCOPED_TRACE(num_columns);
+    auto corrupted = *packed.metadata;
+    // num_columns follows the leading version field in the header.
+    auto constexpr num_columns_offset = sizeof(std::int32_t);
+    std::memcpy(corrupted.data() + num_columns_offset, &num_columns, sizeof(num_columns));
 
-  EXPECT_THROW(cudf::packed_metadata_view{corrupted}, cudf::logic_error);
-  EXPECT_THROW(
-    cudf::unpack(corrupted.data(), reinterpret_cast<uint8_t const*>(packed.gpu_data->data())),
-    cudf::logic_error);
+    EXPECT_THROW(cudf::packed_metadata_view{corrupted}, cudf::logic_error);
+    EXPECT_THROW(
+      cudf::unpack(corrupted.data(), reinterpret_cast<uint8_t const*>(packed.gpu_data->data())),
+      cudf::logic_error);
+  }
 }
 
 // num_rows follows the leading version and num_columns fields in the header.

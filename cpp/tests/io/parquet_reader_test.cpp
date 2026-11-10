@@ -18,6 +18,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/reshape.hpp>
@@ -6576,6 +6577,101 @@ TYPED_TEST(ParquetFilterPushdownTimestampPrecisions, AllPrecisions)
     auto const written_table_chunk = cudf::split(written_table, {num_rows / 2}).back();
     auto const expected = cudf::cast(written_table_chunk.column(0), cudf::data_type{target_type});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view().column(0), expected->view());
+  }
+}
+
+TEST_F(ParquetReaderTest, FilterInt96Stats)
+{
+  // libcudf doesn't write INT96 min/max, so inject them into the footer. Per the Parquet spec,
+  // INT96 min/max are only usable with the INT96_TIMESTAMP_ORDER column order
+  using cudf::io::parquet::ColumnOrder;
+  constexpr auto num_rows           = 10000;
+  constexpr auto rows_per_row_group = 5000;
+  constexpr auto ms_offset          = int64_t{rows_per_row_group} * 1000;
+
+  // Row group 0 is pre-epoch: [-5000 s, -1 s], row group 1: [0 s, 4999 s]
+  auto iter = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return cudf::timestamp_ms{cudf::duration_ms{i * 1000 - ms_offset}}; });
+  auto const ts_col =
+    cudf::test::fixed_width_column_wrapper<cudf::timestamp_ms>(iter, iter + num_rows);
+  auto const written_table = cudf::table_view{{ts_col}};
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, written_table)
+      .int96_timestamps(true)
+      .row_group_size_rows(rows_per_row_group)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP)
+      .build());
+
+  auto const to_int96 = [](int64_t ms) {
+    auto const ts    = cudf::duration_ms{ms};
+    auto const days  = cuda::std::chrono::floor<cudf::duration_D>(ts);
+    auto const nanos = cuda::std::chrono::duration_cast<cudf::duration_ns>(ts - days).count();
+    auto const julian_days =
+      static_cast<int32_t>(days.count()) + cudf::io::parquet::detail::julian_day_unix_epoch;
+    auto bytes = std::vector<uint8_t>(cudf::io::parquet::detail::int96_size);
+    std::memcpy(bytes.data(), &nanos, sizeof(nanos));
+    std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
+    return bytes;
+  };
+
+  // File layout: data | footer | footer length (4 bytes) | "PAR1"
+  auto footer_len = uint32_t{};
+  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
+  auto const data_len = buffer.size() - 8 - footer_len;
+  auto const footer   = cudf::io::parquet::experimental::read_parquet_footer_bytes(
+    {reinterpret_cast<uint8_t const*>(buffer.data()) + data_len, footer_len});
+
+  // ts >= 0 s
+  auto literal_value = cudf::timestamp_scalar<cudf::timestamp_ms>(cudf::duration_ms{0}, true);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(0);
+  auto filter = cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
+  auto const expected = cudf::split(written_table, {rows_per_row_group}).back();
+
+  // {column order, use deprecated min/max, expected row groups after stats filter}
+  using test_case = std::tuple<std::optional<ColumnOrder::Type>, bool, int>;
+  for (auto const& [column_order, deprecated_min_max, num_row_groups] :
+       {test_case{std::nullopt, true, 2},
+        test_case{ColumnOrder::TYPE_ORDER, false, 2},
+        test_case{ColumnOrder::INT96_TIMESTAMP_ORDER, false, 1}}) {
+    auto metadata = footer;
+    metadata.column_orders.reset();
+    if (column_order.has_value()) {
+      metadata.column_orders = std::vector<ColumnOrder>{{*column_order}};
+    }
+    for (auto rg_idx = 0; auto& row_group : metadata.row_groups) {
+      auto& stats    = row_group.columns.front().meta_data.statistics;
+      auto const min = to_int96(rg_idx * ms_offset - ms_offset);
+      auto const max = to_int96((rg_idx + 1) * ms_offset - ms_offset - 1000);
+      if (deprecated_min_max) {
+        stats.min = min;
+        stats.max = max;
+      } else {
+        stats.min_value = min;
+        stats.max_value = max;
+      }
+      ++rg_idx;
+    }
+
+    auto const footer_bytes = cudf::io::parquet::experimental::write_parquet_footer_bytes(metadata);
+    auto file               = std::vector<char>(buffer.begin(), buffer.begin() + data_len);
+    file.insert(file.end(), footer_bytes.begin(), footer_bytes.end());
+    auto const new_footer_len = static_cast<uint32_t>(footer_bytes.size());
+    file.insert(file.end(),
+                reinterpret_cast<char const*>(&new_footer_len),
+                reinterpret_cast<char const*>(&new_footer_len) + sizeof(new_footer_len));
+    file.insert(file.end(), buffer.end() - 4, buffer.end());
+
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<char const>{file.data(), file.size()}})
+        .timestamp_type(cudf::data_type{cudf::type_id::TIMESTAMP_MILLISECONDS})
+        .filter(filter)
+        .build());
+    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), num_row_groups);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
   }
 }
 

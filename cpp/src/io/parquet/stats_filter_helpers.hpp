@@ -49,6 +49,26 @@ auto constexpr stats_cols_per_column = 4;
 [[nodiscard]] std::optional<bool> has_nans(std::optional<int64_t> nan_count);
 
 /**
+ * @brief Checks whether a column chunk's min/max statistics have a defined order
+ *
+ * Per the Parquet spec, INT96 min/max (including the deprecated `min`/`max` fields) are only
+ * ordered if the column declares `INT96_TIMESTAMP_ORDER`, and must be ignored otherwise.
+ *
+ * @param metadata File metadata holding the column orders
+ * @param physical_type Physical type of the column chunk
+ * @param leaf_idx Leaf column index, i.e. the column chunk's position in its row group
+ * @return False if the min/max statistics must be ignored, true otherwise
+ */
+[[nodiscard]] inline bool has_ordered_min_max(FileMetaData const& metadata,
+                                              Type physical_type,
+                                              std::size_t leaf_idx)
+{
+  if (physical_type != Type::INT96) { return true; }
+  return metadata.column_orders.has_value() and leaf_idx < metadata.column_orders->size() and
+         (*metadata.column_orders)[leaf_idx].type == ColumnOrder::INT96_TIMESTAMP_ORDER;
+}
+
+/**
  * @brief Base utilities for converting and casting stats values
  *
  * Derived classes handle row group or page-level statistics as needed.
@@ -136,10 +156,17 @@ class stats_caster_base {
         return stats_caster_base::target_type<T>(
           decode_fixed_width_value<int64_t>(stats_val, stats_size), ts_scale);
       case Type::INT96:  // Deprecated in parquet specification
-        return stats_caster_base::target_type<T>(
-          static_cast<__int128_t>(decode_fixed_width_value<int64_t>(stats_val, stats_size)) << 32 |
-            decode_fixed_width_value<int32_t>(stats_val + sizeof(int64_t), stats_size),
-          ts_scale);
+        if constexpr (cudf::is_timestamp<T>()) {
+          CUDF_EXPECTS(stats_size == static_cast<size_t>(int96_size),
+                       "Parquet reader encountered an invalid INT96 statistics vector size");
+          auto nanos = int64_t{};
+          auto days  = int32_t{};
+          std::memcpy(&nanos, stats_val, sizeof(nanos));
+          std::memcpy(&days, stats_val + sizeof(nanos), sizeof(days));
+          return T{typename T::duration{int96_to_duration<typename T::duration>(nanos, days)}};
+        } else {
+          CUDF_FAIL("INT96 statistics are only supported for timestamp columns");
+        }
       case Type::BYTE_ARRAY: [[fallthrough]];
       case Type::FIXED_LEN_BYTE_ARRAY:
         // Handle chronos, decimals and UUIDs here

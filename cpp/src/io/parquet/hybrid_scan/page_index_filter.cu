@@ -115,6 +115,10 @@ struct page_stats_caster : public stats_caster_base {
           auto const& column_index           = colchunk.column_index.value();
           auto const num_pages_in_colchunk   = column_index.min_values.size();
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
+          auto const use_min_max             = parquet::detail::has_ordered_min_max(
+            per_file_metadata[src_idx],
+            colchunk.meta_data.type,
+            std::distance(row_group.columns.begin(), colchunk_iter));
 
           CUDF_EXPECTS(column_index.max_values.size() == num_pages_in_colchunk,
                        "Number of max values must match the number of pages in the column chunk",
@@ -151,9 +155,14 @@ struct page_stats_caster : public stats_caster_base {
                 return;
               }
 
-              // Translate binary data to Type then to <T>
-              min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
-              max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              // Translate binary data to Type then to <T>, ignoring unordered min/max
+              if (use_min_max) {
+                min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
+                max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              } else {
+                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+              }
               has_nan.set_value(column_page_idx,
                                 parquet::detail::has_nans(
                                   column_index.nan_counts.has_value()

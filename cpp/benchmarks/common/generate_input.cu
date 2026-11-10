@@ -41,6 +41,7 @@
 #include <cuda/std/functional>
 #include <cuda/std/random>
 #include <cuda/std/tuple>
+#include <cuda/std/type_traits>
 #include <thrust/binary_search.h>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
@@ -882,7 +883,7 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
 template <typename Rep>
 std::unique_ptr<cudf::column> create_sequence_column(cudf::data_type type, cudf::size_type num_rows)
 {
-  if constexpr (std::is_integral_v<Rep> and sizeof(Rep) < sizeof(cudf::size_type)) {
+  if constexpr (cuda::std::is_integral_v<Rep> and sizeof(Rep) < sizeof(cudf::size_type)) {
     CUDF_EXPECTS(num_rows - 1 <= std::numeric_limits<Rep>::max(),
                  "Too many rows for distinct values of this element type");
   } else if constexpr (std::is_floating_point_v<Rep>) {
@@ -891,9 +892,10 @@ std::unique_ptr<cudf::column> create_sequence_column(cudf::data_type type, cudf:
   }
   rmm::device_uvector<Rep> data(num_rows, cudf::get_default_stream());
   thrust::tabulate(
-    thrust::device, data.begin(), data.end(), cuda::proclaim_return_type<Rep>([] __device__(auto i) {
-      return static_cast<Rep>(i);
-    }));
+    thrust::device,
+    data.begin(),
+    data.end(),
+    cuda::proclaim_return_type<Rep>([] __device__(auto i) { return static_cast<Rep>(i); }));
   return std::make_unique<cudf::column>(
     type, num_rows, data.release(), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 }

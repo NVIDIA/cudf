@@ -803,6 +803,15 @@ TEST_F(ExperimentalPackUnpackTest, CompressedInputValidation)
   shrink(5 * sizeof(uint64_t), 1);
   EXPECT_THROW(cx::materialize({short_metadata, packed.view().payload}), cudf::logic_error);
 
+  // Shift the first block by one byte. The block offsets follow the 64-byte region entry.
+  auto shifted_metadata         = packed.result.metadata;
+  auto const first_offset_field = 32 + 64;
+  uint64_t first_offset         = 0;
+  std::memcpy(&first_offset, shifted_metadata.data() + first_offset_field, sizeof(first_offset));
+  ++first_offset;
+  std::memcpy(shifted_metadata.data() + first_offset_field, &first_offset, sizeof(first_offset));
+  EXPECT_THROW(cx::materialize({shifted_metadata, packed.view().payload}), cudf::logic_error);
+
   // The same payload behind a 4-byte header, as a transport layer might frame it.
   auto const stream = cudf::get_default_stream();
   rmm::device_buffer framed(packed.result.payload_bytes + 4, stream);

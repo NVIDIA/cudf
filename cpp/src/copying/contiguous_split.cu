@@ -3245,13 +3245,16 @@ std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
       destinations.push_back(destination.data());
     }};
   auto columns = materialize_columns(metadata, selection, source, stream, mr);
-  loader.load(stream, mr);
-  std::vector<buffer_copy> copies;
-  for (std::size_t i = 0; i < payload_ranges.size(); ++i) {
-    copies.push_back(
-      {loader.device_pointer(payload_ranges[i].data()), destinations[i], payload_ranges[i].size()});
-  }
-  copy_buffers(copies, stream, mr);
+  sync_on_throw(stream, [&] {
+    loader.load(stream, mr);
+    std::vector<buffer_copy> copies;
+    for (std::size_t i = 0; i < payload_ranges.size(); ++i) {
+      copies.push_back({loader.device_pointer(payload_ranges[i].data()),
+                        destinations[i],
+                        payload_ranges[i].size()});
+    }
+    copy_buffers(copies, stream, mr);
+  });
   // Host sources are read when the stream reaches each copy, so they must outlive this call.
   if (loader.has_pending_host_reads()) { stream.sync(); }
   return std::make_unique<table>(std::move(columns), metadata.num_rows());
@@ -4013,6 +4016,8 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
         (is_raw ? bytes == expected : compression != pack_compression::none && bytes > 0) &&
           payload_contains(parsed.block_offsets[block_idx], bytes),
         "Compressed block is missing or truncated");
+      CUDF_EXPECTS(is_raw || parsed.block_offsets[block_idx] % block_alignment(compression) == 0,
+                   "Compressed block is misaligned");
       auto& task       = is_raw ? find_or_add_task(pack_compression::none, type_id::UINT8)
                                 : find_or_add_task(compression, cascaded);
       auto const block = input.payload.subspan(parsed.block_offsets[block_idx], bytes);
@@ -4048,13 +4053,6 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
     }};
   auto const metadata = packed_metadata_view{parsed.legacy_metadata};
   auto columns        = materialize_columns(metadata, selection, source, stream, mr);
-  loader.load(stream, mr);
-  for (auto& task : tasks) {
-    for (auto& block : task.inputs) {
-      block = {loader.device_pointer(block.data()), block.size()};
-    }
-  }
-
   if (tasks.empty()) { return std::make_unique<table>(std::move(columns), metadata.num_rows()); }
 
   // Cascaded tasks go first so that their value-type groups form one contiguous range of blocks.
@@ -4073,6 +4071,10 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
     task_offsets.push_back(inputs.size());
   }
   auto const h_results = sync_on_throw(stream, [&] {
+    loader.load(stream, mr);
+    for (auto& block : inputs) {
+      block = {loader.device_pointer(block.data()), block.size()};
+    }
     auto const temp_mr   = mr.get_temporary_mr();
     auto const d_inputs  = cudf::detail::make_device_uvector_async(inputs, stream, temp_mr);
     auto const d_outputs = cudf::detail::make_device_uvector_async(outputs, stream, temp_mr);

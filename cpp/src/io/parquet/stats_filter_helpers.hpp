@@ -44,6 +44,11 @@ constexpr size_t initial_chars_capacity = 1024;
 auto constexpr stats_cols_per_column = 4;
 
 /**
+ * @brief Returns whether any `NaN` is present, or std::nullopt if `nan_count` is absent or negative
+ */
+[[nodiscard]] std::optional<bool> has_nans(std::optional<int64_t> nan_count);
+
+/**
  * @brief Base utilities for converting and casting stats values
  *
  * Derived classes handle row group or page-level statistics as needed.
@@ -255,17 +260,16 @@ class stats_caster_base {
     }
 
     /**
-     * @brief Sets whether a column chunk or page holds any `NaN`, or null if its NaN count is
-     * unknown or invalid (negative) and so `NaN`s may be present
+     * @brief Sets a boolean value, or null if it is std::nullopt
      *
      * @param index Row of the column chunk or page in this column
-     * @param nan_count Optional NaN count from the statistics or the column index
+     * @param value Optional value to set
      */
-    void inline set_has_nan(size_type index, std::optional<int64_t> nan_count)
+    void inline set_value(size_type index, std::optional<bool> value)
       requires std::same_as<T, bool>
     {
-      if (nan_count.has_value() and nan_count.value() >= 0) {
-        val[index] = nan_count.value() > 0;
+      if (value.has_value()) {
+        val[index] = value.value();
       } else {
         set_index(index, std::nullopt, {});
       }
@@ -463,8 +467,8 @@ class stats_expression_converter final : public parquet_expression_simplifier {
    * For a floating-point column, this function wraps `stats_expr` as
    * `(literal != literal OR has_nan) OR stats_expr`, where:
    * - `literal != literal` is true only for a `NaN` literal
-   * - `has_nan` is true if the NaN count is > 0, false if 0, and null if absent, which keeps
-   *   the chunk
+   * - `has_nan` is true if the NaN count is > 0, false if 0, and null if absent, which keeps the
+   * chunk
    *
    * Returns `stats_expr` unchanged for other column types. An all-null chunk holds no `NaN`, so
    * the caller's non-null guard around the result still prunes it.

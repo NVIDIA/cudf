@@ -147,17 +147,18 @@ struct page_stats_caster : public stats_caster_base {
                 min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
                 max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
                 all_null.val[column_page_idx] = true;
-                has_nan.val[column_page_idx]  = false;
+                has_nan.set_value(column_page_idx, false);
                 return;
               }
 
               // Translate binary data to Type then to <T>
               min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
               max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
-              has_nan.set_has_nan(column_page_idx,
+              has_nan.set_value(column_page_idx,
+                                parquet::detail::has_nans(
                                   column_index.nan_counts.has_value()
                                     ? std::make_optional(column_index.nan_counts.value()[page_idx])
-                                    : std::nullopt);
+                                    : std::nullopt));
 
               // Check if the page doesn't have a null count
               if (not column_index.null_counts.has_value()) {

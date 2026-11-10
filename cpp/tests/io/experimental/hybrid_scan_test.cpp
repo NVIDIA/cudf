@@ -439,7 +439,8 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   auto const metadata   = reader->parquet_metadata();
   auto const row_groups = reader->all_row_groups(options);
 
-  // `NOT(col0 < 1)`, which a NaN satisfies, and `NOT(col0 < NaN)`, which every value satisfies
+  // `NOT(col0 < 1)` and `col0 != -100`, which a NaN satisfies, and `NOT(col0 < NaN)` and
+  // `col0 != NaN`, which every value satisfies
   auto one_value       = cudf::numeric_scalar<T>(1);
   auto one             = cudf::ast::literal(one_value);
   auto min_value       = cudf::numeric_scalar<T>(-100);
@@ -448,10 +449,11 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   auto nan             = cudf::ast::literal(nan_value);
   auto col_ref_0       = cudf::ast::column_name_reference("col0");
   auto col0_lt_1       = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_0, one);
-  auto col0_lt_nan     = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_0, nan);
   auto not_col0_lt_1   = cudf::ast::operation(cudf::ast::ast_operator::NOT, col0_lt_1);
+  auto col0_lt_nan     = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_0, nan);
   auto not_col0_lt_nan = cudf::ast::operation(cudf::ast::ast_operator::NOT, col0_lt_nan);
   auto col0_ne_min     = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref_0, min);
+  auto col0_ne_nan     = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref_0, nan);
 
   // Patches the NaN counts of the first column into the metadata, with `nan_count` NaNs in the
   // first row group and its first page, and none elsewhere. std::nullopt leaves them absent. The
@@ -511,6 +513,8 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   // A NaN literal keeps every row group and page even when they are NaN-free
   EXPECT_EQ(prune(not_col0_lt_nan, 0),
             std::pair(row_groups_type{0, 1, 2, 3}, int64_t{num_ordered_rows}));
+  EXPECT_EQ(prune(col0_ne_nan, 0),
+            std::pair(row_groups_type{0, 1, 2, 3}, int64_t{num_ordered_rows}));
   // `col0 != -100` prunes the constant row group and page only when they are known NaN-free
   EXPECT_EQ(prune(col0_ne_min, std::nullopt),
             std::pair(row_groups_type{0, 1, 2, 3}, int64_t{num_ordered_rows}));
@@ -521,9 +525,9 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   EXPECT_EQ(prune(col0_ne_min, -1),
             std::pair(row_groups_type{0, 1, 2, 3}, int64_t{num_ordered_rows}));
   // An all-null row group and page hold no NaN, so they are pruned even with unknown NaN counts
-  EXPECT_EQ(prune(col0_ne_min, std::nullopt, true),
+  EXPECT_EQ(prune(col0_ne_min, /*nan_count=*/std::nullopt, /*first_all_null=*/true),
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
-  EXPECT_EQ(prune(not_col0_lt_1, std::nullopt, true),
+  EXPECT_EQ(prune(not_col0_lt_1, /*nan_count=*/std::nullopt, /*first_all_null=*/true),
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
 }
 

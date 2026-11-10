@@ -131,7 +131,7 @@ struct row_group_stats_caster : public stats_caster_base {
             max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
             // Check the nullability and NaN presence of this column chunk
             if (with_null_and_nan_stats) {
-              has_nan->set_has_nan(stats_idx, stats.nan_count);
+              has_nan->set_value(stats_idx, has_nans(stats.nan_count));
               if (colchunk.meta_data.statistics.null_count.has_value()) {
                 auto const& null_count = colchunk.meta_data.statistics.null_count.value();
                 if (null_count == 0) {
@@ -157,7 +157,7 @@ struct row_group_stats_caster : public stats_caster_base {
             max.set_index(stats_idx, std::nullopt, {});
             if (with_null_and_nan_stats) {
               is_null->set_index(stats_idx, std::nullopt, {});
-              has_nan->set_index(stats_idx, std::nullopt, {});
+              has_nan->set_value(stats_idx, std::nullopt);
             }
           }
           stats_idx++;

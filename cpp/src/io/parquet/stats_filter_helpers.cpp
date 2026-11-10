@@ -100,6 +100,12 @@ thrust::host_vector<bool> stats_columns_collector::get_stats_columns_mask() &&
   return std::move(_columns_mask);
 }
 
+std::optional<bool> has_nans(std::optional<int64_t> nan_count)
+{
+  if (nan_count.value_or(-1) < 0) { return std::nullopt; }
+  return nan_count.value() > 0;
+}
+
 stats_expression_converter::stats_expression_converter(
   ast::expression const& expr, std::span<cudf::data_type const> output_dtypes)
   : parquet_expression_simplifier{output_dtypes}
@@ -141,7 +147,7 @@ ast::expression const& stats_expression_converter::push_nan_guard(size_type col_
     _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, is_nan_lit, has_nan});
 
   // Null-aware so that a chunk known to be NaN-free is decided by `stats_expr` alone, while one
-  // whose NaN count is unknown is kept unless `stats_expr` is true anyway.
+  // whose NaN count is unknown is always kept.
   return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, nan_matches, stats_expr});
 }
 

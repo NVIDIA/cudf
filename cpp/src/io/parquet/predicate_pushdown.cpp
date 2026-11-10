@@ -90,8 +90,8 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
   // Converts Column chunk statistics to a table where, with `n = stats_cols_per_column`,
   // min(col[i]) = columns[i*n], max(col[i]) = columns[i*n+1], is_null(col[i]) = columns[i*n+2] and
-  // has_nan(col[i]) = columns[i*n+3]. For each column, it contains #sources *
-  // #column_chunks_per_src rows
+  // has_nan(col[i]) = columns[i*n+3].
+  // For each column, it contains #sources x #column_chunks_per_src rows
   std::vector<std::unique_ptr<column>> columns;
   row_group_stats_caster const stats_col{
     .total_row_groups        = static_cast<size_type>(total_row_groups),

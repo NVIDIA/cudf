@@ -40,11 +40,11 @@ rmm::device_uvector<unbound_list_view> list_vector_from_column(
   IndexIterator index_begin,
   IndexIterator index_end,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto n_rows = cuda::std::distance(index_begin, index_end);
 
-  auto vector = rmm::device_uvector<unbound_list_view>(n_rows, stream, mr);
+  auto vector = rmm::device_uvector<unbound_list_view>(n_rows, stream, mr.get_output_mr());
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     index_begin,
@@ -85,7 +85,7 @@ std::unique_ptr<column> scatter_impl(rmm::device_uvector<unbound_list_view> cons
                                      column_view const& source,
                                      column_view const& target,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(have_same_types(source, target), "Mismatched column types.");
 
@@ -165,7 +165,7 @@ std::unique_ptr<column> scatter(column_view const& source,
                                 MapIterator scatter_map_end,
                                 column_view const& target,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   auto const num_rows = target.size();
   if (num_rows == 0) { return cudf::empty_like(target); }
@@ -220,7 +220,7 @@ std::unique_ptr<column> scatter(scalar const& slr,
                                 MapIterator scatter_map_end,
                                 column_view const& target,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   auto const num_rows = target.size();
   if (num_rows == 0) { return cudf::empty_like(target); }

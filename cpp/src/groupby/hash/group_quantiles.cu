@@ -80,7 +80,7 @@ struct quantiles_functor {
                                      device_span<double const> quantile,
                                      interpolation interpolation,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     using ResultType = cudf::detail::target_type_t<T, aggregation::QUANTILE>;
 
@@ -97,7 +97,7 @@ struct quantiles_functor {
     auto values_view     = column_device_view::create(values, stream);
     auto group_size_view = column_device_view::create(group_sizes, stream);
     auto result_view     = mutable_column_device_view::create(result->mutable_view(), stream);
-    auto null_count      = cudf::detail::device_scalar<cudf::size_type>(0, stream, mr);
+    auto null_count = cudf::detail::device_scalar<cudf::size_type>(0, stream, mr.get_output_mr());
 
     // For each group, calculate quantile
     if (!cudf::is_dictionary(values.type())) {
@@ -152,7 +152,7 @@ std::unique_ptr<column> group_quantiles(column_view const& values,
                                         std::vector<double> const& quantiles,
                                         interpolation interp,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   auto dv_quantiles = cudf::detail::make_device_buffer_async(
     quantiles, stream, cudf::get_current_device_resource_ref());

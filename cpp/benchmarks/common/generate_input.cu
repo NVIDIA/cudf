@@ -16,6 +16,7 @@
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/filling.hpp>
 #include <cudf/lists/combine.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/combine.hpp>
@@ -892,20 +893,45 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::string_view>(
 }
 
 /**
- * @brief Functor to create a column of the values 0 to `num_rows - 1`, without nulls.
+ * @brief Creates a column of type `type` with the values 0 to `num_rows - 1`, without nulls.
  *
- * The values are distinct as long as the type can represent them all. Returns nullptr for types
- * other than numeric and string types.
+ * @tparam Rep The type the values are stored as, which must represent them all exactly
+ */
+template <typename Rep>
+std::unique_ptr<cudf::column> create_sequence_column(cudf::data_type type, cudf::size_type num_rows)
+{
+  if constexpr (std::is_integral_v<Rep> and sizeof(Rep) < sizeof(cudf::size_type)) {
+    CUDF_EXPECTS(num_rows - 1 <= std::numeric_limits<Rep>::max(),
+                 "Too many rows for distinct values of this element type");
+  } else if constexpr (std::is_floating_point_v<Rep>) {
+    CUDF_EXPECTS(num_rows - 1 <= (int64_t{1} << std::numeric_limits<Rep>::digits),
+                 "Too many rows for distinct values of this element type");
+  }
+  rmm::device_uvector<Rep> data(num_rows, cudf::get_default_stream());
+  thrust::tabulate(
+    thrust::device, data.begin(), data.end(), cuda::proclaim_return_type<Rep>([] __device__(auto i) {
+      return static_cast<Rep>(i);
+    }));
+  return std::make_unique<cudf::column>(
+    type, num_rows, data.release(), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+}
+
+/**
+ * @brief Functor to create a column of distinct values, without nulls.
+ *
+ * Returns nullptr for types other than fixed-width (except bool) and string types.
  */
 struct create_distinct_values_fn {
   template <typename T>
-  std::unique_ptr<cudf::column> operator()(cudf::size_type num_rows)
+  std::unique_ptr<cudf::column> operator()(cudf::data_type type, cudf::size_type num_rows)
   {
-    if constexpr (cudf::is_numeric_not_bool<T>()) {
-      return cudf::sequence(num_rows, *cudf::make_fixed_width_scalar(T{}));
-    } else if constexpr (std::is_same_v<T, cudf::string_view>) {
+    if constexpr (std::is_same_v<T, cudf::string_view>) {
       auto const values = cudf::sequence(num_rows, *cudf::make_fixed_width_scalar<int32_t>(0));
       return cudf::strings::from_integers(values->view());
+    } else if constexpr (cudf::is_chrono<T>()) {
+      return create_sequence_column<typename T::rep>(type, num_rows);
+    } else if constexpr (cudf::is_fixed_width<T>() and not std::is_same_v<T, bool>) {
+      return create_sequence_column<cudf::device_storage_type_t<T>>(type, num_rows);
     } else {
       return nullptr;
     }
@@ -918,12 +944,17 @@ std::unique_ptr<cudf::column> create_distinct_rows_column<cudf::list_view>(
 {
   auto const dist_params = profile.get_distribution_params<cudf::list_view>();
   auto col               = create_random_column<cudf::list_view>(profile, engine, num_rows);
-  // Make the rows distinct by appending a distinct value of the element type to each row. The rows
-  // of lists of other than numeric or string elements are left as they are, so they are not
-  // necessarily distinct.
-  auto child_column = cudf::type_dispatcher(
-    cudf::data_type{dist_params.element_type}, create_distinct_values_fn{}, num_rows);
-  if (child_column == nullptr) { return col; }
+  // Make the rows distinct by appending a distinct value of the element type to each row. The type
+  // is taken from the leaf column, since it carries the scale of a fixed-point type.
+  auto leaf = col->view();
+  while (leaf.type().id() == cudf::type_id::LIST) {
+    leaf = cudf::lists_column_view{leaf}.child();
+  }
+  auto child_column =
+    cudf::type_dispatcher(leaf.type(), create_distinct_values_fn{}, leaf.type(), num_rows);
+  CUDF_EXPECTS(child_column != nullptr,
+               "Distinct list rows are only supported for fixed-width (except bool) and string "
+               "element types");
   auto zero = cudf::make_fixed_width_scalar<cudf::size_type>(0);
   for (int lvl = dist_params.max_depth; lvl > 0; --lvl) {
     auto offsets_column = cudf::sequence(num_rows + 1, *zero);

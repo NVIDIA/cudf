@@ -15,6 +15,7 @@
 #include <nvbench/nvbench.cuh>
 
 #include <algorithm>
+#include <vector>
 
 using Types = nvbench::type_list<int64_t, numeric::decimal64>;
 NVBENCH_DECLARE_TYPE_STRINGS(numeric::decimal64, "decimal64", "decimal64");
@@ -95,6 +96,47 @@ static void bench_groupby_pre_sorted_sum(nvbench::state& state, nvbench::type_li
 NVBENCH_BENCH_TYPES(bench_groupby_pre_sorted_sum, NVBENCH_TYPE_AXES(Types))
   .set_name("pre_sorted_sum")
   .add_int64_axis("num_rows", {100'000, 1'000'000, 10'000'000, 100'000'000});
+
+static void bench_groupby_pre_sorted_keys_sum(nvbench::state& state)
+{
+  auto const num_rows    = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
+  auto const key_types   = state.get_string("key_types");
+
+  auto const key_type_ids =
+    key_types == "int64"
+      ? std::vector<cudf::type_id>{cudf::type_id::INT64}
+      : std::vector<cudf::type_id>{
+          cudf::type_id::INT64, cudf::type_id::TIMESTAMP_DAYS, cudf::type_id::INT32};
+  // Each key column draws from `cardinality` distinct values.
+  data_profile const key_profile = data_profile_builder().cardinality(cardinality).no_validity();
+  auto const keys_table  = create_random_table(key_type_ids, row_count{num_rows}, key_profile);
+  auto const sorted_keys = cudf::sort(*keys_table);
+  data_profile const value_profile = data_profile_builder().cardinality(0).no_validity();
+  auto const vals = create_random_column(cudf::type_id::INT64, row_count{num_rows}, value_profile);
+
+  std::vector<cudf::groupby::aggregation_request> requests;
+  requests.emplace_back(cudf::groupby::aggregation_request());
+  requests[0].values = vals->view();
+  requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+
+  state.add_element_count(num_rows);
+  state.add_global_memory_reads<nvbench::int8_t>(sorted_keys->alloc_size() + vals->alloc_size());
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    cudf::groupby::groupby gb_obj(*sorted_keys, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+    auto const result = gb_obj.aggregate(requests);
+  });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH(bench_groupby_pre_sorted_keys_sum)
+  .set_name("pre_sorted_keys_sum")
+  .add_int64_axis("num_rows", {10'000'000, 100'000'000})
+  .add_int64_axis("cardinality", {1'000, 1'000'000, 100'000'000})
+  .add_string_axis("key_types", {"int64", "int64_timestamp_D_int32"});
 
 static void bench_streaming_groupby_decimal128_sum(nvbench::state& state)
 {

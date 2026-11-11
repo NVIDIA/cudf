@@ -476,6 +476,13 @@ ConfigureTest(
 )
 
 # ##################################################################################################
+# * memory resources tests ------------------------------------------------------------------------
+ConfigureTest(
+  MEMORY_RESOURCES_TEST memory_resources/bitmask_tests.cpp memory_resources/column_tests.cpp
+  memory_resources/operations_tests.cpp memory_resources/strings_tests.cpp
+)
+
+# ##################################################################################################
 # * span tests -------------------------------------------------------------------------------
 
 ConfigureTest(SPAN_TEST utilities_tests/span_tests.cu)

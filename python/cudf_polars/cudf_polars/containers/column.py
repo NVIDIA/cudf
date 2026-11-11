@@ -485,7 +485,7 @@ class Column:
                 f"Unsupported casting from {self.dtype.id()} to {dtype.id()}."
             )
 
-        castable = type_checker(self.obj, stream=stream)  # type: ignore[call-arg]
+        castable = type_checker(self.obj, stream=stream)  # type: ignore[call-arg,unused-ignore]
         if not plc.reduce.reduce(
             castable,
             plc.aggregation.all(),

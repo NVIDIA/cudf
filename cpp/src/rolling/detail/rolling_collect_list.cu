@@ -137,7 +137,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
                                            input.size(),
                                            mask_state::UNALLOCATED,
                                            stream,
-                                           cudf::get_current_device_resource_ref());
+                                           mrs.as_temporary());
 
   thrust::tabulate(cudf::detail::exec_policy_nosync(stream, mr),
                    new_sizes->mutable_view().template begin<size_type>(),

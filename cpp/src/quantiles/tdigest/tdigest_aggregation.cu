@@ -749,7 +749,7 @@ cluster_info generate_group_cluster_info(int delta,
   // buffers
   rmm::device_async_resource_ref temp_mr =
     use_cpu ? rmm::device_async_resource_ref{cudf::get_pinned_memory_resource()}
-            : cudf::get_current_device_resource_ref();
+            : mr.get_temporary_mr();
 
   // output from the function
   cluster_info cinfo;
@@ -758,8 +758,8 @@ cluster_info generate_group_cluster_info(int delta,
   // compute the number of clusters we'd need to allocate for the fast path. the 'fast path' just
   // means using the worst case number of clusters instead of accurately computing the exact cluster
   // count via the kernel.
-  size_t const simple_cluster_count = compute_simple_cluster_count(
-    delta, group_info, cinfo.num_clusters, stream, cudf::get_current_device_resource_ref());
+  size_t const simple_cluster_count =
+    compute_simple_cluster_count(delta, group_info, cinfo.num_clusters, stream, mr);
   size_t const simple_mem_usage = simple_cluster_count * sizeof(double);
 
   // if we can't go down the fast path, run the kernel to compute accurate cluster sizes
@@ -783,8 +783,10 @@ cluster_info generate_group_cluster_info(int delta,
   // generate group cluster start positions (where the clusters for a given group start. however
   // these are not traditional offsets because in the simple case, we will be over-allocating a
   // worse case estimate)
-  cinfo.cluster_start = rmm::device_uvector<size_type>(num_groups + 1, stream, temp_mr);
-  compute_cluster_starts(cinfo, stream, cudf::get_current_device_resource_ref());
+  // cluster_start is returned as part of the output; on the CPU path it is copied there below.
+  cinfo.cluster_start =
+    rmm::device_uvector<size_type>(num_groups + 1, stream, use_cpu ? temp_mr : mr.get_output_mr());
+  compute_cluster_starts(cinfo, stream, mr);
 
   // because of the simple path, the number of allocated clusters may not end up being the same as
   // the number of real clusters.
@@ -821,12 +823,11 @@ cluster_info generate_group_cluster_info(int delta,
   // Note that the size of this data will tend to be very small compared to the size of the
   // input columns themselves, so we are not doing huge memory transfers.
   if (use_cpu) {
-    auto p_cluster_wl = std::move(cinfo.cluster_wl);
-    cinfo.cluster_wl =
-      cuda::device_buffer<double>(stream, cudf::get_current_device_resource_ref(), p_cluster_wl);
+    auto p_cluster_wl   = std::move(cinfo.cluster_wl);
+    cinfo.cluster_wl    = cuda::device_buffer<double>(stream, mr.get_temporary_mr(), p_cluster_wl);
     auto p_num_clusters = std::move(cinfo.num_clusters);
-    cinfo.num_clusters  = cuda::device_buffer<size_type>(
-      stream, cudf::get_current_device_resource_ref(), p_num_clusters);
+    cinfo.num_clusters =
+      cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), p_num_clusters);
     auto p_cluster_start = std::move(cinfo.cluster_start);
     // cluster_start is returned as part of the output, so make sure to use the user supplied mr
     // instead of the current resource.
@@ -904,8 +905,7 @@ std::unique_ptr<column> build_output_column(size_type num_rows,
   auto _weights = remove_stubs(*weights, num_stubs);
 
   // adjust offsets.
-  cuda::device_buffer<size_type> sizes(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  cuda::device_buffer<size_type> sizes(stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
   thrust::transform(
     cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
@@ -1061,8 +1061,7 @@ std::unique_ptr<column> compute_tdigests(int delta,
   // mis-compiles thrust's reduce-by-key kernel for sm_100, causing illegal memory accesses
   auto env = cuda::std::execution::env{
     cuda::std::execution::prop{cuda::get_stream_t{}, cuda::stream_ref{stream.get()}},
-    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                               cudf::get_current_device_resource_ref()}};
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, mr.get_temporary_mr()}};
   CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(keys,                           // keys in
                                                cuda::make_discard_iterator(),  // unique keys out
                                                centroids_begin,                // values in
@@ -1076,9 +1075,7 @@ std::unique_ptr<column> compute_tdigests(int delta,
   // be accurate, so we need to compute with a scan. in the non-simple case, cinfo.cluster_start
   // will already be accurate
   auto offsets = [&]() {
-    if (cinfo.requires_rescan) {
-      compute_cluster_starts(cinfo, stream, cudf::get_current_device_resource_ref());
-    }
+    if (cinfo.requires_rescan) { compute_cluster_starts(cinfo, stream, mr); }
     return std::make_unique<cudf::column>(
       std::move(cinfo.cluster_start),
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
@@ -1511,11 +1508,11 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
                      group_num_clusters,
                      group_is_empty{},
                      0);
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
 
   // merge the centroids
-  auto [merged_means, merged_weights] = generate_merged_centroids(
-    tdv, group_offsets, num_groups, stream, cudf::get_current_device_resource_ref());
+  auto [merged_means, merged_weights] =
+    generate_merged_centroids(tdv, group_offsets, num_groups, stream, mr.as_temporary());
   size_t const num_centroids = tdv.means().size();
   CUDF_EXPECTS(merged_means.size() == num_centroids,
                "Unexpected number of centroids in merged result");
@@ -1648,8 +1645,8 @@ std::unique_ptr<scalar> reduce_tdigest(column_view const& col,
   // since this isn't coming out of a groupby, we need to sort the inputs in ascending
   // order with nulls at the end.
   table_view t({col});
-  auto sorted = cudf::detail::sort(
-    t, {order::ASCENDING}, {null_order::AFTER}, stream, cudf::get_current_device_resource_ref());
+  auto sorted =
+    cudf::detail::sort(t, {order::ASCENDING}, {null_order::AFTER}, stream, mr.as_temporary());
 
   auto const delta = max_centroids;
   return cudf::type_dispatcher(

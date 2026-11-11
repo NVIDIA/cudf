@@ -192,12 +192,9 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
 
   // compute summed weights
   auto weight             = tdv.weights();
-  auto cumulative_weights = cudf::make_fixed_width_column(data_type{type_id::FLOAT64},
-                                                          weight.size(),
-                                                          mask_state::UNALLOCATED,
-                                                          stream,
-                                                          cudf::get_current_device_resource_ref());
-  auto keys               = cudf::detail::make_counting_transform_iterator(
+  auto cumulative_weights = cudf::make_fixed_width_column(
+    data_type{type_id::FLOAT64}, weight.size(), mask_state::UNALLOCATED, stream, mr.as_temporary());
+  auto keys = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<std::ptrdiff_t>(
       [offsets_begin = offsets.begin<int32_t>(),

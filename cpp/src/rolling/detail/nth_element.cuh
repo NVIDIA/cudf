@@ -146,8 +146,8 @@ std::unique_ptr<column> nth_element(size_type n,
     gather_index_calculator<null_handling, PrecedingIter, FollowingIter>{
       n, input, preceding, following, min_periods, stream});
 
-  auto gather_map = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+  auto gather_map =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   thrust::copy(cudf::detail::exec_policy_nosync(stream, mr),
                gather_iter,
                gather_iter + input.size(),

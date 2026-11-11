@@ -153,8 +153,7 @@ std::unique_ptr<column> group_quantiles(column_view const& values,
                                         cuda::stream_ref stream,
                                         cudf::memory_resources mr)
 {
-  auto dv_quantiles = cudf::detail::make_device_buffer_async(
-    quantiles, stream, cudf::get_current_device_resource_ref());
+  auto dv_quantiles = cudf::detail::make_device_buffer_async(quantiles, stream, mr.as_temporary());
 
   auto values_type = cudf::is_dictionary(values.type())
                        ? dictionary_column_view(values).keys().type()

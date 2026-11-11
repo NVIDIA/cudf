@@ -118,9 +118,9 @@ void select_and_write_offsets(range_window_type const& preceding,
   } else if (std::holds_alternative<unbounded>(preceding) &&
              std::holds_alternative<unbounded>(following)) {
     if (group_helper.has_value()) {
-      write_offsets(unbounded_distance_fn<rolling::grouped>{
-        {group_helper->group_labels(stream, cudf::get_current_device_resource_ref()).data(),
-         group_helper->group_offsets(stream, cudf::get_current_device_resource_ref()).data()}});
+      write_offsets(
+        unbounded_distance_fn<rolling::grouped>{{group_helper->group_labels(stream, mr).data(),
+                                                 group_helper->group_offsets(stream, mr).data()}});
     } else {
       write_offsets(unbounded_distance_fn<rolling::ungrouped>{{num_rows}});
     }
@@ -131,9 +131,8 @@ void select_and_write_offsets(range_window_type const& preceding,
       if (std::holds_alternative<current_row>(window)) {
         return peers.value();
       } else if (group_helper.has_value()) {
-        return rolling::grouped{
-          group_helper->group_labels(stream, cudf::get_current_device_resource_ref()).data(),
-          group_helper->group_offsets(stream, cudf::get_current_device_resource_ref()).data()};
+        return rolling::grouped{group_helper->group_labels(stream, mr).data(),
+                                group_helper->group_offsets(stream, mr).data()};
       } else {
         return rolling::ungrouped{num_rows};
       }
@@ -200,9 +199,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
     std::vector<column_view> peer_keys(group_keys.begin(), group_keys.end());
     peer_keys.insert(peer_keys.end(), orderby.begin(), orderby.end());
     peer_helper.emplace(table_view{peer_keys}, null_policy::INCLUDE, sorted::YES);
-    peers = rolling::grouped{
-      peer_helper->group_labels(stream, cudf::get_current_device_resource_ref()).data(),
-      peer_helper->group_offsets(stream, cudf::get_current_device_resource_ref()).data()};
+    peers = rolling::grouped{peer_helper->group_labels(stream, mr).data(),
+                             peer_helper->group_offsets(stream, mr).data()};
   }
 
   std::optional<groupby_helper> group_helper;
@@ -225,7 +223,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
                            following_result->mutable_view(),
                            num_rows,
                            stream,
-                           cudf::get_current_device_resource_ref());
+                           mr);
 
   return std::pair{std::move(preceding_result), std::move(following_result)};
 }

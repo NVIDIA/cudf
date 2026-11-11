@@ -42,8 +42,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
       return detail::select_quantile<size_type>(selector, size, q, interp);
     });
 
-  auto const q_device =
-    cudf::detail::make_device_buffer_async(q, stream, cudf::get_current_device_resource_ref());
+  auto const q_device = cudf::detail::make_device_buffer_async(q, stream, mr.as_temporary());
 
   auto quantile_idx_iter = cuda::transform_iterator(q_device.begin(), quantile_idx_lookup);
 
@@ -76,8 +75,8 @@ std::unique_ptr<table> quantiles(table_view const& input,
   if (is_input_sorted == sorted::YES) {
     return detail::quantiles(input, cuda::counting_iterator<size_type>{0}, q, interp, stream, mr);
   } else {
-    auto sorted_idx = detail::sorted_order(
-      input, column_order, null_precedence, stream, cudf::get_current_device_resource_ref());
+    auto sorted_idx =
+      detail::sorted_order(input, column_order, null_precedence, stream, mr.as_temporary());
     return detail::quantiles(input, sorted_idx->view().data<size_type>(), q, interp, stream, mr);
   }
 }

@@ -68,8 +68,7 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
 
   // Since we may have new null rows depending on the group count, we need to generate a new null
   // mask from scratch.
-  cuda::device_buffer<bool> validity(
-    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
+  cuda::device_buffer<bool> validity(stream, mr.get_temporary_mr(), size, cuda::no_init);
 
   auto const out_it =
     cuda::make_zip_iterator(output->mutable_view().begin<TargetType>(), validity.begin());

@@ -38,7 +38,7 @@ std::unique_ptr<cudf::scalar> nth_element(column_view const& col,
                                cuda::proclaim_return_type<size_type>(
                                  [] __device__(auto b) { return static_cast<size_type>(b); }));
     cuda::device_buffer<size_type> null_skipped_index(
-      stream, cudf::get_current_device_resource_ref(), col.size(), cuda::no_init);
+      stream, mr.get_temporary_mr(), col.size(), cuda::no_init);
     // null skipped index for valids only.
     thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            bitmask_iterator,

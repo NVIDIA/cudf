@@ -120,12 +120,9 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
 
   auto static constexpr size_data_type = data_type{type_to_id<size_type>()};
 
-  auto gather_map_column = make_numeric_column(size_data_type,
-                                               input.size(),
-                                               mask_state::UNALLOCATED,
-                                               stream,
-                                               cudf::get_current_device_resource_ref());
-  auto gather_map        = gather_map_column->mutable_view();
+  auto gather_map_column = make_numeric_column(
+    size_data_type, input.size(), mask_state::UNALLOCATED, stream, mr.as_temporary());
+  auto gather_map = gather_map_column->mutable_view();
 
   auto const input_size = input.size();
   auto const null_index = input.size();
@@ -160,8 +157,8 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
 
   // Must scatter defaults.
   // TODO: Use a resizable buffer when available: https://github.com/NVIDIA/cccl/issues/12051
-  auto scatter_map_storage = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+  auto scatter_map_storage =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
   // Find all indices at which LEAD/LAG computed nulls previously.
   auto scatter_map_end =
@@ -185,7 +182,7 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                          out_of_bounds_policy::DONT_CHECK,
                          cudf::negative_index_policy::NOT_ALLOWED,
                          stream,
-                         cudf::get_current_device_resource_ref());
+                         mrs.as_temporary());
 
   // Scatter defaults into locations where LEAD/LAG computed nulls.
   auto scattered_results = cudf::detail::scatter(

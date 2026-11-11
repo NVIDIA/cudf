@@ -162,13 +162,12 @@ rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
 {
   rmm::device_uvector<T> output(input.size(), stream);
   cuda::device_buffer<pair_type<T>> pairs(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
   if (input.has_nulls()) {
-    cuda::device_buffer<cudf::size_type> nullcnt =
-      null_roll_up(input, stream, cudf::get_current_device_resource_ref());
-    auto device_view = column_device_view::create(input, stream);
-    auto valid_it    = cudf::detail::make_validity_iterator(*device_view);
+    cuda::device_buffer<cudf::size_type> nullcnt = null_roll_up(input, stream, mr.as_temporary());
+    auto device_view                             = column_device_view::create(input, stream);
+    auto valid_it = cudf::detail::make_validity_iterator(*device_view);
     auto data =
       cuda::make_zip_iterator(cuda::std::make_tuple(valid_it, nullcnt.begin(), input.begin<T>()));
 
@@ -232,14 +231,14 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
 {
   rmm::device_uvector<T> output(input.size(), stream);
   cuda::device_buffer<pair_type<T>> pairs(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   cuda::device_buffer<cudf::size_type> nullcnt =
-    [&input, stream]() -> cuda::device_buffer<cudf::size_type> {
+    [&input, stream, mr]() -> cuda::device_buffer<cudf::size_type> {
     if (input.has_nulls()) {
-      return null_roll_up(input, stream, cudf::get_current_device_resource_ref());
+      return null_roll_up(input, stream, mr.as_temporary());
     } else {
       return cuda::device_buffer<cudf::size_type>(
-        stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+        stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
     }
   }();
   // denominators are all 1 and do not need to be computed

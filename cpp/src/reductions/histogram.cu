@@ -118,7 +118,7 @@ compute_row_frequencies(table_view const& input,
                "Nested types are not yet supported in histogram aggregation.",
                std::invalid_argument);
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   auto const preprocessed_input =
     cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const has_nulls = nullate::DYNAMIC{cudf::has_nested_nulls(input)};

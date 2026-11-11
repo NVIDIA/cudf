@@ -816,7 +816,7 @@ struct range_window_clamper {
           value.rescaled(numeric::scale_type{orderby.type().scale()}),
           true,
           stream,
-          cudf::get_current_device_resource_ref()};
+          mr.as_temporary()};
         return window_bounds<OrderbyT>(orderby,
                                        direction,
                                        order,

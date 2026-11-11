@@ -61,7 +61,7 @@ std::unique_ptr<column> rank_generator(column_view const& order_by,
                                        cudf::memory_resources mr)
 {
   auto const order_by_tview = table_view{{order_by}};
-  auto const temp_mr        = cudf::get_current_device_resource_ref();
+  auto const temp_mr        = mr.get_temporary_mr();
   auto comp = cudf::detail::row::equality::self_comparator(order_by_tview, stream, temp_mr);
 
   auto ranks = make_fixed_width_column(
@@ -127,9 +127,8 @@ std::unique_ptr<column> inclusive_one_normalized_percent_rank_scan(column_view c
                                                                    cuda::stream_ref stream,
                                                                    cudf::memory_resources mr)
 {
-  auto const rank_column =
-    inclusive_rank_scan(order_by, stream, cudf::get_current_device_resource_ref());
-  auto const rank_view = rank_column->view();
+  auto const rank_column = inclusive_rank_scan(order_by, stream, mr.as_temporary());
+  auto const rank_view   = rank_column->view();
 
   // Result type for min 0-index percent rank is independent of input type.
   using result_type        = double;

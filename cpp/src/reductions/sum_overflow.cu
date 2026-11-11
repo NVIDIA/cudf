@@ -37,7 +37,7 @@ std::unique_ptr<cudf::scalar> make_sum_overflow_struct_scalar(
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.as_temporary();
 
   std::unique_ptr<cudf::scalar> sum_scalar;
   if constexpr (cudf::is_fixed_point<Source>()) {

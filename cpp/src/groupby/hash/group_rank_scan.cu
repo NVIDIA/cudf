@@ -95,7 +95,7 @@ std::unique_ptr<column> rank_generator(column_view const& grouped_values,
                                        cudf::memory_resources mr)
 {
   auto const grouped_values_view = table_view{{grouped_values}};
-  auto const temp_mr             = cudf::get_current_device_resource_ref();
+  auto const temp_mr             = mr.get_temporary_mr();
   auto const comparator =
     cudf::detail::row::equality::self_comparator{grouped_values_view, stream, temp_mr};
 
@@ -215,19 +215,11 @@ std::unique_ptr<column> average_rank_scan(column_view const& grouped_values,
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr)
 {
-  auto max_rank = max_rank_scan(grouped_values,
-                                value_order,
-                                group_labels,
-                                group_offsets,
-                                stream,
-                                cudf::get_current_device_resource_ref());
-  auto min_rank = min_rank_scan(grouped_values,
-                                value_order,
-                                group_labels,
-                                group_offsets,
-                                stream,
-                                cudf::get_current_device_resource_ref());
-  auto ranks    = make_fixed_width_column(
+  auto max_rank = max_rank_scan(
+    grouped_values, value_order, group_labels, group_offsets, stream, mr.as_temporary());
+  auto min_rank = min_rank_scan(
+    grouped_values, value_order, group_labels, group_offsets, stream, mr.as_temporary());
+  auto ranks = make_fixed_width_column(
     data_type{type_to_id<double>()}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);
   auto mutable_ranks = ranks->mutable_view();
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),

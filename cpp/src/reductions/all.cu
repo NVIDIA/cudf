@@ -55,8 +55,7 @@ struct all_fn {
         cudf::dictionary::detail::make_dictionary_pair_iterator<T>(*d_dict, input.has_nulls());
       return cuda::transform_iterator(pair_iter, null_iter);
     }();
-    auto d_result =
-      cudf::detail::device_scalar<int32_t>(1, stream, cudf::get_current_device_resource_ref());
+    auto d_result = cudf::detail::device_scalar<int32_t>(1, stream, mr.get_temporary_mr());
     thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<size_type>{0},
                        input.size(),

@@ -79,7 +79,7 @@ std::unique_ptr<table> extract(strings_column_view const& input,
                                cudf::memory_resources mr)
 {
   // create device object from regex_program
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
 
   auto const groups = d_prog->group_counts();
   CUDF_EXPECTS(groups > 0, "Group indicators not found in regex pattern");
@@ -153,7 +153,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
   // create device object from regex_program
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
 
   auto const groups = d_prog->group_counts();
   CUDF_EXPECTS(groups > 0, "capture groups not found in regex pattern", std::invalid_argument);

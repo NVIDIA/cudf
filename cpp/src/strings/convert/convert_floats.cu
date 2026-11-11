@@ -18,8 +18,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/concepts>
 #include <cuda/stream>
@@ -60,10 +58,11 @@ struct dispatch_to_floats_fn {
   template <cuda::std::floating_point FloatType>
   void operator()(column_device_view const& strings_column,
                   mutable_column_view& output_column,
-                  cuda::stream_ref stream) const
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const
   {
     auto d_results = output_column.data<FloatType>();
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{strings_column.size()},
                       d_results,
@@ -71,7 +70,10 @@ struct dispatch_to_floats_fn {
   }
   // non-integral types throw an exception
   template <typename T>
-  void operator()(column_device_view const&, mutable_column_view&, cuda::stream_ref) const
+  void operator()(column_device_view const&,
+                  mutable_column_view&,
+                  cuda::stream_ref,
+                  cudf::memory_resources) const
   {
     CUDF_FAIL("Output for to_floats must be a float type.");
   }
@@ -100,7 +102,7 @@ std::unique_ptr<column> to_floats(strings_column_view const& input,
                                      mr);
   auto results_view = results->mutable_view();
   // fill output column with floats
-  type_dispatcher(output_type, dispatch_to_floats_fn{}, d_strings, results_view, stream);
+  type_dispatcher(output_type, dispatch_to_floats_fn{}, d_strings, results_view, stream, mr);
   results->set_null_count(input.null_count());
   return results;
 }

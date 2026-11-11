@@ -137,18 +137,18 @@ std::unique_ptr<column> findall(strings_column_view const& input,
 
   auto [offsets, indices] = [&]() {
     if (groups == 1) {
-      auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+      auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
       return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
         return one_capture_fn{*d_strings, d_offsets, d_indices};
       });
     }
     if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
       return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
         return findall_fn{*d_strings, d_offsets, d_indices};
       });
     }
-    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
     return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
       return findall_fn{*d_strings, d_offsets, d_indices};
     });
@@ -200,11 +200,11 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
   auto const d_strings = column_device_view::create(input.parent(), stream);
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
     launch_transform_kernel(
       find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream, mr.as_temporary());
   } else {
-    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
     launch_transform_kernel(
       find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream, mr.as_temporary());
   }

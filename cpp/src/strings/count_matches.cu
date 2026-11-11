@@ -109,10 +109,10 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
 {
   auto const strings_count = d_strings.size();
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
     return count_matches(d_strings, *d_prog, strings_count, stream, mr);
   }
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
   return count_matches(d_strings, *d_prog, strings_count, stream, mr);
 }
 

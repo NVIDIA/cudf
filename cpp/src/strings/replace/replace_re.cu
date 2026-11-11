@@ -110,16 +110,16 @@ std::unique_ptr<column> replace_re(strings_column_view const& input,
   }
 
   auto const d_repl    = string_view(replacement.data(), replacement.size());
-  auto const d_prog    = regex_device_builder::create_prog_device(prog, stream);
+  auto const d_prog    = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
   auto const d_strings = column_device_view::create(input.parent(), stream);
 
   auto [offsets_column, chars] = [&] {
     if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
       return make_strings_children(
         replace_regex_fn{*d_strings, d_repl, maxrepl}, *d_prog, input.size(), stream, mr);
     } else {
-      auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+      auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
       return make_strings_children(
         replace_regex_fn{*d_strings, d_repl, maxrepl}, *d_prog, input.size(), stream, mr);
     }

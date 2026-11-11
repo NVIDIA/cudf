@@ -174,10 +174,10 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
   cudf::memory_resources mr)
 {
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
     return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream, mr);
   }
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
   return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream, mr);
 }
 

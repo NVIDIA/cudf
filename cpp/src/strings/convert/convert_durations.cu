@@ -8,6 +8,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/convert/convert_durations.hpp>
 #include <cudf/strings/detail/convert/int_to_string.cuh>
@@ -82,8 +83,8 @@ struct alignas(4) format_item {
 struct format_compiler {
   std::string_view const format;
   cuda::device_buffer<format_item> d_items;
-  format_compiler(std::string_view format, cuda::stream_ref stream)
-    : format(format), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
+  format_compiler(std::string_view format, cuda::stream_ref stream, cudf::memory_resources mr)
+    : format(format), d_items(stream, mr.get_temporary_mr(), 0, cuda::no_init)
   {
     static std::map<char, int8_t> const specifier_lengths = {
       {'-', -1},  // '-' if negative
@@ -148,8 +149,7 @@ struct format_compiler {
     }
 
     // create program in device memory
-    d_items =
-      cudf::detail::make_device_buffer(items, stream, cudf::get_current_device_resource_ref());
+    d_items = cudf::detail::make_device_buffer(items, stream, mr.as_temporary());
   }
 
   format_item const* compiled_format_items() { return d_items.data(); }
@@ -397,7 +397,7 @@ struct dispatch_from_durations_fn {
   {
     CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.");
 
-    format_compiler compiler(format, stream);
+    format_compiler compiler(format, stream, mr);
     auto d_format_items = compiler.compiled_format_items();
 
     size_type strings_count = durations.size();
@@ -647,13 +647,14 @@ struct dispatch_to_durations_fn {
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
-                  cuda::stream_ref stream) const
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const
   {
-    format_compiler compiler(format, stream);
+    format_compiler compiler(format, stream, mr);
     auto d_items   = compiler.compiled_format_items();
     auto d_results = results_view.data<T>();
     parse_duration<T> pfn{d_strings, d_items, compiler.items_count()};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{results_view.size()},
                       d_results,
@@ -663,7 +664,8 @@ struct dispatch_to_durations_fn {
   void operator()(column_device_view const&,
                   std::string_view,
                   mutable_column_view&,
-                  cuda::stream_ref) const
+                  cuda::stream_ref,
+                  cudf::memory_resources) const
   {
     CUDF_FAIL("Only durations type are expected for to_durations function");
   }
@@ -707,7 +709,7 @@ std::unique_ptr<column> to_durations(strings_column_view const& input,
                                       mr);
   auto results_view = results->mutable_view();
   cudf::type_dispatcher(
-    duration_type, dispatch_to_durations_fn(), d_column, format, results_view, stream);
+    duration_type, dispatch_to_durations_fn(), d_column, format, results_view, stream, mr);
   results->set_null_count(input.null_count());
   return results;
 }

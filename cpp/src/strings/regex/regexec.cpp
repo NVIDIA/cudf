@@ -37,7 +37,7 @@ reprog_device::reprog_device(reprog const& prog)
 }
 
 std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_device::create(
-  reprog const& h_prog, cuda::stream_ref stream)
+  reprog const& h_prog, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   // compute size to hold all the member data
   auto const insts_count   = h_prog.insts_count();
@@ -63,7 +63,7 @@ std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> reprog_devic
     cudf::detail::make_host_vector<u_char>(memsize, stream);  // copy everything into here;
   auto h_ptr    = h_buffer.data();                            // this is our running host ptr;
   auto d_buffer = new cuda::device_buffer<u_char>(stream,
-                                                  cudf::get_current_device_resource_ref(),
+                                                  mr.get_output_mr(),
                                                   memsize,
                                                   cuda::no_init);  // output device memory;
   auto d_ptr    = d_buffer->data();                                // running device pointer

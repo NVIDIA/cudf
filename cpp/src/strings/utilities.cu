@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/detail/utilities.hpp>
@@ -18,7 +19,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -33,11 +33,12 @@ namespace {
 
 void populate_string_views(strings_column_view input,
                            device_span<string_view> output,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     output.begin(),
@@ -63,7 +64,7 @@ cuda::device_buffer<string_view> create_string_vector_from_column(
 {
   auto strings_vector =
     cuda::device_buffer<string_view>(stream, mr.get_output_mr(), input.size(), cuda::no_init);
-  populate_string_views(input, strings_vector, stream);
+  populate_string_views(input, strings_vector, stream, mr);
   return strings_vector;
 }
 
@@ -218,7 +219,7 @@ rmm::device_uvector<string_view> create_string_vector_from_column(
   CUDF_FUNC_RANGE();
   auto strings_vector =
     rmm::device_uvector<string_view>(strings.size(), stream, mr.get_output_mr());
-  detail::populate_string_views(strings, strings_vector, stream);
+  detail::populate_string_views(strings, strings_vector, stream, mr);
   return strings_vector;
 }
 

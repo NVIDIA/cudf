@@ -46,7 +46,7 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
                     group_offsets.end(),
                     offsets_column->mutable_view().template begin<int32_t>(),
                     [list_offsets = lists_column_view(values).offsets_begin()] __device__(
-                      size_type row) { return list_offsets[row] - list_offsets[0]; });
+                      size_type row) -> size_type { return list_offsets[row] - list_offsets[0]; });
 
   // The child column of the output lists column is just copied from the input column.
   auto child_column =

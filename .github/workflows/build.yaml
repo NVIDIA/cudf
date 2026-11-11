@@ -36,13 +36,13 @@ permissions: {}
 
 jobs:
   build-details:
-    uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@main
   checks:
     if: ${{ github.ref == 'refs/heads/main' }}
     permissions:
       actions: read
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
     with:
       # Seed the default-branch pre-commit cache without running checks that only apply to PRs.
       base-branch: main
@@ -60,7 +60,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-build.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-build.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -79,7 +79,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -99,7 +99,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -117,7 +117,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
@@ -137,7 +137,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/conda-upload-packages.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/conda-upload-packages.yaml@main
     secrets:
       CONDA_RAPIDSAI_NIGHTLY_TOKEN: ${{ secrets.CONDA_RAPIDSAI_NIGHTLY_TOKEN }}
       CONDA_RAPIDSAI_TOKEN: ${{ secrets.CONDA_RAPIDSAI_TOKEN }}
@@ -149,7 +149,7 @@ jobs:
   docs-build-matrix:
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       matrix_name: docs-build
@@ -164,7 +164,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.docs-build-matrix.outputs.matrix) }}
@@ -194,7 +194,7 @@ jobs:
       target-aws-secret-access-key: ${{ secrets.NVIDIA_DOCS_AWS_SECRET_ACCESS_KEY }}
       target-archive-s3-bucket: ${{ secrets.NVIDIA_DOCS_ARCHIVE_S3_BUCKET }}
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
-    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
@@ -206,7 +206,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-build.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-build.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -230,7 +230,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -267,7 +267,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     secrets:
       CONDA_RAPIDSAI_WHEELS_NIGHTLY_TOKEN: ${{ secrets.CONDA_RAPIDSAI_WHEELS_NIGHTLY_TOKEN }}
       RAPIDSAI_PYPI_TOKEN: ${{ secrets.RAPIDSAI_PYPI_TOKEN }}
@@ -288,7 +288,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     secrets:
       CONDA_RAPIDSAI_WHEELS_NIGHTLY_TOKEN: ${{ secrets.CONDA_RAPIDSAI_WHEELS_NIGHTLY_TOKEN }}
       RAPIDSAI_PYPI_TOKEN: ${{ secrets.RAPIDSAI_PYPI_TOKEN }}
@@ -308,7 +308,7 @@ jobs:
       id-token: write
       packages: read
       pull-requests: read
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     secrets:
       CONDA_RAPIDSAI_WHEELS_NIGHTLY_TOKEN: ${{ secrets.CONDA_RAPIDSAI_WHEELS_NIGHTLY_TOKEN }}
       RAPIDSAI_PYPI_TOKEN: ${{ secrets.RAPIDSAI_PYPI_TOKEN }}
@@ -329,7 +329,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -347,7 +347,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -387,7 +387,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -405,7 +405,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       branch: ${{ inputs.branch }}
@@ -442,7 +442,7 @@ jobs:
   devcontainers:
     name: Build devcontainers
     secrets: inherit  # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/build-devcontainers.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/build-devcontainers.yaml@main
     permissions:
       packages: write
     with:
@@ -452,7 +452,7 @@ jobs:
   java-build-matrix:
     permissions:
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       matrix_name: conda-cpp-build
@@ -466,7 +466,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
@@ -521,7 +521,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-    uses: rapidsai/shared-workflows/.github/workflows/maven-publish.yaml@release/26.12
+    uses: rapidsai/shared-workflows/.github/workflows/maven-publish.yaml@main
     secrets:
       GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
       GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

@@ -1361,7 +1361,7 @@ thrust::host_vector<bool> hybrid_scan_reader_impl::compute_data_page_mask_with_p
   auto const& pass = *_pass_itm_data;
 
   // Return an empty vector if all rows are required
-  if (are_all_rows_retained(row_mask, _stream)) { return thrust::host_vector<bool>{}; }
+  if (are_all_rows_retained(row_mask, _stream, _mr)) { return thrust::host_vector<bool>{}; }
 
   std::vector<cudf::size_type> page_row_offsets;
   page_row_offsets.reserve(pass.pages.size() * 2);

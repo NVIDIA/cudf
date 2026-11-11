@@ -213,7 +213,8 @@ void hybrid_scan_reader_impl::setup_compressed_data(
     total_pages, _stream, _mr.as_temporary());
 
   // decoding of column/page information
-  parquet::detail::decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  parquet::detail::decode_page_headers(
+    pass, unsorted_pages, _has_offset_index, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -249,7 +250,8 @@ void hybrid_scan_reader_impl::setup_sparse_compressed_data(
   // PageInfo as whole objects.
   auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, _mr.as_temporary());
-  parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream);
+  parquet::detail::decode_page_headers(
+    pass, unsorted_pages, page_data, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }

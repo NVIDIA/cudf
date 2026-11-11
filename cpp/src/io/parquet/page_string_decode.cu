@@ -1019,9 +1019,9 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
 void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pages,
                                      cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
                                      cuda::device_buffer<uint8_t>& temp_string_buf,
-                                     cuda::stream_ref stream)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // check for needed temp space for DELTA_BYTE_ARRAY
   auto const need_sizes =
     cudf::detail::any_of(pages.device_begin(),

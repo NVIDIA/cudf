@@ -697,7 +697,7 @@ void reader_impl::read_compressed_data()
     total_pages, _stream, _mr.as_temporary());
 
   // decoding of column/page information
-  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -845,7 +845,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   auto& subpass = *pass.subpass;
 
   // figure out which kernels to run
-  subpass.kernel_mask = get_aggregated_decode_kernel_mask(subpass.pages, _stream);
+  subpass.kernel_mask = get_aggregated_decode_kernel_mask(subpass.pages, _stream, _mr);
 
   // Decode definition and repetition levels for all subpass pages
   // so they're available to compute_page_sizes and decode kernels.

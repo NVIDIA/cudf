@@ -17,8 +17,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/stream>
 #include <cuda_runtime_api.h>
 
@@ -34,7 +32,7 @@ namespace {
 std::unique_ptr<cudf::column> make_status_column(cudf::size_type size,
                                                  bool initialize_to_success,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   auto status_column = cudf::make_numeric_column(
     cudf::data_type{cudf::type_id::UINT8}, size, cudf::mask_state::UNALLOCATED, stream, mr);

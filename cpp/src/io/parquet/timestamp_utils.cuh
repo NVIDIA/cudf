@@ -15,8 +15,17 @@
 
 namespace cudf::io::parquet::detail {
 
-/// Julian day number of the Unix epoch (1970-01-01), as used by INT96 timestamps
-constexpr int32_t julian_day_unix_epoch = 2'440'588;
+/// Julian day number of the Unix epoch (1970-01-01), as used by INT96 timestamps: days from the
+/// Julian date epoch (-4713-11-24 12:00:00 UTC), rounded up
+constexpr int32_t julian_day_unix_epoch = [] {
+  using namespace cuda::std::chrono;
+  auto constexpr days_since_julian_epoch = static_cast<int32_t>(
+    ceil<days>(sys_days{January / 1 / 1970} - (sys_days{November / 24 / -4713} + hours{12}))
+      .count());
+  // The well-known Julian day number of 1970-01-01, as used by Spark and Arrow
+  static_assert(days_since_julian_epoch == 2'440'588);
+  return days_since_julian_epoch;
+}();
 
 /// Size in bytes of an INT96 timestamp: 8-byte nanoseconds of day followed by a 4-byte Julian day
 constexpr int32_t int96_size = 12;

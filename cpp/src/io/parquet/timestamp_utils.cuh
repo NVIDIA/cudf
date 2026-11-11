@@ -15,6 +15,9 @@
 
 namespace cudf::io::parquet::detail {
 
+/// Size in bytes of an INT96 timestamp: 8-byte nanoseconds of day followed by a 4-byte Julian day
+constexpr int32_t int96_size = 12;
+
 /// Julian day number of the Unix epoch (1970-01-01), as used by INT96 timestamps: days from the
 /// Julian date epoch (-4713-11-24 12:00:00 UTC), rounded up
 constexpr int32_t julian_day_unix_epoch = [] {
@@ -26,9 +29,6 @@ constexpr int32_t julian_day_unix_epoch = [] {
 
 // The well-known Julian day number of 1970-01-01, as used by Spark and Arrow
 static_assert(julian_day_unix_epoch == 2'440'588);
-
-/// Size in bytes of an INT96 timestamp: 8-byte nanoseconds of day followed by a 4-byte Julian day
-constexpr int32_t int96_size = 12;
 
 /**
  * @brief Converts the two halves of an INT96 timestamp to a count of `Duration` since the epoch.

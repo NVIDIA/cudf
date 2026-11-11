@@ -9,9 +9,8 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/device_operators.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -79,7 +78,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
   // build indices of the scan operation results
   cuda::device_buffer<size_type> result_map(
     stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{input.size()},
                          result_map.begin(),
@@ -90,7 +89,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
     // this prevents un-sanitized null entries in the output
     auto null_itr = cudf::detail::make_counting_transform_iterator(0, null_iterator{mask});
     auto oob_val  = cuda::constant_iterator<size_type>(input.size());
-    thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter_if(cudf::detail::exec_policy_nosync(stream, mr),
                        oob_val,
                        oob_val + input.size(),
                        cuda::counting_iterator<size_type>{0},

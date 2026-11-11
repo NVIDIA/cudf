@@ -12,6 +12,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/split.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/split/split_re.hpp>
@@ -240,7 +241,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
 
   // the output column count is the maximum number of tokens generated for any input string
   auto const columns_count = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings_count},
     cuda::proclaim_return_type<size_type>([d_offsets] __device__(auto const idx) -> size_type {

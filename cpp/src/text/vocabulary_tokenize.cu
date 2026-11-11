@@ -16,6 +16,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/strings/detail/utilities.hpp>
@@ -369,7 +370,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
     auto const zero_itr = cuda::counting_iterator<cudf::size_type>{0};
     auto d_sizes =
       cuda::device_buffer<cudf::size_type>(stream, temp_mr, input.size(), cuda::no_init);
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       zero_itr,
                       zero_itr + input.size(),
                       d_sizes.begin(),
@@ -384,7 +385,8 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
     auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(token_offsets->view());
     vocabulary_tokenizer_fn<decltype(map_ref)> tokenizer{
       *d_strings, d_delimiter, map_ref, default_id, d_offsets, d_tokens};
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr), zero_itr, input.size(), tokenizer);
+    thrust::for_each_n(
+      cudf::detail::exec_policy_nosync(stream, mr), zero_itr, input.size(), tokenizer);
     return cudf::make_lists_column(input.size(),
                                    std::move(token_offsets),
                                    std::move(tokens),
@@ -449,7 +451,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   auto d_tokens = tokens->mutable_view().data<cudf::size_type>();
 
   transform_tokenizer_fn<decltype(map_ref)> tokenizer{d_delimiter, map_ref, default_id};
-  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     d_tmp_strings->begin<cudf::string_view>(),
                     d_tmp_strings->end<cudf::string_view>(),
                     d_tokens,

@@ -11,6 +11,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -297,18 +298,18 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
   {
     cuda::device_buffer<int64_t> sub_offsets(stream, temp_mr, sub_count, cuda::no_init);
     auto const count_itr = cuda::counting_iterator<int64_t>{0};
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       count_itr,
                       count_itr + sub_count,
                       sub_offsets.data(),
                       sub_offset_fn{input_chars, first_offset, last_offset});
     // remove 0s -- where sub-offset could not be computed
     auto const remove_end = thrust::remove(
-      rmm::exec_policy_nosync(stream, temp_mr), sub_offsets.begin(), sub_offsets.end(), 0L);
+      cudf::detail::exec_policy_nosync(stream, mr), sub_offsets.begin(), sub_offsets.end(), 0L);
     sub_count = cuda::std::distance(sub_offsets.begin(), remove_end);
 
     // merge them with input offsets
-    thrust::merge(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::merge(cudf::detail::exec_policy_nosync(stream, mr),
                   input_offsets,
                   input_offsets + input.size() + 1,
                   sub_offsets.begin(),
@@ -331,7 +332,7 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
   // compute indices to the actual output rows
   auto indices =
     cuda::device_buffer<cudf::size_type>(stream, temp_mr, tmp_offsets_size, cuda::no_init);
-  thrust::upper_bound(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::upper_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       input_offsets,
                       input_offsets + input.size() + 1,
                       tmp_offsets.begin(),
@@ -340,7 +341,7 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
 
   // initialize the output row sizes
   auto d_sizes = cuda::device_buffer<cudf::size_type>(stream, temp_mr, input.size(), cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, temp_mr), d_sizes.begin(), d_sizes.end(), 0);
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr), d_sizes.begin(), d_sizes.end(), 0);
 
   replacer.d_strings      = *d_tmp_strings;
   replacer.d_indices      = indices.data();

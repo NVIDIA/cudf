@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/find.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -14,8 +15,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -72,7 +71,7 @@ std::unique_ptr<column> count(strings_column_view const& input,
   auto d_strings = column_device_view::create(input.parent(), stream);
   auto d_results = results->mutable_view().data<size_type>();
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     d_results,

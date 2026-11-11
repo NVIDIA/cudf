@@ -7,6 +7,7 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/capitalize.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -358,7 +359,7 @@ std::unique_ptr<column> is_title(strings_column_view const& input,
                                      stream,
                                      mr);
   auto d_column = column_device_view::create(input.parent(), stream);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     results->mutable_view().data<bool>(),

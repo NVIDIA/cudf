@@ -12,6 +12,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -20,8 +21,6 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/std/iterator>
@@ -93,7 +92,7 @@ auto create_strings_device_views(host_span<column_view const> views,
   CUDF_CUDA_TRY(cudaMemsetAsync(
     d_partition_offsets.data(), 0, sizeof(size_t), stream.get()));  // zero first element
 
-  thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                                    device_views_ptr,
                                    device_views_ptr + views.size(),
                                    std::next(d_partition_offsets.begin()),

@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/convert/convert_integers.hpp>
 #include <cudf/strings/detail/convert/int_to_string.cuh>
@@ -117,13 +118,13 @@ struct dispatch_is_integer_fn {
 
     auto d_results = results->mutable_view().data<bool>();
     if (input.has_nulls()) {
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         d_column->pair_begin<string_view, true>(),
                         d_column->pair_end<string_view, true>(),
                         d_results,
                         string_to_integer_check_fn<T>{});
     } else {
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         d_column->pair_begin<string_view, false>(),
                         d_column->pair_end<string_view, false>(),
                         d_results,
@@ -162,13 +163,13 @@ std::unique_ptr<column> is_integer(strings_column_view const& input,
   auto d_results = results->mutable_view().data<bool>();
   if (input.has_nulls()) {
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       d_column->pair_begin<string_view, true>(),
       d_column->pair_end<string_view, true>(),
       d_results,
       [] __device__(auto const& p) { return p.second ? is_integer(p.first) : false; });
   } else {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       d_column->pair_begin<string_view, false>(),
                       d_column->pair_end<string_view, false>(),
                       d_results,

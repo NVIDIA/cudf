@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/attributes.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -22,7 +23,6 @@
 #include <nvtext/tokenize.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -50,7 +50,7 @@ std::unique_ptr<cudf::column> token_count_fn(cudf::size_type strings_count,
                               mr.get_output_mr());
   auto d_token_counts = token_counts->mutable_view().data<cudf::size_type>();
   // add the counts to the column
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{strings_count},
                     d_token_counts,
@@ -81,7 +81,7 @@ std::unique_ptr<cudf::column> tokenize_fn(cudf::size_type strings_count,
   tokenizer.d_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(token_offsets->view());
   tokenizer.d_tokens = tokens.data();
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<cudf::size_type>{0},
                      strings_count,
                      tokenizer);
@@ -222,8 +222,10 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
 
   // create the output chars buffer -- just a copy of the input's chars
   rmm::device_uvector<char> output_chars(chars_bytes, stream, mr.get_output_mr());
-  thrust::copy(
-    rmm::exec_policy_nosync(stream, temp_mr), d_chars, d_chars + chars_bytes, output_chars.data());
+  thrust::copy(cudf::detail::exec_policy_nosync(stream, mr),
+               d_chars,
+               d_chars + chars_bytes,
+               output_chars.data());
 
   auto output_strings =
     cudf::make_strings_column(num_characters,

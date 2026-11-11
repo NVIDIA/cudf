@@ -10,6 +10,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/repeat_strings.hpp>
@@ -46,7 +47,7 @@ std::unique_ptr<string_scalar> repeat_string(string_scalar const& input,
   auto buff           = rmm::device_buffer(repeat_times * input.size(), stream, mr.get_output_mr());
 
   // Pull data from the input string into each byte of the output string.
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     iter,
                     iter + repeat_times * str_size,
                     static_cast<char*>(buff.data()),

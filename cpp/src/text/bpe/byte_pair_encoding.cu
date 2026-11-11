@@ -16,6 +16,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -25,8 +26,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvtext/byte_pair_encoding.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
@@ -729,7 +728,7 @@ void encode_segments(char const* d_input_chars,
                         cuda::std::identity{},
                         stream,
                         mr.as_temporary());
-  thrust::fill_n(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::fill_n(cudf::detail::exec_policy_nosync(stream, mr),
                  d_segments.begin() + num_segments,
                  1,
                  static_cast<IndexType>(chars_size));
@@ -927,7 +926,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
     auto const input_offsets =
       cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
     thrust::for_each_n(
-      rmm::exec_policy_nosync(stream, temp_mr),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<cudf::size_type>{0},
       input.size(),
       [input_offsets, first_offset, d_spaces = d_spaces.data()] __device__(cudf::size_type idx) {

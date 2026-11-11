@@ -8,12 +8,11 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/copying.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -108,7 +107,7 @@ std::unique_ptr<column> shift(strings_column_view const& input,
   auto d_chars = chars.data();
 
   // run kernel to shift all the characters
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<int64_t>{0},
                     cuda::counting_iterator<int64_t>{total_bytes},
                     d_chars,

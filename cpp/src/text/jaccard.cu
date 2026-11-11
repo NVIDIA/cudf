@@ -11,6 +11,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -21,8 +22,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <nvtext/jaccard.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_sort.cuh>
 #include <cub/warp/warp_reduce.cuh>
@@ -381,14 +380,14 @@ std::pair<cuda::device_buffer<uint32_t>, cuda::device_buffer<int64_t>> hash_subs
       // build a set of indices that point to offsets subsections
       auto sub_offsets =
         cuda::device_buffer<int64_t>(stream, temp_mr, sort_sections + 1, cuda::no_init);
-      thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                        sub_offsets.begin(),
                        sub_offsets.end(),
                        0L,
                        section_size);
       auto indices =
         cuda::device_buffer<int64_t>(stream, temp_mr, sub_offsets.size(), cuda::no_init);
-      thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                           offsets.begin(),
                           offsets.end(),
                           sub_offsets.begin(),
@@ -421,7 +420,7 @@ std::pair<cuda::device_buffer<uint32_t>, cuda::device_buffer<int64_t>> hash_subs
       // This transform can be removed once the bug is fixed.
       auto sort_offsets =
         cuda::device_buffer<int64_t>(stream, temp_mr, num_segments + 1, cuda::no_init);
-      thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         offsets.begin() + index1,
                         offsets.begin() + index2 + 1,
                         sort_offsets.begin(),
@@ -510,7 +509,7 @@ std::unique_ptr<cudf::column> jaccard_index(cudf::strings_column_view const& inp
   auto d_results = results->mutable_view().data<float>();
 
   // compute the jaccard using the unique counts and the intersect counts
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{results->size()},
                     d_results,

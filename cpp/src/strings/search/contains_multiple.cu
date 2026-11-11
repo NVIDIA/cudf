@@ -9,6 +9,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cub/device/device_merge_sort.cuh>
@@ -220,14 +219,11 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
   // remove duplicates to help speed up lower_bound
   auto offsets = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), targets.size(), cuda::no_init);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   offsets.begin(),
-                   offsets.end());
-  auto const end =
-    thrust::unique_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                          first_bytes.begin(),
-                          first_bytes.end(),
-                          offsets.begin());
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), offsets.begin(), offsets.end());
+  auto const end = thrust::unique_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                                         first_bytes.begin(),
+                                         first_bytes.end(),
+                                         offsets.begin());
   auto const unique_count =
     static_cast<size_type>(cuda::std::distance(first_bytes.begin(), end.first));
 

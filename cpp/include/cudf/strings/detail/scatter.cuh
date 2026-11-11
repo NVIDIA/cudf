@@ -5,12 +5,11 @@
 #pragma once
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -69,7 +68,7 @@ std::unique_ptr<column> scatter(SourceIterator begin,
     }));
 
   // do the scatter
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   itr,
                   itr + size,
                   scatter_map,

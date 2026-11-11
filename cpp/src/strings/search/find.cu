@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -178,7 +177,7 @@ void find_utility(strings_column_view const& input,
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     // string-per-thread function
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -214,7 +213,7 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
   if (d_target.empty()) {
     auto d_strings = column_device_view::create(input.parent(), stream);
     auto d_results = results->mutable_view().data<size_type>();
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -390,7 +389,7 @@ std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
   // fill the output with `false` unless the `d_target` is empty
   auto results_view = results->mutable_view();
   if (d_target.empty()) {
-    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                  results_view.begin<bool>(),
                  results_view.end<bool>(),
                  true);
@@ -457,7 +456,7 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     d_results,
@@ -511,7 +510,7 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings.size()},
     d_results,

@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/utf8.hpp>
 #include <cudf/strings/reverse.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -14,8 +15,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -61,7 +60,7 @@ std::unique_ptr<column> reverse(strings_column_view const& input,
   auto d_chars         = result->mutable_view().head<char>();
 
   auto const d_column = column_device_view::create(input.parent(), stream);
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      input.size(),
                      reverse_characters_fn{*d_column, d_offsets, d_chars});

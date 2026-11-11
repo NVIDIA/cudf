@@ -10,6 +10,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/detail/attributes.hpp>
@@ -19,8 +20,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/buffer>
@@ -80,7 +79,7 @@ std::unique_ptr<column> counts_fn(strings_column_view const& strings,
   auto strings_column = cudf::column_device_view::create(strings.parent(), stream);
   auto d_strings      = *strings_column;
   // fill in the lengths
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{strings.size()},
                     d_lengths,
@@ -221,7 +220,7 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
   cuda::device_buffer<size_type> offsets(
     stream, cudf::get_current_device_resource_ref(), input.size() + 1, cuda::no_init);
   thrust::transform_inclusive_scan(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{input.size()},
     offsets.begin() + 1,
@@ -246,7 +245,7 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
   // fill column with character code-point values
   auto d_results = results_view.data<int32_t>();
   // now set the ranges from each strings' character values
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      input.size(),
                      code_points_fn{d_column, offsets.data(), d_results});

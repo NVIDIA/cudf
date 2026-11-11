@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sequence.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/find_multiple.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -14,8 +15,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -59,7 +58,7 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
                         mr);
 
   // fill output column with position values
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{total_count},
                     results->mutable_view().begin<int32_t>(),

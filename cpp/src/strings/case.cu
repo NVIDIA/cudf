@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/case.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
@@ -21,8 +22,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -468,7 +467,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
     cuda::device_buffer<int64_t> sub_offsets(
       stream, cudf::get_current_device_resource_ref(), sub_count, cuda::no_init);
     auto const count_itr = cuda::counting_iterator<int64_t>{0};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       count_itr,
                       count_itr + sub_count,
                       sub_offsets.data(),
@@ -477,7 +476,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
     // merge them with input offsets
     auto input_offsets =
       cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
-    thrust::merge(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::merge(cudf::detail::exec_policy_nosync(stream, mr),
                   input_offsets,
                   input_offsets + input.size() + 1,
                   sub_offsets.begin(),

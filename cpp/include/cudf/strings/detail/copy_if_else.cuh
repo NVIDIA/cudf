@@ -5,11 +5,10 @@
 #pragma once
 
 #include <cudf/column/column.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -68,7 +67,7 @@ std::unique_ptr<cudf::column> copy_if_else(StringIterLeft lhs_begin,
   // build vector of strings
   cuda::device_buffer<string_index_pair> indices(
     stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator{static_cast<size_type>(strings_count)},
                     indices.begin(),

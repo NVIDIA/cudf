@@ -11,6 +11,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -371,7 +372,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   // compute the number of string segments produced by replace in each string
   auto counts = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     counts.begin(),
@@ -394,7 +395,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   auto d_indices = indices.data();
   auto d_sizes   = counts.data();  // reusing this vector to hold output sizes now
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     strings_count,
     [fn,

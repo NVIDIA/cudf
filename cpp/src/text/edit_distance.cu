@@ -11,6 +11,7 @@
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -19,8 +20,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvtext/edit_distance.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cuda/buffer>
@@ -249,7 +248,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
 
   // calculate the size of the compute-buffer
   cuda::device_buffer<std::ptrdiff_t> offsets(stream, temp_mr, input.size() + 1, cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{input.size()},
                     offsets.begin(),

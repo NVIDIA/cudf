@@ -13,6 +13,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/hashing/detail/murmurhash3_x64_128.cuh>
@@ -25,8 +26,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvtext/minhash.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
@@ -399,7 +398,7 @@ std::pair<cudf::size_type, cuda::device_buffer<cudf::size_type>> partition_input
   auto const temp_mr = mr.get_temporary_mr();
   auto indices =
     cuda::device_buffer<cudf::size_type>(stream, mr.get_output_mr(), size, cuda::no_init);
-  thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr), indices.begin(), indices.end());
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), indices.begin(), indices.end());
   cudf::size_type threshold_index = threshold_count < size ? size : 0;
 
   // if we counted a split of above/below threshold then
@@ -408,12 +407,12 @@ std::pair<cudf::size_type, cuda::device_buffer<cudf::size_type>> partition_input
     auto sizes = cuda::device_buffer<cudf::size_type>(stream, temp_mr, size, cuda::no_init);
     auto begin = cuda::counting_iterator<cudf::size_type>{0};
     auto end   = begin + size;
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr), begin, end, sizes.data(), tfn);
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr), begin, end, sizes.data(), tfn);
     // these 2 are slightly faster than using partition()
     thrust::sort_by_key(
-      rmm::exec_policy_nosync(stream, temp_mr), sizes.begin(), sizes.end(), indices.begin());
+      cudf::detail::exec_policy_nosync(stream, mr), sizes.begin(), sizes.end(), indices.begin());
     auto const lb = thrust::lower_bound(
-      rmm::exec_policy_nosync(stream, temp_mr), sizes.begin(), sizes.end(), wide_row_threshold);
+      cudf::detail::exec_policy_nosync(stream, mr), sizes.begin(), sizes.end(), wide_row_threshold);
     threshold_index = static_cast<cudf::size_type>(cuda::std::distance(sizes.begin(), lb));
   }
   return {threshold_index, std::move(indices)};

@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -16,8 +17,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -322,7 +321,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
   if ((input.size() == input.null_count()) ||
       ((last_offset - first_offset) / (input.size() - input.null_count())) <
         AVG_CHAR_BYTES_THRESHOLD) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       results->mutable_view().data<bool>(),

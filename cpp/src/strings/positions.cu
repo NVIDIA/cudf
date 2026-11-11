@@ -7,11 +7,10 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/atomic>
 #include <cuda/buffer>
@@ -34,7 +33,7 @@ std::unique_ptr<column> create_offsets_from_positions(strings_column_view const&
   // first, create a vector of string indices for each position
   auto indices = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), positions.size(), cuda::no_init);
-  thrust::upper_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::upper_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       d_offsets,
                       d_offsets + input.size(),
                       positions.begin(),
@@ -46,16 +45,13 @@ std::unique_ptr<column> create_offsets_from_positions(strings_column_view const&
     stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   // memset to zero-out the counts for any null-entries or strings with no positions
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    counts.begin(),
-    counts.end(),
-    0);
+    cudf::detail::exec_policy_nosync(stream, mr), counts.begin(), counts.end(), 0);
 
   // next, count the number of positions per string
   auto d_counts  = counts.data();
   auto d_indices = indices.data();
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<int64_t>{0},
     positions.size(),
     [d_indices, d_counts] __device__(int64_t idx) {

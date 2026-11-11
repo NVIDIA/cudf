@@ -15,6 +15,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
@@ -31,7 +32,6 @@
 #include <nvtext/unicode_normalize.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
@@ -345,7 +345,7 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
     cudf::column_device_view::create(unicode_data.column(2), stream, temp_mr);
   bool const apply_compat =
     (form == unicode_normalization_form::NFKD || form == unicode_normalization_form::NFKC);
-  auto const policy   = rmm::exec_policy_nosync(stream, temp_mr);
+  auto const policy   = cudf::detail::exec_policy_nosync(stream, mr);
   auto const row_iter = cuda::make_counting_iterator(cudf::size_type{0});
 
   // Build Canonical Combining Class (CCC) table
@@ -1038,7 +1038,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
 
   auto const& p          = *normalizer._impl;
   auto const temp_mr     = mr.get_temporary_mr();
-  auto const policy      = rmm::exec_policy_nosync(stream, temp_mr);
+  auto const policy      = cudf::detail::exec_policy_nosync(stream, mr);
   auto const byte_iter   = cuda::make_counting_iterator(int64_t{0});
   auto const d_raw_chars = input.chars_begin(stream) + first_offset;
   auto const chars_span  = cuda::std::span<char const>(d_raw_chars, chars_size);

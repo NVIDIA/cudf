@@ -15,6 +15,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/sorting.hpp>
@@ -153,7 +154,7 @@ cuda::device_buffer<codepoint_metadata_type> get_codepoint_metadata(cuda::stream
   auto table_vector = cuda::device_buffer<codepoint_metadata_type>{
     stream, mr.get_output_mr(), codepoint_metadata_size, cuda::no_init};
   auto table = table_vector.data();
-  thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                table + cp_section1_end,
                table + codepoint_metadata_size,
                codepoint_metadata_default_value);
@@ -179,7 +180,7 @@ cuda::device_buffer<aux_codepoint_data_type> get_aux_codepoint_data(cuda::stream
   auto table_vector = cuda::device_buffer<aux_codepoint_data_type>{
     stream, mr.get_output_mr(), aux_codepoint_data_size, cuda::no_init};
   auto table = table_vector.data();
-  thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                table + aux_section1_end,
                table + aux_codepoint_data_size,
                aux_codepoint_default_value);
@@ -739,7 +740,7 @@ std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view con
   }();
 
   // convert the block sizes to block offsets
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          d_block_offsets.begin(),
                          d_block_offsets.end(),
                          d_block_offsets.data());

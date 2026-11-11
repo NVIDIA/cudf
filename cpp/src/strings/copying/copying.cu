@@ -7,13 +7,13 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/copying.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/stream>
@@ -49,7 +49,7 @@ std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
       cudf::detail::offsetalator_factory::make_output_iterator(offsets_column->mutable_view());
     auto input_offsets =
       cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), offsets_offset);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input_offsets,
                       input_offsets + offsets_column->size(),
                       d_offsets,

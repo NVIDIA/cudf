@@ -16,6 +16,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -308,7 +309,7 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
   // prefetch the [unk] vocab entry
   auto unk_ids = cuda::device_buffer<cudf::size_type>{stream, temp_mr, 2, cuda::no_init};
   auto d_map   = vocab_map->ref(cuco::op::find);
-  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     zero_itr,
                     zero_itr + unk_ids.size(),
                     unk_ids.begin(),
@@ -858,7 +859,7 @@ tokenized_words tokenize_words(WordsFn words,
     0, cuda::proclaim_return_type<int64_t>([input_offsets, first_offset] __device__(auto idx) {
       return input_offsets[idx] - first_offset;
     }));
-  thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       d_starts,
                       d_starts + num_words,
                       d_offsets,
@@ -926,7 +927,7 @@ std::unique_ptr<cudf::column> make_tokens_column(tokenized_words&& tokens,
       CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Sum(
         counts_itr, d_block_offsets.begin(), grid.num_blocks, words_block_size, env));
     }
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            d_block_offsets.begin(),
                            d_block_offsets.end(),
                            d_block_offsets.begin());
@@ -973,7 +974,7 @@ cuda::device_buffer<cudf::bitmask_type> make_row_starts(cudf::strings_column_vie
   auto const input_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     input.size(),
     [input_offsets, first_offset, chars_size, d_row_starts = d_row_starts.data()] __device__(

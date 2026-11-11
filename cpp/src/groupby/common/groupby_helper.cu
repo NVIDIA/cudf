@@ -13,10 +13,9 @@
 #include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -83,7 +82,7 @@ void stabilize_rows(hash::grouped_keys& groups,
   auto const size       = static_cast<size_type>(groups.grouped_rows->size());
   // HashCSR determines group membership. Stably sorting those group IDs in input-row order
   // preserves the existing group offsets while restoring input order within each group.
-  auto const policy       = rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
+  auto const policy       = cudf::detail::exec_policy_nosync(stream, mr);
   auto const filtered     = size != num_rows;
   auto const store_labels = keep_labels && !groups.group_labels;
   auto input_labels =
@@ -205,7 +204,7 @@ void groupby_helper::build_groups(bool need_grouped_rows,
 
   // Sorted keys already form contiguous groups in input order, so adjacent equality identifies
   // boundaries without sorting or hashing.
-  auto const policy = rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
+  auto const policy = cudf::detail::exec_policy_nosync(stream, mr);
   auto const size   = _keys.num_rows();
   auto rows = cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), size, cuda::no_init);
   thrust::sequence(policy, rows.begin(), rows.end(), size_type{0});
@@ -303,7 +302,7 @@ device_span<size_type const> groupby_helper::input_labels(cuda::stream_ref strea
                                                           cudf::memory_resources mr)
 {
   if (_input_labels) { return *_input_labels; }
-  auto const policy  = rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
+  auto const policy  = cudf::detail::exec_policy_nosync(stream, mr);
   auto const& labels = group_labels(stream, mr);
   auto input         = std::make_unique<cuda::device_buffer<size_type>>(
     stream, mr.get_temporary_mr(), _keys.num_rows(), cuda::no_init);

@@ -9,11 +9,11 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -146,7 +146,7 @@ cuda::device_buffer<cudf::size_type> null_roll_up(column_view const& input,
     cuda::proclaim_return_type<int>([] __device__(int valid) -> int { return 1 - valid; }));
 
   // valid mask {1, 0, 1, 0, 0, 1} leads to output array {0, 0, 1, 0, 1, 2}
-  thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                 invalid_it,
                                 invalid_it + input.size() - 1,
                                 invalid_it,
@@ -172,53 +172,49 @@ rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
     auto data =
       cuda::make_zip_iterator(cuda::std::make_tuple(valid_it, nullcnt.begin(), input.begin<T>()));
 
-    thrust::transform_inclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      data,
-      data + input.size(),
-      pairs.begin(),
-      ewma_adjust_nulls_functor<T, true>{beta},
-      recurrence_functor<T>{});
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
+                                     data,
+                                     data + input.size(),
+                                     pairs.begin(),
+                                     ewma_adjust_nulls_functor<T, true>{beta},
+                                     recurrence_functor<T>{});
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       pairs.begin(),
                       pairs.end(),
                       output.begin(),
                       [] __device__(pair_type<T> pair) -> T { return pair.second; });
 
-    thrust::transform_inclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      data,
-      data + input.size(),
-      pairs.begin(),
-      ewma_adjust_nulls_functor<T, false>{beta},
-      recurrence_functor<T>{});
+    thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
+                                     data,
+                                     data + input.size(),
+                                     pairs.begin(),
+                                     ewma_adjust_nulls_functor<T, false>{beta},
+                                     recurrence_functor<T>{});
 
   } else {
-    thrust::transform_inclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      input.begin<T>(),
-      input.end<T>(),
-      pairs.begin(),
-      ewma_adjust_no_nulls_functor<T, true>{beta},
-      recurrence_functor<T>{});
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
+                                     input.begin<T>(),
+                                     input.end<T>(),
+                                     pairs.begin(),
+                                     ewma_adjust_no_nulls_functor<T, true>{beta},
+                                     recurrence_functor<T>{});
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       pairs.begin(),
                       pairs.end(),
                       output.begin(),
                       [] __device__(pair_type<T> pair) -> T { return pair.second; });
     auto itr = cuda::counting_iterator<size_type>{0};
 
-    thrust::transform_inclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      itr,
-      itr + input.size(),
-      pairs.begin(),
-      ewma_adjust_no_nulls_functor<T, false>{beta},
-      recurrence_functor<T>{});
+    thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
+                                     itr,
+                                     itr + input.size(),
+                                     pairs.begin(),
+                                     ewma_adjust_no_nulls_functor<T, false>{beta},
+                                     recurrence_functor<T>{});
   }
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     pairs.begin(),
     pairs.end(),
     output.begin(),
@@ -252,13 +248,12 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
   if (!input.has_nulls()) {
     auto data = cuda::make_zip_iterator(
       cuda::std::make_tuple(input.begin<T>(), cuda::counting_iterator<size_type>{0}));
-    thrust::transform_inclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      data,
-      data + input.size(),
-      pairs.begin(),
-      ewma_noadjust_no_nulls_functor<T>{beta},
-      recurrence_functor<T>{});
+    thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
+                                     data,
+                                     data + input.size(),
+                                     pairs.begin(),
+                                     ewma_noadjust_no_nulls_functor<T>{beta},
+                                     recurrence_functor<T>{});
 
   } else {
     auto device_view = column_device_view::create(input, stream);
@@ -267,17 +262,16 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
     auto data = cuda::make_zip_iterator(cuda::std::make_tuple(
       input.begin<T>(), cuda::counting_iterator<size_type>{0}, valid_it, nullcnt.begin()));
 
-    thrust::transform_inclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      data,
-      data + input.size(),
-      pairs.begin(),
-      ewma_noadjust_nulls_functor<T>{beta},
-      recurrence_functor<T>());
+    thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
+                                     data,
+                                     data + input.size(),
+                                     pairs.begin(),
+                                     ewma_noadjust_nulls_functor<T>{beta},
+                                     recurrence_functor<T>());
   }
 
   // copy the second elements to the output for now
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     pairs.begin(),
                     pairs.end(),
                     output.begin(),

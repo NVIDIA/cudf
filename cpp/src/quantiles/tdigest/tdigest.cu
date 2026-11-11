@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/tdigest/tdigest.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/lists_column_view.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -207,12 +206,11 @@ std::unique_ptr<column> compute_approx_percentiles(tdigest_column_view const& in
           offsets_begin,
           cuda::std::prev(thrust::upper_bound(thrust::seq, offsets_begin, offsets_end, i)));
       }));
-  thrust::inclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    keys,
-    keys + weight.size(),
-    weight.begin<double>(),
-    cumulative_weights->mutable_view().begin<double>());
+  thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                                keys,
+                                keys + weight.size(),
+                                weight.begin<double>(),
+                                cumulative_weights->mutable_view().begin<double>());
 
   auto percentiles_cdv = column_device_view::create(percentiles, stream);
 
@@ -316,20 +314,20 @@ std::unique_ptr<column> make_empty_tdigests_column(size_type num_rows,
 {
   auto offsets = cudf::make_fixed_width_column(
     data_type(type_id::INT32), num_rows + 1, mask_state::UNALLOCATED, stream, mr);
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                offsets->mutable_view().begin<int32_t>(),
                offsets->mutable_view().end<int32_t>(),
                0);
 
   auto min_col = cudf::make_numeric_column(
     data_type(type_id::FLOAT64), num_rows, mask_state::UNALLOCATED, stream, mr);
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                min_col->mutable_view().begin<double>(),
                min_col->mutable_view().end<double>(),
                0);
   auto max_col = cudf::make_numeric_column(
     data_type(type_id::FLOAT64), num_rows, mask_state::UNALLOCATED, stream, mr);
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                max_col->mutable_view().begin<double>(),
                max_col->mutable_view().end<double>(),
                0);
@@ -379,11 +377,10 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
       detail::size_begin(tdv),
       cuda::proclaim_return_type<size_type>(
         [] __device__(size_type tdigest_size) -> size_type { return tdigest_size == 0; }));
-    auto const null_count =
-      thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     tdigest_is_empty,
-                     tdigest_is_empty + tdv.size(),
-                     0);
+    auto const null_count = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                           tdigest_is_empty,
+                                           tdigest_is_empty + tdv.size(),
+                                           0);
     if (null_count == 0) {
       return std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type>{
         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), null_count};
@@ -409,7 +406,7 @@ std::unique_ptr<column> percentile_approx(tdigest_column_view const& input,
         if (row == num_rows) { return 0; }
         return tdigest_sizes[row] == 0 ? 0 : num_percentiles;
       }));
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          row_size_iter,
                          row_size_iter + input.size() + 1,
                          offsets->mutable_view().begin<int32_t>());

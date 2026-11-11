@@ -11,11 +11,10 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/stream>
@@ -60,7 +59,7 @@ struct scan_dispatcher {
 
     // CUB 2.0.0 requires that the binary operator returns the same type as the identity.
     auto const binary_op = cudf::detail::cast_functor<T>(Op{});
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            begin,
                            begin + input.size(),
                            output.data<T>(),

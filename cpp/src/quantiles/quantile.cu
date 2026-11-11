@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/detail/iterator.cuh>
@@ -22,8 +23,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -81,7 +80,7 @@ struct quantile_functor {
     if (!cudf::is_dictionary(input.type())) {
       auto sorted_data =
         cuda::make_permutation_iterator(input.data<StorageType>(), ordered_indices);
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         q_device.begin(),
                         q_device.end(),
                         d_output->template begin<StorageResult>(),
@@ -93,7 +92,7 @@ struct quantile_functor {
     } else {
       auto sorted_data = cuda::make_permutation_iterator(
         dictionary::detail::make_dictionary_iterator<T>(*d_input), ordered_indices);
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         q_device.begin(),
                         q_device.end(),
                         d_output->template begin<StorageResult>(),

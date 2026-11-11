@@ -6,6 +6,7 @@
 #include "simple.cuh"
 
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/concepts.hpp>
@@ -56,7 +57,7 @@ struct any_fn {
     }();
     auto d_result =
       cudf::detail::device_scalar<int32_t>(0, stream, cudf::get_current_device_resource_ref());
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<size_type>{0},
                        input.size(),
                        any_true_fn<decltype(iter)>{iter, d_result.data()});

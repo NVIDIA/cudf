@@ -8,11 +8,10 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/gather.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -59,7 +58,7 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
   // But if min_periods=3, rows at indices 0 and 4 have too few observations, and must return
   // null. The sizes at these positions must be 0, i.e.
   //  prec + foll = [0,3,3,3,0]
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     preceding_begin,
                     preceding_begin + input_size,
                     following_begin,
@@ -110,7 +109,7 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
                                             stream,
                                             mr.get_output_mr());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{per_row_mapping.size()},
     gather_map->mutable_view().template begin<size_type>(),

@@ -17,8 +17,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cub/device/device_reduce.cuh>
 #include <cuda/execution>
 #include <cuda/std/execution>
@@ -171,7 +169,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
   // compute the result value from intermediate value in device
   using ScalarType = cudf::scalar_type_t<OutputType>;
   auto result      = std::make_unique<ScalarType>(OutputType{0}, true, stream, mr);
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      intermediate_result.data(),
                      1,
                      [dres = result->data(), op, valid_count, ddof] __device__(auto i) {

@@ -12,6 +12,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/rolling.hpp>
 #include <cudf/rolling/range_window_bounds.hpp>
 #include <cudf/types.hpp>
@@ -366,7 +367,7 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
           return nulls_per_group[i] < (d_offsets[i + 1] - d_offsets[i]) &&
                  d_orderby.is_null_nocheck(d_offsets[i]);
         }));
-    auto is_before = thrust::reduce(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    auto is_before = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
                                     it,
                                     it + offsets.size() - 1,
                                     false,
@@ -387,7 +388,7 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
           return nulls_per_group[i] < (d_offsets[i + 1] - d_offsets[i]) &&
                  d_orderby.is_null_nocheck(d_offsets[i + 1] - 1);
         }));
-    auto is_before = thrust::reduce(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    auto is_before = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
                                     it,
                                     it + offsets.size() - 1,
                                     false,

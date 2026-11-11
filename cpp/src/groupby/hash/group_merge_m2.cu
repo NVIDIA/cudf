@@ -5,11 +5,10 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -100,11 +99,8 @@ std::unique_ptr<column> merge_m2(column_view const& values,
                                        count_valid.template begin<count_type>(),
                                        mean_values.template begin<result_type>(),
                                        M2_values.template begin<result_type>()};
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    iter,
-                    iter + num_groups,
-                    out_iter,
-                    fn);
+  thrust::transform(
+    cudf::detail::exec_policy_nosync(stream, mr), iter, iter + num_groups, out_iter, fn);
 
   // Output is a structs column containing the merged values of `COUNT_VALID`, `MEAN`, and `M2`.
   std::vector<std::unique_ptr<column>> out_columns;

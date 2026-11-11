@@ -7,10 +7,9 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -41,16 +40,15 @@ std::unique_ptr<cudf::scalar> nth_element(column_view const& col,
     cuda::device_buffer<size_type> null_skipped_index(
       stream, cudf::get_current_device_resource_ref(), col.size(), cuda::no_init);
     // null skipped index for valids only.
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            bitmask_iterator,
                            bitmask_iterator + col.size(),
                            null_skipped_index.begin());
 
-    auto n_pos =
-      thrust::upper_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                          null_skipped_index.begin(),
-                          null_skipped_index.end(),
-                          n);
+    auto n_pos          = thrust::upper_bound(cudf::detail::exec_policy_nosync(stream, mr),
+                                     null_skipped_index.begin(),
+                                     null_skipped_index.end(),
+                                     n);
     auto null_skipped_n = n_pos - null_skipped_index.begin();
     return cudf::detail::get_element(col, null_skipped_n, stream, mr);
   } else {

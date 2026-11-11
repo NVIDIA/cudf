@@ -14,6 +14,7 @@
 #include <cudf/detail/unary.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/reduction/detail/segmented_reduction.cuh>
 #include <cudf/types.hpp>
@@ -221,18 +222,17 @@ std::unique_ptr<column> fixed_point_segmented_reduction(
                                                   stream,
                                                   cudf::get_current_device_resource_ref());
 
-      auto const max_count =
-        thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       counts.begin(),
-                       counts.end(),
-                       size_type{0},
-                       cuda::maximum<size_type>{});
+      auto const max_count = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                            counts.begin(),
+                                            counts.end(),
+                                            size_type{0},
+                                            cuda::maximum<size_type>{});
 
       auto const new_scale = numeric::scale_type{col.type().scale() * max_count};
 
       // adjust values in each segment to match the new scale
       auto const d_col = column_device_view::create(col, stream);
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         d_col->begin<InputType>(),
                         d_col->end<InputType>(),
                         d_col->begin<InputType>(),

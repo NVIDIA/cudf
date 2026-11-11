@@ -10,6 +10,7 @@
 #include <cudf/detail/scan.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/device_operators.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -135,7 +136,7 @@ std::unique_ptr<column> inclusive_one_normalized_percent_rank_scan(column_view c
   auto percent_rank_result = cudf::make_fixed_width_column(
     data_type{type_to_id<result_type>()}, rank_view.size(), mask_state::UNALLOCATED, stream, mr);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     rank_view.begin<size_type>(),
                     rank_view.end<size_type>(),
                     percent_rank_result->mutable_view().begin<result_type>(),

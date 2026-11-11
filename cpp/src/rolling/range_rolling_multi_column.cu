@@ -14,6 +14,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/rolling.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -22,7 +23,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/functional>
@@ -104,7 +104,7 @@ void select_and_write_offsets(range_window_type const& preceding,
     auto const src_iter = cudf::detail::make_counting_transform_iterator(
       size_type{0}, cuda::proclaim_return_type<cuda::std::tuple<size_type, size_type>>(offset_fn));
     thrust::copy_n(
-      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       src_iter,
       num_rows,
       cuda::zip_iterator(preceding_view.begin<size_type>(), following_view.begin<size_type>()));

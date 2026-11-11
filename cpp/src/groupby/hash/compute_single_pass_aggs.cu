@@ -14,6 +14,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
@@ -91,7 +92,7 @@ std::unique_ptr<column> count_groups(reduction_context const& ctx,
                   stream,
                   mr);
   } else {
-    thrust::adjacent_difference(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::adjacent_difference(cudf::detail::exec_policy_nosync(stream, mr),
                                 ctx.grouped.offsets.begin() + 1,
                                 ctx.grouped.offsets.end(),
                                 result->mutable_view().begin<size_type>());

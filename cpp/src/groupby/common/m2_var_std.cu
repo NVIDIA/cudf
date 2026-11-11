@@ -7,11 +7,10 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -74,10 +73,8 @@ std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
 
   auto const out_it =
     cuda::make_zip_iterator(output->mutable_view().begin<TargetType>(), validity.begin());
-  thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   out_it,
-                   out_it + size,
-                   transform_fn);
+  thrust::tabulate(
+    cudf::detail::exec_policy_nosync(stream, mr), out_it, out_it + size, transform_fn);
 
   auto [null_mask, null_count] =
     cudf::detail::valid_if(validity.begin(), validity.end(), cuda::std::identity{}, stream, mr);

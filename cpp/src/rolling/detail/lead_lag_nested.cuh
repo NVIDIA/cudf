@@ -13,12 +13,11 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/scatter.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -131,7 +130,7 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
   auto const input_size = input.size();
   auto const null_index = input.size();
   if (op == aggregation::LEAD) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       gather_map.begin<size_type>(),
@@ -140,7 +139,7 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                           return (row_offset > following[i]) ? null_index : (i + row_offset);
                         }));
   } else {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       gather_map.begin<size_type>(),

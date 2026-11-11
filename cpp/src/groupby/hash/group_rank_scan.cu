@@ -12,6 +12,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/utilities/device_operators.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
@@ -195,7 +196,7 @@ std::unique_ptr<column> first_rank_scan(column_view const& grouped_values,
   auto ranks = make_fixed_width_column(
     data_type{type_to_id<size_type>()}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);
   auto mutable_ranks = ranks->mutable_view();
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>(0),
                     cuda::counting_iterator<size_type>(group_labels.size()),
                     mutable_ranks.begin<size_type>(),
@@ -229,7 +230,7 @@ std::unique_ptr<column> average_rank_scan(column_view const& grouped_values,
   auto ranks    = make_fixed_width_column(
     data_type{type_to_id<double>()}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);
   auto mutable_ranks = ranks->mutable_view();
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     max_rank->view().begin<size_type>(),
                     max_rank->view().end<size_type>(),
                     min_rank->view().begin<size_type>(),
@@ -277,7 +278,7 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
     return group_size == 1 ? 0.0 : ((rank - 1.0) / (group_size - 1));
   };
   if (method == rank_method::DENSE) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(group_labels.size()),
                       mutable_ranks.begin<double>(),
@@ -298,7 +299,7 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
                                  : one_normalized(r, last_rank);
                       });
   } else {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(group_labels.size()),
                       mutable_ranks.begin<double>(),

@@ -267,7 +267,7 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0,
     stream,
-    mr.get_output_mr());
+    mr);
   auto d_results = results->mutable_view().data<cudf::size_type>();
 
   constexpr auto block_size = 256L;

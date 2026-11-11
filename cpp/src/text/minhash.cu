@@ -452,7 +452,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
                               input.size() * static_cast<cudf::size_type>(parameter_a.size()),
                               cudf::mask_state::UNALLOCATED,
                               stream,
-                              mr.get_output_mr());
+                              mr);
   auto d_results = results->mutable_view().data<hash_value_type>();
 
   cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * block_size,
@@ -542,7 +542,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
                               input.size() * static_cast<cudf::size_type>(parameter_a.size()),
                               cudf::mask_state::UNALLOCATED,
                               stream,
-                              mr.get_output_mr());
+                              mr);
   auto d_results = results->mutable_view().data<hash_value_type>();
 
   cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * block_size,
@@ -605,11 +605,10 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                                 cudf::memory_resources mr)
 {
   // build the offsets for the output lists column
-  auto const output_mr = mr.get_output_mr();
-  auto const zero      = cudf::numeric_scalar<cudf::size_type>(0, true, stream, mr.as_temporary());
+  auto const zero = cudf::numeric_scalar<cudf::size_type>(0, true, stream, mr.as_temporary());
   auto const size =
     cudf::numeric_scalar<cudf::size_type>(seeds_size, true, stream, mr.as_temporary());
-  auto offsets = cudf::detail::sequence(input.size() + 1, zero, size, stream, output_mr);
+  auto offsets = cudf::detail::sequence(input.size() + 1, zero, size, stream, mr);
   hashes->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
                         0);  // children have no nulls
 
@@ -621,7 +620,7 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                   cudf::detail::copy_bitmask(input, stream, mr));
   // expect this condition to be very rare
   if (input.null_count() > 0) {
-    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, output_mr);
+    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, mr);
   }
   return result;
 }

@@ -1035,7 +1035,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
     cudf::strings::detail::get_first_and_last_offset(input, stream);
   auto const chars_size = last_offset - first_offset;
   auto const output_mr  = mr.get_output_mr();
-  if (chars_size == 0) { return std::make_unique<cudf::column>(input.parent(), stream, output_mr); }
+  if (chars_size == 0) { return std::make_unique<cudf::column>(input.parent(), stream, mr); }
 
   auto const& p          = *normalizer._impl;
   auto const temp_mr     = mr.get_temporary_mr();
@@ -1052,7 +1052,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
     auto nfc_qc_fn = detail::nfc_quick_check_fn{chars_span, p.ccc_table, p.compat_decomp_flags};
     if (!cudf::detail::any_of(
           byte_iter, byte_iter + chars_size, nfc_qc_fn, stream, mr.as_temporary())) {
-      return std::make_unique<cudf::column>(input.parent(), stream, output_mr);
+      return std::make_unique<cudf::column>(input.parent(), stream, mr);
     }
   }
 

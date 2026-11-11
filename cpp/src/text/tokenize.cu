@@ -47,7 +47,7 @@ std::unique_ptr<cudf::column> token_count_fn(cudf::size_type strings_count,
                               strings_count,
                               cudf::mask_state::UNALLOCATED,
                               stream,
-                              mr.get_output_mr());
+                              mr);
   auto d_token_counts = token_counts->mutable_view().data<cudf::size_type>();
   // add the counts to the column
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
@@ -86,7 +86,7 @@ std::unique_ptr<cudf::column> tokenize_fn(cudf::size_type strings_count,
                      strings_count,
                      tokenizer);
   // create the strings column using the tokens pointers
-  return cudf::make_strings_column(tokens, stream, mr.get_output_mr());
+  return cudf::make_strings_column(tokens, stream, mr);
 }
 
 }  // namespace
@@ -206,7 +206,7 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
 
   // create output offsets column
   auto offsets_column = cudf::make_numeric_column(
-    offsets.type(), num_characters + 1, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+    offsets.type(), num_characters + 1, cudf::mask_state::UNALLOCATED, stream, mr);
   auto d_new_offsets =
     cudf::detail::offsetalator_factory::make_output_iterator(offsets_column->mutable_view());
   // offsets are at the beginning byte of each character

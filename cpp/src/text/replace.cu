@@ -273,8 +273,8 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
 
   if ((non_null_count == 0) || ((chars_size / non_null_count) < AVG_CHAR_BYTES_THRESHOLD)) {
     // this utility calls replacer to build the offsets and chars columns
-    auto [offsets_column, chars] = cudf::strings::detail::make_strings_children(
-      replacer, input.size(), stream, mr.get_output_mr());
+    auto [offsets_column, chars] =
+      cudf::strings::detail::make_strings_children(replacer, input.size(), stream, mr);
     // return new strings column
     return cudf::make_strings_column(input.size(),
                                      std::move(offsets_column),
@@ -348,10 +348,10 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
   replacer.d_indices      = indices.data();
   replacer.d_output_sizes = d_sizes.data();
 
-  auto chars          = std::get<1>(cudf::strings::detail::make_strings_children(
-    replacer, tmp_strings.size(), stream, mr.get_output_mr()));
-  auto offsets_column = std::get<0>(
-    cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr.get_output_mr()));
+  auto chars = std::get<1>(
+    cudf::strings::detail::make_strings_children(replacer, tmp_strings.size(), stream, mr));
+  auto offsets_column =
+    std::get<0>(cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr));
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets_column),
                                    chars.release(),

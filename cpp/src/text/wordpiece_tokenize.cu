@@ -261,8 +261,8 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
   // hold a copy of the input (not expected to be very large)
   auto const output_mr = mr.get_output_mr();
   auto const temp_mr   = mr.get_temporary_mr();
-  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, output_mr);
-  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, output_mr);
+  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, mr);
+  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, mr);
 
   // build the vocabulary map: each row is a single term and is the key for the map
   auto vocab_map = std::make_unique<detail::vocabulary_map_type>(
@@ -906,8 +906,8 @@ std::unique_ptr<cudf::column> make_tokens_column(tokenized_words&& tokens,
     d_token_counts.begin(), d_token_counts.end(), stream, mr);
 
   auto const output_type = cudf::data_type{cudf::type_to_id<cudf::size_type>()};
-  auto output            = cudf::make_numeric_column(
-    output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto output =
+    cudf::make_numeric_column(output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
 
   if (num_words > 0) {
     // compute the output offset for each block of words

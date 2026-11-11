@@ -132,7 +132,7 @@ std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& 
 
   // build offsets and children using the normalize_space_fn
   auto [offsets_column, chars] = cudf::strings::detail::make_strings_children(
-    normalize_spaces_fn{*d_strings}, strings.size(), stream, mr.get_output_mr());
+    normalize_spaces_fn{*d_strings}, strings.size(), stream, mr);
 
   return cudf::make_strings_column(strings.size(),
                                    std::move(offsets_column),
@@ -242,9 +242,8 @@ character_normalizer::character_normalizer(bool do_lower_case,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
 {
-  auto const output_mr = mr.get_output_mr();
-  auto cp_metadata     = nvtext::detail::get_codepoint_metadata(stream, mr);
-  auto aux_table       = nvtext::detail::get_aux_codepoint_data(stream, mr);
+  auto cp_metadata = nvtext::detail::get_codepoint_metadata(stream, mr);
+  auto aux_table   = nvtext::detail::get_aux_codepoint_data(stream, mr);
   CUDF_EXPECTS(
     !special_tokens.has_nulls(), "special tokens should not have nulls", std::invalid_argument);
 
@@ -253,16 +252,16 @@ character_normalizer::character_normalizer(bool do_lower_case,
                                      {},
                                      {},
                                      stream,
-                                     do_lower_case ? mr.get_temporary_mr() : output_mr)
+                                     do_lower_case ? mr.as_temporary() : mr)
                             ->release()
                             .front());
   if (do_lower_case) {
     // lower-case the tokens so they will match the normalized input
-    sorted = cudf::strings::to_lower(cudf::strings_column_view(sorted->view()), stream, output_mr);
+    sorted = cudf::strings::to_lower(cudf::strings_column_view(sorted->view()), stream, mr);
   }
 
   auto tokens_view = cudf::strings::detail::create_string_vector_from_column(
-    cudf::strings_column_view(sorted->view()), stream, output_mr);
+    cudf::strings_column_view(sorted->view()), stream, mr);
 
   _impl = std::make_unique<character_normalizer_impl>(std::move(cp_metadata),
                                                       std::move(aux_table),
@@ -671,9 +670,7 @@ std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view con
   auto const chars_size    = last_offset - first_offset;
   auto const d_input_chars = input.chars_begin(stream) + first_offset;
 
-  if (chars_size == 0) {
-    return std::make_unique<cudf::column>(input.parent(), stream, mr.get_output_mr());
-  }
+  if (chars_size == 0) { return std::make_unique<cudf::column>(input.parent(), stream, mr); }
 
   auto const temp_mr     = mr.get_temporary_mr();
   auto const& parameters = normalizer._impl;

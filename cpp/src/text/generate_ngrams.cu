@@ -139,7 +139,7 @@ std::unique_ptr<cudf::column> generate_ngrams(cudf::strings_column_view const& s
   auto const ngrams_count = strings_count - ngrams + 1;
 
   auto [offsets_column, chars] = cudf::strings::detail::make_strings_children(
-    ngram_generator_fn{d_strings, ngrams, d_separator}, ngrams_count, stream, mr.get_output_mr());
+    ngram_generator_fn{d_strings, ngrams, d_separator}, ngrams_count, stream, mr);
 
   // make the output strings column from the offsets and chars column
   return cudf::make_strings_column(
@@ -292,8 +292,8 @@ std::unique_ptr<cudf::column> generate_character_ngrams(cudf::strings_column_vie
                "Insufficient number of characters in each string to generate ngrams");
 
   character_ngram_generator_fn generator{*d_strings, ngrams, d_offsets};
-  auto [offsets_column, chars] = cudf::strings::detail::make_strings_children(
-    generator, input.size(), total_ngrams, stream, mr.get_output_mr());
+  auto [offsets_column, chars] =
+    cudf::strings::detail::make_strings_children(generator, input.size(), total_ngrams, stream, mr);
 
   auto output =
     cudf::make_strings_column(total_ngrams,
@@ -403,8 +403,8 @@ std::unique_ptr<cudf::column> hash_character_ngrams(cudf::strings_column_view co
                "Insufficient number of characters in each string to generate ngrams");
 
   // compute ngrams and build hashes
-  auto hashes = cudf::make_numeric_column(
-    output_type, total_ngrams, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto hashes =
+    cudf::make_numeric_column(output_type, total_ngrams, cudf::mask_state::UNALLOCATED, stream, mr);
   auto d_hashes = hashes->mutable_view().data<cudf::hash_value_type>();
 
   character_ngram_hash_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(

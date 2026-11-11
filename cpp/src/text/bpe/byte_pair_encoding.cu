@@ -877,11 +877,8 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
   auto const temp_mr = mr.get_temporary_mr();
   if (input.chars_size(stream) == 0) {  // all rows are empty or null
-    auto result =
-      cudf::make_column_from_scalar(cudf::string_scalar("", true, stream, mr.as_temporary()),
-                                    input.size(),
-                                    stream,
-                                    mr.get_output_mr());
+    auto result = cudf::make_column_from_scalar(
+      cudf::string_scalar("", true, stream, mr.as_temporary()), input.size(), stream, mr);
     result->set_null_mask(cudf::detail::copy_bitmask(input.parent(), stream, mr),
                           input.null_count());
     return result;

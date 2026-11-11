@@ -236,8 +236,7 @@ std::unique_ptr<cudf::column> resolve_duplicates_fn(
                                            cudf::string_view(rhs.first, rhs.second);
                                   });
 
-  return cudf::strings::detail::make_strings_column(
-    duplicates.begin(), duplicates_end, stream, mr.get_output_mr());
+  return cudf::strings::detail::make_strings_column(duplicates.begin(), duplicates_end, stream, mr);
 }
 
 }  // namespace
@@ -516,8 +515,7 @@ std::unique_ptr<cudf::column> resolve_duplicates_pair_impl(
                                            cudf::string_view(rhs.first, rhs.second);
                                   });
 
-  return cudf::strings::detail::make_strings_column(
-    duplicates.begin(), duplicates_end, stream, mr.get_output_mr());
+  return cudf::strings::detail::make_strings_column(duplicates.begin(), duplicates_end, stream, mr);
 }
 }  // namespace
 

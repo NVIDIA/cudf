@@ -133,15 +133,13 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(InputItera
                                                                       cuda::stream_ref stream,
                                                                       cudf::memory_resources mr)
 {
-  auto const output_mr = mr.get_output_mr();
-
   auto constexpr size_type_max = static_cast<int64_t>(std::numeric_limits<size_type>::max());
   auto const lcount            = static_cast<int64_t>(std::distance(begin, end));
   CUDF_EXPECTS(
     lcount <= size_type_max, "Size of output exceeds the column size limit", std::overflow_error);
   auto const strings_count = static_cast<size_type>(lcount);
   auto offsets_column      = make_numeric_column(
-    data_type{type_id::INT32}, strings_count + 1, mask_state::UNALLOCATED, stream, output_mr);
+    data_type{type_id::INT32}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
   auto d_offsets = offsets_column->mutable_view().template data<int32_t>();
 
   // The number of offsets is strings_count+1 so to build the offsets from the sizes
@@ -161,7 +159,7 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(InputItera
   if (total_bytes >= cudf::strings::get_offset64_threshold()) {
     // recompute as int64 offsets when above the threshold
     offsets_column = make_numeric_column(
-      data_type{type_id::INT64}, strings_count + 1, mask_state::UNALLOCATED, stream, output_mr);
+      data_type{type_id::INT64}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
     auto d_offsets64 = offsets_column->mutable_view().template data<int64_t>();
     cudf::detail::sizes_to_offsets(
       input_itr, input_itr + strings_count + 1, d_offsets64, 0, stream, mr);

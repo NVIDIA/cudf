@@ -137,8 +137,8 @@ tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
 
   // need to hold a copy of the input
   auto const output_mr = mr.get_output_mr();
-  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, output_mr);
-  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, output_mr);
+  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, mr);
+  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, mr);
 
   auto vocab_map = std::make_unique<detail::vocabulary_map_type>(
     static_cast<size_t>(vocabulary->size() * 2),
@@ -381,7 +381,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
 
     // build the output column to hold all the token ids
     auto tokens = cudf::make_numeric_column(
-      output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+      output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
     auto d_tokens  = tokens->mutable_view().data<cudf::size_type>();
     auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(token_offsets->view());
     vocabulary_tokenizer_fn<decltype(map_ref)> tokenizer{
@@ -447,8 +447,8 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
 
   auto const d_tmp_strings = cudf::column_device_view::create(tmp_input, stream, mr.as_temporary());
 
-  auto tokens = cudf::make_numeric_column(
-    output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto tokens =
+    cudf::make_numeric_column(output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
   auto d_tokens = tokens->mutable_view().data<cudf::size_type>();
 
   transform_tokenizer_fn<decltype(map_ref)> tokenizer{d_delimiter, map_ref, default_id};

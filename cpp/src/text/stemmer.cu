@@ -98,7 +98,7 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& strings
                                   cudf::detail::copy_bitmask(strings.parent(), stream, mr),
                                   strings.null_count(),
                                   stream,
-                                  mr.get_output_mr());
+                                  mr);
   // set values into output column
   auto strings_column =
     cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
@@ -214,7 +214,7 @@ std::unique_ptr<cudf::column> porter_stemmer_measure(cudf::strings_column_view c
                                   cudf::detail::copy_bitmask(strings.parent(), stream, mr),
                                   strings.null_count(),
                                   stream,
-                                  mr.get_output_mr());
+                                  mr);
   // compute measures into output column
   auto strings_column =
     cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());

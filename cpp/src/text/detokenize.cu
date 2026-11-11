@@ -160,7 +160,7 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& string
     detokenizer_fn{*strings_column, d_row_map, tokens_offsets.data(), d_separator},
     output_count,
     stream,
-    mr.get_output_mr());
+    mr);
 
   // make the output strings column from the offsets and chars column
   return cudf::make_strings_column(

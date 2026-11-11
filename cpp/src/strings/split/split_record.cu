@@ -271,8 +271,8 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
     cudf::detail::make_offsets_child_column(token_counts.begin(), token_counts.end(), stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
-  auto tokens =
-    cuda::device_buffer<string_index_pair>(stream, mr.get_output_mr(), total_tokens, cuda::no_init);
+  auto tokens = cuda::device_buffer<string_index_pair>(
+    stream, mr.get_temporary_mr(), total_tokens, cuda::no_init);
   if (total_tokens > 0) {
     thrust::for_each_n(policy, iota_itr, strings_count, make_extract(d_offsets, tokens.data()));
   }

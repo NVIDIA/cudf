@@ -506,7 +506,7 @@ std::unique_ptr<cudf::column> jaccard_index(cudf::strings_column_view const& inp
   }();
 
   auto results = cudf::make_numeric_column(
-    output_type, input1.size(), cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+    output_type, input1.size(), cudf::mask_state::UNALLOCATED, stream, mr);
   auto d_results = results->mutable_view().data<float>();
 
   // compute the jaccard using the unique counts and the intersect counts

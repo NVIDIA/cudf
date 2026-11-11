@@ -157,7 +157,7 @@ std::unique_ptr<detail::cross_set_type> initialize_cross_set(cudf::column_device
 std::unique_ptr<bpe_merge_pairs::bpe_merge_pairs_impl> create_bpe_merge_pairs_impl(
   std::unique_ptr<cudf::column>&& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto d_input = cudf::column_device_view::create(input->view(), stream, mr.get_output_mr());
+  auto d_input             = cudf::column_device_view::create(input->view(), stream, mr);
   auto [merge_pairs, salt] = initialize_merge_pairs_map(*d_input, stream, mr);
   auto cross_set           = initialize_cross_set(*d_input, stream, mr);
   return std::make_unique<nvtext::bpe_merge_pairs::bpe_merge_pairs_impl>(
@@ -168,12 +168,8 @@ std::unique_ptr<bpe_merge_pairs::bpe_merge_pairs_impl> create_bpe_merge_pairs_im
   cudf::strings_column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const space = std::string(" ");  // workaround to ARM issue
-  auto pairs =
-    cudf::strings::split_record(input,
-                                cudf::string_scalar(space, true, stream, mr.as_temporary()),
-                                1,
-                                stream,
-                                mr.get_output_mr());
+  auto pairs       = cudf::strings::split_record(
+    input, cudf::string_scalar(space, true, stream, mr.as_temporary()), 1, stream, mr);
   auto content = pairs->release();
   return create_bpe_merge_pairs_impl(std::move(content.children.back()), stream, mr);
 }

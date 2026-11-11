@@ -113,7 +113,7 @@ std::unique_ptr<table> apply_retention_mask(table_view const& input,
 std::unique_ptr<table> apply_boolean_mask(table_view const& input,
                                           column_view const& boolean_mask,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::apply_mask(input, boolean_mask, detail::mask_type::RETENTION, stream, mr);

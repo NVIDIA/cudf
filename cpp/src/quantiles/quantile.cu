@@ -43,7 +43,7 @@ struct quantile_functor {
   interpolation interp;
   bool retain_types;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input)
@@ -134,7 +134,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  bool retain_types,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto functor = quantile_functor<exact, SortMapIterator>{
     ordered_indices, size, q, interp, retain_types, stream, mr};
@@ -152,7 +152,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  column_view const& indices,
                                  bool exact,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   if (indices.is_empty()) {
     auto begin = cuda::counting_iterator<size_type>{0};
@@ -183,7 +183,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  column_view const& ordered_indices,
                                  bool exact,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::quantile(input, q, interp, ordered_indices, exact, stream, mr);

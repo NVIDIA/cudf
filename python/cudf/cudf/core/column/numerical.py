@@ -567,6 +567,8 @@ class NumericalColumn(NumericalBaseColumn):
 
             if (
                 op in {"__and__", "__or__"}
+                and self.dtype.kind == "b"
+                and other_cudf_dtype.kind == "b"
                 and out_dtype.kind == "b"
                 and is_pandas_nullable_extension_dtype(out_dtype)
             ):

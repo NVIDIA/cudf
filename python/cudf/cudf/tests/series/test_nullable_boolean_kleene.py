@@ -83,3 +83,12 @@ def test_nullable_boolean_dataframe_filter():
     actual = gdf[True | gdf["c0"]]
 
     assert_eq(expected, actual)
+
+
+def test_mixed_nullable_integer_boolean_bitwise_and():
+    left = cudf.Series([2, 3, 0], dtype="Int64")
+    right = cudf.Series([True, True, True], dtype="bool")
+
+    result = left & right
+
+    assert result.to_pandas().tolist() == [False, True, False]

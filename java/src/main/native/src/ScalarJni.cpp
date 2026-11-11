@@ -595,6 +595,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Scalar_binaryOpSV(JNIEnv* env,
 
       auto lhs_col  = cudf::make_column_from_scalar(*lhs, 1, stream, mr.as_temporary());
       auto out_view = out->mutable_view();
+      // TODO: pass mr once apply_sorting_struct_binary_op takes cudf::memory_resources
+      // (NVIDIA/cudf#25213)
       cudf::binops::compiled::detail::apply_sorting_struct_binary_op(
         out_view, lhs_col->view(), *rhs, true, false, op, stream);
       return release_as_jlong(out);

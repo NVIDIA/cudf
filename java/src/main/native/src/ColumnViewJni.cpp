@@ -1828,6 +1828,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_binaryOpVV(JNIEnv* env,
       }
 
       auto out_view = out->mutable_view();
+      // TODO: pass mr once apply_sorting_struct_binary_op takes cudf::memory_resources
+      // (NVIDIA/cudf#25213)
       cudf::binops::compiled::detail::apply_sorting_struct_binary_op(
         out_view, *lhs, *rhs, false, false, op, stream);
       return release_as_jlong(out);
@@ -1887,6 +1889,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_binaryOpVS(JNIEnv* env,
 
       auto rhsv     = cudf::make_column_from_scalar(*rhs, 1, stream, mr.as_temporary());
       auto out_view = out->mutable_view();
+      // TODO: pass mr once apply_sorting_struct_binary_op takes cudf::memory_resources
+      // (NVIDIA/cudf#25213)
       cudf::binops::compiled::detail::apply_sorting_struct_binary_op(
         out_view, *lhs, rhsv->view(), false, true, op, stream);
       return release_as_jlong(out);

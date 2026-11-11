@@ -11,6 +11,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/large_memory.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -1383,7 +1384,7 @@ std::vector<cudf::packed_table> do_chunked_pack(cudf::table_view const& input)
     cudf::device_span<uint8_t>(reinterpret_cast<uint8_t*>(bounce_buff.data()), bounce_buff.size());
 
   auto chunked_pack =
-    cudf::chunked_pack::create(input, bounce_buff_span.size(), cudf::get_default_stream(), mr);
+    cudf::chunked_pack::create(input, bounce_buff_span.size(), cudf::get_default_stream());
 
   // right size the final buffer
   rmm::device_buffer final_buff(
@@ -1467,8 +1468,7 @@ TEST_F(ContiguousSplitZeroColumnTest, InvalidSplitsThrow)
 TEST_F(ContiguousSplitZeroColumnTest, ChunkedPackPreservesRowCount)
 {
   cudf::table_view input{std::vector<cudf::column_view>{}, 7};
-  auto mr = cudf::get_current_device_resource_ref();
-  auto cp = cudf::chunked_pack::create(input, 1 * 1024 * 1024, cudf::get_default_stream(), mr);
+  auto cp = cudf::chunked_pack::create(input, 1 * 1024 * 1024, cudf::get_default_stream());
   // No device data to copy: zero total size and no chunks.
   EXPECT_EQ(cp->get_total_contiguous_size(), 0u);
   EXPECT_FALSE(cp->has_next());
@@ -1862,7 +1862,7 @@ TEST_F(ContiguousSplitUntypedTest, ChunkedPackNextReturnValueOver2GB)
   // The bug only manifests when a single next() call returns >2GB.
   auto const bounce_size = expected_total_size + (1024 * 1024);
 
-  auto chunked_packer = cudf::chunked_pack::create(tv, bounce_size, cudf::get_default_stream(), mr);
+  auto chunked_packer = cudf::chunked_pack::create(tv, bounce_size, cudf::get_default_stream());
 
   EXPECT_EQ(chunked_packer->get_total_contiguous_size(), expected_total_size);
   EXPECT_TRUE(chunked_packer->has_next());
@@ -1875,6 +1875,50 @@ TEST_F(ContiguousSplitUntypedTest, ChunkedPackNextReturnValueOver2GB)
   auto const bytes_copied = chunked_packer->next(bounce_span);
   EXPECT_EQ(bytes_copied, expected_total_size);
   EXPECT_FALSE(chunked_packer->has_next());
+}
+
+TEST_F(ContiguousSplitUntypedTest, ChunkedPackUsesTemporaryResource)
+{
+  auto harness = cudf::test::memory_resource_test_harness{};
+  auto stream  = cudf::test::get_default_stream();
+  auto setup   = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{
+    {1, 2, 3, 4}, {true, false, true, true}, stream, setup};
+  cudf::test::strings_column_wrapper strings{
+    {"one", "two", "three", "four"}, {true, false, true, true}, stream, setup};
+  cudf::table_view input{{values, strings}};
+
+  std::size_t constexpr bounce_size = 1 * 1024 * 1024;
+  cuda::device_buffer<uint8_t> bounce_buff(stream, harness.setup_mr(), bounce_size, cuda::no_init);
+  rmm::device_buffer packed_data(
+    cudf::packed_size(input, stream, setup), stream, harness.setup_mr());
+
+  std::unique_ptr<std::vector<uint8_t>> metadata;
+  {
+    auto const scope  = harness.fail_on_current_device_resource_use();
+    auto const packer = cudf::chunked_pack::create(input, bounce_size, stream, harness.resources());
+    EXPECT_EQ(packer->get_total_contiguous_size(), packed_data.size());
+    std::size_t offset = 0;
+    while (packer->has_next()) {
+      auto const bytes_copied =
+        packer->next(cudf::device_span<uint8_t>(bounce_buff.data(), bounce_buff.size()));
+      CUDF_CUDA_TRY(cudaMemcpyAsync(static_cast<uint8_t*>(packed_data.data()) + offset,
+                                    bounce_buff.data(),
+                                    bytes_copied,
+                                    cudaMemcpyDefault,
+                                    stream.get()));
+      offset += bytes_copied;
+    }
+    metadata = packer->build_metadata();
+    harness.synchronize(stream);
+  }
+
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(
+    input, cudf::unpack(metadata->data(), static_cast<uint8_t const*>(packed_data.data())));
 }
 
 TEST_F(ContiguousSplitUntypedTest, OffsetAlignment)

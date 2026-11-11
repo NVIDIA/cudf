@@ -188,14 +188,32 @@ class chunked_pack {
    * @param user_buffer_size buffer size (in bytes) that will be passed on `next`. Must be
    *                         at least 1MB
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param temp_mr An optional memory resource to be used for temporary and scratch allocations
-   * only
+   * @param mr Device memory resources. `chunked_pack` returns no device memory, so only the
+   * temporary resource is used, for its scratch and state allocations.
    */
-  explicit chunked_pack(
-    cudf::table_view const& input,
-    std::size_t user_buffer_size,
-    cuda::stream_ref stream                = cudf::get_default_stream(),
-    rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+  explicit chunked_pack(cudf::table_view const& input,
+                        std::size_t user_buffer_size,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+  /**
+   * @brief Construct a `chunked_pack` class.
+   *
+   * @deprecated Use the overload taking `cudf::memory_resources`, passing `temp_mr` as its
+   * temporary resource.
+   *
+   * @param input source `table_view` to pack
+   * @param user_buffer_size buffer size (in bytes) that will be passed on `next`. Must be
+   *                         at least 1MB
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param temp_mr Memory resource to be used for temporary and scratch allocations only
+   */
+  [[deprecated(
+    "Use the overload taking cudf::memory_resources, passing temp_mr as its temporary "
+    "resource.")]] explicit chunked_pack(cudf::table_view const& input,
+                                         std::size_t user_buffer_size,
+                                         cuda::stream_ref stream,
+                                         rmm::device_async_resource_ref temp_mr);
 
   /**
    * @brief Destructor that will be implemented as default. Declared with definition here because
@@ -244,7 +262,7 @@ class chunked_pack {
    * "input", where a buffer of `user_buffer_size` is filled with chunks of the
    * overall operation. This operation can be used in cases where GPU memory is constrained.
    *
-   * The memory resource (`temp_mr`) could be a special memory resource to be used in
+   * The temporary resource of `mr` could be a special memory resource to be used in
    * situations when GPU memory is low and we want scratch and temporary allocations to
    * happen from a small reserved pool of memory. Note that it defaults to the regular cuDF
    * per-device resource.
@@ -255,14 +273,40 @@ class chunked_pack {
    * @param user_buffer_size buffer size (in bytes) that will be passed on `next`. Must be
    *                         at least 1MB
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param temp_mr RMM memory resource to be used for temporary and scratch allocations only
+   * @param mr Device memory resources. `chunked_pack` returns no device memory, so only the
+   * temporary resource is used, for its scratch and state allocations.
    * @return a unique_ptr of chunked_pack
    */
   [[nodiscard]] static std::unique_ptr<chunked_pack> create(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    cuda::stream_ref stream                = cudf::get_default_stream(),
-    rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+  /**
+   * @brief Creates a `chunked_pack` instance to perform a "pack" of the `table_view`
+   * "input", where a buffer of `user_buffer_size` is filled with chunks of the
+   * overall operation.
+   *
+   * @deprecated Use the overload taking `cudf::memory_resources`, passing `temp_mr` as its
+   * temporary resource.
+   *
+   * @throws cudf::logic_error When user_buffer_size is less than 1MB
+   *
+   * @param input source `table_view` to pack
+   * @param user_buffer_size buffer size (in bytes) that will be passed on `next`. Must be
+   *                         at least 1MB
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param temp_mr RMM memory resource to be used for temporary and scratch allocations only
+   * @return a unique_ptr of chunked_pack
+   */
+  [[deprecated(
+    "Use the overload taking cudf::memory_resources, passing temp_mr as its temporary "
+    "resource.")]] [[nodiscard]] static std::unique_ptr<chunked_pack>
+  create(cudf::table_view const& input,
+         std::size_t user_buffer_size,
+         cuda::stream_ref stream,
+         rmm::device_async_resource_ref temp_mr);
 
  private:
   // internal state of contiguous split
@@ -295,13 +339,31 @@ packed_columns pack(cudf::table_view const& input,
  *
  * @param input View of the table to compute the packed size for
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param temp_mr An optional memory resource to use for temporary allocations
+ * @param mr Device memory resources. Only the temporary resource is used, as no device memory is
+ * returned.
  * @return The size in bytes required to store the packed table data (not including metadata)
  */
-std::size_t packed_size(
-  cudf::table_view const& input,
-  cuda::stream_ref stream                = cudf::get_default_stream(),
-  rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+std::size_t packed_size(cudf::table_view const& input,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Compute the size in bytes of the contiguous memory buffer needed to pack the input table.
+ *
+ * @deprecated Use the overload taking `cudf::memory_resources`, passing `temp_mr` as its temporary
+ * resource.
+ *
+ * @param input View of the table to compute the packed size for
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param temp_mr Memory resource to use for temporary allocations
+ * @return The size in bytes required to store the packed table data (not including metadata)
+ */
+[[deprecated(
+  "Use the overload taking cudf::memory_resources, passing temp_mr as its temporary "
+  "resource.")]] std::size_t
+packed_size(cudf::table_view const& input,
+            cuda::stream_ref stream,
+            rmm::device_async_resource_ref temp_mr);
 
 /**
  * @brief Produce the metadata used for packing a table stored in a contiguous buffer.

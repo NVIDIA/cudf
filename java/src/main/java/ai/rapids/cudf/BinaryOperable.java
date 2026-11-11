@@ -105,8 +105,25 @@ public interface BinaryOperable {
    * @param rhs     the rhs of the operation
    * @param outType the type of output you want.
    * @return the result
+   * @deprecated Use
+   *     {@link #binaryOp(BinaryOp, BinaryOperable, DType, Cuda.Stream, MemoryResources)}.
    */
-  ColumnVector binaryOp(BinaryOp op, BinaryOperable rhs, DType outType);
+  @Deprecated
+  default ColumnVector binaryOp(BinaryOp op, BinaryOperable rhs, DType outType) {
+    return binaryOp(op, rhs, outType, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Multiple different binary operations.
+   * @param op      the operation to perform
+   * @param rhs     the rhs of the operation
+   * @param outType the type of output you want.
+   * @param stream  CUDA stream used for device memory operations and kernel launches
+   * @param mr      device memory resources for the returned column and for temporary allocations
+   * @return the result
+   */
+  ColumnVector binaryOp(BinaryOp op, BinaryOperable rhs, DType outType, Cuda.Stream stream,
+      MemoryResources mr);
 
   /**
    * Add one vector to another with the given output type. this + rhs

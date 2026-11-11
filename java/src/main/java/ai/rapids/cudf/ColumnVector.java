@@ -808,15 +808,17 @@ public final class ColumnVector extends ColumnView {
    * Double.NEGATIVE_INFINITY => "-Inf" instead of "-INFINITY"
    *
    * @param type type of the resulting ColumnVector
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
    * @return A new vector allocated on the GPU
    */
   @Override
-  public ColumnVector castTo(DType type) {
+  public ColumnVector castTo(DType type, Cuda.Stream stream, MemoryResources mr) {
     if (this.type.equals(type)) {
       // Optimization
       return incRefCount();
     }
-    return super.castTo(type);
+    return super.castTo(type, stream, mr);
   }
 
   /////////////////////////////////////////////////////////////////////////////

@@ -1668,12 +1668,8 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   if (t == 0 and is_valid) {
     // If we have an index, seek to the initial run and update row positions
     if (num_rowgroups > 0) {
-      if (s->top.data.index.strm_offset[0] > s->chunk.strm_len[CI_DATA]) {
-        set_decode_error(error_code);
-      }
-      if (s->top.data.index.strm_offset[1] > s->chunk.strm_len[CI_DATA2]) {
-        set_decode_error(error_code);
-      }
+      if (s->top.data.index.strm_offset[0] > s->chunk.strm_len[CI_DATA]) { set_error(error_code); }
+      if (s->top.data.index.strm_offset[1] > s->chunk.strm_len[CI_DATA2]) { set_error(error_code); }
       auto const ofs0       = min(s->top.data.index.strm_offset[0], s->chunk.strm_len[CI_DATA]);
       auto const ofs1       = min(s->top.data.index.strm_offset[1], s->chunk.strm_len[CI_DATA2]);
       uint32_t const rg_idx = blockIdx.x % num_rowgroups;
@@ -2004,10 +2000,10 @@ CUDF_KERNEL void __launch_bounds__(block_size)
             case DATE: {
               auto const original = s->vals.i32[t + vals_skipped];
               auto const rebased =
-                s->chunk.convert_dates_to_proleptic ? rebase_days<false>(original) : original;
+                s->chunk.convert_dates_to_proleptic ? hybrid_to_proleptic_days(original) : original;
               if (s->chunk.convert_dates_to_proleptic and
-                  not is_representable_date<false>(original, rebased)) {
-                set_decode_error(error_code, decode_error::UNREPRESENTABLE_DATE);
+                  not is_representable_as_proleptic_date(original, rebased)) {
+                set_error(error_code, error_code::UNREPRESENTABLE_DATE);
               }
               if (s->chunk.dtype_len == 8) {
                 cudf::duration_D days{static_cast<int32_t>(rebased)};

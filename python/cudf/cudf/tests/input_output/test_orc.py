@@ -1554,6 +1554,7 @@ def test_orc_writer_lists_empty_rg():
         ([-719163, 0], None, "1970-01-01"),
         ([0, 2932897], "1970-01-01", None),
         ([-2147483648, 2147483647], None, None),
+        ([None, None], None, None),
     ],
 )
 def test_date_statistics_outside_datetime_range(
@@ -1572,17 +1573,27 @@ def test_date_statistics_outside_datetime_range(
             ("maximum", expected_max),
         ]:
             if expected is None:
-                assert bound not in stats
+                assert stats[bound] is None
             else:
                 assert stats[bound] == datetime.datetime.fromisoformat(
                     expected
                 ).replace(tzinfo=datetime.timezone.utc)
-        assert stats.number_of_values == 2
+        assert stats.number_of_values == sum(day is not None for day in days)
+        assert stats.has_null == any(day is None for day in days)
 
     # Statistics are parsed before projection. An unrepresentable DATE bound
     # must not prevent predicate pushdown on a different column.
     got = cudf.read_orc(buffer, columns=["value"], filters=[("value", ">", 0)])
     assert_eq(got, cudf.DataFrame({"value": [1, 2]}))
+
+    # Unknown DATE bounds must remain conservative for equality and membership
+    # pruning, including when the filter column is absent from the projection.
+    epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+    for op, value in [("=", epoch), ("in", [epoch])]:
+        got = cudf.read_orc(
+            buffer, columns=["value"], filters=[("date", op, value)]
+        )
+        assert_eq(got, cudf.DataFrame({"value": [1, 2]}))
 
 
 def test_statistics_sum_overflow():

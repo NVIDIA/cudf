@@ -185,9 +185,9 @@ cdef class OrcColumnStatistics:
                         datetime.timezone.utc,
                     )
                 except (ValueError, OverflowError):
-                    # DATE spans more years than Python datetime. Omit an
-                    # unrepresentable bound so filtering remains conservative.
-                    pass
+                    # DATE spans more years than Python datetime. Treat an
+                    # unrepresentable bound like a missing statistic.
+                    self.column_stats["minimum"] = None
             else:
                 self.column_stats["minimum"] = None
             if date_stats.maximum.has_value():
@@ -197,9 +197,9 @@ cdef class OrcColumnStatistics:
                         datetime.timezone.utc,
                     )
                 except (ValueError, OverflowError):
-                    # DATE spans more years than Python datetime. Omit an
-                    # unrepresentable bound so filtering remains conservative.
-                    pass
+                    # DATE spans more years than Python datetime. Treat an
+                    # unrepresentable bound like a missing statistic.
+                    self.column_stats["maximum"] = None
             else:
                 self.column_stats["maximum"] = None
         elif bin_stats := get_if[binary_statistics](&type_specific_stats):

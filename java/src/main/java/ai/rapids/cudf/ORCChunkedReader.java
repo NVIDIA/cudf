@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -34,7 +34,7 @@ public class ORCChunkedReader implements AutoCloseable {
         opts.getIncludeColumnNames(), buffer.getAddress() + offset, len,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
         opts.getDecimal128Columns(),
-        opts.ignoreTimezoneInStripeFooter());
+        opts.ignoreTimezoneInStripeFooter(), opts.convertDatesToProleptic());
     if (handle == 0) {
       throw new IllegalStateException("Cannot create native chunked ORC reader object.");
     }
@@ -58,7 +58,8 @@ public class ORCChunkedReader implements AutoCloseable {
     handle = createReaderWithOutputGranularity(chunkReadLimit, passReadLimit, outputRowSizingGranularity,
         opts.getIncludeColumnNames(), buffer.getAddress() + offset, len,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
-        opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter());
+        opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter(),
+        opts.convertDatesToProleptic());
     if (handle == 0) {
       throw new IllegalStateException("Cannot create native chunked ORC reader object.");
     }
@@ -137,21 +138,21 @@ public class ORCChunkedReader implements AutoCloseable {
   private static native long createReader(long chunkReadLimit, long passReadLimit,
       String[] filterColumnNames, long bufferAddrs, long length,
       boolean usingNumPyTypes, int timeUnit, String[] decimal128Columns,
-      boolean ignoreTimezoneInStripeFooter);
+      boolean ignoreTimezoneInStripeFooter, boolean convertDatesToProleptic);
 
   /**
    * Create a native chunked ORC reader object, similar to
-   * {@link ORCChunkedReader#createReader(long, long, String[], long, long, boolean, int, String[])},
+   * {@link ORCChunkedReader#createReader(long, long, String[], long, long, boolean, int, String[], boolean, boolean)},
    * with an additional parameter to control the granularity of the output table.
    *
    * @param outputRowSizingGranularity The change step in number of rows in the output table.
-   * @see ORCChunkedReader#createReader(long, long, String[], long, long, boolean, int, String[])
+   * @see ORCChunkedReader#createReader(long, long, String[], long, long, boolean, int, String[], boolean, boolean)
    */
   private static native long createReaderWithOutputGranularity(
       long chunkReadLimit, long passReadLimit, long outputRowSizingGranularity,
       String[] filterColumnNames, long bufferAddrs, long length,
       boolean usingNumPyTypes, int timeUnit, String[] decimal128Columns,
-      boolean ignoreTimezoneInStripeFooter);
+      boolean ignoreTimezoneInStripeFooter, boolean convertDatesToProleptic);
 
   private static native boolean hasNext(long handle);
 

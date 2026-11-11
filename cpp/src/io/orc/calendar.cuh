@@ -70,4 +70,25 @@ CUDF_HOST_DEVICE constexpr bool is_representable_date(int64_t original, int64_t 
          rebase_days<!to_hybrid>(rebased) == original;
 }
 
+CUDF_HOST_DEVICE constexpr int64_t proleptic_to_hybrid_days(int64_t days)
+{
+  return rebase_days<true>(days);
+}
+
+CUDF_HOST_DEVICE constexpr int64_t hybrid_to_proleptic_days(int64_t days)
+{
+  return rebase_days<false>(days);
+}
+
+CUDF_HOST_DEVICE constexpr bool is_representable_as_hybrid_date(int64_t original, int64_t rebased)
+{
+  return is_representable_date<true>(original, rebased);
+}
+
+CUDF_HOST_DEVICE constexpr bool is_representable_as_proleptic_date(int64_t original,
+                                                                   int64_t rebased)
+{
+  return is_representable_date<false>(original, rebased);
+}
+
 }  // namespace cudf::io::orc::detail

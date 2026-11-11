@@ -2254,10 +2254,10 @@ void rebase_date_columns(orc_table_view& orc_table,
                            return;
                          }
                          auto const original        = column.element<int32_t>(row);
-                         auto const rebased         = rebase_days<true>(original);
+                         auto const rebased         = proleptic_to_hybrid_days(original);
                          out[row + column.offset()] = static_cast<int32_t>(rebased);
-                         if (not is_representable_date<true>(original, rebased)) {
-                           set_decode_error(error_status, decode_error::UNREPRESENTABLE_DATE);
+                         if (not is_representable_as_hybrid_date(original, rebased)) {
+                           set_error(error_status, error_code::UNREPRESENTABLE_DATE);
                          }
                        });
     auto const rebased_view = column_device_view::create(

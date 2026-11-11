@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 
@@ -86,15 +87,52 @@ class ORCCalendarTest {
       try (Table actual = Table.readORC(ORCOptions.builder().withNumPyTypes(false)
           .convertDatesToProleptic(true).build(), file.toFile())) {
         assertTablesAreEqual(input, actual);
+        checkChunkedRead(actual, ORCOptions.builder().withNumPyTypes(false)
+            .convertDatesToProleptic(true).build(), file);
       }
       try (ColumnVector rawDates = ColumnVector.timestampDaysFromBoxedInts(encoded);
            Table expected = new Table(rawDates);
            Table raw = Table.readORC(ORCOptions.builder().withNumPyTypes(false)
                .includeColumn("d").build(), file.toFile())) {
         assertTablesAreEqual(expected, raw);
+        checkChunkedRead(raw, ORCOptions.builder().withNumPyTypes(false)
+            .includeColumn("d").build(), file);
       }
     } finally {
       Files.deleteIfExists(file);
+    }
+  }
+
+  private static void checkChunkedRead(Table expected, ORCOptions options,
+      java.nio.file.Path file) throws IOException {
+    byte[] bytes = Files.readAllBytes(file);
+    try (HostMemoryBuffer buffer = HostMemoryBuffer.allocate(bytes.length)) {
+      buffer.setBytes(0, bytes, 0, bytes.length);
+      for (boolean explicitGranularity : new boolean[]{false, true}) {
+        ArrayList<Table> chunks = new ArrayList<>();
+        try (ORCChunkedReader reader = explicitGranularity
+            ? new ORCChunkedReader(0, 0, 1, options, buffer, 0, bytes.length)
+            : new ORCChunkedReader(0, 0, options, buffer, 0, bytes.length)) {
+          try {
+            while (reader.hasNext()) {
+              Table chunk = reader.readChunk();
+              if (chunk != null) {
+                chunks.add(chunk);
+              }
+            }
+            assertFalse(chunks.isEmpty());
+            if (chunks.size() == 1) {
+              assertTablesAreEqual(expected, chunks.get(0));
+            } else {
+              try (Table actual = Table.concatenate(chunks.toArray(new Table[0]))) {
+                assertTablesAreEqual(expected, actual);
+              }
+            }
+          } finally {
+            chunks.forEach(Table::close);
+          }
+        }
+      }
     }
   }
 }

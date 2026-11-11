@@ -448,7 +448,7 @@ void decode_stream_data(int64_t num_dicts,
   chunks.device_to_host_async(stream);
   auto const errors = error_code.value_sync(stream);
   CUDF_EXPECTS(
-    (errors & static_cast<kernel_error::value_type>(decode_error::UNREPRESENTABLE_DATE)) == 0,
+    (errors & static_cast<kernel_error::value_type>(error_code::UNREPRESENTABLE_DATE)) == 0,
     "ORC DATE cannot be represented in the proleptic Gregorian calendar");
   CUDF_EXPECTS(errors == 0,
                "ORC data decode failed with code(s) " + kernel_error::to_string(errors));

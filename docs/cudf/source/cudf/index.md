@@ -8,6 +8,7 @@ api_docs/index
 pandas-comparison
 data-types
 io/index
+jit/index
 missing-data
 groupby
 guide-to-udfs

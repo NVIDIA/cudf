@@ -981,7 +981,8 @@ async def _shuffle_join(
     output_indices = strategy.output_indices
     nranks = comm.nranks
     metadata_out = ChannelMetadata(
-        local_count=max(1, shuffle_modulus // nranks),
+        # The shuffler assigns partitions to ranks round robin.
+        local_count=max(1, (shuffle_modulus - comm.rank + nranks - 1) // nranks),
         partitioning=Partitioning(
             HashScheme(column_indices=output_indices, modulus=shuffle_modulus),
             local="inherit",

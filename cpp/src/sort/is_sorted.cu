@@ -5,6 +5,7 @@
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
@@ -12,8 +13,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -28,11 +27,11 @@ namespace detail {
 bool is_sorted(cudf::table_view const& in,
                std::vector<order> const& column_order,
                std::vector<null_order> const& null_precedence,
-               cuda::stream_ref stream)
+               cuda::stream_ref stream,
+               cudf::memory_resources mr)
 {
-  cudf::memory_resources const mrs{cudf::get_current_device_resource_ref()};
   auto const comparator = detail::row::lexicographic::self_comparator{
-    in, column_order, null_precedence, stream, mrs.as_temporary()};
+    in, column_order, null_precedence, stream, mr.as_temporary()};
 
   if (cudf::detail::has_nested_columns(in)) {
     auto const device_comparator = comparator.less<true>(has_nested_nulls(in));
@@ -40,9 +39,9 @@ bool is_sorted(cudf::table_view const& in,
     // Using a temporary buffer for intermediate transform results from the lambda containing
     // the comparator speeds up compile-time significantly over using the comparator directly
     // in thrust::is_sorted.
-    auto d_results = cuda::device_buffer<bool>(
-      stream, cudf::get_current_device_resource_ref(), in.num_rows(), cuda::no_init);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    auto d_results =
+      cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), in.num_rows(), cuda::no_init);
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{in.num_rows()},
                       d_results.begin(),
@@ -50,18 +49,17 @@ bool is_sorted(cudf::table_view const& in,
                         return (idx == 0) || device_comparator(idx - 1, idx);
                       });
 
-    return thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    return thrust::count(cudf::detail::exec_policy_nosync(stream, mr),
                          d_results.begin(),
                          d_results.end(),
                          false) == 0;
   } else {
     auto const device_comparator = comparator.less<false>(has_nested_nulls(in));
 
-    return thrust::is_sorted(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      cuda::counting_iterator<size_type>{0},
-      cuda::counting_iterator<size_type>{in.num_rows()},
-      device_comparator);
+    return thrust::is_sorted(cudf::detail::exec_policy_nosync(stream, mr),
+                             cuda::counting_iterator<size_type>{0},
+                             cuda::counting_iterator<size_type>{in.num_rows()},
+                             device_comparator);
   }
 }
 
@@ -70,7 +68,8 @@ bool is_sorted(cudf::table_view const& in,
 bool is_sorted(cudf::table_view const& in,
                std::vector<order> const& column_order,
                std::vector<null_order> const& null_precedence,
-               cuda::stream_ref stream)
+               cuda::stream_ref stream,
+               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   if (in.num_columns() == 0 || in.num_rows() == 0) { return true; }
@@ -86,7 +85,7 @@ bool is_sorted(cudf::table_view const& in,
       "Number of columns in the table doesn't match the vector null_precedence's size .\n");
   }
 
-  return detail::is_sorted(in, column_order, null_precedence, stream);
+  return detail::is_sorted(in, column_order, null_precedence, stream, mr);
 }
 
 }  // namespace cudf

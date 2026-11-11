@@ -293,9 +293,11 @@ std::unique_ptr<column> normalize_nans_and_zeros(
  * @throws cudf::logic_error if column does not have floating point data type.
  * @param[in, out] in_out of floating-point elements to normalize
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
 void normalize_nans_and_zeros(mutable_column_view& in_out,
-                              cuda::stream_ref stream = cudf::get_default_stream());
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

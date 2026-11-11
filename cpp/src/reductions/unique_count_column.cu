@@ -7,13 +7,12 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/reduction/detail/unique_count.hpp>
 #include <cudf/reduction/unique_count.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/cmath>
@@ -45,7 +44,8 @@ struct check_nan {
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   auto const num_rows = input.size();
 
@@ -57,8 +57,8 @@ cudf::size_type unique_count(column_view const& input,
   auto const count_nulls      = null_handling == null_policy::INCLUDE;
   auto const nan_is_null      = nan_handling == nan_policy::NAN_IS_NULL;
   auto const should_check_nan = cudf::is_floating_point(input.type());
-  auto const temp_mr          = cudf::get_current_device_resource_ref();
-  auto input_device_view      = cudf::column_device_view::create(input, stream, temp_mr);
+  auto const temp_mr          = mr.get_temporary_mr();
+  auto input_device_view      = cudf::column_device_view::create(input, stream, mr.as_temporary());
   auto device_view            = *input_device_view;
   auto input_table_view       = table_view{{input}};
   auto const comparator =
@@ -69,7 +69,7 @@ cudf::size_type unique_count(column_view const& input,
     cudf::detail::row::equality::nan_equal_physical_equality_comparator{});
 
   return thrust::count_if(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator<cudf::size_type>{num_rows},
     [count_nulls, nan_is_null, should_check_nan, device_view, comp] __device__(cudf::size_type i) {
@@ -92,10 +92,11 @@ cudf::size_type unique_count(column_view const& input,
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::unique_count(input, null_handling, nan_handling, stream);
+  return detail::unique_count(input, null_handling, nan_handling, stream, mr);
 }
 
 }  // namespace cudf

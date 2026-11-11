@@ -496,7 +496,8 @@ std::unique_ptr<column> superimpose_and_sanitize_nulls(bitmask_type const* null_
   input = superimpose_nulls(null_mask, null_count, std::move(input), stream, mr);
 
   nvtxRangePushA("purging");
-  if (auto const input_view = input->view(); cudf::detail::has_nonempty_nulls(input_view, stream)) {
+  if (auto const input_view = input->view();
+      cudf::detail::has_nonempty_nulls(input_view, stream, mr.as_temporary())) {
     // We can't call `purge_nonempty_nulls` for individual child column(s) that need to be
     // sanitized. Instead, we have to call it from the top level column.
     // This is to make sure all the columns (top level + all children) have consistent offsets.
@@ -521,7 +522,7 @@ std::vector<std::unique_ptr<column>> superimpose_and_sanitize_nulls(
   std::vector<std::unique_ptr<column>> purged_columns;
   for (auto& input : inputs) {
     auto const input_view = input->view();
-    auto const nullbool   = cudf::detail::has_nonempty_nulls(input_view, stream);
+    auto const nullbool   = cudf::detail::has_nonempty_nulls(input_view, stream, mr.as_temporary());
     if (nullbool) {
       purged_columns.emplace_back(cudf::detail::purge_nonempty_nulls(input_view, stream, mr));
     } else {
@@ -614,7 +615,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls(column_view cons
   auto output = push_down_nulls_no_sanitize(input, stream, mr);
 
   if (auto const output_view = output.first;
-      cudf::detail::has_nonempty_nulls(output_view, stream)) {
+      cudf::detail::has_nonempty_nulls(output_view, stream, mr.as_temporary())) {
     output.second.new_columns.emplace_back(
       cudf::detail::purge_nonempty_nulls(output_view, stream, mr));
     output.first = output.second.new_columns.back()->view();

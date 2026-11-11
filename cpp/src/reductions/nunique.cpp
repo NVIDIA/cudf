@@ -43,8 +43,8 @@ std::unique_ptr<cudf::scalar> nunique(column_view const& col,
                                       cuda::stream_ref stream,
                                       cudf::memory_resources mr)
 {
-  size_type count =
-    cudf::detail::distinct_count(col, null_handling, nan_policy::NAN_IS_VALID, stream);
+  size_type count = cudf::detail::distinct_count(
+    col, null_handling, nan_policy::NAN_IS_VALID, stream, mr.as_temporary());
   return cudf::type_dispatcher(output_dtype, nunique_scalar_fn{}, count, stream, mr);
 }
 }  // namespace detail

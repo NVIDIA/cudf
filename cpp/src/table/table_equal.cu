@@ -27,9 +27,9 @@ template <bool has_nested_columns>
 [[nodiscard]] bool tables_equal(table_view const& left,
                                 table_view const& right,
                                 null_equality nulls_equal,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   auto const comparator =
     detail::row::equality::two_table_comparator{left, right, stream, mr.get_temporary_mr()};
   auto const rows_equal = comparator.equal_to<has_nested_columns>(
@@ -57,7 +57,8 @@ template <bool has_nested_columns>
 [[nodiscard]] bool tables_equal(table_view const& left,
                                 table_view const& right,
                                 null_equality nulls_equal,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   if (left.num_rows() != right.num_rows() || left.num_columns() != right.num_columns() ||
       !have_same_types(left, right)) {
@@ -67,18 +68,19 @@ template <bool has_nested_columns>
   }
 
   return cudf::has_nested_columns(left) || cudf::has_nested_columns(right)
-           ? tables_equal<true>(left, right, nulls_equal, stream)
-           : tables_equal<false>(left, right, nulls_equal, stream);
+           ? tables_equal<true>(left, right, nulls_equal, stream, mr)
+           : tables_equal<false>(left, right, nulls_equal, stream, mr);
 }
 }  // namespace detail
 
 bool tables_equal(table_view const& left,
                   table_view const& right,
                   null_equality nulls_equal,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::tables_equal(left, right, nulls_equal, stream);
+  return detail::tables_equal(left, right, nulls_equal, stream, mr);
 }
 
 }  // namespace cudf

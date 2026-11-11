@@ -78,12 +78,14 @@ std::unique_ptr<column> stable_sorted_order(
  *                          `null_order::BEFORE` is assumed for all columns.
  *
  * @param stream            CUDA stream used for device memory operations and kernel launches
+ * @param mr                Memory resources used for temporary allocations
  * @returns                 true if sorted as expected, false if not
  */
 bool is_sorted(cudf::table_view const& table,
                std::vector<order> const& column_order,
                std::vector<null_order> const& null_precedence,
-               cuda::stream_ref stream = cudf::get_default_stream());
+               cuda::stream_ref stream   = cudf::get_default_stream(),
+               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a lexicographic sort of the rows of a table

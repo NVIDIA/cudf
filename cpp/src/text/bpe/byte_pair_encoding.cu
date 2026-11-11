@@ -890,7 +890,8 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   CUDF_EXPECTS(d_separator.size_bytes() == 1, "for now, separator must be a single-byte character");
 
   // the chars data for null rows would otherwise be encoded and written to the output
-  if (input.has_nulls() && cudf::detail::has_nonempty_nulls(input.parent(), stream)) {
+  if (input.has_nulls() &&
+      cudf::detail::has_nonempty_nulls(input.parent(), stream, mr.as_temporary())) {
     auto const sanitized = cudf::detail::purge_nonempty_nulls(input.parent(), stream, temp_mr);
     return detail::byte_pair_encoding(
       cudf::strings_column_view(sanitized->view()), merge_pairs, separator, stream, mr);

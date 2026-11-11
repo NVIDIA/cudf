@@ -100,7 +100,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
     // If any nulls are present, the corresponding lists must be purged so that
     // the result is sanitized.
     if (auto const result_cv = result->view();
-        cudf::detail::has_nonempty_nulls(result_cv, stream)) {
+        cudf::detail::has_nonempty_nulls(result_cv, stream, mr.as_temporary())) {
       return cudf::detail::purge_nonempty_nulls(result_cv, stream, mr);
     }
 
@@ -149,7 +149,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     // If any nulls are present, the corresponding lists must be purged so that
     // the result is sanitized.
     if (auto const result_cv = result->view();
-        cudf::detail::has_nonempty_nulls(result_cv, stream)) {
+        cudf::detail::has_nonempty_nulls(result_cv, stream, mr.as_temporary())) {
       return cudf::detail::purge_nonempty_nulls(result_cv, stream, mr);
     }
 

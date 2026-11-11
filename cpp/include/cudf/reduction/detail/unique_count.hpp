@@ -9,6 +9,7 @@
 #include <cudf/reduction/unique_count.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
 
@@ -21,14 +22,16 @@ namespace detail {
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             cuda::stream_ref stream);
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::unique_count(table_view const&, null_equality, cuda::stream_ref)
  */
 cudf::size_type unique_count(table_view const& input,
                              null_equality nulls_equal,
-                             cuda::stream_ref stream);
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

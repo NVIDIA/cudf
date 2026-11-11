@@ -815,10 +815,13 @@ struct column_comparator {
   }
 };
 
-void check_non_empty_nulls(column_view const& lhs, column_view const& rhs, cuda::stream_ref stream)
+void check_non_empty_nulls(column_view const& lhs,
+                           column_view const& rhs,
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
-  auto check_column_nulls = [stream](column_view const& col, char const* col_name) {
-    if (cudf::detail::has_nonempty_nulls(col, stream)) {
+  auto check_column_nulls = [stream, mr](column_view const& col, char const* col_name) {
+    if (cudf::detail::has_nonempty_nulls(col, stream, mr.as_temporary())) {
       throw std::invalid_argument(col_name + std::string(" column has non-empty nulls"));
     }
   };
@@ -839,7 +842,7 @@ bool expect_column_properties_equal(column_view const& lhs,
                                     cuda::stream_ref stream,
                                     cudf::memory_resources mr)
 {
-  check_non_empty_nulls(lhs, rhs, stream);
+  check_non_empty_nulls(lhs, rhs, stream, mr);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);
   return cudf::type_dispatcher(lhs.type(),
@@ -862,7 +865,7 @@ bool expect_column_properties_equivalent(column_view const& lhs,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr)
 {
-  check_non_empty_nulls(lhs, rhs, stream);
+  check_non_empty_nulls(lhs, rhs, stream, mr);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);
   return cudf::type_dispatcher(lhs.type(),
@@ -888,7 +891,7 @@ bool expect_columns_equal(cudf::column_view const& lhs,
   // TODO: check_non_empty_nulls (via has_nonempty_nulls) still allocates temporaries from the
   // current device resource. Once it accepts a memory resource, callers can guard comparisons
   // with fail_on_current_device_resource_use().
-  check_non_empty_nulls(lhs, rhs, stream);
+  check_non_empty_nulls(lhs, rhs, stream, mr);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);
   return cudf::type_dispatcher(lhs.type(),
@@ -914,7 +917,7 @@ bool expect_columns_equivalent(cudf::column_view const& lhs,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
-  check_non_empty_nulls(lhs, rhs, stream);
+  check_non_empty_nulls(lhs, rhs, stream, mr);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);
   return cudf::type_dispatcher(lhs.type(),

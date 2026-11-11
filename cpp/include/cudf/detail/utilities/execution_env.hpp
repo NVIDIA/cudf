@@ -7,6 +7,8 @@
 
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <rmm/exec_policy.hpp>
+
 #include <cuda/devices>
 #include <cuda/memory_resource>
 #include <cuda/std/execution>
@@ -24,7 +26,7 @@ namespace detail {
  */
 [[nodiscard]] inline auto exec_policy_nosync(cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  return cudf::detail::exec_policy_nosync(stream, mr);
+  return rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
 }
 
 /**

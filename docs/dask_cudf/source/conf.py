@@ -82,19 +82,29 @@ with open("../../../RAPIDS_BRANCH", "r") as f:
     branch = f.read().strip()
 intersphinx_version = "latest" if branch == "main" else version
 
+
+# NVIDIA/cudf#25194: fall back to latest until the release inventory is published.
+def _rapids_inventory(project):
+    base = f"https://docs.nvidia.com/{project}"
+    return (
+        f"{base}/{intersphinx_version}/",
+        (
+            f"{base}/{intersphinx_version}/objects.inv",
+            f"{base}/latest/objects.inv",
+        ),
+    )
+
+
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
-    "cudf": (f"https://docs.nvidia.com/cudf/{intersphinx_version}/", None),
+    "cudf": _rapids_inventory("cudf"),
     "dask": ("https://docs.dask.org/en/stable/", None),
     "pandas": ("https://pandas.pydata.org/docs/", None),
-    "dask-cuda": (
-        f"https://docs.nvidia.com/dask-cuda/{intersphinx_version}/",
-        None,
-    ),
-    "rmm": (f"https://docs.nvidia.com/rmm/{intersphinx_version}/", None),
+    "dask-cuda": _rapids_inventory("dask-cuda"),
+    "rmm": _rapids_inventory("rmm"),
 }
 
 numpydoc_show_inherited_class_members = True

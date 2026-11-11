@@ -478,29 +478,33 @@ with open("../../../RAPIDS_BRANCH", "r") as f:
     branch = f.read().strip()
 intersphinx_version = "latest" if branch == "main" else version
 
+
+# NVIDIA/cudf#25194: fall back to latest until the release inventory is published.
+def _rapids_inventory(project):
+    base = f"https://docs.nvidia.com/{project}"
+    return (
+        f"{base}/{intersphinx_version}/",
+        (
+            f"{base}/{intersphinx_version}/objects.inv",
+            f"{base}/latest/objects.inv",
+        ),
+    )
+
+
 intersphinx_mapping = {
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
-    "dask-cuda": (
-        f"https://docs.nvidia.com/dask-cuda/{intersphinx_version}/",
-        None,
-    ),
-    "dask-cudf": (
-        f"https://docs.nvidia.com/dask-cudf/{intersphinx_version}/",
-        None,
-    ),
+    "dask-cuda": _rapids_inventory("dask-cuda"),
+    "dask-cudf": _rapids_inventory("dask-cudf"),
     "dlpack": ("https://dmlc.github.io/dlpack/latest/", None),
-    "kvikio": (f"https://docs.nvidia.com/kvikio/{intersphinx_version}/", None),
+    "kvikio": _rapids_inventory("kvikio"),
     "nanoarrow": ("https://arrow.apache.org/nanoarrow/latest/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pandas": ("https://pandas.pydata.org/pandas-docs/stable/", None),
     "polars": ("https://docs.pola.rs/api/python/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
     "python": ("https://docs.python.org/3/", None),
-    "rmm": (f"https://docs.nvidia.com/rmm/{intersphinx_version}/", None),
-    "rapidsmpf": (
-        f"https://docs.nvidia.com/rapidsmpf/{intersphinx_version}/",
-        None,
-    ),
+    "rmm": _rapids_inventory("rmm"),
+    "rapidsmpf": _rapids_inventory("rapidsmpf"),
     "torch": ("https://docs.pytorch.org/docs/stable/", None),
     "typing_extensions": (
         "https://typing-extensions.readthedocs.io/en/stable/",

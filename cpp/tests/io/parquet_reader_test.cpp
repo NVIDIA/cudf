@@ -6604,11 +6604,8 @@ TEST_F(ParquetReaderTest, FilterInt96Stats)
       .build());
 
   auto const to_int96 = [](int64_t ms) {
-    auto const ts    = cudf::duration_ms{ms};
-    auto const days  = cuda::std::chrono::floor<cudf::duration_D>(ts);
-    auto const nanos = cuda::std::chrono::duration_cast<cudf::duration_ns>(ts - days).count();
-    auto const julian_days =
-      static_cast<int32_t>(days.count()) + cudf::io::parquet::detail::julian_day_unix_epoch;
+    auto const [nanos, julian_days] =
+      cudf::io::parquet::detail::duration_to_int96(cudf::duration_ms{ms});
     auto bytes = std::vector<uint8_t>(cudf::io::parquet::detail::int96_size);
     std::memcpy(bytes.data(), &nanos, sizeof(nanos));
     std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));

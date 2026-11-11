@@ -11,6 +11,7 @@
 
 #include <cuda/std/chrono>
 #include <cuda/std/optional>
+#include <cuda/std/utility>
 
 namespace cudf::io::parquet::detail {
 
@@ -37,6 +38,23 @@ template <typename Duration>
   auto const days = cudf::duration_D{julian_days - julian_day_unix_epoch};
   return duration_cast<Duration>(days).count() +
          duration_cast<Duration>(cudf::duration_ns{nanos}).count();
+}
+
+/**
+ * @brief Splits a timestamp into the two halves of an INT96 timestamp
+ *
+ * @tparam Duration Input duration type, e.g. `cudf::duration_ms`
+ * @param duration Time since the Unix epoch
+ * @return Pair of nanoseconds of the day and Julian day number
+ */
+template <typename Duration>
+[[nodiscard]] CUDF_HOST_DEVICE inline cuda::std::pair<int64_t, int32_t> duration_to_int96(
+  Duration duration)
+{
+  using namespace cuda::std::chrono;
+  auto const days = floor<cudf::duration_D>(duration);
+  return {duration_cast<cudf::duration_ns>(duration - days).count(),
+          static_cast<int32_t>(days.count()) + julian_day_unix_epoch};
 }
 
 /**

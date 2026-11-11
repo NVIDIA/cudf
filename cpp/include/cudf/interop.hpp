@@ -873,4 +873,58 @@ unique_column_view_t from_arrow_device_column(
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
+
+namespace experimental {
+/**
+ * @addtogroup interop_arrow
+ * @{
+ */
+
+/**
+ * @brief Convert a packed table in host memory to Arrow host data
+ *
+ * Takes the metadata and the payload of an uncompressed packed table, as produced by
+ * `cudf::pack`, `chunked_pack` or `pack_into` with `pack_compression::none`, in host memory, and
+ * returns the same Arrow data as `cudf::to_arrow_host` on the unpacked table. The data is copied
+ * into memory owned by the returned array, so the packed buffers can be freed afterwards.
+ *
+ * Runs entirely on the host: it launches no kernels and allocates no device memory.
+ *
+ * The schema of the result is returned by `unpack_to_arrow_schema`.
+ *
+ * @throws cudf::logic_error if `metadata` does not describe a valid packed table
+ * @throws std::invalid_argument if the packed table is compressed
+ * @throws std::out_of_range if `metadata` refers to bytes outside of `data`, or to children that
+ * a column does not have
+ *
+ * @param metadata The packed metadata
+ * @param data The packed payload in host memory
+ * @return ArrowDeviceArray with a device type of CPU, holding a struct array with one child per
+ * column
+ */
+unique_device_array_t unpack_to_arrow_host(std::span<uint8_t const> metadata,
+                                           std::span<uint8_t const> data);
+
+/**
+ * @brief Create the Arrow schema of a packed table from its metadata
+ *
+ * Returns the same schema as `cudf::to_arrow_schema` of the unpacked table. Only the metadata
+ * is read, so the payload may be anywhere, for example in device memory or on disk.
+ *
+ * `columns_metadata` describes the columns as for `cudf::to_arrow_schema`, with one entry per
+ * column.
+ *
+ * @throws cudf::logic_error if `metadata` does not describe a valid packed table, or if
+ * `columns_metadata` does not have one entry per column
+ * @throws cudf::data_type_error if a column has a type that cannot be converted to Arrow
+ *
+ * @param metadata The packed metadata
+ * @param columns_metadata Names and other metadata of the columns
+ * @return Arrow schema of a struct with one child per column
+ */
+unique_schema_t unpack_to_arrow_schema(std::span<uint8_t const> metadata,
+                                       std::span<column_metadata const> columns_metadata);
+
+/** @} */  // end of group
+}  // namespace experimental
 }  // namespace CUDF_EXPORT cudf

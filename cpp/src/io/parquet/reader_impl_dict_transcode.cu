@@ -153,8 +153,7 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
   cudf::memory_resources mr)
 {
   if (entry_count <= 0) { return cudf::make_empty_column(data_type{type_id::STRING}); }
-  return cudf::strings::detail::make_strings_column(
-    begin, begin + entry_count, stream, mr.get_output_mr());
+  return cudf::strings::detail::make_strings_column(begin, begin + entry_count, stream, mr);
 }
 
 /**
@@ -385,8 +384,8 @@ void reader_impl::assemble_dict_transcoded_columns(
         auto const num_distinct_keys = cudf::detail::distinct_count(
           keys->view(), null_policy::INCLUDE, nan_policy::NAN_IS_VALID, _stream);
         if (num_distinct_keys != keys->size()) { return true; }  // fall back: dedup below
-        out_columns[out_idx] = cudf::make_dictionary_column(
-          std::move(keys), std::move(indices_owner), _stream, _mr.get_output_mr());
+        out_columns[out_idx] =
+          cudf::make_dictionary_column(std::move(keys), std::move(indices_owner), _stream, _mr);
         return false;
       };
 
@@ -481,7 +480,7 @@ void reader_impl::assemble_dict_transcoded_columns(
                                 cudf::device_span<size_type const>{d_key_base_offsets.data(),
                                                                    d_key_base_offsets.size()}});
         stacked_keys_owner = cudf::strings::detail::make_strings_column(
-          keys_begin, keys_begin + total_keys, _stream, _mr.get_temporary_mr());
+          keys_begin, keys_begin + total_keys, _stream, _mr.as_temporary());
       }
       column_view const stacked_keys = stacked_keys_owner->view();
 
@@ -511,7 +510,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       _stream.sync();
 
       out_columns[out_idx] = cudf::make_dictionary_column(
-        std::move(unique_keys), std::move(indices_owner), _stream, _mr.get_output_mr());
+        std::move(unique_keys), std::move(indices_owner), _stream, _mr);
     });
 }
 

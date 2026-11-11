@@ -669,7 +669,7 @@ std::pair<bool, std::future<void>> reader_impl::read_column_chunks()
                                    column_chunk_offsets,
                                    chunk_source_map,
                                    _stream,
-                                   _mr.get_temporary_mr())};
+                                   _mr.as_temporary())};
 }
 
 void reader_impl::read_compressed_data()

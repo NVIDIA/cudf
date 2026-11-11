@@ -737,7 +737,7 @@ fetch_byte_ranges_to_device_async(cudf::io::datasource& datasource,
     {byte_ranges_per_source.data(), byte_ranges_per_source.size()},
     policy == io_submission_policy::SERIALIZE,
     stream,
-    mr.get_output_mr());
+    mr);
 
   return {std::move(buffers), std::move(fetched_byte_ranges.front()), std::move(fut)};
 }
@@ -765,7 +765,7 @@ fetch_byte_ranges_to_device_async(
     {byte_range_spans_per_source.data(), byte_range_spans_per_source.size()},
     policy == io_submission_policy::SERIALIZE,
     stream,
-    mr.get_output_mr());
+    mr);
 }
 
 std::pair<std::vector<cuda::device_buffer<uint8_t>>, std::vector<cudf::device_span<uint8_t const>>>
@@ -788,7 +788,7 @@ fetch_bloom_filters_to_device(
     {bloom_filter_byte_ranges_per_source.data(), bloom_filter_byte_ranges_per_source.size()},
     policy == io_submission_policy::SERIALIZE,
     stream,
-    mr.get_output_mr());
+    mr);
 
   return {std::move(buffers), std::move(fetched_byte_ranges.front())};
 }
@@ -816,7 +816,7 @@ fetch_bloom_filters_to_device(
                                              bloom_filter_byte_range_spans_per_source.size()},
                                             policy == io_submission_policy::SERIALIZE,
                                             stream,
-                                            mr.get_output_mr());
+                                            mr);
 }
 
 std::tuple<std::vector<rmm::device_buffer>,

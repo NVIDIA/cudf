@@ -300,8 +300,8 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_all_true_row_mask
                "Total rows in row groups exceed the cudf's column size limit. Retry with a smaller "
                "set of row groups",
                std::invalid_argument);
-  auto true_scalar = cudf::numeric_scalar<bool>(true, true, stream, mr.get_temporary_mr());
-  return cudf::make_column_from_scalar(true_scalar, num_rows, stream, mr.get_output_mr());
+  auto true_scalar = cudf::numeric_scalar<bool>(true, true, stream, mr.as_temporary());
+  return cudf::make_column_from_scalar(true_scalar, num_rows, stream, mr);
 }
 
 std::tuple<std::vector<input_column_info>,

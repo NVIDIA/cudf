@@ -59,8 +59,7 @@ std::unique_ptr<column> cast_decimals_to_width(std::unique_ptr<column>&& col,
   auto const col_type = col->type();
   if (cudf::is_fixed_point(col_type)) {
     if (col_type.id() == decimal_width) { return col; }
-    return cudf::cast(
-      col->view(), data_type{decimal_width, col_type.scale()}, stream, mr.get_output_mr());
+    return cudf::cast(col->view(), data_type{decimal_width, col_type.scale()}, stream, mr);
   }
   if (col_type.id() != type_id::LIST and col_type.id() != type_id::STRUCT) { return col; }
 
@@ -1104,13 +1103,11 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
     auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
     auto predicate =
-      use_jit ? cudf::compute_column_jit(read_table->view(),
-                                         final_filter_expr.value().get(),
-                                         {},
-                                         _stream,
-                                         _mr.get_temporary_mr())
-              : cudf::detail::compute_column(
-                  *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
+      use_jit
+        ? cudf::compute_column_jit(
+            read_table->view(), final_filter_expr.value().get(), {}, _stream, _mr.as_temporary())
+        : cudf::detail::compute_column(
+            *read_table, final_filter_expr.value().get(), _stream, _mr.as_temporary());
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");

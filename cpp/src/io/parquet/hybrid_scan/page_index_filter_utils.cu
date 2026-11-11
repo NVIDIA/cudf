@@ -666,8 +666,8 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
     CUDF_LOG_WARN(
       "At least one set of compacted page statistics is required. Falling back to an all true row "
       "mask.");
-    auto const true_scalar = cudf::numeric_scalar<bool>{true, true, stream, temp_mr};
-    return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr.get_output_mr());
+    auto const true_scalar = cudf::numeric_scalar<bool>{true, true, stream, mr.as_temporary()};
+    return cudf::make_column_from_scalar(true_scalar, total_rows, stream, mr);
   }
 
   // Ensure all compacted page statistics refer to a valid input column, are internally consistent,
@@ -706,9 +706,9 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   });
 
   auto const all_page_row_offsets =
-    cudf::detail::make_device_buffer_async(host_all_page_row_offsets, stream, temp_mr);
+    cudf::detail::make_device_buffer_async(host_all_page_row_offsets, stream, mr.as_temporary());
   auto const input_slice_bounds =
-    cudf::detail::make_device_buffer_async(host_input_slice_bounds, stream, temp_mr);
+    cudf::detail::make_device_buffer_async(host_input_slice_bounds, stream, mr.as_temporary());
 
   // Sorted, deduplicated union of all page boundaries. Host fold for small totals, device
   // sort+unique for larger.
@@ -724,17 +724,19 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
 
   // Compute all input columns' page maps in a single kernel launch.
   auto const page_maps = compute_segment_page_maps(
-    all_page_row_offsets, input_slice_bounds, segment_row_offsets, stream, temp_mr);
+    all_page_row_offsets, input_slice_bounds, segment_row_offsets, stream, mr.as_temporary());
 
   auto constexpr stats_cols_per_column = parquet::detail::stats_cols_per_column;
 
   // Stats of non-participating columns are never referenced by the expression so use a common
   // placeholder column for them.
-  auto const placeholder =
-    std::cmp_less(inputs.size(), num_columns)
-      ? cudf::make_numeric_column(
-          data_type{type_id::BOOL8}, num_segments, mask_state::UNALLOCATED, stream, temp_mr)
-      : std::unique_ptr<column>{};
+  auto const placeholder = std::cmp_less(inputs.size(), num_columns)
+                             ? cudf::make_numeric_column(data_type{type_id::BOOL8},
+                                                         num_segments,
+                                                         mask_state::UNALLOCATED,
+                                                         stream,
+                                                         mr.as_temporary())
+                             : std::unique_ptr<column>{};
 
   // Convert per-segment page statistics into a table such that for each column `i`:
   //   min(col[i])     = segment_views[i * stats_cols_per_column + 0]
@@ -768,15 +770,15 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
 
   // Filter segment-level statistics using AST expression and return the (BOOL8) predicate column.
   auto const page_segments_table = cudf::table_view{segment_views};
-  auto segment_mask =
-    cudf::detail::compute_column(page_segments_table, stats_expression.get(), stream, temp_mr);
+  auto segment_mask              = cudf::detail::compute_column(
+    page_segments_table, stats_expression.get(), stream, mr.as_temporary());
   CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
                "Page statistics expression must produce a boolean column");
 
   // Drop the null mask if it was allocated but ended up empty
   if (segment_mask->nullable() and segment_mask->null_count() == 0) {
     segment_mask->set_null_mask(
-      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.as_temporary()), 0);
   }
 
   // Compute row-level segment indices

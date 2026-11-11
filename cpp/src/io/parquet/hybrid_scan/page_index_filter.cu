@@ -220,12 +220,10 @@ struct page_stats_caster : public stats_caster_base {
 
       std::vector<std::unique_ptr<column>> columns;
       columns.reserve(parquet::detail::stats_cols_per_column);
-      columns.emplace_back(min.to_device(dtype, stream, mr.get_output_mr()));
-      columns.emplace_back(max.to_device(dtype, stream, mr.get_output_mr()));
-      columns.emplace_back(
-        all_null.to_device(data_type{type_id::BOOL8}, stream, mr.get_output_mr()));
-      columns.emplace_back(
-        has_nan.to_device(data_type{type_id::BOOL8}, stream, mr.get_output_mr()));
+      columns.emplace_back(min.to_device(dtype, stream, mr));
+      columns.emplace_back(max.to_device(dtype, stream, mr));
+      columns.emplace_back(all_null.to_device(data_type{type_id::BOOL8}, stream, mr));
+      columns.emplace_back(has_nan.to_device(data_type{type_id::BOOL8}, stream, mr));
 
       return page_statistics_input{
         .column_index = column_index,

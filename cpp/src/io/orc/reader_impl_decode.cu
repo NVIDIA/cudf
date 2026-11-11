@@ -952,7 +952,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
       stripe_data[stripe_start - load_stripe_start] = std::move(decomp_data);
       for (std::size_t i = 1; i < stripe_count; ++i) {
         stripe_data[i + stripe_start - load_stripe_start] =
-          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
+          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_temporary_mr());
       }
 
     } else {
@@ -1052,11 +1052,11 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
     auto& stripe_data = _file_itm_data.lvl_stripe_data[level];
     if (_metadata.per_file_metadata[0].ps.compression != orc::NONE) {
       stripe_data[stripe_start - load_stripe_start] =
-        cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
+        cuda::device_buffer<std::uint8_t>(_stream, _mr.get_temporary_mr());
     } else {
       for (std::size_t i = 0; i < stripe_count; ++i) {
         stripe_data[i + stripe_start - load_stripe_start] =
-          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
+          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_temporary_mr());
       }
     }
   }

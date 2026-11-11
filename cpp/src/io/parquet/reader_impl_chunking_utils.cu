@@ -766,7 +766,7 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
     });
 
   cuda::device_buffer<size_t> d_temp_cost =
-    cudf::detail::make_device_buffer(temp_cost, stream, temp_mr);
+    cudf::detail::make_device_buffer(temp_cost, stream, mr.as_temporary());
 
   std::array codecs{compression_type::BROTLI,
                     compression_type::GZIP,
@@ -829,7 +829,7 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
         total_decomp_info.max_page_decompressed_size,
         total_decomp_info.total_decompressed_size,
         stream,
-        temp_mr);
+        mr.as_temporary());
 
       // Make use of the extended API if it provides a more accurate estimate
       if (total_temp_size_ex < total_temp_size) {

@@ -184,11 +184,11 @@ cuda::device_buffer<std::uint8_t> decompress_data(
 {
   if (meta.codec == "deflate") {
     auto inflate_in = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(
-      meta.block_list.size(), stream, mr.get_temporary_mr());
+      meta.block_list.size(), stream, mr.as_temporary());
     auto inflate_out = cudf::detail::hostdevice_vector<device_span<uint8_t>>(
-      meta.block_list.size(), stream, mr.get_temporary_mr());
+      meta.block_list.size(), stream, mr.as_temporary());
     auto inflate_stats = cudf::detail::hostdevice_vector<codec_exec_result>(
-      meta.block_list.size(), stream, mr.get_temporary_mr());
+      meta.block_list.size(), stream, mr.as_temporary());
     thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                  inflate_stats.d_begin(),
                  inflate_stats.d_end(),
@@ -263,7 +263,7 @@ cuda::device_buffer<std::uint8_t> decompress_data(
     // file header. meta.block_list[i].offset refers to offset of block i in the file, including
     // file header.
     cudf::detail::hostdevice_vector<device_span<uint8_t const>> compressed_blocks(
-      num_blocks, stream, mr.get_temporary_mr());
+      num_blocks, stream, mr.as_temporary());
     std::transform(meta.block_list.begin(),
                    meta.block_list.end(),
                    compressed_blocks.host_ptr(),
@@ -276,12 +276,12 @@ cuda::device_buffer<std::uint8_t> decompress_data(
     compressed_blocks.host_to_device_async(stream);
 
     cudf::detail::hostdevice_vector<size_t> uncompressed_sizes(
-      num_blocks, stream, mr.get_temporary_mr());
+      num_blocks, stream, mr.as_temporary());
     get_snappy_uncompressed_size(compressed_blocks, uncompressed_sizes, stream);
     uncompressed_sizes.device_to_host(stream);
 
     cudf::detail::hostdevice_vector<size_t> uncompressed_offsets(
-      num_blocks, stream, mr.get_temporary_mr());
+      num_blocks, stream, mr.as_temporary());
     std::exclusive_scan(uncompressed_sizes.begin(),
                         uncompressed_sizes.end(),
                         uncompressed_offsets.begin(),

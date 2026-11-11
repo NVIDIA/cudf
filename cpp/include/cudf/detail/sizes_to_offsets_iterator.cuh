@@ -309,9 +309,9 @@ std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(InputIte
                                                                         cuda::stream_ref stream,
                                                                         cudf::memory_resources mr)
 {
-  auto count          = static_cast<size_type>(std::distance(begin, end));
-  auto offsets_column = make_numeric_column(
-    data_type{type_id::INT32}, count + 1, mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto count = static_cast<size_type>(std::distance(begin, end));
+  auto offsets_column =
+    make_numeric_column(data_type{type_id::INT32}, count + 1, mask_state::UNALLOCATED, stream, mr);
   auto offsets_view = offsets_column->mutable_view();
   auto d_offsets    = offsets_view.template data<int32_t>();
 

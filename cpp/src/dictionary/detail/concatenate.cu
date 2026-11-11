@@ -191,7 +191,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // kernel. The keys concatenate below and the indices concatenate further down are two separate
   // launches over the same set of input columns and could be fused into a single batched call.
   // first, concatenate all the keys
-  auto all_keys = cudf::detail::concatenate(keys_views, stream, temp_mr);
+  auto all_keys = cudf::detail::concatenate(keys_views, stream, mr.as_temporary());
   // compute the unique set of keys to better help map the new indices values
   using encode_probe_t = cuco::linear_probing<
     1,
@@ -215,7 +215,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   auto iota   = cuda::counting_iterator<size_type>{0};
 
   auto d_indices = cuda::device_buffer<size_type>(stream, temp_mr, all_keys->size(), cuda::no_init);
-  auto d_all_keys = column_device_view::create(all_keys->view(), stream, temp_mr);
+  auto d_all_keys = column_device_view::create(all_keys->view(), stream, mr.as_temporary());
   thrust::transform(
     policy, iota, iota + all_keys->size(), d_indices.begin(), insert_keys_fn{set_ref, *d_all_keys});
   auto keys_indices_storage =
@@ -266,7 +266,8 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
       if (dict_view.is_empty()) { return column_view{indices_type, 0, nullptr, nullptr, 0}; }
       auto indices = dict_view.get_indices_annotated();  // includes validity mask and view offset
       if (indices.type() == indices_type) { return indices; }
-      widened_indices.emplace_back(cudf::detail::cast(indices, indices_type, stream, temp_mr));
+      widened_indices.emplace_back(
+        cudf::detail::cast(indices, indices_type, stream, mr.as_temporary()));
       return widened_indices.back()->view();
     });
   auto all_indices = cudf::detail::concatenate(indices_views, stream, mr);
@@ -274,11 +275,11 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // remap the input indices values to the new indices for the new keys order
   auto indices_column = make_numeric_column(
     all_indices->type(), all_indices->size(), mask_state::UNALLOCATED, stream, mr);
-  auto input_view = column_device_view::create(all_indices->view(), stream, temp_mr);
+  auto input_view = column_device_view::create(all_indices->view(), stream, mr.as_temporary());
   auto d_input    = cudf::detail::indexalator_factory::make_input_iterator(all_indices->view());
   auto d_output =
     cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
-  auto children_offsets = child_offsets_fn.create_children_offsets(stream, temp_mr);
+  auto children_offsets = child_offsets_fn.create_children_offsets(stream, mr.as_temporary());
   auto map_fn           = map_indices_fn{children_offsets, final_remap, *input_view, d_input};
   thrust::transform(policy, iota, iota + all_indices->size(), d_output, map_fn);
 

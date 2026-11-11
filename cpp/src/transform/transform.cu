@@ -159,12 +159,12 @@ auto to_args(std::span<input_column_view const> inputs,
 
   for (auto& in : inputs) {
     if (auto* col = std::get_if<column_view>(&in)) {
-      auto handle = column_device_view::create(*col, stream, mr.get_output_mr());
+      auto handle = column_device_view::create(*col, stream, mr);
       h_args.push_back(*handle);
       handles.emplace_back(std::move(handle));
     } else {
       auto& scalar = std::get<scalar_column_view>(in);
-      auto handle = column_device_view::create(scalar.as_column_view(), stream, mr.get_output_mr());
+      auto handle  = column_device_view::create(scalar.as_column_view(), stream, mr);
       h_args.push_back(*handle);
       handles.emplace_back(std::move(handle));
     }

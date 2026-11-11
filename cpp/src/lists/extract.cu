@@ -46,19 +46,14 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
 {
   // New column, near identical to `indices`, except with null values replaced.
   // `segmented_gather()` on a null index should produce a null row.
-  if (not indices.nullable()) {
-    return std::make_unique<column>(indices, stream, mr.get_output_mr());
-  }
+  if (not indices.nullable()) { return std::make_unique<column>(indices, stream, mr); }
 
   auto const d_indices = column_device_view::create(indices, stream);
   // Replace null indices with MAX_SIZE_TYPE, so that gather() returns null for them.
   auto const null_replaced_iter_begin =
     cudf::detail::make_null_replacement_iterator(*d_indices, std::numeric_limits<size_type>::max());
-  auto index_child = make_numeric_column(data_type{type_to_id<size_type>()},
-                                         indices.size(),
-                                         mask_state::UNALLOCATED,
-                                         stream,
-                                         mr.get_output_mr());
+  auto index_child = make_numeric_column(
+    data_type{type_to_id<size_type>()}, indices.size(), mask_state::UNALLOCATED, stream, mr);
   thrust::copy_n(cudf::detail::exec_policy_nosync(stream, mr),
                  null_replaced_iter_begin,
                  indices.size(),
@@ -81,11 +76,8 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
                                                cudf::memory_resources mr)
 {
   auto index_child =  // [index, index, index, ..., index]
-    make_numeric_column(data_type{type_to_id<size_type>()},
-                        num_rows,
-                        mask_state::UNALLOCATED,
-                        stream,
-                        mr.get_output_mr());
+    make_numeric_column(
+      data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, mr);
   thrust::fill_n(cudf::detail::exec_policy_nosync(stream, mr),
                  index_child->mutable_view().begin<size_type>(),
                  num_rows,
@@ -108,7 +100,7 @@ std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists,
     num_lists + 1,
     cudf::scalar_type_t<int32_t>(0, true, stream, mr.get_temporary_mr()),
     stream,
-    mr.get_output_mr());
+    mr);
 }
 
 }  // namespace

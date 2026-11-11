@@ -68,11 +68,10 @@ std::unique_ptr<column> encode(column_view const& input,
                "encoding nested types not supported",
                std::invalid_argument);
 
-  auto const output_mr = mr.get_output_mr();
-  auto const temp_mr   = mr.get_temporary_mr();
+  auto const temp_mr = mr.get_temporary_mr();
 
   auto indices_column = cudf::make_numeric_column(
-    indices_type, input.size(), cudf::mask_state::UNALLOCATED, stream, output_mr);
+    indices_type, input.size(), cudf::mask_state::UNALLOCATED, stream, mr);
   if (input.is_empty()) {
     return make_dictionary_column(make_empty_column(input.type()),
                                   std::move(indices_column),
@@ -102,7 +101,7 @@ std::unique_ptr<column> encode(column_view const& input,
   // build a static_set of the input values
   // and keep track of the indices of the unique values
   auto d_indices = cuda::device_buffer<size_type>(stream, temp_mr, input.size(), cuda::no_init);
-  auto d_input   = column_device_view::create(input, stream, temp_mr);
+  auto d_input   = column_device_view::create(input, stream, mr.as_temporary());
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
@@ -140,7 +139,7 @@ std::unique_ptr<column> encode(column_view const& input,
   // create column with keys_column and indices_column
   return make_dictionary_column(std::move(keys_column),
                                 std::move(indices_column),
-                                cudf::detail::copy_bitmask(input, stream, output_mr),
+                                cudf::detail::copy_bitmask(input, stream, mr),
                                 input.null_count());
 }
 

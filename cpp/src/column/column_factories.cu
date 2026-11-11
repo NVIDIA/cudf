@@ -53,7 +53,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
     return make_strings_column(
       size,
       make_column_from_scalar(
-        numeric_scalar<int32_t>(0, true, stream, temp_mr), size + 1, stream, mr),
+        numeric_scalar<int32_t>(0, true, stream, mr.as_temporary()), size + 1, stream, mr),
       rmm::device_buffer{},
       size,
       cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr));
@@ -105,7 +105,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stru
                                ? cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)
                                : detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr),
                              stream,
-                             mr.get_output_mr());
+                             mr);
 }
 
 }  // anonymous namespace

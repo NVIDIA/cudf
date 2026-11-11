@@ -42,7 +42,7 @@ void in_place_copy_range(cudf::column_view const& source,
 {
   auto const temp_mr        = mr.get_temporary_mr();
   auto const temp_mrs       = cudf::memory_resources{temp_mr, temp_mr};
-  auto p_source_device_view = cudf::column_device_view::create(source, stream, temp_mr);
+  auto p_source_device_view = cudf::column_device_view::create(source, stream, mr.as_temporary());
   if (source.has_nulls()) {
     cudf::detail::copy_range(
       cudf::detail::make_null_replacement_iterator<T>(*p_source_device_view, T()) + source_begin,

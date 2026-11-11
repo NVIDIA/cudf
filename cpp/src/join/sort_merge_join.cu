@@ -16,6 +16,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/sort_merge_join.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -759,20 +760,20 @@ merge<SmallerIterator>::left(cuda::stream_ref stream, cudf::memory_resources mr)
 
 namespace detail {
 
-void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_ref stream)
+void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr)
 {
   auto table   = this->_table_view;
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
   // remove rows that have nulls at any nesting level
   // step 1: identify nulls at root level
-  auto [validity_mask, num_nulls] = cudf::bitmask_and(table, stream, temp_mr);
+  auto [validity_mask, num_nulls] = cudf::bitmask_and(table, stream, mr);
 
   // If the table has no nullable top-level columns, then we need to create
   // an all-valid bitmask that is passed to subsequent operations. This bitmask
   // is updated if any of the nested struct/list children columns have nulls.
   if (validity_mask.empty())
-    validity_mask =
-      cudf::create_null_mask(table.num_rows(), mask_state::ALL_VALID, stream, temp_mr);
+    validity_mask = cudf::create_null_mask(table.num_rows(), mask_state::ALL_VALID, stream, mr);
 
   // step 2: identify nulls at non-root levels
   for (size_type col_idx = 0; col_idx < table.num_columns(); col_idx++) {
@@ -785,7 +786,7 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
       cuda::device_buffer<int32_t> offsets_subset(stream, temp_mr, offsets.size(), cuda::no_init);
       cuda::device_buffer<int32_t> child_positions(stream, temp_mr, offsets.size(), cuda::no_init);
       auto unique_end = thrust::unique_by_key_copy(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        cudf::detail::exec_policy_nosync(stream, mr),
         cuda::std::reverse_iterator(lcv.offsets_end()),
         cuda::std::reverse_iterator(lcv.offsets_end()) + offsets.size(),
         cuda::std::reverse_iterator(cuda::counting_iterator{offsets.size()}),
@@ -803,9 +804,9 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
                                               null_policy::INCLUDE,
                                               std::nullopt,
                                               stream,
-                                              temp_mr);
+                                              mr.as_temporary());
 
-      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        cuda::counting_iterator<cudf::size_type>{0} + subset_size,
                        list_nonnull_filter{validity_mask.data(),
@@ -859,9 +860,10 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
   this->_validity_mask = std::move(validity_mask);
 }
 
-void sort_merge_join::preprocessed_table::apply_nonnull_filter(cuda::stream_ref stream)
+void sort_merge_join::preprocessed_table::apply_nonnull_filter(cuda::stream_ref stream,
+                                                               cudf::memory_resources mr)
 {
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
   // construct bool column to apply mask
   cudf::scalar_type_t<bool> true_scalar(true, true, stream, temp_mr);
   auto bool_mask =
@@ -872,29 +874,34 @@ void sort_merge_join::preprocessed_table::apply_nonnull_filter(cuda::stream_ref 
 
   // Use the internal apply_mask directly to avoid the public API overhead (NVTX range).
   _null_processed_table =
-    detail::apply_mask(_table_view, *bool_mask, detail::mask_type::RETENTION, stream, temp_mr);
+    detail::apply_mask(_table_view, *bool_mask, detail::mask_type::RETENTION, stream, mr);
   _null_processed_table_view = _null_processed_table.value()->view();
 }
 
-void sort_merge_join::preprocessed_table::preprocess_unprocessed_table(cuda::stream_ref stream)
+void sort_merge_join::preprocessed_table::preprocess_unprocessed_table(cuda::stream_ref stream,
+                                                                       cudf::memory_resources mr)
 {
-  populate_nonnull_filter(stream);
-  apply_nonnull_filter(stream);
+  populate_nonnull_filter(stream, mr);
+  apply_nonnull_filter(stream, mr);
 }
 
-void sort_merge_join::preprocessed_table::compute_sorted_order(cuda::stream_ref stream)
+void sort_merge_join::preprocessed_table::compute_sorted_order(cuda::stream_ref stream,
+                                                               cudf::memory_resources mr)
 {
-  auto temp_mr = cudf::get_current_device_resource_ref();
   std::vector<cudf::order> column_order(_null_processed_table_view.num_columns(),
                                         cudf::order::ASCENDING);
   std::vector<cudf::null_order> null_precedence(_null_processed_table_view.num_columns(),
                                                 cudf::null_order::BEFORE);
   this->_null_processed_table_sorted_order =
-    cudf::sorted_order(_null_processed_table_view, column_order, null_precedence, stream, temp_mr);
+    cudf::sorted_order(_null_processed_table_view, column_order, null_precedence, stream, mr);
 }
 
 sort_merge_join::preprocessed_table sort_merge_join::preprocessed_table::create(
-  table_view const& table, null_equality compare_nulls, sorted is_sorted, cuda::stream_ref stream)
+  table_view const& table,
+  null_equality compare_nulls,
+  sorted is_sorted,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   preprocessed_table result;
   result._table_view = table;
@@ -904,13 +911,13 @@ sort_merge_join::preprocessed_table sort_merge_join::preprocessed_table::create(
   } else {
     // if a table has no nullable column, then there's no preprocessing to be done
     if (has_nested_nulls(table)) {
-      result.preprocess_unprocessed_table(stream);
+      result.preprocess_unprocessed_table(stream, mr);
     } else {
       result._null_processed_table_view = table;
     }
   }
 
-  if (is_sorted == cudf::sorted::NO) { result.compute_sorted_order(stream); }
+  if (is_sorted == cudf::sorted::NO) { result.compute_sorted_order(stream, mr); }
 
   return result;
 }
@@ -918,8 +925,10 @@ sort_merge_join::preprocessed_table sort_merge_join::preprocessed_table::create(
 sort_merge_join::sort_merge_join(table_view const& right,
                                  sorted is_right_sorted,
                                  null_equality compare_nulls,
-                                 cuda::stream_ref stream)
-  : preprocessed_right{preprocessed_table::create(right, compare_nulls, is_right_sorted, stream)},
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
+  : preprocessed_right{preprocessed_table::create(
+      right, compare_nulls, is_right_sorted, stream, mr)},
     compare_nulls{compare_nulls}
 {
   cudf::scoped_range range{"sort_merge_join::sort_merge_join"};
@@ -928,8 +937,6 @@ sort_merge_join::sort_merge_join(table_view const& right,
                "Number of columns the keys table must be non-zero for a join",
                std::invalid_argument);
 
-  // The run index is owned by this object, which takes no caller-provided resource.
-  cudf::memory_resources const mr{cudf::get_current_device_resource_ref()};
   auto const& right_view = preprocessed_right._null_processed_table_view;
   auto run_index         = [&] {
     if (preprocessed_right._null_processed_table_sorted_order.has_value()) {
@@ -1072,7 +1079,7 @@ sort_merge_join::inner_join(table_view const& left,
 
   // Match discovery probes rows in their original order, so skip the unused probe-side sort.
   auto preprocessed_left =
-    preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream);
+    preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream, mr.as_temporary());
 
   return invoke_merge(
     preprocessed_right._null_processed_table_view,
@@ -1103,7 +1110,7 @@ sort_merge_join::left_join(table_view const& left,
 
   // Match discovery probes rows in their original order, so skip the unused probe-side sort.
   auto preprocessed_left =
-    preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream);
+    preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream, mr.as_temporary());
 
   return invoke_merge(
     preprocessed_right._null_processed_table_view,
@@ -1180,7 +1187,7 @@ std::unique_ptr<cudf::join_match_context> sort_merge_join::inner_join_match_cont
 
   // Match counts are produced in original probe-row order, so skip the unused probe-side sort.
   auto preprocessed_left =
-    preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream);
+    preprocessed_table::create(left, compare_nulls, cudf::sorted::YES, stream, mr);
 
   auto match_counts = invoke_merge(
     preprocessed_right._null_processed_table_view,
@@ -1284,8 +1291,9 @@ sort_merge_join::~sort_merge_join() = default;
 sort_merge_join::sort_merge_join(table_view const& right,
                                  sorted is_right_sorted,
                                  null_equality compare_nulls,
-                                 cuda::stream_ref stream)
-  : _impl{std::make_unique<impl_type>(right, is_right_sorted, compare_nulls, stream)}
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
+  : _impl{std::make_unique<impl_type>(right, is_right_sorted, compare_nulls, stream, mr)}
 {
 }
 

@@ -673,11 +673,14 @@ void aggregate_result_functor::operator()<aggregation::MERGE_TDIGEST>(aggregatio
 
   auto const max_centroids =
     dynamic_cast<cudf::detail::merge_tdigest_aggregation const&>(agg).max_centroids;
-  // tdigest_column_view rejects a sliced column, so merge a copy of sliced presorted values.
+  // tdigest_column_view reads its children without the offset and size of a sliced column, so
+  // merge a copy of sliced presorted values. A prefix slice has no offset, but its children still
+  // hold the rows after its end.
   auto const grouped = get_grouped_values();
-  auto const copy    = grouped.offset() == 0
-                         ? nullptr
-                         : std::make_unique<column>(grouped, stream, mr.get_temporary_mr());
+  auto const sliced  = grouped.offset() != 0 ||
+                      (grouped.num_children() > 0 && grouped.child(0).size() != grouped.size());
+  auto const copy =
+    sliced ? std::make_unique<column>(grouped, stream, mr.get_temporary_mr()) : nullptr;
   cache.add_result(values,
                    agg,
                    cudf::tdigest::detail::group_merge_tdigest(copy ? copy->view() : grouped,

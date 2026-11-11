@@ -727,7 +727,8 @@ TEST_F(groupby_key_shape_test, PresortedSlicedNestedValues)
     {expected_counts, expected_means, expected_m2s}};
 
   auto const sliced_keys = cudf::slice(keys, {1, 5}).front();
-  auto const aggregate   = [&](std::vector<cudf::column_view> const& values) {
+  auto const aggregate   = [&](cudf::column_view const& group_keys,
+                             std::vector<cudf::column_view> const& values) {
     std::vector<cudf::groupby::aggregation_request> requests(values.size());
     for (std::size_t i = 0; i < values.size(); ++i) {
       requests[i].values = values[i];
@@ -743,34 +744,43 @@ TEST_F(groupby_key_shape_test, PresortedSlicedNestedValues)
     requests[3].aggregations.push_back(
       cudf::make_merge_tdigest_aggregation<cudf::groupby_aggregation>(1000));
     cudf::groupby::groupby gb(
-      cudf::table_view{{sliced_keys}}, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+      cudf::table_view{{group_keys}}, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
     return gb.aggregate(requests);
   };
-  std::vector<cudf::column_view> const sliced_values{
-    cudf::slice(lists, {1, 5}).front(),
-    cudf::slice(partials, {1, 5}).front(),
-    cudf::slice(histograms->view(), {1, 5}).front(),
-    cudf::slice(tdigests->view(), {1, 5}).front()};
   // Unsliced copies give the expected results of the aggregations without a simple literal form.
-  std::vector<std::unique_ptr<cudf::column>> copies;
-  std::vector<cudf::column_view> copied_values;
-  for (auto const& values : sliced_values) {
-    copies.push_back(std::make_unique<cudf::column>(values));
-    copied_values.push_back(copies.back()->view());
-  }
-  auto const [result_keys, results] = aggregate(sliced_values);
-  auto const expected               = aggregate(copied_values);
+  auto const aggregate_slices = [&](cudf::size_type begin, cudf::size_type end) {
+    std::vector<cudf::size_type> const range{begin, end};
+    std::vector<cudf::column_view> const sliced_values{
+      cudf::slice(lists, range).front(),
+      cudf::slice(partials, range).front(),
+      cudf::slice(histograms->view(), range).front(),
+      cudf::slice(tdigests->view(), range).front()};
+    std::vector<std::unique_ptr<cudf::column>> copies;
+    std::vector<cudf::column_view> copied_values;
+    for (auto const& values : sliced_values) {
+      copies.push_back(std::make_unique<cudf::column>(values));
+      copied_values.push_back(copies.back()->view());
+    }
+    auto const group_keys = cudf::slice(keys, range).front();
+    auto result           = aggregate(group_keys, sliced_values);
+    auto const expected   = aggregate(group_keys, copied_values);
+    for (std::size_t i = 0; i < result.second.size(); ++i) {
+      for (std::size_t j = 0; j < result.second[i].results.size(); ++j) {
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected.second[i].results[j],
+                                       *result.second[i].results[j]);
+      }
+    }
+    return result;
+  };
+  // A prefix slice has no offset, but its children still hold the rows after its end.
+  aggregate_slices(0, 1);
+  auto const [result_keys, results] = aggregate_slices(1, 5);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, result_keys->get_column(0));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_lists, *results[0].results[0]);
   // Column comparisons accept list offsets that do not start at 0, so check them directly.
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::lists_column_view(expected_lists).offsets(),
                                  cudf::lists_column_view(results[0].results[0]->view()).offsets());
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_partials, *results[1].results[0]);
-  for (std::size_t i = 0; i < results.size(); ++i) {
-    for (std::size_t j = 0; j < results[i].results.size(); ++j) {
-      CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected.second[i].results[j], *results[i].results[j]);
-    }
-  }
 
   // The struct MIN scan gathers the children of its input and pushes down its null mask.
   cudf::test::fixed_width_column_wrapper<int32_t> struct_child{9, 3, 1, 2, 4};

@@ -15,8 +15,8 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/stream>
 
@@ -58,9 +58,8 @@ void finalize_means(table_view const& values,
       cache != nullptr && cache->has_result(values.column(i), *count_agg);
     CUDF_EXPECTS(count != columns.end() || has_cached_count,
                  "MEAN requires the valid count of its values.");
-    auto const counts = count != columns.end()
-                          ? column_view{results.column(*count)}
-                          : cache->get_result(values.column(i), *count_agg);
+    auto const counts = count != columns.end() ? column_view{results.column(*count)}
+                                               : cache->get_result(values.column(i), *count_agg);
     // The sums already carry the MEAN validity, so divide only their values in place.
     auto const sums = column_view{mean.type(), mean.size(), mean.head(), nullptr, 0, mean.offset()};
     auto out =

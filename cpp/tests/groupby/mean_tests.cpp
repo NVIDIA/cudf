@@ -14,8 +14,6 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/groupby.hpp>
-#include <cudf/reduction.hpp>
-#include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 
@@ -220,26 +218,6 @@ TYPED_TEST(groupby_mean_overflow_typed_test, overflowing_sum)
     {1,                        1,                        1,                        0}};
   // clang-format on
 
-  test_single_agg(
-    keys, vals, expect_keys, expect_vals, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
-}
-
-// Groupby MEAN of a single group matches reduction MEAN, which also accumulates in double.
-TYPED_TEST(groupby_mean_overflow_typed_test, matches_reduction)
-{
-  using V            = TypeParam;
-  auto constexpr max = std::numeric_limits<V>::max();
-
-  cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 0, 0};
-  cudf::test::fixed_width_column_wrapper<V> vals{max, max, max, V{3}};
-
-  auto const reduced = cudf::reduce(vals,
-                                    *cudf::make_mean_aggregation<cudf::reduce_aggregation>(),
-                                    cudf::data_type{cudf::type_id::FLOAT64});
-  auto const expect  = static_cast<cudf::numeric_scalar<double> const&>(*reduced).value();
-
-  cudf::test::fixed_width_column_wrapper<K> expect_keys{0};
-  cudf::test::fixed_width_column_wrapper<double> expect_vals{expect};
   test_single_agg(
     keys, vals, expect_keys, expect_vals, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
 }

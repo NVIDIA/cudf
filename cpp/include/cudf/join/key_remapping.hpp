@@ -96,14 +96,16 @@ class key_remapping {
    *        and get_max_duplicate_count(). If NO, skip metrics computation for better performance;
    *        calling get_distinct_count() or get_max_duplicate_count() will throw.
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the internal hash table
+   * @param mr Memory resources used by the key remapping object. The output resource backs
+   * allocations that live as long as the key remapping object, such as the hash table; the
+   * temporary resource backs scratch used during construction. Both are non-owning references, so
+   * the resources they refer to must outlive the key remapping object.
    */
   key_remapping(cudf::table_view const& right,
                 null_equality compare_nulls   = null_equality::EQUAL,
                 cudf::compute_metrics metrics = cudf::compute_metrics::YES,
                 cuda::stream_ref stream       = cudf::get_default_stream(),
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                  cudf::get_current_device_resource_ref());
+                cudf::memory_resources mr     = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Remap right keys to integer IDs.

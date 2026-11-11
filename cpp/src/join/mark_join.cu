@@ -41,16 +41,15 @@ namespace detail {
 namespace {
 
 std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
-  table_view const& input, cuda::stream_ref stream)
+  table_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const nullable_columns = get_nullable_columns(input);
   CUDF_EXPECTS(nullable_columns.size() > 0,
                "The input table has nulls thus it should have nullable columns.");
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   if (nullable_columns.size() > 1) {
-    auto row_bitmask =
-      cudf::detail::bitmask_and(table_view{nullable_columns}, stream, temp_mr).first;
+    auto row_bitmask = cudf::detail::bitmask_and(table_view{nullable_columns}, stream, mr).first;
     auto const row_bitmask_ptr = row_bitmask.data();
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
@@ -517,7 +516,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
   bitmask_type const* right_bitmask_ptr = nullptr;
   if (right_has_nulls && _nulls_equal == null_equality::UNEQUAL) {
-    auto bitmask_buffer_and_ptr = build_row_bitmask(right, stream);
+    auto bitmask_buffer_and_ptr = build_row_bitmask(right, stream, mr.as_temporary());
     right_bitmask_buffer        = std::move(bitmask_buffer_and_ptr.first);
     right_bitmask_ptr           = bitmask_buffer_and_ptr.second;
   }
@@ -587,7 +586,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   }
 
   if (null_contribution > 0) {
-    auto const bitmask_buffer_and_ptr = build_row_bitmask(_left, stream);
+    auto const bitmask_buffer_and_ptr = build_row_bitmask(_left, stream, mr.as_temporary());
     auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
     thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
                     cuda::counting_iterator<size_type>{0},
@@ -604,16 +603,17 @@ mark_join::mark_join(cudf::table_view const& left,
                      double load_factor,
                      cudf::join_prefilter prefilter,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                     cudf::memory_resources mr)
   : _has_nested_columns{cudf::has_nested_columns(left)},
     _left{left},
     _nulls_equal{compare_nulls},
     _prefilter{prefilter},
-    _preprocessed_left{cudf::detail::row::equality::preprocessed_table::create(
-      left, stream, cudf::get_current_device_resource_ref())},
+    _mr{mr},
+    _preprocessed_left{
+      cudf::detail::row::equality::preprocessed_table::create(left, stream, _mr.get_output_mr())},
     _bucket_storage{
       cuco::extent<std::size_t>{compute_mark_join_capacity(left, checked_load_factor(load_factor))},
-      rmm::mr::polymorphic_allocator<char>{mr},
+      rmm::mr::polymorphic_allocator<char>{_mr.get_output_mr()},
       stream.get()}
 {
   cudf::scoped_range range{"mark_join::mark_join"};
@@ -624,7 +624,7 @@ mark_join::mark_join(cudf::table_view const& left,
       get_bloom_filter_blocks<bloom_filter_type>(_left.num_rows()),
       cuco::cuda_thread_scope<cuda::thread_scope_device>{},
       bloom_filter_policy_type{},
-      bloom_filter_allocator_type{std::move(mr)},
+      bloom_filter_allocator_type{_mr.get_output_mr()},
       stream.get());
   }
 
@@ -636,12 +636,12 @@ mark_join::mark_join(cudf::table_view const& left,
   auto const has_null_left_keys =
     cudf::has_nested_nulls(_left) && _nulls_equal == null_equality::UNEQUAL;
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = _mr.get_temporary_mr();
   auto row_bitmask_buffer =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
   bitmask_type const* row_bitmask_ptr = nullptr;
   if (has_null_left_keys) {
-    auto bitmask_buffer_and_ptr = build_row_bitmask(_left, stream);
+    auto bitmask_buffer_and_ptr = build_row_bitmask(_left, stream, _mr.as_temporary());
     row_bitmask_buffer          = std::move(bitmask_buffer_and_ptr.first);
     row_bitmask_ptr             = bitmask_buffer_and_ptr.second;
   }
@@ -832,9 +832,9 @@ mark_join::mark_join(cudf::table_view const& left,
                      cudf::null_equality compare_nulls,
                      cudf::join_prefilter prefilter,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                     cudf::memory_resources mr)
   : _impl{std::make_unique<detail::mark_join>(
-      left, compare_nulls, detail::CUCO_DESIRED_LOAD_FACTOR, prefilter, stream, std::move(mr))}
+      left, compare_nulls, detail::CUCO_DESIRED_LOAD_FACTOR, prefilter, stream, mr)}
 {
 }
 
@@ -843,9 +843,9 @@ mark_join::mark_join(cudf::table_view const& left,
                      cudf::null_equality compare_nulls,
                      cudf::join_prefilter prefilter,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _impl{std::make_unique<detail::mark_join>(
-      left, compare_nulls, load_factor, prefilter, stream, std::move(mr))}
+                     cudf::memory_resources mr)
+  : _impl{
+      std::make_unique<detail::mark_join>(left, compare_nulls, load_factor, prefilter, stream, mr)}
 {
 }
 

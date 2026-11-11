@@ -75,8 +75,8 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                              bool has_nulls,
                              cudf::null_equality compare_nulls,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : hash_join{right, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream, std::move(mr)}
+                             cudf::memory_resources mr)
+  : hash_join{right, has_nulls, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream, mr}
 {
 }
 
@@ -86,15 +86,18 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                              cudf::null_equality compare_nulls,
                              double load_factor,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                             cudf::memory_resources mr)
   : _has_nulls(has_nulls),
     _is_empty{right.num_rows() == 0},
     _nulls_equal{compare_nulls},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
-      _right, stream, cudf::get_current_device_resource_ref())},
-    _impl{std::make_unique<impl>(
-      hash_csr_capacity(right.num_rows(), load_factor), right.num_rows(), stream, std::move(mr))}
+    _mr{mr},
+    _preprocessed_right{
+      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr.get_output_mr())},
+    _impl{std::make_unique<impl>(hash_csr_capacity(right.num_rows(), load_factor),
+                                 right.num_rows(),
+                                 stream,
+                                 _mr.get_output_mr())}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
@@ -105,10 +108,10 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   CUDF_CUDA_TRY(cudaMemsetAsync(
     _impl->_offsets.data(), 0, _impl->_offsets.size() * sizeof(size_type), stream.get()));
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = _mr.get_temporary_mr();
   auto const row_bitmask =
     _nulls_equal == null_equality::UNEQUAL
-      ? cudf::detail::bitmask_and(right, stream, temp_mr).first
+      ? cudf::detail::bitmask_and(right, stream, _mr.as_temporary()).first
       : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
   auto const valid_rows = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
   // Hashing and comparing variable-width rows again can dominate construction. Cache one
@@ -149,7 +152,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
   }
   // The output array is not needed until the scan workspace has been released.
   _impl->_values =
-    cuda::device_buffer<size_type>(stream, _impl->_mr, right.num_rows(), cuda::no_init);
+    cuda::device_buffer<size_type>(stream, _mr.get_output_mr(), right.num_rows(), cuda::no_init);
   // Reuse each cumulative end as a scatter cursor. Once all rows in a group have been
   // scattered, its cursor is the group's exclusive begin. No per-row positions are retained.
   if (cache_representatives) {
@@ -174,20 +177,18 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, fill);
 }
 
-template hash_join<hash_join_hasher>::hash_join(
-  cudf::table_view const& right,
-  bool has_nulls,
-  cudf::null_equality compare_nulls,
-  cuda::stream_ref stream,
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+template hash_join<hash_join_hasher>::hash_join(cudf::table_view const& right,
+                                                bool has_nulls,
+                                                cudf::null_equality compare_nulls,
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr);
 
-template hash_join<hash_join_hasher>::hash_join(
-  cudf::table_view const& right,
-  bool has_nulls,
-  cudf::null_equality compare_nulls,
-  double load_factor,
-  cuda::stream_ref stream,
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+template hash_join<hash_join_hasher>::hash_join(cudf::table_view const& right,
+                                                bool has_nulls,
+                                                cudf::null_equality compare_nulls,
+                                                double load_factor,
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr);
 
 template <typename Hasher>
 hash_join<Hasher>::~hash_join() = default;
@@ -203,13 +204,9 @@ hash_join::~hash_join() = default;
 hash_join::hash_join(cudf::table_view const& right,
                      null_equality compare_nulls,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : hash_join(right,
-              nullable_join::YES,
-              compare_nulls,
-              cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-              stream,
-              std::move(mr))
+                     cudf::memory_resources mr)
+  : hash_join(
+      right, nullable_join::YES, compare_nulls, cudf::detail::CUCO_DESIRED_LOAD_FACTOR, stream, mr)
 {
 }
 
@@ -218,9 +215,9 @@ hash_join::hash_join(cudf::table_view const& right,
                      null_equality compare_nulls,
                      double load_factor,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                     cudf::memory_resources mr)
   : _impl{std::make_unique<impl_type const>(
-      right, has_nulls == nullable_join::YES, compare_nulls, load_factor, stream, std::move(mr))}
+      right, has_nulls == nullable_join::YES, compare_nulls, load_factor, stream, mr)}
 {
 }
 

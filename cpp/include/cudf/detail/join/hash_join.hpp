@@ -62,17 +62,18 @@ class hash_join {
    *        any `left` table that will be used later for join.
    * @param compare_nulls Controls whether null join-key values should match or not.
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the internal hash table.
+   * @param mr Memory resources: the output resource backs the hash table and preprocessed right
+   * table, which live as long as this object; the temporary resource backs construction scratch.
    */
   hash_join(cudf::table_view const& right,
             bool has_nulls,
             cudf::null_equality compare_nulls,
             cuda::stream_ref stream,
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+            cudf::memory_resources mr);
 
   /**
    * @copydoc hash_join(cudf::table_view const&, bool, null_equality, cuda::stream_ref,
-   * cuda::mr::any_resource<cuda::mr::device_accessible>)
+   * cudf::memory_resources)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
    */
@@ -81,7 +82,7 @@ class hash_join {
             cudf::null_equality compare_nulls,
             double load_factor,
             cuda::stream_ref stream,
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+            cudf::memory_resources mr);
 
   /**
    * @copydoc cudf::hash_join::inner_join
@@ -185,6 +186,7 @@ class hash_join {
   bool const _has_nulls;  ///< true if nulls are present in either right table or any left table
   cudf::null_equality const _nulls_equal;  ///< whether to consider nulls as equal
   cudf::table_view _right;                 ///< input table to build the hash map
+  cudf::memory_resources _mr;              ///< resources backing this object's allocations
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table>
     _preprocessed_right;        ///< input table preprocssed for row operators
   std::unique_ptr<impl> _impl;  ///< CUDA hash table implementation

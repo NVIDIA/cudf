@@ -842,6 +842,7 @@ add_library(
   src/io/parquet/experimental/hybrid_scan_multifile.cpp
   src/io/parquet/experimental/parquet_footer.cpp
   src/io/parquet/experimental/variant_extract.cu
+  src/io/parquet/experimental/variant_from_json.cu
   src/io/parquet/experimental/variant_path.cpp
   src/io/parquet/expression_transform_helpers.cpp
   src/io/parquet/hybrid_scan/dictionary_page_filter.cu

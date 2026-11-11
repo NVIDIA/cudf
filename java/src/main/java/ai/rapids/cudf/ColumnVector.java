@@ -807,6 +807,10 @@ public final class ColumnVector extends ColumnView {
    * Double.POSITIVE_INFINITY => "Inf" instead of "INFINITY"
    * Double.NEGATIVE_INFINITY => "-Inf" instead of "-INFINITY"
    *
+   * If {@code type} is this column's type and {@code mr} is {@link MemoryResources#CURRENT}, this
+   * column is returned with its reference count incremented. With any other {@code mr}, the result
+   * is a copy allocated from its output resource.
+   *
    * @param type type of the resulting ColumnVector
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr device memory resources for the returned column and for temporary allocations
@@ -814,7 +818,7 @@ public final class ColumnVector extends ColumnView {
    */
   @Override
   public ColumnVector castTo(DType type, Cuda.Stream stream, MemoryResources mr) {
-    if (this.type.equals(type)) {
+    if (this.type.equals(type) && mr == MemoryResources.CURRENT) {
       // Optimization
       return incRefCount();
     }

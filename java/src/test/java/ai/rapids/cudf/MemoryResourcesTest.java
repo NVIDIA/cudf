@@ -205,6 +205,16 @@ public class MemoryResourcesTest extends CudfTestBase {
   }
 
   @Test
+  void testCastToSameType() {
+    try (ColumnVector ints = ColumnVector.fromInts(1, 2, 3)) {
+      try (ColumnVector same = ints.castTo(DType.INT32, stream, MemoryResources.CURRENT)) {
+        assertSame(ints, same);
+      }
+      checkColumn(() -> ints.castTo(DType.INT32), () -> ints.castTo(DType.INT32, stream, mr));
+    }
+  }
+
+  @Test
   void testTableOps() {
     try (Table table = new Table.TestBuilder()
              .column(3, 1, 2, 1)

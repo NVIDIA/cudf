@@ -14,6 +14,7 @@
 #include <cudf/detail/row_operator/primitive_equality.cuh>
 #include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing.hpp>
@@ -388,7 +389,7 @@ class key_remap_table : public key_remap_table_interface {
     if (this->_right.num_rows() == 0) {
       auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
         left_num_rows, stream, mr.get_output_mr());
-      thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                    result->begin(),
                    result->end(),
                    cudf::JoinNoMatch);
@@ -614,7 +615,7 @@ class key_remapping_impl {
     if (_table == nullptr) {
       auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
         keys.num_rows(), stream, mr.get_output_mr());
-      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                    result->begin(),
                    result->end(),
                    cudf::JoinNoMatch);
@@ -678,7 +679,7 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
 
   if (indices->size() == 0) { return cudf::make_empty_column(cudf::type_id::INT32); }
 
-  thrust::replace(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::replace(cudf::detail::exec_policy_nosync(stream, mr),
                   indices->begin(),
                   indices->end(),
                   cudf::JoinNoMatch,

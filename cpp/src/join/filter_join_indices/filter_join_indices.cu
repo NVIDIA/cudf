@@ -19,6 +19,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/dispatchers.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
@@ -453,7 +454,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
   });
 
   if (join_kind == join_kind::LEFT_JOIN) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       output_counts.begin(),
                       output_counts.end(),
                       output_counts.begin(),
@@ -464,7 +465,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
   if (join_kind == join_kind::FULL_JOIN) {
     auto const counts    = output_counts.data();
     auto const left_size = static_cast<std::size_t>(left.num_rows());
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<std::size_t>{0},
                       cuda::counting_iterator<std::size_t>{counts_size},
                       output_counts.begin(),
@@ -474,11 +475,10 @@ filter_join_indices_output_size(cudf::table_view const& left,
                       });
   }
 
-  std::size_t const total =
-    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   output_counts.begin(),
-                   output_counts.end(),
-                   std::size_t{0});
+  std::size_t const total = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                           output_counts.begin(),
+                                           output_counts.end(),
+                                           std::size_t{0});
 
   return {total, std::make_unique<rmm::device_uvector<size_type>>(std::move(output_counts))};
 }

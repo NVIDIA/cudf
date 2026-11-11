@@ -11,6 +11,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/join/mark_join.hpp>
@@ -589,7 +590,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   if (null_contribution > 0) {
     auto const bitmask_buffer_and_ptr = build_row_bitmask(_left, stream);
     auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
-    thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::copy_if(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator{_left.num_rows()},
                     result.begin() + unmatched_valid,
@@ -814,9 +815,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::anti_join(
   if (right.num_rows() == 0) {
     auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
       _left.num_rows(), stream, mr.get_output_mr());
-    thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     result->begin(),
-                     result->end());
+    thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), result->begin(), result->end());
     return result;
   }
   return semi_anti_join(right, join_kind::LEFT_ANTI_JOIN, stream, mr);

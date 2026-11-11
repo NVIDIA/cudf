@@ -10,6 +10,7 @@
 
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/dispatchers.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -78,7 +79,7 @@ cudf::join_match_context hash_join<Hasher>::make_match_context(join_kind join,
     stream, mr.get_output_mr(), _is_empty ? 0 : left.num_rows(), cuda::no_init);
 
   if (_is_empty) {
-    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                  match_counts->begin(),
                  match_counts->end(),
                  join == join_kind::INNER_JOIN ? 0 : 1);

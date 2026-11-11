@@ -16,6 +16,7 @@
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/stream_compaction.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -69,7 +70,7 @@ std::unique_ptr<table> unique(table_view const& input,
       auto d_results = cuda::device_buffer<bool>(stream, temp_mr, num_rows, cuda::no_init);
       auto itr       = cuda::counting_iterator<size_type>{0};
       thrust::transform(
-        rmm::exec_policy_nosync(stream, temp_mr),
+        cudf::detail::exec_policy_nosync(stream, mrs),
         itr,
         itr + num_rows,
         d_results.begin(),

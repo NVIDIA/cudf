@@ -8,6 +8,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/detail/join/join.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
@@ -159,10 +160,7 @@ compute_mixed_join_output_size(table_view const& left_equality,
       auto counts = rmm::device_uvector<size_type>(
         static_cast<std::size_t>(left_num_rows), stream, mr.get_output_mr());
       thrust::uninitialized_fill(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        counts.begin(),
-        counts.end(),
-        size_type{1});
+        cudf::detail::exec_policy_nosync(stream, mr), counts.begin(), counts.end(), size_type{1});
       return {static_cast<std::size_t>(left_num_rows),
               std::make_unique<rmm::device_uvector<size_type>>(std::move(counts))};
     }

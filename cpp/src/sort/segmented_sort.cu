@@ -7,6 +7,7 @@
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -30,7 +31,7 @@ cuda::device_buffer<size_type> get_segment_indices(size_type num_rows,
   auto offset_begin  = offsets.begin<size_type>();
   auto offset_end    = offsets.end<size_type>();
   auto counting_iter = cuda::counting_iterator<size_type>{0};
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     counting_iter,
                     counting_iter + segment_ids.size(),
                     segment_ids.begin(),

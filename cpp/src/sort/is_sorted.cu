@@ -5,6 +5,7 @@
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
@@ -42,7 +43,7 @@ bool is_sorted(cudf::table_view const& in,
     // in thrust::is_sorted.
     auto d_results = cuda::device_buffer<bool>(
       stream, cudf::get_current_device_resource_ref(), in.num_rows(), cuda::no_init);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mrs),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{in.num_rows()},
                       d_results.begin(),
@@ -50,18 +51,17 @@ bool is_sorted(cudf::table_view const& in,
                         return (idx == 0) || device_comparator(idx - 1, idx);
                       });
 
-    return thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    return thrust::count(cudf::detail::exec_policy_nosync(stream, mrs),
                          d_results.begin(),
                          d_results.end(),
                          false) == 0;
   } else {
     auto const device_comparator = comparator.less<false>(has_nested_nulls(in));
 
-    return thrust::is_sorted(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      cuda::counting_iterator<size_type>{0},
-      cuda::counting_iterator<size_type>{in.num_rows()},
-      device_comparator);
+    return thrust::is_sorted(cudf::detail::exec_policy_nosync(stream, mrs),
+                             cuda::counting_iterator<size_type>{0},
+                             cuda::counting_iterator<size_type>{in.num_rows()},
+                             device_comparator);
   }
 }
 

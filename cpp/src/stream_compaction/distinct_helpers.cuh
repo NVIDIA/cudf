@@ -7,6 +7,7 @@
 
 #include "distinct_helpers.hpp"
 
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -55,7 +56,7 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
 
   auto set_ref = set.ref(cuco::op::insert_and_find);
 
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    cuda::counting_iterator<cudf::size_type>{0},
                    cuda::counting_iterator{num_rows},
                    [set_ref, keep, reduction_results = reduction_results.begin()] __device__(

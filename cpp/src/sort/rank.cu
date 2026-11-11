@@ -10,6 +10,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
@@ -358,7 +359,7 @@ std::unique_ptr<column> rank(column_view const& input,
     auto drs            = dense_rank_sorted.data();
     bool const is_dense = (method == rank_method::DENSE);
     thrust::transform(
-      rmm::exec_policy_nosync(stream, temp_mr),
+      cudf::detail::exec_policy_nosync(stream, mr),
       rank_iter,
       rank_iter + input.size(),
       rank_iter,

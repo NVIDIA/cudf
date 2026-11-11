@@ -13,6 +13,7 @@
 #include <cudf/detail/row_operator/primitive_equality.cuh>
 #include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -358,7 +359,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
   } else {
     // If right table is empty, return left table
     if (this->_right.num_rows() == 0) {
-      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                    right_indices->begin(),
                    right_indices->end(),
                    cudf::JoinNoMatch);

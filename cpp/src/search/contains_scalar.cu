@@ -9,6 +9,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/search.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -120,7 +121,7 @@ struct contains_scalar_dispatch {
     // runtime performance over using the comparator in a transform iterator with thrust::count_if.
     auto d_results = cuda::device_buffer<bool>(stream, temp_mr, haystack.size(), cuda::no_init);
     thrust::transform(
-      rmm::exec_policy_nosync(stream, temp_mr),
+      cudf::detail::exec_policy_nosync(stream, mr),
       begin,
       end,
       d_results.begin(),
@@ -131,9 +132,10 @@ struct contains_scalar_dispatch {
         return d_comp(idx, rhs_index_type{0});  // compare haystack[idx] == needle[0].
       });
 
-    return thrust::count(
-             rmm::exec_policy_nosync(stream, temp_mr), d_results.begin(), d_results.end(), true) >
-           0;
+    return thrust::count(cudf::detail::exec_policy_nosync(stream, mr),
+                         d_results.begin(),
+                         d_results.end(),
+                         true) > 0;
   }
 };
 

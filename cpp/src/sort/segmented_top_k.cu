@@ -13,6 +13,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/sorting.hpp>
@@ -116,7 +117,7 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
     size_data_type, total_elements, mask_state::UNALLOCATED, stream, mr);
   auto d_result = result->mutable_view().begin<size_type>();
   // remove the indices marked by resolve_segment_indices
-  thrust::remove_copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::remove_copy(cudf::detail::exec_policy_nosync(stream, mr),
                       d_indices,
                       d_indices + indices->size(),
                       d_result,

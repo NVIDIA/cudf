@@ -5,6 +5,7 @@
 
 #include <cudf/detail/copy_if.cuh>
 #include <cudf/detail/stream_compaction.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -49,12 +50,9 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
     auto markers = cuda::device_buffer<bool>(
       stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
     thrust::uninitialized_fill(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      markers.begin(),
-      markers.end(),
-      false);
+      cudf::detail::exec_policy_nosync(stream, mr), markers.begin(), markers.end(), false);
     thrust::scatter(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::constant_iterator<bool>(true, 0),
       cuda::constant_iterator<bool>(true, static_cast<size_type>(distinct_indices.size())),
       distinct_indices.begin(),

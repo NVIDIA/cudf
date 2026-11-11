@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/convert/int_cast.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -217,16 +218,17 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
 namespace detail {
 
 std::optional<cudf::data_type> integer_cast_type(strings_column_view const& input,
-                                                 cuda::stream_ref stream)
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr)
 {
   if (input.size() == 0) { return std::nullopt; }
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // compute the maximum string size and whether any first byte has its high bit set;
   // since the bytes are left-aligned, the first byte's high bit becomes the sign bit
   using size_sign                 = cuda::std::pair<size_type, bool>;
   auto const [max_size, high_bit] = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{input.size()},
     cuda::proclaim_return_type<size_sign>(
@@ -250,10 +252,11 @@ std::optional<cudf::data_type> integer_cast_type(strings_column_view const& inpu
 }  // namespace detail
 
 std::optional<cudf::data_type> integer_cast_type(strings_column_view const& input,
-                                                 cuda::stream_ref stream)
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::integer_cast_type(input, stream);
+  return detail::integer_cast_type(input, stream, mr);
 }
 }  // namespace strings
 }  // namespace cudf

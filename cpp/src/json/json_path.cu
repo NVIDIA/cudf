@@ -1050,7 +1050,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                     col.size() - d_valid_count.value(stream),
                                     std::move(validity));
   // unmatched array query may result in unsanitized '[' value in the result
-  if (cudf::detail::has_nonempty_nulls(result->view(), stream)) {
+  if (cudf::detail::has_nonempty_nulls(result->view(), stream, mr.as_temporary())) {
     result = cudf::detail::purge_nonempty_nulls(result->view(), stream, mr);
   }
   return result;

@@ -13,6 +13,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -29,7 +30,8 @@ namespace {
 template <typename T>
 void table_to_array_impl(table_view const& input,
                          device_span<cuda::std::byte> output,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   auto const num_columns = input.num_columns();
   auto const num_rows    = input.num_rows();
@@ -55,19 +57,13 @@ void table_to_array_impl(table_view const& input,
     h_dsts[i] = reinterpret_cast<T*>(base_ptr + i * item_size * num_rows);
   }
 
-  auto const mr = cudf::get_current_device_resource_ref();
-
-  auto d_srcs = cudf::detail::make_device_buffer_async(h_srcs, stream, mr);
-  auto d_dsts = cudf::detail::make_device_buffer_async(h_dsts, stream, mr);
+  auto d_srcs = cudf::detail::make_device_buffer_async(h_srcs, stream, mr.as_temporary());
+  auto d_dsts = cudf::detail::make_device_buffer_async(h_dsts, stream, mr.as_temporary());
 
   cuda::constant_iterator<size_t> sizes(static_cast<size_t>(item_size * num_rows));
 
-  cudf::detail::batched_memcpy_async(d_srcs.data(),
-                                     d_dsts.data(),
-                                     sizes,
-                                     num_columns,
-                                     stream.get(),
-                                     cudf::get_current_device_resource_ref());
+  cudf::detail::batched_memcpy_async(
+    d_srcs.data(), d_dsts.data(), sizes, num_columns, stream.get(), mr);
   cudf::detail::sync_stream(
     stream);  // ensures h_srcs and h_dsts are not destroyed before the copy is done
 }
@@ -76,11 +72,12 @@ struct table_to_array_dispatcher {
   table_view const& input;
   device_span<cuda::std::byte> output;
   cuda::stream_ref stream;
+  cudf::memory_resources mr;
 
   template <typename T, CUDF_ENABLE_IF(is_fixed_width<T>())>
   void operator()() const
   {
-    table_to_array_impl<T>(input, output, stream);
+    table_to_array_impl<T>(input, output, stream, mr);
   }
 
   template <typename T, CUDF_ENABLE_IF(!is_fixed_width<T>())>
@@ -94,24 +91,26 @@ struct table_to_array_dispatcher {
 
 void table_to_array(table_view const& input,
                     device_span<cuda::std::byte> output,
-                    cuda::stream_ref stream)
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr)
 {
   if (input.num_columns() == 0) return;
 
   auto const dtype = input.column(0).type();
 
   cudf::type_dispatcher<cudf::dispatch_storage_type>(
-    dtype, table_to_array_dispatcher{input, output, stream});
+    dtype, table_to_array_dispatcher{input, output, stream, mr});
 }
 
 }  // namespace detail
 
 void table_to_array(table_view const& input,
                     device_span<cuda::std::byte> output,
-                    cuda::stream_ref stream)
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  cudf::detail::table_to_array(input, output, stream);
+  cudf::detail::table_to_array(input, output, stream, mr);
 }
 
 }  // namespace cudf

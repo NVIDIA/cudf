@@ -172,7 +172,8 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
                                   null_count,
                                   std::move(null_mask));
 
-  if (auto const output_cv = output->view(); cudf::detail::has_nonempty_nulls(output_cv, stream)) {
+  if (auto const output_cv = output->view();
+      cudf::detail::has_nonempty_nulls(output_cv, stream, mr.as_temporary())) {
     return cudf::detail::purge_nonempty_nulls(output_cv, stream, mr);
   }
   return output;
@@ -258,7 +259,8 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
                                   null_count,
                                   std::move(null_mask));
 
-  if (auto const output_cv = output->view(); cudf::detail::has_nonempty_nulls(output_cv, stream)) {
+  if (auto const output_cv = output->view();
+      cudf::detail::has_nonempty_nulls(output_cv, stream, mr.as_temporary())) {
     return cudf::detail::purge_nonempty_nulls(output_cv, stream, mr);
   }
   return output;

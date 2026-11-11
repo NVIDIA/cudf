@@ -36,7 +36,8 @@ std::unique_ptr<column> interleave_columns(table_view const& input,
  */
 void table_to_array(table_view const& input,
                     device_span<cuda::std::byte> output,
-                    cuda::stream_ref stream = cudf::get_default_stream());
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

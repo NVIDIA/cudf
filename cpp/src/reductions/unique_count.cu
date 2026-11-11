@@ -5,13 +5,12 @@
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/reduction/detail/unique_count.hpp>
 #include <cudf/reduction/unique_count.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -24,9 +23,10 @@ namespace detail {
 
 cudf::size_type unique_count(table_view const& keys,
                              null_equality nulls_equal,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
-  auto const temp_mr  = cudf::get_current_device_resource_ref();
+  auto const temp_mr  = mr.get_temporary_mr();
   auto const row_comp = cudf::detail::row::equality::self_comparator(keys, stream, temp_mr);
   if (cudf::detail::has_nested_columns(keys)) {
     auto const comp =
@@ -35,21 +35,21 @@ cudf::size_type unique_count(table_view const& keys,
     // the comparator speeds up compile-time significantly without much degradation in
     // runtime performance over using the comparator directly in thrust::count_if.
     auto d_results = cuda::device_buffer<bool>(stream, temp_mr, keys.num_rows(), cuda::no_init);
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{keys.num_rows()},
                       d_results.begin(),
                       [comp] __device__(auto i) { return (i == 0 or not comp(i, i - 1)); });
 
     return static_cast<size_type>(thrust::count(
-      rmm::exec_policy_nosync(stream, temp_mr), d_results.begin(), d_results.end(), true));
+      cudf::detail::exec_policy_nosync(stream, mr), d_results.begin(), d_results.end(), true));
   } else {
     auto const comp =
       row_comp.equal_to<false>(nullate::DYNAMIC{has_nested_nulls(keys)}, nulls_equal);
     // Using thrust::copy_if with the comparator directly will compile more slowly but
     // improves runtime by up to 2x over the transform/count approach above.
     return thrust::count_if(
-      rmm::exec_policy_nosync(stream, temp_mr),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::counting_iterator<cudf::size_type>{keys.num_rows()},
       [comp] __device__(cudf::size_type i) { return (i == 0 or not comp(i, i - 1)); });
@@ -60,10 +60,11 @@ cudf::size_type unique_count(table_view const& keys,
 
 cudf::size_type unique_count(table_view const& input,
                              null_equality nulls_equal,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::unique_count(input, nulls_equal, stream);
+  return detail::unique_count(input, nulls_equal, stream, mr);
 }
 
 }  // namespace cudf

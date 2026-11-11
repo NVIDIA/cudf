@@ -60,8 +60,8 @@ struct find_index_fn {
     auto tmp_size = std::size_t{0};
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
       nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
-    auto tmp = cuda::device_buffer<std::byte>(
-      stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
+    auto tmp =
+      cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), tmp_size, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
       tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
     if (result->value(stream) == num_keys) { result->set_valid_async(false, stream); }

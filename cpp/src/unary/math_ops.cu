@@ -381,14 +381,14 @@ std::unique_ptr<cudf::column> transform_fn(cudf::dictionary_column_view const& i
 {
   auto dictionary_view = cudf::column_device_view::create(input.parent(), stream);
   auto dictionary_itr  = dictionary::detail::make_dictionary_iterator<T>(*dictionary_view);
-  auto default_mr      = cudf::get_current_device_resource_ref();
   // call unary-op using temporary output buffer
-  auto output = transform_fn<T, UFN>(dictionary_itr,
-                                     dictionary_itr + input.size(),
-                                     detail::copy_bitmask(input.parent(), stream, default_mr),
-                                     input.null_count(),
-                                     stream,
-                                     default_mr);
+  auto output =
+    transform_fn<T, UFN>(dictionary_itr,
+                         dictionary_itr + input.size(),
+                         detail::copy_bitmask(input.parent(), stream, mr.as_temporary()),
+                         input.null_count(),
+                         stream,
+                         mr.as_temporary());
   return cudf::dictionary::detail::encode(
     output->view(), dictionary::detail::get_indices_type_for_size(output->size()), stream, mr);
 }

@@ -118,8 +118,8 @@ generate_list_offsets_and_validities(column_view const& input,
   auto const d_list_offsets = lists_column_view(lists_column_view(input).child()).offsets_begin();
 
   // The array of int8_t stores validities for the output list elements.
-  auto validities = cuda::device_buffer<int8_t>(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  auto validities =
+    cuda::device_buffer<int8_t>(stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
 
   // Compute output list sizes and validities.
   auto sizes_itr = cudf::detail::make_counting_transform_iterator(
@@ -171,7 +171,7 @@ std::unique_ptr<column> gather_list_entries(column_view const& input,
   auto const d_row_offsets  = lists_column_view(input).offsets_begin();
   auto const d_list_offsets = lists_column_view(child_col).offsets_begin();
   auto gather_map           = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), num_output_entries, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_output_entries, cuda::no_init);
 
   // Fill the gather map with indices of the lists from the child column of the input column.
   thrust::for_each_n(

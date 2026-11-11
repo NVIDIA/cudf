@@ -158,8 +158,7 @@ std::unique_ptr<column> copy_if_else(bool nullable,
 
   // if we have validity in the output
   if (nullable) {
-    cudf::detail::device_scalar<size_type> valid_count{
-      0, stream, cudf::get_current_device_resource_ref()};
+    cudf::detail::device_scalar<size_type> valid_count{0, stream, mr.get_temporary_mr()};
 
     // call the kernel
     copy_if_else_kernel<block_size, Element, LeftIter, RightIter, FilterFn, true>

@@ -39,9 +39,8 @@ std::unique_ptr<column> distinct(lists_column_view const& input,
 
   if (input.is_empty()) { return empty_like(input.parent()); }
 
-  auto const child = input.get_sliced_child(stream);
-  auto const labels =
-    generate_labels(input, child.size(), stream, cudf::get_current_device_resource_ref());
+  auto const child  = input.get_sliced_child(stream);
+  auto const labels = generate_labels(input, child.size(), stream, mr.as_temporary());
 
   auto const distinct_table =
     cudf::detail::stable_distinct(table_view{{labels->view(), child}},  // input table

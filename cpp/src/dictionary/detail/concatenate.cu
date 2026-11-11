@@ -13,6 +13,7 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/unary.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/concatenate.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
@@ -25,7 +26,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
@@ -185,7 +185,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     return keys;
   });
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
 
   // TODO: Overload function to accept multiple vectors to do the concatenate at once, with a 2D
   // kernel. The keys concatenate below and the indices concatenate further down are two separate
@@ -211,7 +211,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   auto set_ref    = set.ref(cuco::insert_and_find);
   using set_ref_t = decltype(set_ref);
 
-  auto policy = rmm::exec_policy_nosync(stream, temp_mr);
+  auto policy = cudf::detail::exec_policy_nosync(stream, mr);
   auto iota   = cuda::counting_iterator<size_type>{0};
 
   auto d_indices = cuda::device_buffer<size_type>(stream, temp_mr, all_keys->size(), cuda::no_init);

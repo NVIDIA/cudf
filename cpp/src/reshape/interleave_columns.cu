@@ -171,7 +171,7 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     auto num_strings = num_columns * strings_count;
 
     cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
-      stream, cudf::get_current_device_resource_ref(), num_strings, cuda::no_init);
+      stream, mr.get_temporary_mr(), num_strings, cuda::no_init);
     thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{num_strings},

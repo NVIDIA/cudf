@@ -80,8 +80,8 @@ struct remap_indices_dispatch_fn {
                           cudf::memory_resources mr)
   {
     // compute sorted-order so the new_keys can be searched more quickly
-    auto sorted_indices = cudf::detail::sorted_order(
-      table_view({new_keys}), {}, {}, stream, cudf::get_current_device_resource_ref());
+    auto sorted_indices =
+      cudf::detail::sorted_order(table_view({new_keys}), {}, {}, stream, mr.as_temporary());
     auto d_sorted_indices = sorted_indices->view().data<size_type>();
 
     auto const old_keys   = input.keys();
@@ -91,8 +91,8 @@ struct remap_indices_dispatch_fn {
     auto const iota     = cuda::counting_iterator<cudf::size_type>{0};
 
     // create a map from the old key indices to the new ones
-    auto indices_map = cuda::device_buffer<size_type>(
-      stream, cudf::get_current_device_resource_ref(), old_keys.size(), cuda::no_init);
+    auto indices_map =
+      cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), old_keys.size(), cuda::no_init);
     create_indices_map_fn<T, decltype(keys_itr)> map_fn{
       *d_old_keys, keys_itr, keys_itr + new_keys.size(), d_sorted_indices};
     thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),

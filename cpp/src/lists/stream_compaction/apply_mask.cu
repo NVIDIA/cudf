@@ -61,10 +61,8 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
       auto const inverted_mask_child =
         (mask_kind == cudf::detail::mask_type::RETENTION)
           ? std::unique_ptr<column>{}
-          : cudf::detail::unary_operation(mask_sliced_child,
-                                          cudf::unary_operator::NOT,
-                                          stream,
-                                          cudf::get_current_device_resource_ref());
+          : cudf::detail::unary_operation(
+              mask_sliced_child, cudf::unary_operator::NOT, stream, mr.as_temporary());
       auto const effective_mask_sliced_child = (mask_kind == cudf::detail::mask_type::RETENTION)
                                                  ? mask_sliced_child
                                                  : inverted_mask_child->view();
@@ -74,7 +72,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                                     null_policy::EXCLUDE,
                                                     std::nullopt,
                                                     stream,
-                                                    cudf::get_current_device_resource_ref());
+                                                    mr.as_temporary());
     }();
     auto const d_sizes     = column_device_view::create(*sizes, stream);
     auto const sizes_begin = cudf::detail::make_null_replacement_iterator(*d_sizes, size_type{0});

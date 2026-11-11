@@ -633,7 +633,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     nullptr, temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
   cuda::device_buffer<std::byte> d_temp_storage(
-    stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
+    stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(
     d_temp_storage.data(), temp_storage_bytes, srcs, dsts, src_sizes, size, stream.get()));
 
@@ -812,7 +812,7 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
   auto stencil_has_nulls = stencil.has_value() ? (stencil->second > 0) : false;
 
   cudf::detail::device_scalar<int32_t> d_max_error(
-    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+    static_cast<int32_t>(errc::SUCCESS), stream, mr.get_temporary_mr());
 
   if (compiled_kernel == nullptr) {
     jit_transform::run(is_null_aware == null_aware::YES,
@@ -1018,7 +1018,7 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
     is_null_aware == null_aware::YES, user_data.has_value(), inputs, output_columns);
 
   cudf::detail::device_scalar<int32_t> d_max_error(
-    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+    static_cast<int32_t>(errc::SUCCESS), stream, mr.get_temporary_mr());
 
   jit_transform::run_lto(precompiled_kernel_fragment,
                          is_null_aware == null_aware::YES,

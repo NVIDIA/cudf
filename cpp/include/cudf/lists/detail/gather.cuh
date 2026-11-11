@@ -104,7 +104,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
 
   // generate the base offsets
   cuda::device_buffer<int32_t> base_offsets(
-    stream, cudf::get_current_device_resource_ref(), output_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), output_count, cuda::no_init);
   thrust::transform(
     cudf::detail::exec_policy_nosync(stream, mr),
     gather_map,

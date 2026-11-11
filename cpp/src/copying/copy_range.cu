@@ -103,9 +103,8 @@ struct out_of_place_copy_range_dispatch {
     }
 
     if (source_end != source_begin) {  // otherwise no-op
-      auto ret_view = p_ret->mutable_view();
-      // TODO: route through the caller's memory resources once copy_range is migrated
-      auto const temp_mr = cudf::get_current_device_resource_ref();
+      auto ret_view      = p_ret->mutable_view();
+      auto const temp_mr = mr.get_temporary_mr();
       in_place_copy_range<T>(source,
                              ret_view,
                              source_begin,
@@ -158,8 +157,8 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   auto target_matched =
     cudf::dictionary::detail::add_keys(dict_target, dict_source.keys(), stream, mr);
   auto const target_view = cudf::dictionary_column_view(target_matched->view());
-  auto source_matched    = cudf::dictionary::detail::set_keys(
-    dict_source, target_view.keys(), stream, cudf::get_current_device_resource_ref());
+  auto source_matched =
+    cudf::dictionary::detail::set_keys(dict_source, target_view.keys(), stream, mr.as_temporary());
   auto const source_view = cudf::dictionary_column_view(source_matched->view());
 
   // build the new indices by calling in_place_copy_range on just the indices
@@ -171,8 +170,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
                                         target_indices->mutable_view().head(),
                                         target_contents.null_mask->data(),
                                         dict_target.null_count());
-  // TODO: route through the caller's memory resources once copy_range is migrated
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   cudf::type_dispatcher(new_indices.type(),
                         in_place_copy_range_dispatch{source_indices, new_indices},
                         source_begin,

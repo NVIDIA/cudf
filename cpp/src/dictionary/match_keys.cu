@@ -50,7 +50,7 @@ struct unique_keys_dispatch_fn {
 
     auto const has_nulls  = nullate::DYNAMIC{false};
     auto const keys_tv    = table_view({all_keys});
-    auto const temp_mr    = cudf::get_current_device_resource_ref();
+    auto const temp_mr    = mr.get_temporary_mr();
     auto const row_hash   = cudf::detail::row::hash::row_hasher(keys_tv, stream, temp_mr);
     auto const row_equal  = cudf::detail::row::equality::self_comparator(keys_tv, stream, temp_mr);
     auto const comparator = cudf::detail::row::equality::nan_equal_physical_equality_comparator{};
@@ -97,7 +97,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries(
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
 
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
   std::vector<cudf::column_view> keys(input.size());
   std::transform(input.begin(), input.end(), keys.begin(), [](auto& col) { return col.keys(); });
   auto all_keys = cudf::detail::concatenate(keys, stream, temp_mr);
@@ -163,7 +163,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
 
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
   std::vector<cudf::column_view> keys(input.size());
   std::transform(input.begin(), input.end(), keys.begin(), [](auto& col) { return col.keys(); });
   auto all_keys = cudf::detail::concatenate(keys, stream, temp_mr);

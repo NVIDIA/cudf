@@ -521,7 +521,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 
   // move stack info to the gpu
   cuda::device_buffer<column_info> d_info =
-    cudf::detail::make_device_buffer_async(info, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::make_device_buffer_async(info, stream, mr.get_temporary_mr());
 
   // each thread needs to maintain a stack of row spans of size max_branch_depth. we will use
   // shared memory to do this rather than allocating a potentially gigantic temporary buffer

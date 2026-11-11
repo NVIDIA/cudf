@@ -33,7 +33,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
 {
   // Create a gather map containing indices of the prefix min/max elements.
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   cudf::memory_resources mrs(mr);
   auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(
     input, stream, mrs.as_temporary());

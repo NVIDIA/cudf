@@ -226,7 +226,7 @@ struct list_child_constructor {
     if (num_child_rows == 0) { return make_empty_column(type_id::STRING); }
 
     auto string_views = cuda::device_buffer<string_view>(
-      stream, cudf::get_current_device_resource_ref(), num_child_rows, cuda::no_init);
+      stream, mr.get_temporary_mr(), num_child_rows, cuda::no_init);
 
     auto const null_string_view = string_view{nullptr, 0};  // placeholder for factory function
 
@@ -293,7 +293,7 @@ struct list_child_constructor {
     }
 
     auto child_list_views = cuda::device_buffer<unbound_list_view>(
-      stream, cudf::get_current_device_resource_ref(), num_child_rows, cuda::no_init);
+      stream, mr.get_temporary_mr(), num_child_rows, cuda::no_init);
 
     // Convert from parent list_device_view instances to child list_device_views.
     // For instance, if a parent list_device_view has 3 elements, it should have 3 corresponding

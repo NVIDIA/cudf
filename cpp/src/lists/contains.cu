@@ -211,7 +211,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
   auto const child_tview = cudf::table_view{{child}};
   auto const has_nulls   = has_nested_nulls(child_tview) || has_nested_nulls(keys_tview);
   auto const comparator  = cudf::detail::row::equality::two_table_comparator(
-    child_tview, keys_tview, stream, cudf::get_current_device_resource_ref());
+    child_tview, keys_tview, stream, mr.as_temporary());
   if (cudf::is_nested(search_keys.type())) {
     auto const d_comp = comparator.equal_to<true>(nullate::DYNAMIC{has_nulls});
     index_of(input_it,
@@ -222,7 +222,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
              find_option,
              d_comp,
              stream,
-             cudf::get_current_device_resource_ref());
+             mr.as_temporary());
   } else {
     auto const d_comp = comparator.equal_to<false>(nullate::DYNAMIC{has_nulls});
     index_of(input_it,
@@ -233,7 +233,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
              find_option,
              d_comp,
              stream,
-             cudf::get_current_device_resource_ref());
+             mr.as_temporary());
   }
 
   if (search_keys_have_nulls || lists.has_nulls()) {
@@ -319,11 +319,8 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
-  auto key_indices = detail::index_of(lists,
-                                      search_key,
-                                      duplicate_find_option::FIND_FIRST,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
+  auto key_indices = detail::index_of(
+    lists, search_key, duplicate_find_option::FIND_FIRST, stream, mr.as_temporary());
   return to_contains(std::move(key_indices), stream, mr);
 }
 
@@ -335,11 +332,8 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
   CUDF_EXPECTS(search_keys.size() == lists.size(),
                "Number of search keys must match list column size.");
 
-  auto key_indices = detail::index_of(lists,
-                                      search_keys,
-                                      duplicate_find_option::FIND_FIRST,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
+  auto key_indices = detail::index_of(
+    lists, search_keys, duplicate_find_option::FIND_FIRST, stream, mr.as_temporary());
   return to_contains(std::move(key_indices), stream, mr);
 }
 

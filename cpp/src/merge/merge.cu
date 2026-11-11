@@ -544,7 +544,7 @@ table_ptr_type merge(cudf::table_view const& left_table,
                                             null_precedence,
                                             nullable,
                                             stream,
-                                            cudf::get_current_device_resource_ref());
+                                            mr.as_temporary());
     } else {
       return generate_merged_indices(index_left_view,
                                      index_right_view,
@@ -552,7 +552,7 @@ table_ptr_type merge(cudf::table_view const& left_table,
                                      null_precedence,
                                      nullable,
                                      stream,
-                                     cudf::get_current_device_resource_ref());
+                                     mr.as_temporary());
     }
   }();
   // create merged table:
@@ -638,8 +638,8 @@ table_ptr_type merge(std::vector<table_view> const& tables_to_merge,
 
   // This utility will ensure all corresponding dictionary columns have matching keys.
   // It will return any new dictionary columns created as well as updated table_views.
-  auto matched = cudf::dictionary::detail::match_dictionaries(
-    tables_to_merge, stream, cudf::get_current_device_resource_ref());
+  auto matched =
+    cudf::dictionary::detail::match_dictionaries(tables_to_merge, stream, mr.as_temporary());
   auto merge_tables = matched.second;
 
   // A queue of (table view, table) pairs
@@ -665,7 +665,7 @@ table_ptr_type merge(std::vector<table_view> const& tables_to_merge,
     auto const right_table = top_and_pop(merge_queue);
 
     // Only use mr for the output table
-    auto const& new_tbl_mr = merge_queue.empty() ? mr : cudf::get_current_device_resource_ref();
+    auto const& new_tbl_mr = merge_queue.empty() ? mr : mr.as_temporary();
     auto merged_table      = merge(left_table.view,
                               right_table.view,
                               key_cols,

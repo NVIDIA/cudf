@@ -111,7 +111,7 @@ std::unique_ptr<table> explode(table_view const& input_table,
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), sliced_child.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), sliced_child.size(), cuda::no_init);
 
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
@@ -150,7 +150,7 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), sliced_child.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), sliced_child.size(), cuda::no_init);
 
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
@@ -206,7 +206,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
   // number of nulls or empty lists found so far in the explode column
   cuda::device_buffer<size_type> null_or_empty_offset(
-    stream, cudf::get_current_device_resource_ref(), explode_col.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), explode_col.size(), cuda::no_init);
 
   auto null_or_empty = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
@@ -238,9 +238,9 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
   auto gather_map_size = sliced_child.size() + null_or_empty_count;
 
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), gather_map_size, cuda::no_init);
+    stream, mr.get_temporary_mr(), gather_map_size, cuda::no_init);
   cuda::device_buffer<size_type> explode_col_gather_map(
-    stream, cudf::get_current_device_resource_ref(), gather_map_size, cuda::no_init);
+    stream, mr.get_temporary_mr(), gather_map_size, cuda::no_init);
   rmm::device_uvector<size_type> pos(
     include_position ? gather_map_size : 0, stream, mr.get_output_mr());
 

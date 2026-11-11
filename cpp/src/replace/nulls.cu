@@ -123,8 +123,7 @@ struct replace_nulls_column_kernel_forwarder {
     auto device_out         = cudf::mutable_column_device_view::create(output_view, stream);
     auto device_replacement = cudf::column_device_view::create(replacement, stream);
 
-    cudf::detail::device_scalar<cudf::size_type> valid_counter(
-      0, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<cudf::size_type> valid_counter(0, stream, mr.get_temporary_mr());
     cudf::size_type* valid_count = valid_counter.data();
 
     replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.get()>>>(
@@ -275,7 +274,7 @@ std::unique_ptr<cudf::column> replace_nulls_policy_impl(cudf::column_view const&
   auto in_begin  = cuda::make_zip_iterator(cuda::std::make_tuple(index, valid_it));
 
   cuda::device_buffer<cudf::size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   auto gm_begin = cuda::make_zip_iterator(
     cuda::std::make_tuple(gather_map.begin(), cuda::make_discard_iterator()));
 

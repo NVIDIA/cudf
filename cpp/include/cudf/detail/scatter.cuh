@@ -213,8 +213,8 @@ struct column_scatterer_impl<dictionary32> {
     // first combine keys so both dictionaries have the same set
     auto target_matched    = dictionary::detail::add_keys(target, source.keys(), stream, mr);
     auto const target_view = dictionary_column_view(target_matched->view());
-    auto source_matched    = dictionary::detail::set_keys(
-      source, target_view.keys(), stream, cudf::get_current_device_resource_ref());
+    auto source_matched =
+      dictionary::detail::set_keys(source, target_view.keys(), stream, mr.as_temporary());
     auto const source_view = dictionary_column_view(source_matched->view());
 
     // now build the new indices by doing a scatter on just the matched indices
@@ -295,11 +295,8 @@ struct column_scatterer_impl<struct_view> {
                                             structs_target.child_end(),
                                             [](auto const& col) { return col.nullable(); });
     if (child_nullable) {
-      auto const gather_map = scatter_to_gather(scatter_map_begin,
-                                                scatter_map_end,
-                                                target.size(),
-                                                stream,
-                                                cudf::get_current_device_resource_ref());
+      auto const gather_map = scatter_to_gather(
+        scatter_map_begin, scatter_map_end, target.size(), stream, mr.as_temporary());
       gather_bitmask(cudf::table_view{std::vector<cudf::column_view>{structs_src.child_begin(),
                                                                      structs_src.child_end()}},
                      gather_map.begin(),
@@ -322,11 +319,8 @@ struct column_scatterer_impl<struct_view> {
     // Only gather bitmask from the target column for the rows that have not been scattered onto
     // The bitmask from the source column will be gathered at the top level `scatter()` call.
     if (target.nullable()) {
-      auto const gather_map = scatter_to_gather_complement(scatter_map_begin,
-                                                           scatter_map_end,
-                                                           target.size(),
-                                                           stream,
-                                                           cudf::get_current_device_resource_ref());
+      auto const gather_map = scatter_to_gather_complement(
+        scatter_map_begin, scatter_map_end, target.size(), stream, mr.as_temporary());
       gather_bitmask(table_view{std::vector<cudf::column_view>{target}},
                      gather_map.begin(),
                      result,
@@ -418,7 +412,7 @@ std::unique_ptr<table> scatter(table_view const& source,
                                               updated_scatter_map_end,
                                               target.num_rows(),
                                               stream,
-                                              cudf::get_current_device_resource_ref());
+                                              mr.as_temporary());
     gather_bitmask(source, gather_map.begin(), result, gather_bitmask_op::PASSTHROUGH, stream, mr);
 
     // For struct columns, we need to superimpose the null_mask of the parent over the null_mask of

@@ -133,7 +133,7 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
       iter, iter + left_table_num_rows, d_equal, hasher, found_begin, stream.get());
   } else {
     auto stencil           = cuda::counting_iterator<size_type>{0};
-    auto const row_bitmask = cudf::detail::bitmask_and(left, stream, mr.get_temporary_mr()).first;
+    auto const row_bitmask = cudf::detail::bitmask_and(left, stream, mr.as_temporary()).first;
     auto const pred        = cudf::detail::row_is_valid{row_bitmask.data()};
 
     hash_table.find_if_async(

@@ -370,7 +370,7 @@ filter_join_indices_jit(cudf::table_view const& left,
 
   if (join_kind == join_kind::FULL_JOIN) {
     auto left_maps =
-      full_to_left_join_indices(left_indices, right_indices, stream, mr.get_temporary_mr());
+      full_to_left_join_indices(left_indices, right_indices, stream, mr.as_temporary());
     auto filtered_left =
       cudf::detail::filter_join_indices_jit(left,
                                             right,
@@ -381,12 +381,8 @@ filter_join_indices_jit(cudf::table_view const& left,
                                             is_ptx,
                                             stream,
                                             mr);
-    return finalize_full_join(std::move(filtered_left),
-                              left.num_rows(),
-                              right.num_rows(),
-                              std::nullopt,
-                              stream,
-                              mr.get_temporary_mr());
+    return finalize_full_join(
+      std::move(filtered_left), left.num_rows(), right.num_rows(), std::nullopt, stream, mr);
   }
 
   // Compile JIT kernel
@@ -461,7 +457,7 @@ filter_join_indices_jit(cudf::table_view const& left,
 
   if (join_kind == join_kind::FULL_JOIN) {
     auto left_maps =
-      full_to_left_join_indices(left_indices, right_indices, stream, mr.get_temporary_mr());
+      full_to_left_join_indices(left_indices, right_indices, stream, mr.as_temporary());
     auto filtered_left =
       cudf::detail::filter_join_indices_jit(left,
                                             right,
@@ -472,12 +468,8 @@ filter_join_indices_jit(cudf::table_view const& left,
                                             join_kind::LEFT_JOIN,
                                             stream,
                                             mr);
-    return finalize_full_join(std::move(filtered_left),
-                              left.num_rows(),
-                              right.num_rows(),
-                              std::nullopt,
-                              stream,
-                              mr.get_temporary_mr());
+    return finalize_full_join(
+      std::move(filtered_left), left.num_rows(), right.num_rows(), std::nullopt, stream, mr);
   }
 
   // Convert AST predicate to JIT code

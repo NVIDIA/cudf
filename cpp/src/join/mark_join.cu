@@ -441,9 +441,9 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
 {
   CUDF_EXPECTS(_bloom_filter != nullptr, "Prefilter-enabled mark_join is missing bloom filter.");
 
-  auto filtered_right_rows =
-    cuda::device_buffer<right_key_type>(stream, mr.get_output_mr(), num_right_rows, cuda::no_init);
-  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr.get_output_mr());
+  auto filtered_right_rows = cuda::device_buffer<right_key_type>(
+    stream, mr.get_temporary_mr(), num_right_rows, cuda::no_init);
+  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr.get_temporary_mr());
 
   auto const filter_ref = _bloom_filter->ref();
   using prefilter_operator_type =

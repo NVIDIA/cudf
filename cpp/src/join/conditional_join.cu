@@ -77,7 +77,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> conditional_join_anti_semi(
     join_size = *output_size;
   } else {
     // Allocate storage for the counter used to get the size of the join output
-    cudf::detail::device_scalar<std::size_t> size(0, stream, mr.get_output_mr());
+    cudf::detail::device_scalar<std::size_t> size(0, stream, mr.get_temporary_mr());
     if (has_nulls) {
       compute_conditional_join_output_size<DEFAULT_JOIN_BLOCK_SIZE, true>
         <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.get()>>>(
@@ -201,7 +201,7 @@ conditional_join(table_view const& left,
     join_size = *output_size;
   } else {
     // Allocate storage for the counter used to get the size of the join output
-    cudf::detail::device_scalar<std::size_t> size(0, stream, mr.get_output_mr());
+    cudf::detail::device_scalar<std::size_t> size(0, stream, mr.get_temporary_mr());
     if (has_nulls) {
       compute_conditional_join_output_size<DEFAULT_JOIN_BLOCK_SIZE, true>
         <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.get()>>>(
@@ -353,7 +353,7 @@ std::size_t compute_conditional_join_output_size(table_view const& left,
   auto const shmem_size_per_block = parser.shmem_per_thread * config.num_threads_per_block;
 
   // Allocate storage for the counter used to get the size of the join output
-  cudf::detail::device_scalar<std::size_t> size(0, stream, mr.get_output_mr());
+  cudf::detail::device_scalar<std::size_t> size(0, stream, mr.get_temporary_mr());
 
   // Determine number of output rows without actually building the output to simply
   // find what the size of the output will be.

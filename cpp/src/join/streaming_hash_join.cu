@@ -360,7 +360,7 @@ class streaming_hash_join_impl {
     auto const batch_rows = keys.num_rows();
     auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<cudf::bitmask_type>> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && nullable(keys)) {
-        return cudf::detail::bitmask_and(keys, stream, mr.get_temporary_mr()).first;
+        return cudf::detail::bitmask_and(keys, stream, mr.as_temporary()).first;
       }
       return std::nullopt;
     }();

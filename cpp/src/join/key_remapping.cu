@@ -475,7 +475,7 @@ class key_remap_table : public key_remap_table_interface {
     } else {
       auto stencil = cuda::counting_iterator<cudf::size_type>{0};
       auto const row_bitmask =
-        cudf::detail::bitmask_and(left_keys, stream, mr.get_temporary_mr()).first;
+        cudf::detail::bitmask_and(left_keys, stream, mr.as_temporary()).first;
       auto const pred = row_is_valid{row_bitmask.data()};
 
       _hash_table.find_if_async(iter,

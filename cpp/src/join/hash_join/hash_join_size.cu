@@ -54,11 +54,11 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   if (_is_empty) { return left.num_rows(); }
 
   auto total_matches =
-    cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_output_mr());
+    cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_temporary_mr());
   auto matched_groups = cudf::detail::make_zeroed_device_buffer_async<cuda::std::uint32_t>(
-    _right.num_rows(), stream, mr.get_output_mr());
+    _right.num_rows(), stream, mr.get_temporary_mr());
   auto matched_build_rows =
-    cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_output_mr());
+    cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_temporary_mr());
   probe(join_kind::FULL_JOIN,
         left,
         {},

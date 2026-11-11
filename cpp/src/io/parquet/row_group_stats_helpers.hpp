@@ -119,9 +119,15 @@ struct row_group_stats_caster : public stats_caster_base {
           if (col != std::end(row_group.columns)) {
             auto const& colchunk = *col;
             auto const& stats    = colchunk.meta_data.statistics;
-            if (has_ordered_min_max(source_metadata,
-                                    colchunk.meta_data.type,
-                                    std::distance(row_group.columns.begin(), col))) {
+            // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them
+            auto const ignore_int96_min_max =
+              is_unordered_int96(source_metadata,
+                                 colchunk.meta_data.type,
+                                 std::distance(row_group.columns.begin(), col));
+            if (ignore_int96_min_max) {
+              min.set_index(stats_idx, std::nullopt, {});
+              max.set_index(stats_idx, std::nullopt, {});
+            } else {
               // Deprecated min/max use signed physical ordering, so only fall back
               // when that ordering is compatible with the output type.
               auto const* min_value = &stats.min_value;
@@ -133,9 +139,6 @@ struct row_group_stats_caster : public stats_caster_base {
               // translate binary data to Type then to <T>
               min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
               max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
-            } else {
-              min.set_index(stats_idx, std::nullopt, {});
-              max.set_index(stats_idx, std::nullopt, {});
             }
             // Check the nullability and NaN presence of this column chunk
             if (with_null_and_nan_stats) {

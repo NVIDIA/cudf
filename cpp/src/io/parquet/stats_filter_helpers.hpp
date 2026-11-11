@@ -49,18 +49,18 @@ auto constexpr stats_cols_per_column = 4;
 [[nodiscard]] std::optional<bool> has_nans(std::optional<int64_t> nan_count);
 
 /**
- * @brief Checks whether INT96 min/max stats have a defined order; always true for other types
+ * @brief Checks whether a column chunk is INT96 without `INT96_TIMESTAMP_ORDER`
  *
  * @throws std::invalid_argument if `leaf_idx` is out of bounds of the column orders
  *
  * @param metadata File metadata
  * @param physical_type Physical type of the column chunk
  * @param leaf_idx Leaf column index
- * @return Whether the min/max statistics have a defined order
+ * @return Whether the column chunk's min/max statistics must be ignored
  */
-[[nodiscard]] bool has_ordered_min_max(FileMetaData const& metadata,
-                                       Type physical_type,
-                                       std::size_t leaf_idx);
+[[nodiscard]] bool is_unordered_int96(FileMetaData const& metadata,
+                                      Type physical_type,
+                                      std::size_t leaf_idx);
 
 /**
  * @brief Base utilities for converting and casting stats values

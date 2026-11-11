@@ -1059,7 +1059,7 @@ struct out_to_in_index_function {
 // packed block of memory 1: split indices and src_buf_info structs
 struct packed_split_indices_and_src_buf_info {
   packed_split_indices_and_src_buf_info(cudf::table_view const& input,
-                                        std::vector<size_type> const& splits,
+                                        std::span<size_type const> splits,
                                         std::size_t num_partitions,
                                         cudf::size_type num_src_bufs,
                                         cuda::stream_ref stream,
@@ -1271,7 +1271,7 @@ std::unique_ptr<packed_src_and_dst_pointers> setup_src_and_dst_pointers(
  */
 std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
   cudf::table_view const& input,
-  std::vector<size_type> const& splits,
+  std::span<size_type const> splits,
   std::size_t num_partitions,
   cudf::size_type num_src_bufs,
   std::size_t num_bufs,
@@ -1435,7 +1435,7 @@ std::unique_ptr<packed_partition_buf_size_and_dst_buf_info> compute_splits(
  */
 std::tuple<size_type, std::size_t, std::unique_ptr<packed_partition_buf_size_and_dst_buf_info>>
 compute_num_bufs_and_splits(cudf::table_view const& input,
-                            std::vector<size_type> const& splits,
+                            std::span<size_type const> splits,
                             cuda::stream_ref stream,
                             rmm::device_async_resource_ref temp_mr)
 {
@@ -1835,10 +1835,10 @@ void copy_data(int num_batches_to_copy,
  * special handling has to happen in the calling code.
  *
  * @param input table_view of source table to be split
- * @param splits the splits specified by the user, or an empty vector if no splits
+ * @param splits the splits specified by the user, or an empty span if no splits
  * @returns true if the input is empty, false otherwise
  */
-bool check_inputs(cudf::table_view const& input, std::vector<size_type> const& splits)
+bool check_inputs(cudf::table_view const& input, std::span<size_type const> splits)
 {
   auto const num_rows = input.num_rows();
   if (input.num_columns() == 0 && num_rows == 0) { return true; }
@@ -1889,7 +1889,7 @@ struct contiguous_split_state {
   }
 
   contiguous_split_state(cudf::table_view const& input,
-                         std::vector<size_type> const& splits,
+                         std::span<size_type const> splits,
                          cuda::stream_ref stream,
                          std::optional<rmm::device_async_resource_ref> mr,
                          rmm::device_async_resource_ref temp_mr)
@@ -2007,7 +2007,7 @@ struct contiguous_split_state {
 
  private:
   contiguous_split_state(cudf::table_view const& input,
-                         std::vector<size_type> const& splits,
+                         std::span<size_type const> splits,
                          std::size_t user_buffer_size,
                          cuda::stream_ref stream,
                          std::optional<rmm::device_async_resource_ref> mr,
@@ -2203,28 +2203,43 @@ struct contiguous_split_state {
 };
 
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
-                                           std::vector<size_type> const& splits,
+                                           std::span<size_type const> splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
-  // `temp_mr` is the same as `mr` for contiguous_split as it allocates all
-  // of its memory from the default memory resource in cuDF
-  auto temp_mr = mr;
-  auto state   = contiguous_split_state(input, splits, stream, mr, temp_mr);
+  // contiguous_split allocates its temporaries from the output resource, as it did before
+  // `cudf::memory_resources`; using `mr.get_temporary_mr()` is left to a follow-up.
+  auto temp_mr = mr.get_output_mr();
+  auto state   = contiguous_split_state(input, splits, stream, mr.get_output_mr(), temp_mr);
   return state.contiguous_split();
 }
 
 };  // namespace detail
 
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
-                                           std::vector<size_type> const& splits,
+                                           std::span<size_type const> splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contiguous_split(input, splits, stream, mr);
 }
 
+std::vector<packed_table> contiguous_split(cudf::table_view const& input,
+                                           std::vector<size_type> const& splits,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
+{
+  return cudf::contiguous_split(input, std::span<size_type const>{splits}, stream, mr);
+}
+std::vector<packed_table> contiguous_split(cudf::table_view const& input,
+                                           std::initializer_list<size_type> splits,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
+{
+  return cudf::contiguous_split(
+    input, std::span<size_type const>{splits.begin(), splits.size()}, stream, mr);
+}
 chunked_pack::chunked_pack(cudf::table_view const& input,
                            std::size_t user_buffer_size,
                            cuda::stream_ref stream,

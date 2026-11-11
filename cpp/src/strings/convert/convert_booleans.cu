@@ -28,7 +28,7 @@ namespace detail {
 std::unique_ptr<column> to_booleans(strings_column_view const& input,
                                     string_scalar const& true_string,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   size_type strings_count = input.size();
   if (strings_count == 0) {
@@ -71,7 +71,7 @@ std::unique_ptr<column> to_booleans(strings_column_view const& input,
 std::unique_ptr<column> to_booleans(strings_column_view const& input,
                                     string_scalar const& true_string,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_booleans(input, true_string, stream, mr);
@@ -110,7 +110,7 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
                                       string_scalar const& true_string,
                                       string_scalar const& false_string,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   size_type strings_count = booleans.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
@@ -148,7 +148,7 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
                                       string_scalar const& true_string,
                                       string_scalar const& false_string,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::from_booleans(booleans, true_string, false_string, stream, mr);

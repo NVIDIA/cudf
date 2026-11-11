@@ -31,6 +31,7 @@ from . import (
     json,
     labeling,
     lists,
+    memory_resources,
     merge,
     null_mask,
     nvtext,
@@ -59,6 +60,7 @@ from . import (
 )
 from .column import Column
 from .gpumemoryview import gpumemoryview
+from .memory_resources import MemoryResources
 from .scalar import Scalar
 from .table import Table
 from .types import DataType, MaskState, TypeId
@@ -67,6 +69,7 @@ __all__ = [
     "Column",
     "DataType",
     "MaskState",
+    "MemoryResources",
     "Scalar",
     "Table",
     "TypeId",
@@ -90,6 +93,7 @@ __all__ = [
     "json",
     "labeling",
     "lists",
+    "memory_resources",
     "merge",
     "null_mask",
     "nvtext",

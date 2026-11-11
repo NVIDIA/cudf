@@ -8,7 +8,6 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
-#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -405,16 +404,14 @@ TEST_P(RowPreprocessingMemoryResourceTest, EqualityPreprocessingMemoryResources)
   auto& resources               = this->harness();
   auto const setup = cudf::memory_resources{resources.setup_mr(), resources.setup_mr()};
   auto strings =
-    cudf::test::strings_column_wrapper{
-      {"", "a", "b"}, cudf::test::iterators::null_at(0), stream, setup}
+    cudf::test::strings_column_wrapper{{"", "a", "b"}, {false, true, true}, stream, setup}
       .release();
   if (has_nonempty_nulls) {
     cudf::set_null_mask(strings->mutable_view().null_mask(), 1, 2, false, stream);
     strings->set_null_count(2);
   }
   auto expected =
-    cudf::test::strings_column_wrapper{
-      {"", "", "b"}, cudf::test::iterators::nulls_at({0, 1}), stream, setup}
+    cudf::test::strings_column_wrapper{{"", "", "b"}, {false, false, true}, stream, setup}
       .release();
   // The device table owns its column views; nonempty null rows require an owning sanitized column.
   auto constexpr alignment     = alignof(cudf::column_device_view);

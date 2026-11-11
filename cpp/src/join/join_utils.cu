@@ -9,6 +9,7 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -255,12 +256,11 @@ VectorPair finalize_full_join(
 
 }  // namespace detail
 
-std::size_t join_match_context::output_size(cuda::stream_ref stream) const
+std::size_t join_match_context::output_size(cuda::stream_ref stream,
+                                            cudf::memory_resources mr) const
 {
   auto const counts = match_counts();
-  return thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                        counts.begin(),
-                        counts.end(),
-                        std::size_t{0});
+  return thrust::reduce(
+    cudf::detail::exec_policy_nosync(stream, mr), counts.begin(), counts.end(), std::size_t{0});
 }
 }  // namespace cudf

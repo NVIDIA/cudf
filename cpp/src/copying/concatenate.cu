@@ -152,10 +152,10 @@ size_type concatenate_masks(device_span<column_device_view const> d_views,
                             device_span<size_t const> d_offsets,
                             bitmask_type* dest_mask,
                             size_type output_size,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
-  cudf::detail::device_scalar<size_type> d_valid_count(
-    0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<size_type> d_valid_count(0, stream, mr.get_temporary_mr());
   constexpr size_type block_size{256};
   cudf::detail::grid_1d config(output_size, block_size);
   concatenate_masks_kernel<block_size>
@@ -172,16 +172,16 @@ size_type concatenate_masks(device_span<column_device_view const> d_views,
 
 size_type concatenate_masks(host_span<column_view const> views,
                             bitmask_type* dest_mask,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
   // Preprocess and upload inputs to device memory
-  auto const device_views =
-    create_device_views(views, stream, cudf::get_current_device_resource_ref());
-  auto const& d_views    = std::get<1>(device_views);
-  auto const& d_offsets  = std::get<2>(device_views);
-  auto const output_size = std::get<3>(device_views);
+  auto const device_views = create_device_views(views, stream, mr.get_temporary_mr());
+  auto const& d_views     = std::get<1>(device_views);
+  auto const& d_offsets   = std::get<2>(device_views);
+  auto const output_size  = std::get<3>(device_views);
 
-  return concatenate_masks(d_views, d_offsets, dest_mask, output_size, stream);
+  return concatenate_masks(d_views, d_offsets, dest_mask, output_size, stream, mr);
 }
 
 namespace {
@@ -318,7 +318,7 @@ std::unique_ptr<column> for_each_concatenate(host_span<column_view const> views,
   // If concatenated column is nullable, proceed to calculate it
   if (has_nulls) {
     col->set_null_count(
-      cudf::detail::concatenate_masks(views, (col->mutable_view()).null_mask(), stream));
+      cudf::detail::concatenate_masks(views, (col->mutable_view()).null_mask(), stream, mr));
   } else {
     col->set_null_count(0);  // prevent null count from being materialized
   }
@@ -593,7 +593,7 @@ cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view 
       cudf::detail::create_null_mask(total_element_count, mask_state::UNINITIALIZED, stream, mr);
 
     detail::concatenate_masks(
-      host_span<column_view const>{views.data(), views.size()}, null_mask.data(), stream);
+      host_span<column_view const>{views.data(), views.size()}, null_mask.data(), stream, mr);
 
     return null_mask;
   }

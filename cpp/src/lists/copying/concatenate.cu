@@ -118,7 +118,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     total_list_count, has_nulls ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED, stream, mr);
   auto null_mask_data = null_mask.data();
   auto const null_count =
-    has_nulls ? cudf::detail::concatenate_masks(columns, null_mask_data, stream) : size_type{0};
+    has_nulls ? cudf::detail::concatenate_masks(columns, null_mask_data, stream, mr) : size_type{0};
 
   // assemble into outgoing list column
   return make_lists_column(

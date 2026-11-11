@@ -10,6 +10,7 @@
 #include <cudf/detail/utilities/assert.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/valid_if.cuh>
@@ -28,8 +29,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -117,10 +116,9 @@ void gather_helper(InputItr source_itr,
                    cuda::stream_ref stream,
                    cudf::memory_resources mr)
 {
-  auto const temp_mr = mr.get_temporary_mr();
-  using map_type     = typename std::iterator_traits<MapIterator>::value_type;
+  using map_type = typename std::iterator_traits<MapIterator>::value_type;
   if (nullify_out_of_bounds) {
-    thrust::gather_if(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::gather_if(cudf::detail::exec_policy_nosync(stream, mr),
                       gather_map_begin,
                       gather_map_end,
                       gather_map_begin,
@@ -128,7 +126,7 @@ void gather_helper(InputItr source_itr,
                       target_itr,
                       bounds_checker<map_type>{0, source_size});
   } else {
-    thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                    gather_map_begin,
                    gather_map_end,
                    source_itr,

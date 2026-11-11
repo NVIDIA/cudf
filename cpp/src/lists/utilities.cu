@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 namespace cudf::lists::detail {
@@ -63,7 +64,7 @@ std::unique_ptr<column> get_normalized_offsets(lists_column_view const& input,
                                          cudf::mask_state::UNALLOCATED,
                                          stream,
                                          mr.get_output_mr());
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     input.offsets_begin(),
                     input.offsets_end(),
                     out_offsets->mutable_view().begin<int32_t>(),

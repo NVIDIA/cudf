@@ -10,6 +10,7 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -64,7 +65,7 @@ std::unique_ptr<table> sample(table_view const& input,
                                           cudf::get_current_device_resource_ref());
     auto gather_map_mutable_view = gather_map->mutable_view();
     // Shuffle all the row indices
-    thrust::shuffle_copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::shuffle_copy(cudf::detail::exec_policy_nosync(stream, mr),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{num_rows},
                          gather_map_mutable_view.begin<size_type>(),

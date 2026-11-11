@@ -8,6 +8,7 @@
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/lists/filling.hpp>
 #include <cudf/types.hpp>
@@ -15,8 +16,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -115,10 +114,8 @@ struct sequences_functor<T, std::enable_if_t<is_supported<T>()>> {
     auto const steps_begin  = steps ? steps.value().template begin<T>() : nullptr;
 
     auto const op = tabulator<T>{n_lists, n_elements, starts_begin, steps_begin, offsets};
-    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     result_begin,
-                     result_begin + n_elements,
-                     op);
+    thrust::tabulate(
+      cudf::detail::exec_policy_nosync(stream, mr), result_begin, result_begin + n_elements, op);
 
     return result;
   }

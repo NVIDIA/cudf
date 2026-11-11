@@ -10,6 +10,7 @@
 #include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -21,8 +22,6 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -500,7 +499,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
   // trivially computed
   if (h_info.complex_type_count <= 0) {
     thrust::tabulate(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       mcv.begin<size_type>(),
       mcv.end<size_type>(),
       cuda::proclaim_return_type<size_type>(

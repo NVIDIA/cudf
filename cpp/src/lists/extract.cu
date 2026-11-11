@@ -10,14 +10,13 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/extract.hpp>
 #include <cudf/lists/detail/gather.cuh>
 #include <cudf/lists/extract.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -60,7 +59,7 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
                                          mask_state::UNALLOCATED,
                                          stream,
                                          mr.get_output_mr());
-  thrust::copy_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::copy_n(cudf::detail::exec_policy_nosync(stream, mr),
                  null_replaced_iter_begin,
                  indices.size(),
                  index_child->mutable_view().begin<size_type>());
@@ -87,7 +86,7 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
                         mask_state::UNALLOCATED,
                         stream,
                         mr.get_output_mr());
-  thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::fill_n(cudf::detail::exec_policy_nosync(stream, mr),
                  index_child->mutable_view().begin<size_type>(),
                  num_rows,
                  index);

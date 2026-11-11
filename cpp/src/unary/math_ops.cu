@@ -8,14 +8,13 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/std/bit>
 #include <cuda/std/cmath>
@@ -323,7 +322,7 @@ std::unique_ptr<column> unary_op_with(column_view const& input,
     n *= 10;
   }
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     input.begin<Type>(),
                     input.end<Type>(),
                     out_view.begin<Type>(),
@@ -353,7 +352,7 @@ std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
                             mr);
 
   auto output_view = output->mutable_view();
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     begin,
                     end,
                     output_view.begin<OutputType>(),

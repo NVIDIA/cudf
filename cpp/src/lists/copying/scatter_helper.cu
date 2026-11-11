@@ -6,6 +6,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/detail/copying.hpp>
 #include <cudf/lists/detail/scatter_helper.cuh>
@@ -177,7 +178,7 @@ struct list_child_constructor {
                                                       mr);
 
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::counting_iterator{child_column->size()},
       child_column->mutable_view().begin<T>(),
@@ -230,7 +231,7 @@ struct list_child_constructor {
     auto const null_string_view = string_view{nullptr, 0};  // placeholder for factory function
 
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<size_type>{0},
       cuda::counting_iterator{static_cast<size_type>(string_views.size())},
       string_views.begin(),
@@ -298,7 +299,7 @@ struct list_child_constructor {
     // For instance, if a parent list_device_view has 3 elements, it should have 3 corresponding
     // child list_device_view instances.
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<size_type>{0},
       cuda::counting_iterator{static_cast<size_type>(child_list_views.size())},
       child_list_views.begin(),

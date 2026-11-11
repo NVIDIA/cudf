@@ -9,14 +9,13 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -59,7 +58,7 @@ generate_list_offsets_and_validities(table_view const& input,
 
   // Compute list sizes and validities.
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_output_lists},
     d_offsets,
@@ -201,7 +200,7 @@ struct interleave_list_entries_impl<T, std::enable_if_t<std::is_same_v<T, cudf::
       stream, cudf::get_current_device_resource_ref(), num_output_entries, cuda::no_init);
     auto comp_fn =
       compute_string_sizes_and_interleave_lists_fn{*table_dv_ptr, d_list_offsets, indices.data()};
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<size_type>{0},
                        num_output_lists,
                        comp_fn);
@@ -237,7 +236,7 @@ struct interleave_list_entries_impl<T, std::enable_if_t<cudf::is_fixed_width<T>(
                                                   cuda::no_init);
 
     thrust::for_each_n(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<size_type>{0},
       num_output_lists,
       [num_cols,

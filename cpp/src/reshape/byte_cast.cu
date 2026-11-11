@@ -9,14 +9,13 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -73,7 +72,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
     auto const d_out = byte_column->mutable_view().data<char>();
 
     if (configuration == flip_endianness::YES) {
-      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        cuda::counting_iterator{num_bytes},
                        [d_inp, d_out] __device__(auto index) {
@@ -81,10 +80,7 @@ struct byte_list_conversion_fn<T, std::enable_if_t<cudf::is_numeric<T>()>> {
                          d_out[index]        = d_inp[index + mask - ((index & mask) << 1)];
                        });
     } else {
-      thrust::copy_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     d_inp,
-                     num_bytes,
-                     d_out);
+      thrust::copy_n(cudf::detail::exec_policy_nosync(stream, mr), d_inp, num_bytes, d_out);
     }
 
     auto const it = cuda::make_constant_iterator(sizeof(T));

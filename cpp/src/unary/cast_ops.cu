@@ -10,6 +10,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -21,8 +22,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/concepts>
@@ -235,7 +234,7 @@ struct dispatch_unary_cast_to {
 
     mutable_column_view output_mutable = *output;
 
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input.begin<SourceT>(),
                       input.end<SourceT>(),
                       output_mutable.begin<TargetT>(),
@@ -262,7 +261,7 @@ struct dispatch_unary_cast_to {
     using DeviceT    = device_storage_type_t<SourceT>;
     auto const scale = numeric::scale_type{input.type().scale()};
 
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input.begin<DeviceT>(),
                       input.end<DeviceT>(),
                       output_mutable.begin<TargetT>(),
@@ -290,7 +289,7 @@ struct dispatch_unary_cast_to {
 
     auto const scale = numeric::scale_type{type.scale()};
 
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input.begin<SourceT>(),
                       input.end<SourceT>(),
                       output_mutable.begin<DeviceT>(),
@@ -351,7 +350,7 @@ struct dispatch_unary_cast_to {
 
       mutable_column_view output_mutable = *output;
 
-      thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         input.begin<SourceDeviceT>(),
                         input.end<SourceDeviceT>(),
                         output_mutable.begin<TargetDeviceT>(),

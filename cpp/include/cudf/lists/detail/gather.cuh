@@ -7,13 +7,12 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -107,7 +106,7 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
   cuda::device_buffer<int32_t> base_offsets(
     stream, cudf::get_current_device_resource_ref(), output_count, cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     gather_map,
     gather_map + output_count,
     base_offsets.data(),

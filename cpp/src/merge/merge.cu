@@ -13,6 +13,7 @@
 #include <cudf/detail/search.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/detail/merge.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/lists/detail/concatenate.hpp>
@@ -27,8 +28,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -258,7 +257,7 @@ index_vector generate_merged_indices(table_view const& left_table,
 
     auto ineq_op = detail::row_lexicographic_tagged_comparator<true>(
       *lhs_device_view, *rhs_device_view, d_column_order, d_null_precedence);
-    thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::merge(cudf::detail::exec_policy_nosync(stream, mr),
                   left_begin,
                   left_begin + left_size,
                   right_begin,
@@ -268,7 +267,7 @@ index_vector generate_merged_indices(table_view const& left_table,
   } else {
     auto ineq_op = detail::row_lexicographic_tagged_comparator<false>(
       *lhs_device_view, *rhs_device_view, d_column_order, {});
-    thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::merge(cudf::detail::exec_policy_nosync(stream, mr),
                   left_begin,
                   left_begin + left_size,
                   right_begin,
@@ -305,7 +304,7 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
 
   auto const total_counter = cuda::counting_iterator<cudf::size_type>{0};
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     total_counter,
     total_counter + total_size,
     [merged = merged_indices.data(), left = left_indices_begin, left_size, right_size] __device__(
@@ -390,7 +389,7 @@ struct column_merger {
     // and "gather" into merged_view.data()[indx_merged]
     // from lcol or rcol, depending on side;
     //
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       row_order_.begin(),
                       row_order_.end(),
                       merged_view.begin<Element>(),

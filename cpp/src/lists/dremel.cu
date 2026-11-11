@@ -9,6 +9,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/detail/dremel.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -97,7 +98,7 @@ dremel_data get_encoding(column_view h_col,
       [d_off] __device__(auto i) -> bool { return d_off[i] == d_off[i + 1]; },
       stream,
       mr.as_temporary());
-    auto empties_end = thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+    auto empties_end = thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                                       empties_idx.begin(),
                                       empties_idx_end,
                                       lcv.offsets().begin<int32_t>(),

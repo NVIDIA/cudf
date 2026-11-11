@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/repeat.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -19,8 +20,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -48,7 +47,7 @@ std::unique_ptr<table> repeat(table_view const& input_table,
   auto count_iter    = cudf::detail::indexalator_factory::make_input_iterator(count);
 
   cuda::device_buffer<size_type> offsets(stream, temp_mr, count.size(), cuda::no_init);
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          count_iter,
                          count_iter + count.size(),
                          offsets.begin());
@@ -57,7 +56,7 @@ std::unique_ptr<table> repeat(table_view const& input_table,
   cudf::detail::cuda_memcpy(
     host_span<size_type>{&output_size, 1}, device_span<size_type const>{offsets}.last(1), stream);
   cuda::device_buffer<size_type> indices(stream, temp_mr, output_size, cuda::no_init);
-  thrust::upper_bound(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::upper_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       offsets.begin(),
                       offsets.end(),
                       cuda::counting_iterator<cudf::size_type>{0},

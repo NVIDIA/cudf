@@ -13,6 +13,7 @@
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/lists/list_view.hpp>
@@ -113,7 +114,7 @@ struct column_scalar_scatterer_impl {
     auto scalar_iter =
       cuda::make_permutation_iterator(scalar_impl->data(), cuda::make_constant_iterator(0));
 
-    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                     scalar_iter,
                     scalar_iter + scatter_rows,
                     scatter_iter,
@@ -191,7 +192,7 @@ struct column_scalar_scatterer_impl<dictionary32, MapIterator> {
     auto new_indices = std::make_unique<column>(dict_view.get_indices_annotated(), stream, mr);
     auto target_iter = indexalator_factory::make_output_iterator(new_indices->mutable_view());
 
-    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                     scalar_iter,
                     scalar_iter + scatter_rows,
                     scatter_iter,
@@ -387,7 +388,7 @@ std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
                                            cudf::get_current_device_resource_ref());
   auto mutable_indices = indices->mutable_view();
 
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    mutable_indices.begin<size_type>(),
                    mutable_indices.end<size_type>(),
                    0);
@@ -442,7 +443,7 @@ std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
                                            stream,
                                            cudf::get_current_device_resource_ref());
   auto mutable_indices = indices->mutable_view();
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    mutable_indices.begin<size_type>(),
                    mutable_indices.end<size_type>(),
                    0);

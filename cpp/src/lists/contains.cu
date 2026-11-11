@@ -8,6 +8,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/contains.hpp>
 #include <cudf/lists/detail/contains.hpp>
@@ -20,8 +21,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -163,7 +162,7 @@ void index_of(InputIterator input_it,
 {
   auto const keys_dv_ptr       = column_device_view::create(search_keys, stream);
   auto const key_validity_iter = cudf::detail::make_validity_iterator<true>(*keys_dv_ptr);
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     input_it,
                     input_it + num_rows,
                     output_it,
@@ -262,7 +261,7 @@ std::unique_ptr<column> to_contains(std::unique_ptr<column>&& key_positions,
   auto const positions_begin = key_positions->view().template begin<size_type>();
   auto result                = make_numeric_column(
     data_type{type_id::BOOL8}, key_positions->size(), mask_state::UNALLOCATED, stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     positions_begin,
                     positions_begin + key_positions->size(),
                     result->mutable_view().template begin<bool>(),
@@ -359,7 +358,7 @@ std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
   auto const lists_cdv_ptr = column_device_view::create(lists_cv, stream);
 
   thrust::tabulate(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     out_begin,
     out_begin + lists.size(),
     cuda::proclaim_return_type<bool>(

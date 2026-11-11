@@ -9,9 +9,8 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/device_operators.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -38,7 +37,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
   cudf::memory_resources mrs(mr);
   auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(
     input, stream, mrs.as_temporary());
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{input.size()},
                          gather_map.begin(),

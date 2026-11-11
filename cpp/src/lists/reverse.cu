@@ -10,11 +10,10 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/reverse.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -44,7 +43,7 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
     stream, cudf::get_current_device_resource_ref(), child.size(), cuda::no_init);
 
   // Build a segmented reversed order for the child column.
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      child.size(),
                      [list_offsets = out_offsets->view().begin<int32_t>(),

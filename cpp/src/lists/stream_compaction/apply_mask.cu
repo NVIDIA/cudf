@@ -10,13 +10,12 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/stream_compaction.hpp>
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <thrust/scan.h>
 
@@ -86,7 +85,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 
     // Could have attempted an exclusive_scan(), but it would not compute the last entry.
     // Instead, inclusive_scan(), followed by writing `0` to the head of the offsets column.
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            sizes_begin,
                            sizes_end,
                            output_offsets_view.begin<int32_t>() + 1);

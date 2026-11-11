@@ -13,6 +13,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
@@ -24,7 +25,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
@@ -103,7 +103,7 @@ std::unique_ptr<column> encode(column_view const& input,
   // and keep track of the indices of the unique values
   auto d_indices = cuda::device_buffer<size_type>(stream, temp_mr, input.size(), cuda::no_init);
   auto d_input   = column_device_view::create(input, stream, temp_mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     d_indices.begin(),
@@ -116,7 +116,8 @@ std::unique_ptr<column> encode(column_view const& input,
     keys_indices_storage.data(), cuda::std::distance(keys_indices_storage.begin(), keys_end));
 
   // sort the keys_indices so we can use lower-bound on them
-  thrust::sort(rmm::exec_policy_nosync(stream, temp_mr), keys_indices.begin(), keys_indices.end());
+  thrust::sort(
+    cudf::detail::exec_policy_nosync(stream, mr), keys_indices.begin(), keys_indices.end());
 
   // use keys_indices to retrieve the keys
   auto const oob_policy   = cudf::out_of_bounds_policy::DONT_CHECK;
@@ -129,7 +130,7 @@ std::unique_ptr<column> encode(column_view const& input,
   // call lower-bound with keys_indices and d_indices to get the output indices_column
   auto d_result =
     cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
-  thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       keys_indices.begin(),
                       keys_indices.end(),
                       d_indices.begin(),

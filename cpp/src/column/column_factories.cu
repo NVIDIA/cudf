@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/fill.hpp>
 #include <cudf/detail/gather.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -68,7 +69,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
     d_str.empty() ? cudf::strings::detail::string_index_pair{"", 0}
                   : cudf::strings::detail::string_index_pair{d_str.data(), d_str.size_bytes()};
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, temp_mr), indices.begin(), indices.end(), row_value);
+    cudf::detail::exec_policy_nosync(stream, mr), indices.begin(), indices.end(), row_value);
   return cudf::make_strings_column(indices, stream, mr);
 }
 

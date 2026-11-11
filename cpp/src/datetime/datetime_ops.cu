@@ -13,6 +13,7 @@
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -252,7 +253,7 @@ struct dispatch_round {
                                           stream,
                                           mr);
 
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       column.begin<Timestamp>(),
                       column.end<Timestamp>(),
                       output->mutable_view().begin<Timestamp>(),
@@ -353,7 +354,7 @@ struct add_calendrical_months_functor {
       make_fixed_width_column(output_col_type, size, mask_state::UNALLOCATED, stream, mr);
     auto output_mview = output->mutable_view();
 
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       timestamp_column.begin<Timestamp>(),
                       timestamp_column.end<Timestamp>(),
                       months_begin,

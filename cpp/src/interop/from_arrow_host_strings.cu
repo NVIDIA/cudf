@@ -13,6 +13,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -110,7 +111,7 @@ std::unique_ptr<column> from_arrow_stringview(
   auto d_indices = cuda::device_buffer<string_index_pair>(
     stream, cudf::get_current_device_resource_ref(), input->length, cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{static_cast<cudf::size_type>(input->length)},
     d_indices.begin(),

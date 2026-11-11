@@ -195,5 +195,16 @@ int initialize_array(ArrowArray* arr, ArrowType storage_type, cudf::column_view 
   return NANOARROW_OK;
 }
 
+size_type checked_row_count(int64_t num_rows, bool has_offsets)
+{
+  CUDF_EXPECTS(num_rows >= 0, "Number of rows must be non-negative.", std::invalid_argument);
+  auto const max_rows =
+    static_cast<int64_t>(std::numeric_limits<size_type>::max()) - static_cast<int64_t>(has_offsets);
+  CUDF_EXPECTS(num_rows <= max_rows,
+               "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
+               std::overflow_error);
+  return static_cast<size_type>(num_rows);
+}
+
 }  // namespace detail
 }  // namespace cudf

@@ -19,9 +19,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <thrust/logical.h>
@@ -86,7 +86,8 @@ void post_process_list_overlap(cudf::column_view const& lhs,
   auto const overlap_cdv_ptr = column_device_view::create(overlap_cv, stream);
 
   // Create a new bitmask to satisfy Spark's arrays_overlap's special behavior.
-  auto validity = rmm::device_uvector<bool>(overlap_cv.size(), stream);
+  auto validity = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), overlap_cv.size(), cuda::no_init);
   thrust::tabulate(
     rmm::exec_policy_nosync(stream),
     validity.begin(),
@@ -150,7 +151,8 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
 
   // Generate labels for the input list elements.
   cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto labels = rmm::device_uvector<cudf::size_type>(child.size(), stream, mr.get_temporary_mr());
+  auto labels               = cuda::device_buffer<cudf::size_type>(
+    stream, mr.get_temporary_mr(), child.size(), cuda::no_init);
   cudf::detail::label_segments(input.offsets_begin(),
                                input.offsets_end(),
                                labels.begin(),

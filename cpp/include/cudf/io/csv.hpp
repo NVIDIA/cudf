@@ -395,8 +395,12 @@ class csv_reader_options {
    * @brief Whether to detect closing quotes followed by spaces or tabs.
    *
    * Only string fields beginning with a quote are affected. Whitespace inside quotes and
-   * leading whitespace are preserved. Detection around quotes takes precedence.
-   * NA matching also considers the quoted field without trailing whitespace.
+   * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
+   * Detection around quotes takes precedence for trimming when both options are enabled;
+   * NA matching also considers the quoted field without trailing spaces or tabs.
+   * This option does not change type inference or non-string conversion. Specify STRING for
+   * columns requiring this option's trimming and additional NA matching. Disabled by default
+   * and ignored when quoting is disabled.
    *
    * @return `true` if trailing whitespace detection is enabled
    */
@@ -753,9 +757,13 @@ class csv_reader_options {
   /**
    * @brief Sets whether to detect closing quotes followed by spaces or tabs.
    *
-   * Only string fields beginning with a quote are affected. Disabled by default.
-   * Detection around quotes takes precedence when both options are enabled.
-   * NA matching also considers the quoted field without trailing whitespace.
+   * Only string fields beginning with a quote are affected. Whitespace inside quotes and
+   * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
+   * Detection around quotes takes precedence for trimming when both options are enabled;
+   * NA matching also considers the quoted field without trailing spaces or tabs.
+   * This option does not change type inference or non-string conversion. Specify STRING for
+   * columns requiring this option's trimming and additional NA matching. Disabled by default
+   * and ignored when quoting is disabled.
    *
    * @param val Boolean value to enable/disable
    */
@@ -1207,10 +1215,13 @@ class csv_reader_options_builder {
   /**
    * @brief Sets whether to detect closing quotes followed by spaces or tabs.
    *
-   * Only string fields beginning with a quote are affected. Disabled by default.
-   * Whitespace inside quotes and leading whitespace are preserved. Detection
-   * around quotes takes precedence when both options are enabled.
-   * NA matching also considers the quoted field without trailing whitespace.
+   * Only string fields beginning with a quote are affected. Whitespace inside quotes and
+   * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
+   * Detection around quotes takes precedence for trimming when both options are enabled;
+   * NA matching also considers the quoted field without trailing spaces or tabs.
+   * This option does not change type inference or non-string conversion. Specify STRING for
+   * columns requiring this option's trimming and additional NA matching. Disabled by default
+   * and ignored when quoting is disabled.
    *
    * @param val Boolean value to enable/disable
    * @return this for chaining
@@ -1409,10 +1420,9 @@ class csv_reader_options_builder {
  *
  * @return The set of columns along with metadata
  */
-table_with_metadata read_csv(
-  csv_reader_options options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+table_with_metadata read_csv(csv_reader_options options,
+                             cuda::stream_ref stream   = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 /**

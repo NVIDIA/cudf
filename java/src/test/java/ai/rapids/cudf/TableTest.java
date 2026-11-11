@@ -1159,7 +1159,8 @@ public class TableTest extends CudfTestBase {
           boolean detect = Boolean.TRUE.equals(enabled);
           boolean emptyNA = nullPolicy == 2;
           assertEquals(detect, options.getDetectWhitespaceAfterQuotes());
-          String paddedEmpty = detect ? (emptyNA ? null : "") : "\"\" \t";
+          // Quoted-token NA matching is independent of this string-trimming option.
+          String paddedEmpty = emptyNA ? null : (detect ? "" : "\"\" \t");
           String[] a = {
               detect ? "A" : "\"A\" \t", " \"C\" \t", detect ? " E " : "\" E \" \t",
               nullPolicy > 0 ? null : "NULL", " \t",

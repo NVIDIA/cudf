@@ -11,6 +11,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
@@ -1565,7 +1566,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
   device_span<SymbolT const> json_in,
   cudf::io::json_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   check_input_size(json_in.size());
 
@@ -1659,8 +1660,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                stream);
 
   auto const num_total_tokens = num_written_tokens.value(stream) + delimiter_offset;
-  rmm::device_uvector<PdaTokenT> tokens{num_total_tokens, stream, mr};
-  rmm::device_uvector<SymbolOffsetT> tokens_indices{num_total_tokens, stream, mr};
+  rmm::device_uvector<PdaTokenT> tokens{num_total_tokens, stream, mr.get_output_mr()};
+  rmm::device_uvector<SymbolOffsetT> tokens_indices{num_total_tokens, stream, mr.get_output_mr()};
 
   // Run FST to translate the input JSON string into tokens and indices at which they occur
   json_to_tokens_fst.Transduce(zip_in,
@@ -1706,7 +1707,7 @@ void make_json_column(json_column& root_column,
                       cudf::io::json_reader_options const& options,
                       bool include_quote_char,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr)
+                      cudf::memory_resources mr)
 {
   // Range of encapsulating function that parses to internal columnar data representation
   CUDF_FUNC_RANGE();
@@ -2108,7 +2109,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
   cudf::io::json_reader_options const& options,
   std::optional<schema_element> schema,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   // Range of orchestrating/encapsulating function
   CUDF_FUNC_RANGE();
@@ -2139,16 +2140,14 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
                    "string offset, string length mismatch");
 
       // Move string_offsets and string_lengths to GPU
-      rmm::device_uvector<json_column::row_offset_t> d_string_offsets =
-        cudf::detail::make_device_uvector_async(
-          json_col.string_offsets, stream, cudf::get_current_device_resource_ref());
-      rmm::device_uvector<json_column::row_offset_t> d_string_lengths =
-        cudf::detail::make_device_uvector_async(
-          json_col.string_lengths, stream, cudf::get_current_device_resource_ref());
+      auto d_string_offsets = cudf::detail::make_device_buffer_async(
+        json_col.string_offsets, stream, cudf::get_current_device_resource_ref());
+      auto d_string_lengths = cudf::detail::make_device_buffer_async(
+        json_col.string_lengths, stream, cudf::get_current_device_resource_ref());
 
       // Prepare iterator that returns (string_offset, string_length)-tuples
       auto offset_length_it =
-        cuda::make_zip_iterator(d_string_offsets.begin(), d_string_lengths.begin());
+        cuda::make_zip_iterator(d_string_offsets.data(), d_string_lengths.data());
 
       data_type target_type{};
 
@@ -2232,7 +2231,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
         json_col.child_columns.empty() ? list_child_name : json_col.child_columns.begin()->first);
 
       rmm::device_uvector<json_column::row_offset_t> d_offsets =
-        cudf::detail::make_device_uvector_async(json_col.child_offsets, stream, mr);
+        cudf::detail::make_device_uvector_async(json_col.child_offsets, stream, mr.get_output_mr());
       auto offsets_column =
         std::make_unique<column>(data_type{type_id::INT32},
                                  num_rows,

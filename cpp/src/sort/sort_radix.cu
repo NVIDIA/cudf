@@ -135,7 +135,7 @@ bool is_radix_sortable(column_view const& column)
 std::unique_ptr<column> sort_radix(column_view const& input,
                                    bool ascending,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   auto result   = std::make_unique<column>(input, stream, mr);
   auto out_view = result->mutable_view();

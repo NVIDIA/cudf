@@ -176,7 +176,11 @@ public class CSVOptions extends ColumnFilterOptions {
     /**
      * Detect a closing quote followed by spaces or tabs. Only string fields beginning with
      * a quote are affected; leading whitespace and whitespace inside quotes are
-     * preserved. Null matching also considers the quoted field without trailing whitespace.
+     * preserved. Only spaces and tabs after closing quotes are recognized. Detection around
+     * quotes takes precedence for trimming when both options are enabled. Null matching also
+     * considers the quoted field without trailing spaces or tabs.
+     * This option does not change type inference or non-string conversion. Specify STRING for
+     * columns requiring this option's trimming and additional null matching.
      * Disabled by default and ignored when quoting is disabled.
      */
     public Builder withDetectWhitespaceAfterQuotes(boolean enabled) {

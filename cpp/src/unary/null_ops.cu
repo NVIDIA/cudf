@@ -17,7 +17,7 @@ namespace cudf {
 namespace detail {
 std::unique_ptr<column> is_null(cudf::column_view const& input,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   auto input_device_view = column_device_view::create(input, stream);
   auto device_view       = *input_device_view;
@@ -32,7 +32,7 @@ std::unique_ptr<column> is_null(cudf::column_view const& input,
 
 std::unique_ptr<column> is_valid(cudf::column_view const& input,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto input_device_view = column_device_view::create(input, stream);
   auto device_view       = *input_device_view;
@@ -49,7 +49,7 @@ std::unique_ptr<column> is_valid(cudf::column_view const& input,
 
 std::unique_ptr<column> is_null(cudf::column_view const& input,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_null(input, stream, mr);
@@ -57,7 +57,7 @@ std::unique_ptr<column> is_null(cudf::column_view const& input,
 
 std::unique_ptr<column> is_valid(cudf::column_view const& input,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_valid(input, stream, mr);

@@ -220,9 +220,11 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
   }
 }
 
-void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_ref stream)
+void streaming_groupby::impl::initialize(table_view const& data,
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources temp_mr)
 {
-  auto const mr = cudf::memory_resources{_mr, cudf::get_current_device_resource_ref()};
+  auto const mr = cudf::memory_resources{_mr, temp_mr.get_temporary_mr()};
 
   // Detect nested key columns (struct, list) for comparator template dispatch.
   std::vector<column_view> key_cols;
@@ -615,10 +617,15 @@ streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::
 }
 
 cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert(
-  table_view const& batch_keys, bool use_partials, cuda::stream_ref stream)
+  table_view const& batch_keys,
+  bool use_partials,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
-  if (_has_nested_keys) { return probe_and_insert_impl<true>(batch_keys, use_partials, stream); }
-  return probe_and_insert_impl<false>(batch_keys, use_partials, stream);
+  if (_has_nested_keys) {
+    return probe_and_insert_impl<true>(batch_keys, use_partials, stream, mr);
+  }
+  return probe_and_insert_impl<false>(batch_keys, use_partials, stream, mr);
 }
 
 // Constructor, destructor, and move ops require full impl definition.
@@ -640,17 +647,21 @@ streaming_groupby& streaming_groupby::operator=(streaming_groupby&&) noexcept = 
 
 // Private member functions defined here (requires full impl definition).
 // The public API wrappers in streaming_groupby.cpp call these.
-void streaming_groupby::do_aggregate(table_view const& data, cuda::stream_ref stream)
+void streaming_groupby::do_aggregate(table_view const& data,
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
-  _impl->do_aggregate(data, stream);
+  _impl->do_aggregate(data, stream, mr);
 }
 
-void streaming_groupby::do_merge(streaming_groupby const& other, cuda::stream_ref stream)
+void streaming_groupby::do_merge(streaming_groupby const& other,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_EXPECTS(_impl != nullptr && other._impl != nullptr,
                "streaming_groupby has been consumed or moved from.");
-  _impl->do_merge(*other._impl, stream);
+  _impl->do_merge(*other._impl, stream, mr);
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::do_finalize(

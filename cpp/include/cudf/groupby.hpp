@@ -483,7 +483,7 @@ class streaming_groupby {
    * @param null_handling Indicates whether rows in keys that contain NULL values should be included
    * @param mr Device memory resource used to allocate all persistent state, including the hash
    *        table, stored keys, and aggregate results. Temporary allocations made by aggregate()
-   *        and merge() use the current device memory resource.
+   *        and merge() use the temporary resource passed to those calls.
    *
    * @throws std::invalid_argument if `max_distinct_keys <= 0`
    * @throws std::invalid_argument if any requested aggregation kind is unsupported
@@ -511,11 +511,15 @@ class streaming_groupby {
    *
    * @param data Table containing both key and value columns
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources whose temporary resource is used for temporary allocations.
+   *        Persistent state is allocated from the resource passed to the constructor.
    *
    * @throws std::invalid_argument if `data.num_rows()` exceeds `max_distinct_keys`
    * @throws cudf::logic_error if cumulative distinct keys exceed `max_distinct_keys`
    */
-  void aggregate(table_view const& data, cuda::stream_ref stream = cudf::get_default_stream());
+  void aggregate(table_view const& data,
+                 cuda::stream_ref stream   = cudf::get_default_stream(),
+                 cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Merge another streaming_groupby's accumulated partial state into this one.
@@ -531,13 +535,17 @@ class streaming_groupby {
    *
    * @param other The streaming_groupby whose partial state to merge
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources whose temporary resource is used for temporary allocations.
+   *        Persistent state is allocated from the resource passed to the constructor.
    *
    * @throws std::invalid_argument if the other object has more distinct keys than
    * `max_distinct_keys`
    * @throws cudf::logic_error if this object has not been initialized via `aggregate()`
    * @throws cudf::logic_error if distinct keys exceed `max_distinct_keys` after merge
    */
-  void merge(streaming_groupby const& other, cuda::stream_ref stream = cudf::get_default_stream());
+  void merge(streaming_groupby const& other,
+             cuda::stream_ref stream   = cudf::get_default_stream(),
+             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Finalize the accumulated partial aggregates into final results.
@@ -595,8 +603,8 @@ class streaming_groupby {
   struct impl;
   std::unique_ptr<impl> _impl;
 
-  void do_aggregate(table_view const& data, cuda::stream_ref stream);
-  void do_merge(streaming_groupby const& other, cuda::stream_ref stream);
+  void do_aggregate(table_view const& data, cuda::stream_ref stream, cudf::memory_resources mr);
+  void do_merge(streaming_groupby const& other, cuda::stream_ref stream, cudf::memory_resources mr);
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> do_finalize(
     cuda::stream_ref stream, cudf::memory_resources mr) const;
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>

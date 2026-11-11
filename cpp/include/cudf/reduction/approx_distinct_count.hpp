@@ -199,8 +199,11 @@ class approx_distinct_count {
    *
    * @param input Table whose rows will be added
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
-  void add(table_view const& input, cuda::stream_ref stream = cudf::get_default_stream());
+  void add(table_view const& input,
+           cuda::stream_ref stream   = cudf::get_default_stream(),
+           cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Merges another sketch into this sketch

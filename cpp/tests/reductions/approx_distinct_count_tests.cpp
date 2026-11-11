@@ -5,6 +5,7 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/reduction/approx_distinct_count.hpp>
@@ -120,6 +121,34 @@ TEST_F(ApproxDistinctCount, WithNull)
   auto const exact_count =
     cudf::distinct_count(input_col, null_policy::INCLUDE, nan_policy::NAN_IS_VALID);
 
+  EXPECT_TRUE(is_reasonable_approximation(approx_count, exact_count))
+    << "Exact: " << exact_count << ", Approx: " << approx_count;
+}
+
+TEST_F(ApproxDistinctCount, AddMemoryResources)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  auto data         = generate_data<int32_t>(2000, 100);
+  auto validity     = generate_validity(2000, 20);
+  cudf::test::fixed_width_column_wrapper<int32_t> input_col(
+    data.begin(), data.end(), validity.begin());
+  cudf::table_view input_table({input_col});
+
+  auto adc = cudf::approx_distinct_count(input_table, 12);
+  {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    adc.add(input_table, stream, harness.resources());
+    harness.synchronize(stream);
+  }
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+
+  auto approx_count = adc.estimate(stream);
+  auto const exact_count =
+    cudf::distinct_count(input_col, null_policy::EXCLUDE, nan_policy::NAN_IS_VALID);
   EXPECT_TRUE(is_reasonable_approximation(approx_count, exact_count))
     << "Exact: " << exact_count << ", Approx: " << approx_count;
 }

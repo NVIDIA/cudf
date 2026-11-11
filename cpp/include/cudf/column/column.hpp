@@ -182,10 +182,12 @@ class column {
    * @param new_null_count The count of null elements
    * @param stream The stream on which to perform the allocation and copy. Uses the default CUDF
    * stream if none is specified.
+   * @param mr Memory resources used to allocate the copy of `new_null_mask`
    */
   void set_null_mask(cuda::device_buffer<cudf::bitmask_type> const& new_null_mask,
                      size_type new_null_count,
-                     cuda::stream_ref stream = cudf::get_default_stream());
+                     cuda::stream_ref stream   = cudf::get_default_stream(),
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Updates the count of null elements.

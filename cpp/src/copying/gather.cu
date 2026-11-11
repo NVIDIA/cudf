@@ -8,6 +8,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/indexalator.cuh>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -18,6 +19,8 @@
 #include <cuda/iterator>
 #include <cuda/stream>
 
+#include <algorithm>
+#include <optional>
 #include <stdexcept>
 
 namespace cudf {
@@ -68,6 +71,42 @@ std::unique_ptr<table> gather(table_view const& source_table,
   return detail::gather(source_table, map_col, bounds_policy, neg_indices, stream, mr);
 }
 
+std::unique_ptr<table> gather_every(table_view const& source_table,
+                                    size_type step,
+                                    std::optional<size_type> start,
+                                    std::optional<size_type> stop,
+                                    cuda::stream_ref stream,
+                                    memory_resources mr)
+{
+  CUDF_EXPECTS(step != 0, "step must not be zero", std::invalid_argument);
+
+  // Resolve the slice the same way as Python's `slice.indices(num_rows)`: negative values count
+  // from the end, and out-of-range values are clamped to [lower, upper].
+  auto const num_rows = source_table.num_rows();
+  auto const lower    = step < 0 ? -1 : 0;
+  auto const upper    = step < 0 ? num_rows - 1 : num_rows;
+  auto const resolve  = [&](std::optional<size_type> index, size_type fallback) {
+    if (!index.has_value()) { return fallback; }
+    auto const i = *index < 0 ? *index + num_rows : *index;
+    return std::clamp(i, lower, upper);
+  };
+  auto const first = resolve(start, step < 0 ? upper : lower);
+  auto const last  = resolve(stop, step < 0 ? lower : upper);
+
+  // Divide by `step` directly rather than `-step`, which would overflow for the minimum value.
+  auto const output_size = step < 0 ? (first > last ? 1 + (last - first + 1) / step : 0)
+                                    : (last > first ? 1 + (last - first - 1) / step : 0);
+  if (output_size == 0) { return empty_like(source_table); }
+
+  auto const map_begin = make_counting_transform_iterator(
+    0, cuda::proclaim_return_type<size_type>([step, first] __device__(size_type i) {
+      return first + i * step;
+    }));
+
+  return gather(
+    source_table, map_begin, map_begin + output_size, out_of_bounds_policy::DONT_CHECK, stream, mr);
+}
+
 }  // namespace detail
 
 std::unique_ptr<table> gather(table_view const& source_table,
@@ -93,6 +132,17 @@ std::unique_ptr<table> gather(table_view const& source_table,
 {
   CUDF_FUNC_RANGE();
   return detail::gather(source_table, gather_map, bounds_policy, neg_indices, stream, mr);
+}
+
+std::unique_ptr<table> gather_every(table_view const& source_table,
+                                    size_type step,
+                                    std::optional<size_type> start,
+                                    std::optional<size_type> stop,
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::gather_every(source_table, step, start, stop, stream, mr);
 }
 
 }  // namespace cudf

@@ -129,7 +129,7 @@ struct empty_column_constructor {
         dynamic_cast<cudf::detail::host_udf_aggregation const&>(agg).udf_ptr;
       auto const udf_ptr = dynamic_cast<groupby_host_udf const*>(udf_base_ptr.get());
       CUDF_EXPECTS(udf_ptr != nullptr, "Invalid HOST_UDF instance for groupby aggregation.");
-      return udf_ptr->get_empty_output(stream, mr.get_output_mr());
+      return udf_ptr->get_empty_output(stream, mr);
     }
 
     return make_empty_column(target_type(values.type(), k));

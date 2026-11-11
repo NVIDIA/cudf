@@ -1925,8 +1925,8 @@ class lists_column_wrapper : public detail::column_wrapper {
     int32_t const expected_depth   = hierarchy_and_depth.second;
 
     // preprocess columns so that every column_view in 'cols' is an equivalent hierarchy
-    auto [cols, stubs] = preprocess_columns(
-      elements, expected_hierarchy, expected_depth, stream, mr.get_temporary_mr());
+    auto [cols, stubs] =
+      preprocess_columns(elements, expected_hierarchy, expected_depth, stream, mr.as_temporary());
 
     // generate offsets
     size_type count = 0;
@@ -2043,14 +2043,14 @@ class lists_column_wrapper : public detail::column_wrapper {
    * @param col Input column to be normalized
    * @param expected_hierarchy Input column which represents the expected hierarchy
    * @param stream CUDA stream used for device memory operations
-   * @param temp_mr Device memory resource used for temporary normalized copies
+   * @param temp_mr Memory resources used for temporary normalized copies
    *
    * @return A new column representing a normalized copy of col
    */
   std::unique_ptr<column> normalize_column(column_view const& col,
                                            column_view const& expected_hierarchy,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref temp_mr)
+                                           cudf::memory_resources temp_mr)
   {
     // if are at the bottom of the short column, it must be empty
     if (col.type().id() != type_id::LIST) {
@@ -2077,7 +2077,7 @@ class lists_column_wrapper : public detail::column_wrapper {
     column_view& expected_hierarchy,
     int expected_depth,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref temp_mr)
+    cudf::memory_resources temp_mr)
   {
     std::vector<std::unique_ptr<column>> stubs;
     std::vector<column_view> cols;

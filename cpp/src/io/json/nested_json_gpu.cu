@@ -1463,7 +1463,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
                                   cuda::make_discard_iterator(),
                                   d_num_stack_ops.data(),
                                   to_stack_op::start_state,
-                                  stream);
+                                  stream,
+                                  mr);
 
   // Copy back to actual number of stack operations
   auto num_stack_ops = d_num_stack_ops.value(stream);
@@ -1480,7 +1481,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
                                   stack_op_indices.data(),
                                   cuda::make_discard_iterator(),
                                   to_stack_op::start_state,
-                                  stream);
+                                  stream,
+                                  mr);
 
   // Stack operations with indices are converted to top of the stack for each character in the input
   if (stack_behavior == stack_behavior_t::ResetOnDelimiter) {
@@ -1548,7 +1550,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
     cuda::make_discard_iterator(),
     d_num_selected_tokens.data(),
     token_filter::start_state,
-    stream);
+    stream,
+    mr);
 
   auto const num_total_tokens = d_num_selected_tokens.value(stream);
   rmm::device_uvector<PdaTokenT> tokens_out{num_total_tokens, stream, mr.get_output_mr()};
@@ -1624,7 +1627,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                         cuda::make_discard_iterator(),
                                         cuda::make_discard_iterator(),
                                         fix_stack_of_excess_chars::start_state,
-                                        stream);
+                                        stream,
+                                        mr);
 
     // Make sure memory of the FST's lookup tables isn't freed before the FST completes
     stream.sync();
@@ -1657,7 +1661,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                cuda::make_discard_iterator(),
                                num_written_tokens.data(),
                                tokenizer_pda::start_state,
-                               stream);
+                               stream,
+                               mr);
 
   auto const num_total_tokens = num_written_tokens.value(stream) + delimiter_offset;
   rmm::device_uvector<PdaTokenT> tokens{num_total_tokens, stream, mr.get_output_mr()};
@@ -1670,7 +1675,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                tokens_indices.data() + delimiter_offset,
                                cuda::make_discard_iterator(),
                                tokenizer_pda::start_state,
-                               stream);
+                               stream,
+                               mr);
 
   if (delimiter_offset == 1) {
     tokens.set_element(0, token_t::LineEnd, stream);

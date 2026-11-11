@@ -183,7 +183,8 @@ TEST_F(FstTest, GroundTruth)
                    out_indexes_gpu.device_ptr(),
                    output_gpu_size.device_ptr(),
                    start_state,
-                   stream.get());
+                   stream.get(),
+                   cudf::get_current_device_resource_ref());
 
   // Async copy results from device to host
   output_gpu.device_to_host_async(stream_view);

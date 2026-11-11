@@ -316,7 +316,8 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
                    cuda::make_discard_iterator(),
                    outbuf_size.data(),
                    normalize_quotes::start_state,
-                   stream);
+                   stream,
+                   mr);
 
   outbuf.resize(outbuf_size.value(stream), stream);
   datasource::owning_buffer<rmm::device_buffer> outdata(std::move(outbuf));
@@ -406,7 +407,8 @@ std::
                    outbuf_indices.data(),
                    outbuf_indices_size.data(),
                    normalize_whitespace::start_state,
-                   stream);
+                   stream,
+                   mr);
 
   auto const num_deletions = outbuf_indices_size.value(stream);
   outbuf_indices           = outbuf_indices.subspan(0, num_deletions);

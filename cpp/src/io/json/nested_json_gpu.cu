@@ -1589,17 +1589,12 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
 
   // Memory holding the top-of-stack stack context for the input
   cuda::device_buffer<StackSymbolT> stack_symbols(
-    stream, cudf::get_current_device_resource_ref(), json_in.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), json_in.size(), cuda::no_init);
 
   // Identify what is the stack context for each input character (JSON-root, struct, or list)
   auto const stack_behavior =
     recover_from_error ? stack_behavior_t::ResetOnDelimiter : stack_behavior_t::PushPopWithoutReset;
-  get_stack_context(json_in,
-                    stack_symbols.data(),
-                    stack_behavior,
-                    delimiter,
-                    stream,
-                    cudf::get_current_device_resource_ref());
+  get_stack_context(json_in, stack_symbols.data(), stack_behavior, delimiter, stream, mr);
 
   // Input to the full pushdown automaton finite-state transducer, where a input symbol comprises
   // the combination of a character from the JSON input together with the stack context for that
@@ -1647,8 +1642,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
     (format == tokenizer_pda::json_format_cfg_t::JSON_LINES_RECOVER ? 1 : 0);
 
   // Perform a PDA-transducer pass
-  cudf::detail::device_scalar<std::size_t> num_written_tokens{
-    stream, cudf::get_current_device_resource_ref()};
+  cudf::detail::device_scalar<std::size_t> num_written_tokens{stream, mr.get_temporary_mr()};
 
   // Run FST to estimate the size of output buffers
   json_to_tokens_fst.Transduce(zip_in,
@@ -1674,8 +1668,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
 
   if (delimiter_offset == 1) {
     tokens.set_element(0, token_t::LineEnd, stream);
-    validate_token_stream(
-      json_in, tokens, tokens_indices, options, stream, cudf::get_current_device_resource_ref());
+    validate_token_stream(json_in, tokens, tokens_indices, options, stream, mr);
     auto [filtered_tokens, filtered_tokens_indices] =
       process_token_stream(tokens, tokens_indices, stream, cudf::get_current_device_resource_ref());
     tokens         = std::move(filtered_tokens);
@@ -2140,10 +2133,10 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
                    "string offset, string length mismatch");
 
       // Move string_offsets and string_lengths to GPU
-      auto d_string_offsets = cudf::detail::make_device_buffer_async(
-        json_col.string_offsets, stream, cudf::get_current_device_resource_ref());
-      auto d_string_lengths = cudf::detail::make_device_buffer_async(
-        json_col.string_lengths, stream, cudf::get_current_device_resource_ref());
+      auto d_string_offsets =
+        cudf::detail::make_device_buffer_async(json_col.string_offsets, stream, mr.as_temporary());
+      auto d_string_lengths =
+        cudf::detail::make_device_buffer_async(json_col.string_lengths, stream, mr.as_temporary());
 
       // Prepare iterator that returns (string_offset, string_length)-tuples
       auto offset_length_it =

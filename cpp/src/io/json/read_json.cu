@@ -483,16 +483,13 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
   // The second owning buffer in the pair returned by get_record_range_raw_input may not be
   // populated depending on the size of the actual byte range read. The first owning buffer will
   // always be non-empty.
-  auto owning_buffers = get_record_range_raw_input(
-    sources, reader_opts, stream, cudf::get_current_device_resource_ref());
+  auto owning_buffers = get_record_range_raw_input(sources, reader_opts, stream, mr.as_temporary());
 
   // If input JSON buffer has single quotes and option to normalize single quotes is enabled,
   // invoke pre-processing FST
   if (reader_opts.is_enabled_normalize_single_quotes()) {
-    normalize_single_quotes(owning_buffers.first,
-                            reader_opts.get_delimiter(),
-                            stream,
-                            cudf::get_current_device_resource_ref());
+    normalize_single_quotes(
+      owning_buffers.first, reader_opts.get_delimiter(), stream, mr.as_temporary());
     stream.sync();
   }
 
@@ -516,10 +513,8 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
 
   // Repeat the normalization and table construction steps for the second buffer if it exists
   if (reader_opts.is_enabled_normalize_single_quotes()) {
-    normalize_single_quotes(owning_buffers.second.value(),
-                            reader_opts.get_delimiter(),
-                            stream,
-                            cudf::get_current_device_resource_ref());
+    normalize_single_quotes(
+      owning_buffers.second.value(), reader_opts.get_delimiter(), stream, mr.as_temporary());
     stream.sync();
   }
   buffer = cudf::device_span<char const>(
@@ -707,11 +702,8 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
       batched_reader_opts.set_byte_range_offset(batch_offsets[batch_offset_pos]);
       batched_reader_opts.set_byte_range_size(batch_offsets[batch_offset_pos + 1] -
                                               batch_offsets[batch_offset_pos]);
-      auto has_inserted = insert_partial_tables(read_batch(sources,
-                                                           batched_reader_opts,
-                                                           stream,
-                                                           cudf::get_current_device_resource_ref(),
-                                                           diagnostics_out));
+      auto has_inserted = insert_partial_tables(
+        read_batch(sources, batched_reader_opts, stream, mr.as_temporary(), diagnostics_out));
 
       if (!has_inserted) {
         CUDF_EXPECTS(batch_offset_pos == batch_offsets.size() - 2,

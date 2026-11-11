@@ -377,7 +377,7 @@ std::
                              inbuf_lengths_size,
                              stream.get());
     cuda::device_buffer<std::byte> temp_storage(
-      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
+      stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
     cub::DeviceCopy::Batched(temp_storage.data(),
                              temp_storage_bytes,
                              input_it,
@@ -426,7 +426,7 @@ std::
     });
 
   auto stencil = cudf::detail::make_zeroed_device_buffer_async<bool>(
-    static_cast<std::size_t>(inbuf_size), stream, cudf::get_current_device_resource_ref());
+    static_cast<std::size_t>(inbuf_size), stream, mr.as_temporary());
   thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   cuda::make_constant_iterator(true),
                   cuda::make_constant_iterator(true) + num_deletions,

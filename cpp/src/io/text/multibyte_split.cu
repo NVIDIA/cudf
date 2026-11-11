@@ -335,10 +335,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     // best when at least 32 more than max possible concurrent tiles, due to rolling `invalid`s
     auto const concurrency = 2;
     auto num_tile_states   = std::max(32, TILES_PER_CHUNK * concurrency + 32);
-    auto tile_multistates =
-      scan_tile_state<multistate>(num_tile_states, stream, cudf::get_current_device_resource_ref());
-    auto tile_offsets = scan_tile_state<output_offset>(
-      num_tile_states, stream, cudf::get_current_device_resource_ref());
+    auto tile_multistates = scan_tile_state<multistate>(num_tile_states, stream, mr.as_temporary());
+    auto tile_offsets = scan_tile_state<output_offset>(num_tile_states, stream, mr.as_temporary());
 
     multibyte_split_init_kernel<<<TILES_PER_CHUNK,
                                   THREADS_PER_TILE,
@@ -372,9 +370,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     // amortize output chunk allocations over 8 worst-case outputs. This limits the overallocation
     constexpr auto max_growth = 8;
     output_builder<byte_offset> row_offset_storage(
-      ITEMS_PER_CHUNK, max_growth, stream, cudf::get_current_device_resource_ref());
-    output_builder<char> char_storage(
-      ITEMS_PER_CHUNK, max_growth, stream, cudf::get_current_device_resource_ref());
+      ITEMS_PER_CHUNK, max_growth, stream, mr.as_temporary());
+    output_builder<char> char_storage(ITEMS_PER_CHUNK, max_growth, stream, mr.as_temporary());
 
     auto streams = cudf::detail::fork_streams(stream, concurrency);
 

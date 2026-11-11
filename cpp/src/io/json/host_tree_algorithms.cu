@@ -369,14 +369,14 @@ void make_device_json_column(device_span<SymbolT const> input,
   bool const is_enabled_lines                 = options.is_enabled_lines();
   bool const is_enabled_mixed_types_as_string = options.is_enabled_mixed_types_as_string();
   // make a copy
-  auto sorted_col_ids = cuda::device_buffer<NodeIndexT>(
-    stream, cudf::get_current_device_resource_ref(), col_ids.size(), cuda::no_init);
+  auto sorted_col_ids =
+    cuda::device_buffer<NodeIndexT>(stream, mr.get_temporary_mr(), col_ids.size(), cuda::no_init);
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(
     sorted_col_ids.data(), col_ids.data(), col_ids.size_bytes(), stream));
 
   // sort by {col_id} on {node_ids} stable
   cuda::device_buffer<NodeIndexT> node_ids(
-    stream, cudf::get_current_device_resource_ref(), col_ids.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), col_ids.size(), cuda::no_init);
   thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), node_ids.begin(), node_ids.end());
   thrust::stable_sort_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                              sorted_col_ids.begin(),
@@ -396,27 +396,19 @@ void make_device_json_column(device_span<SymbolT const> input,
                           is_array_of_arrays,
                           row_array_parent_col_id,
                           stream,
-                          cudf::get_current_device_resource_ref());
+                          mr.as_temporary());
 
-  auto num_columns = d_unique_col_ids.size();
-  std::vector<std::string> column_names =
-    copy_strings_to_host_sync(input,
-                              d_column_tree.node_range_begin,
-                              d_column_tree.node_range_end,
-                              stream,
-                              cudf::get_current_device_resource_ref());
+  auto num_columns                      = d_unique_col_ids.size();
+  std::vector<std::string> column_names = copy_strings_to_host_sync(
+    input, d_column_tree.node_range_begin, d_column_tree.node_range_end, stream, mr.as_temporary());
   // array of arrays column names
   if (is_array_of_arrays) {
     auto const unique_col_ids = cudf::detail::make_host_vector_async(d_unique_col_ids, stream);
     auto const column_parent_ids =
       cudf::detail::make_host_vector_async(d_column_tree.parent_node_ids, stream);
     TreeDepthT const row_array_children_level = is_enabled_lines ? 1 : 2;
-    auto values_column_indices                = get_values_column_indices(row_array_children_level,
-                                                           tree,
-                                                           col_ids,
-                                                           num_columns,
-                                                           stream,
-                                                           cudf::get_current_device_resource_ref());
+    auto values_column_indices                = get_values_column_indices(
+      row_array_children_level, tree, col_ids, num_columns, stream, mr.as_temporary());
     auto h_values_column_indices = cudf::detail::make_host_vector(values_column_indices, stream);
     std::transform(unique_col_ids.begin(),
                    unique_col_ids.end(),
@@ -433,13 +425,8 @@ void make_device_json_column(device_span<SymbolT const> input,
   auto const is_str_column_all_nulls = [&, &column_tree = d_column_tree]() {
     if (is_enabled_mixed_types_as_string) {
       return cudf::detail::make_std_vector(
-        is_all_nulls_each_column(input,
-                                 column_tree,
-                                 tree,
-                                 col_ids,
-                                 options,
-                                 stream,
-                                 cudf::get_current_device_resource_ref()),
+        is_all_nulls_each_column(
+          input, column_tree, tree, col_ids, options, stream, mr.as_temporary()),
         stream);
     }
     return std::vector<uint8_t>();

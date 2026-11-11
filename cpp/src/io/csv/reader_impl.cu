@@ -727,7 +727,7 @@ std::vector<std::unique_ptr<column>> materialize_string_columns(
     input,
     [&](std::size_t idx) {
       staging[idx] = cuda::device_buffer<string_offset_pair<OffsetT>>{
-        stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+        stream, mr.get_temporary_mr(), 0, cuda::no_init};
     },
     stream,
     mr);
@@ -773,8 +773,8 @@ decode_result decode_data(parse_options const& parse_opts,
                                ? column_buffer(column_types[active_col], true)
                                : column_buffer(column_types[active_col], num_records, true, stream, mr);
       if (is_string) {
-        staging[active_col].emplace(make_null_string_indices<OffsetT>(
-          num_records, stream, cudf::get_current_device_resource_ref()));
+        staging[active_col].emplace(
+          make_null_string_indices<OffsetT>(num_records, stream, mr.as_temporary()));
       }
 
       out_buffer.name = column_names[col];
@@ -792,19 +792,16 @@ decode_result decode_data(parse_options const& parse_opts,
   }
 
   auto d_valid_counts = cudf::detail::make_zeroed_device_buffer_async<size_type>(
-    num_active_columns, stream, cudf::get_current_device_resource_ref());
+    num_active_columns, stream, mr.as_temporary());
 
   cudf::io::csv::gpu::decode_row_column_data<OffsetT>(
     parse_opts.view(),
     data,
-    cudf::detail::make_device_buffer_async(
-      column_flags, stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::make_device_buffer_async(column_flags, stream, mr.as_temporary()),
     row_offsets,
-    cudf::detail::make_device_buffer_async(
-      column_types, stream, cudf::get_current_device_resource_ref()),
-    cudf::detail::make_device_buffer_async(h_data, stream, cudf::get_current_device_resource_ref()),
-    cudf::detail::make_device_buffer_async(
-      h_valid, stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::make_device_buffer_async(column_types, stream, mr.as_temporary()),
+    cudf::detail::make_device_buffer_async(h_data, stream, mr.as_temporary()),
+    cudf::detail::make_device_buffer_async(h_valid, stream, mr.as_temporary()),
     d_valid_counts,
     stream);
 

@@ -810,8 +810,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
     size_type{0},
     cuda::maximum<size_type>{});
 
-  cuda::device_buffer<size_type> sizes(
-    stream, cudf::get_current_device_resource_ref(), col_size, cuda::no_init);
+  cuda::device_buffer<size_type> sizes(stream, mr.get_temporary_mr(), col_size, cuda::no_init);
   auto d_sizes         = sizes.data();
   auto null_count_data = d_null_count.data();
 
@@ -825,8 +824,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
   constexpr auto warps_per_block  = 8;
   constexpr int threads_per_block = cudf::detail::warp_size * warps_per_block;
   auto num_blocks                 = cudf::detail::div_rounding_up_safe(col_size, warps_per_block);
-  auto str_counter =
-    cudf::numeric_scalar(size_type{0}, true, stream, cudf::get_current_device_resource_ref());
+  auto str_counter = cudf::numeric_scalar(size_type{0}, true, stream, mr.as_temporary());
 
   // TODO run these independent kernels in parallel streams.
   if (max_length > SINGLE_THREAD_THRESHOLD) {
@@ -926,8 +924,8 @@ std::unique_ptr<column> parse_data(
   CUDF_FUNC_RANGE();
 
   if (col_size == 0) { return make_empty_column(col_type); }
-  auto d_null_count = cudf::detail::device_scalar<size_type>(
-    null_count, stream, cudf::get_current_device_resource_ref());
+  auto d_null_count =
+    cudf::detail::device_scalar<size_type>(null_count, stream, mr.get_temporary_mr());
   auto null_count_data = d_null_count.data();
   if (null_mask.empty()) {
     null_mask = cudf::create_null_mask(col_size, mask_state::ALL_VALID, stream, mr);

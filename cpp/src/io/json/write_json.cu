@@ -298,7 +298,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
   auto const total_strings = num_strviews_per_row * num_rows;
   auto const total_rows    = num_rows * strings_columns.num_columns();
   cuda::device_buffer<string_view> d_strviews(
-    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_strings, cuda::no_init);
   if (strings_columns.num_columns() > 0) {
     struct_scatter_strings_fn scatter_fn{*tbl_device_view,
                                          *d_column_names,
@@ -330,7 +330,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
   if (!include_nulls) {
     // if previous column was null, then we skip the value separator
     cuda::device_buffer<bool> d_str_separator(
-      stream, cudf::get_current_device_resource_ref(), total_rows, cuda::no_init);
+      stream, mr.get_temporary_mr(), total_rows, cuda::no_init);
     auto row_num = cudf::detail::make_counting_transform_iterator(
       0,
       cuda::proclaim_return_type<size_type>([tbl = *tbl_device_view] __device__(auto idx)
@@ -472,7 +472,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
   auto const num_offsets      = offsets.size();
 
   cuda::device_buffer<size_type> d_strview_offsets(
-    stream, cudf::get_current_device_resource_ref(), num_offsets, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_offsets, cuda::no_init);
   auto num_strings_per_list = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<size_type>(
@@ -493,7 +493,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
   cudf::detail::sync_stream(stream);
 
   cuda::device_buffer<string_view> d_strviews(
-    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_strings, cuda::no_init);
   // scatter null_list and list_prefix, list_suffix
   auto col_device_view = cudf::column_device_view::create(lists_strings.parent(), stream);
   thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
@@ -515,8 +515,8 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
                    });
 
   // scatter string and separator
-  auto labels = cudf::lists::detail::generate_labels(
-    lists_strings, num_strings, stream, cudf::get_current_device_resource_ref());
+  auto labels =
+    cudf::lists::detail::generate_labels(lists_strings, num_strings, stream, mr.as_temporary());
   auto d_strings_children = cudf::column_device_view::create(strings_children, stream);
   thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    cuda::counting_iterator<size_type>{0},

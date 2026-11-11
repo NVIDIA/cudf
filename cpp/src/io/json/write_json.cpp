@@ -159,10 +159,8 @@ std::unique_ptr<column> leaf_column_to_strings(column_view const& column,
   if (cudf::is_timestamp(column.type())) { return timestamp_to_strings(column, stream, mr); }
   if (cudf::is_duration(column.type())) { return duration_to_strings(column, stream, mr); }
   if (cudf::is_boolean(column.type())) {
-    string_scalar const true_value(
-      options.get_true_value(), true, stream, cudf::get_current_device_resource_ref());
-    string_scalar const false_value(
-      options.get_false_value(), true, stream, cudf::get_current_device_resource_ref());
+    string_scalar const true_value(options.get_true_value(), true, stream, mr.as_temporary());
+    string_scalar const false_value(options.get_false_value(), true, stream, mr.as_temporary());
     return cudf::strings::detail::from_booleans(column, true_value, false_value, stream, mr);
   }
   if (cudf::is_integral(column.type())) {
@@ -195,13 +193,13 @@ struct column_to_strings_fn {
     : options_(options),
       stream_(stream),
       mr_(std::move(mr)),
-      narep(options.get_na_rep(), true, stream, cudf::get_current_device_resource_ref()),
-      struct_value_separator(",", true, stream, cudf::get_current_device_resource_ref()),
-      struct_row_begin_wrap("{", true, stream, cudf::get_current_device_resource_ref()),
-      struct_row_end_wrap("}", true, stream, cudf::get_current_device_resource_ref()),
-      list_value_separator(",", true, stream, cudf::get_current_device_resource_ref()),
-      list_row_begin_wrap("[", true, stream, cudf::get_current_device_resource_ref()),
-      list_row_end_wrap("]", true, stream, cudf::get_current_device_resource_ref())
+      narep(options.get_na_rep(), true, stream, mr_.as_temporary()),
+      struct_value_separator(",", true, stream, mr_.as_temporary()),
+      struct_row_begin_wrap("{", true, stream, mr_.as_temporary()),
+      struct_row_end_wrap("}", true, stream, mr_.as_temporary()),
+      list_value_separator(",", true, stream, mr_.as_temporary()),
+      list_row_begin_wrap("[", true, stream, mr_.as_temporary()),
+      list_row_end_wrap("]", true, stream, mr_.as_temporary())
   {
   }
 
@@ -236,13 +234,13 @@ struct column_to_strings_fn {
     };
 
     auto new_offsets = cudf::lists::detail::get_normalized_offsets(
-      lists_column_view(column), stream_, cudf::get_current_device_resource_ref());
-    auto const list_child_string = make_lists_column(
-      column.size(),
-      std::move(new_offsets),
-      child_string_with_null(),
-      column.null_count(),
-      cudf::detail::copy_bitmask(column, stream_, cudf::get_current_device_resource_ref()));
+      lists_column_view(column), stream_, mr_.as_temporary());
+    auto const list_child_string =
+      make_lists_column(column.size(),
+                        std::move(new_offsets),
+                        child_string_with_null(),
+                        column.null_count(),
+                        cudf::detail::copy_bitmask(column, stream_, mr_.as_temporary()));
     return join_list_of_strings(lists_column_view(*list_child_string),
                                 list_row_begin_wrap.value(stream_),
                                 list_row_end_wrap.value(stream_),

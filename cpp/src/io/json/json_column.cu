@@ -348,7 +348,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
                      "either prune_columns or mixed_types_as_string to be enabled");
         auto [normalized_d_input, col_offsets, col_lengths] =
           cudf::io::json::detail::normalize_whitespace(
-            d_input, json_col.string_offsets, json_col.string_lengths, stream, mr);
+            d_input, json_col.string_offsets, json_col.string_lengths, stream, mr.as_temporary());
         auto offset_length_it = cuda::make_zip_iterator(col_offsets.data(), col_lengths.data());
         target_type           = data_type{type_id::STRING};
         // Convert strings to the inferred data type
@@ -534,7 +534,7 @@ table_with_metadata device_parse_nested_json_impl(
   auto gpu_tree = [&]() {
     // Parse the JSON and get the token stream
     auto const [tokens_gpu, token_indices_gpu] =
-      get_token_stream(d_input, options, stream, cudf::get_current_device_resource_ref());
+      get_token_stream(d_input, options, stream, mr.as_temporary());
     // gpu tree generation
     // Note that to normalize whitespaces in nested columns coerced to be string, we need the column
     // to either be of mixed type or we need to request the column to be returned as string by
@@ -544,7 +544,7 @@ table_with_metadata device_parse_nested_json_impl(
       token_indices_gpu,
       options.is_enabled_mixed_types_as_string() || options.is_enabled_prune_columns(),
       stream,
-      cudf::get_current_device_resource_ref());
+      mr.as_temporary());
   }();  // IILE used to free memory of token data.
 #ifdef NJP_DEBUG_PRINT
   auto h_input = cudf::detail::make_host_vector_async(d_input, stream);
@@ -569,7 +569,7 @@ table_with_metadata device_parse_nested_json_impl(
                                   options.is_enabled_lines(),
                                   options.is_enabled_experimental(),
                                   stream,
-                                  cudf::get_current_device_resource_ref());
+                                  mr.as_temporary());
 
   device_json_column root_column(stream, mr);
   root_column.type = json_col_t::ListColumn;

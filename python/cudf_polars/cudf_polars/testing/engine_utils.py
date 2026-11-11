@@ -101,7 +101,7 @@ def warns_on_spmd(  # pragma: no cover; rapidsmpf-only path
 
 
 SMALL_MAX_ROWS_PER_PARTITION = 4
-SMALL_TARGET_PARTITION_SIZE = 10
+SMALL_TARGET_PARTITION_SIZE = 500
 
 
 def create_streaming_options(

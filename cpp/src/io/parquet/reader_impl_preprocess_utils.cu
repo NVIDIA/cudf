@@ -185,7 +185,7 @@ void generate_depth_remappings(
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   // Construct per source byte ranges in chunk iteration order
   std::vector<std::vector<byte_range_info>> source_byte_ranges(sources.size());

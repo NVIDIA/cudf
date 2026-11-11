@@ -51,7 +51,7 @@ struct SHA256Hash : HashBase<SHA256Hash> {
 
 std::unique_ptr<column> sha256(table_view const& input,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   return sha_hash<SHA256Hash>(input, stream, mr);
 }
@@ -60,7 +60,7 @@ std::unique_ptr<column> sha256(table_view const& input,
 
 std::unique_ptr<column> sha256(table_view const& input,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sha256(input, stream, mr);

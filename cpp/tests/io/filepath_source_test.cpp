@@ -12,8 +12,19 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/types.hpp>
+#include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <string_view>
+#include <vector>
 
 auto const temp_env = static_cast<cudf::test::TempDirTestEnvironment*>(
   ::testing::AddGlobalTestEnvironment(new cudf::test::TempDirTestEnvironment));
@@ -73,6 +84,79 @@ TEST_F(FilepathSourceTest, KnownSizePlumbsThroughMakeDatasources)
   auto const read_opts = cudf::io::parquet_reader_options::builder(source_info).build();
   auto const result    = cudf::io::read_parquet(read_opts);
   CUDF_TEST_EXPECT_TABLES_EQUAL(table, result.tbl->view());
+}
+
+namespace {
+
+class HostOnlySource : public cudf::io::datasource {
+ public:
+  explicit HostOnlySource(std::vector<std::byte> data) : _data{std::move(data)} {}
+
+  std::unique_ptr<buffer> host_read(size_t offset, size_t size) override
+  {
+    auto const count = std::min(size, _data.size() - offset);
+    return buffer::create(
+      std::vector<std::byte>(_data.begin() + offset, _data.begin() + offset + count));
+  }
+
+  size_t host_read(size_t offset, size_t size, uint8_t* dst) override
+  {
+    auto const count = std::min(size, _data.size() - offset);
+    std::memcpy(dst, _data.data() + offset, count);
+    return count;
+  }
+
+  [[nodiscard]] size_t size() const override { return _data.size(); }
+
+ private:
+  std::vector<std::byte> _data;
+};
+
+class DirectDeviceReadSource : public HostOnlySource {
+ public:
+  using HostOnlySource::HostOnlySource;
+
+  [[nodiscard]] bool supports_device_read() const override { return true; }
+
+  [[nodiscard]] bool is_device_read_direct(size_t) const override { return true; }
+};
+
+// Above KvikIO's default GDS threshold, so only the compatibility mode decides a file's answer
+constexpr size_t large_read = 1 << 20;
+
+}  // namespace
+
+TEST_F(FilepathSourceTest, IsDeviceReadDirect)
+{
+  std::vector<std::byte> const data(64, std::byte{1});
+
+  // libcudf defaults KvikIO to compatibility mode, which stages device reads through host memory.
+  // libcudf reads the mode once per process, so an override can't be undone here; skip instead.
+  auto const* compat_mode = std::getenv("KVIKIO_COMPAT_MODE");
+  if (compat_mode == nullptr || std::string_view{compat_mode} == "ON") {
+    auto const filepath = temp_env->get_temp_filepath("IsDeviceReadDirect.bin");
+    std::ofstream(filepath, std::ios::binary)
+      .write(reinterpret_cast<char const*>(data.data()), data.size());
+    EXPECT_FALSE(cudf::io::datasource::create(filepath)->is_device_read_direct(large_read));
+  }
+
+  EXPECT_FALSE(cudf::io::datasource::create(cudf::host_span<std::byte const>{data})
+                 ->is_device_read_direct(large_read));
+
+  auto const stream = cudf::get_default_stream();
+  cuda::device_buffer<std::byte> d_data(
+    stream, cudf::get_current_device_resource_ref(), data.size(), cuda::no_init);
+  EXPECT_TRUE(
+    cudf::io::datasource::create(cudf::device_span<std::byte const>{d_data.data(), d_data.size()})
+      ->is_device_read_direct(large_read));
+
+  // A user source's answer reaches the caller through cudf's wrapper: false here...
+  HostOnlySource host_only{data};
+  EXPECT_FALSE(cudf::io::datasource::create(&host_only)->is_device_read_direct(large_read));
+
+  // ...and true here, which the wrapper can only report by forwarding the call
+  DirectDeviceReadSource direct{data};
+  EXPECT_TRUE(cudf::io::datasource::create(&direct)->is_device_read_direct(large_read));
 }
 
 CUDF_TEST_PROGRAM_MAIN()

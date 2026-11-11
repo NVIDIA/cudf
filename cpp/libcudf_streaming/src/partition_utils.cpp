@@ -70,7 +70,9 @@ void check_reservation(rapidsmpf::MemoryReservation const& reservation, std::siz
   rmm::device_async_resource_ref temp_mr,
   std::optional<std::size_t> packed_bytes = std::nullopt)
 {
-  if (!packed_bytes.has_value()) { packed_bytes = cudf::packed_size(table, stream, temp_mr); }
+  if (!packed_bytes.has_value()) {
+    packed_bytes = cudf::packed_size(table, stream, cudf::memory_resources{temp_mr, temp_mr});
+  }
   return {*packed_bytes, 2 * *packed_bytes};
 }
 

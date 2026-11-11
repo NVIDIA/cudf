@@ -14,8 +14,8 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/lexicographic.cuh>
-
-#include <rmm/exec_policy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -62,9 +62,9 @@ void apply_struct_binary_op(mutable_column_view& out,
                             bool is_lhs_scalar,
                             bool is_rhs_scalar,
                             PhysicalElementComparator comparator,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
-  cudf::memory_resources mrs{cudf::get_current_device_resource_ref()};
   auto const compare_orders = std::vector<order>(
     lhs.size(),
     is_any_v<BinaryOperator, ops::Greater, ops::GreaterEqual> ? order::DESCENDING
@@ -72,15 +72,15 @@ void apply_struct_binary_op(mutable_column_view& out,
   auto const tlhs             = table_view{{lhs}};
   auto const trhs             = table_view{{rhs}};
   auto const table_comparator = cudf::detail::row::lexicographic::two_table_comparator{
-    tlhs, trhs, compare_orders, {}, stream, mrs.as_temporary()};
-  auto outd = column_device_view::create(out, stream, mrs.get_temporary_mr());
+    tlhs, trhs, compare_orders, {}, stream, mr.as_temporary()};
+  auto outd = column_device_view::create(out, stream, mr.get_temporary_mr());
   auto optional_iter =
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});
   auto const comparator_nulls = nullate::DYNAMIC{has_nested_nulls(tlhs) || has_nested_nulls(trhs)};
 
   auto tabulate_device_operator = [&](auto device_comparator) {
     thrust::transform(
-      rmm::exec_policy_nosync(stream, mrs.get_temporary_mr()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<size_type>(0),
       cuda::counting_iterator<size_type>(out.size()),
       out.begin<bool>(),
@@ -138,14 +138,15 @@ void apply_struct_equality_op(mutable_column_view& out,
                               bool is_rhs_scalar,
                               binary_operator op,
                               PhysicalEqualityComparator comparator,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(op == binary_operator::EQUAL || op == binary_operator::NOT_EQUAL ||
                  op == binary_operator::NULL_EQUALS || op == binary_operator::NULL_NOT_EQUALS,
                "Unsupported operator for these types",
                cudf::data_type_error);
 
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
   auto tlhs    = table_view{{lhs}};
   auto trhs    = table_view{{rhs}};
   auto table_comparator =
@@ -156,7 +157,7 @@ void apply_struct_equality_op(mutable_column_view& out,
     cudf::detail::make_optional_iterator<bool>(*outd, nullate::DYNAMIC{out.has_nulls()});
 
   auto const comparator_helper = [&](auto const device_comparator) {
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(out.size()),
                       out.begin<bool>(),

@@ -18,7 +18,6 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/reshape.hpp>
@@ -6582,8 +6581,8 @@ TYPED_TEST(ParquetFilterPushdownTimestampPrecisions, AllPrecisions)
 
 TEST_F(ParquetReaderTest, FilterInt96Stats)
 {
-  // libcudf doesn't write INT96 min/max, so inject them into the footer. Per the Parquet spec,
-  // INT96 min/max are only usable with the INT96_TIMESTAMP_ORDER column order
+  // libcudf doesn't write INT96 min/max, so inject them into the footer metadata. Per the Parquet
+  // spec, INT96 min/max are only usable with the INT96_TIMESTAMP_ORDER column order
   using cudf::io::parquet::ColumnOrder;
   constexpr auto num_rows           = 10000;
   constexpr auto rows_per_row_group = 5000;
@@ -6616,12 +6615,9 @@ TEST_F(ParquetReaderTest, FilterInt96Stats)
     return bytes;
   };
 
-  // File layout: data | footer | footer length (4 bytes) | "PAR1"
-  auto footer_len = uint32_t{};
-  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
-  auto const data_len = buffer.size() - 8 - footer_len;
-  auto const footer   = cudf::io::parquet::experimental::read_parquet_footer_bytes(
-    {reinterpret_cast<uint8_t const*>(buffer.data()) + data_len, footer_len});
+  auto const source_info = cudf::io::source_info{cudf::host_span<char const>{buffer}};
+  auto const footer =
+    cudf::io::read_parquet_footers(cudf::io::make_datasources(source_info)).front();
 
   // ts >= 0 s
   auto literal_value = cudf::timestamp_scalar<cudf::timestamp_ms>(cudf::duration_ms{0}, true);
@@ -6630,12 +6626,13 @@ TEST_F(ParquetReaderTest, FilterInt96Stats)
   auto filter = cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
   auto const expected = cudf::split(written_table, {rows_per_row_group}).back();
 
-  // {column order, use deprecated min/max, expected row groups after stats filter}
-  using test_case = std::tuple<std::optional<ColumnOrder::Type>, bool, int>;
-  for (auto const& [column_order, deprecated_min_max, num_row_groups] :
-       {test_case{std::nullopt, true, 2},
-        test_case{ColumnOrder::TYPE_ORDER, false, 2},
-        test_case{ColumnOrder::INT96_TIMESTAMP_ORDER, false, 1}}) {
+  // {name, column order, use deprecated min/max, expected row groups after stats filter}
+  using test_case = std::tuple<char const*, std::optional<ColumnOrder::Type>, bool, int>;
+  for (auto const& [name, column_order, deprecated_min_max, num_row_groups] :
+       {test_case{"no column order, deprecated min/max", std::nullopt, true, 2},
+        test_case{"TYPE_ORDER", ColumnOrder::TYPE_ORDER, false, 2},
+        test_case{"INT96_TIMESTAMP_ORDER", ColumnOrder::INT96_TIMESTAMP_ORDER, false, 1}}) {
+    SCOPED_TRACE(name);
     auto metadata = footer;
     metadata.column_orders.reset();
     if (column_order.has_value()) {
@@ -6655,18 +6652,11 @@ TEST_F(ParquetReaderTest, FilterInt96Stats)
       ++rg_idx;
     }
 
-    auto const footer_bytes = cudf::io::parquet::experimental::write_parquet_footer_bytes(metadata);
-    auto file               = std::vector<char>(buffer.begin(), buffer.begin() + data_len);
-    file.insert(file.end(), footer_bytes.begin(), footer_bytes.end());
-    auto const new_footer_len = static_cast<uint32_t>(footer_bytes.size());
-    file.insert(file.end(),
-                reinterpret_cast<char const*>(&new_footer_len),
-                reinterpret_cast<char const*>(&new_footer_len) + sizeof(new_footer_len));
-    file.insert(file.end(), buffer.end() - 4, buffer.end());
-
+    auto metadatas    = std::vector<cudf::io::parquet::FileMetaData>{std::move(metadata)};
     auto const result = cudf::io::read_parquet(
-      cudf::io::parquet_reader_options::builder(
-        cudf::io::source_info{cudf::host_span<char const>{file.data(), file.size()}})
+      cudf::io::make_datasources(source_info),
+      std::move(metadatas),
+      cudf::io::parquet_reader_options::builder(source_info)
         .timestamp_type(cudf::data_type{cudf::type_id::TIMESTAMP_MILLISECONDS})
         .filter(filter)
         .build());

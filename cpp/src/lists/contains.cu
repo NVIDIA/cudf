@@ -319,8 +319,8 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
-  auto key_indices = detail::index_of(
-    lists, search_key, duplicate_find_option::FIND_FIRST, stream, mr.as_temporary());
+  auto key_indices =
+    detail::index_of(lists, search_key, duplicate_find_option::FIND_FIRST, stream, mr);
   return to_contains(std::move(key_indices), stream, mr);
 }
 
@@ -332,8 +332,8 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
   CUDF_EXPECTS(search_keys.size() == lists.size(),
                "Number of search keys must match list column size.");
 
-  auto key_indices = detail::index_of(
-    lists, search_keys, duplicate_find_option::FIND_FIRST, stream, mr.as_temporary());
+  auto key_indices =
+    detail::index_of(lists, search_keys, duplicate_find_option::FIND_FIRST, stream, mr);
   return to_contains(std::move(key_indices), stream, mr);
 }
 

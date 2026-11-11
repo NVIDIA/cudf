@@ -48,7 +48,8 @@ ColumnView slice(ColumnView const& input, size_type begin, size_type end, cuda::
  */
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               cuda::stream_ref stream);
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @copydoc cudf::slice(column_view const&, std::initializer_list<size_type>)
  *
@@ -56,7 +57,8 @@ std::vector<column_view> slice(column_view const& input,
  */
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               cuda::stream_ref stream);
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @copydoc cudf::slice(table_view const&, std::span<size_type const>)
@@ -65,7 +67,8 @@ std::vector<column_view> slice(column_view const& input,
  */
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              cuda::stream_ref stream);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @copydoc cudf::slice(table_view const&, std::initializer_list<size_type>)
  *
@@ -73,7 +76,8 @@ std::vector<table_view> slice(table_view const& input,
  */
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              cuda::stream_ref stream);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @copydoc cudf::split(column_view const&, std::span<size_type const>)
@@ -82,7 +86,8 @@ std::vector<table_view> slice(table_view const& input,
  */
 std::vector<column_view> split(column_view const& input,
                                std::span<size_type const> splits,
-                               cuda::stream_ref stream);
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @copydoc cudf::split(column_view const&, std::initializer_list<size_type>)
  *
@@ -90,7 +95,8 @@ std::vector<column_view> split(column_view const& input,
  */
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               cuda::stream_ref stream);
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @copydoc cudf::split(table_view const&, std::span<size_type const>)
@@ -99,7 +105,8 @@ std::vector<column_view> split(column_view const& input,
  */
 std::vector<table_view> split(table_view const& input,
                               std::span<size_type const> splits,
-                              cuda::stream_ref stream);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @copydoc cudf::split(table_view const&, std::initializer_list<size_type>)
  *
@@ -107,7 +114,8 @@ std::vector<table_view> split(table_view const& input,
  */
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              cuda::stream_ref stream);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @copydoc cudf::shift(column_view const&,size_type,scalar const&,

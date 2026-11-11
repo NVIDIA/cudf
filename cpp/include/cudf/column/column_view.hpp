@@ -7,6 +7,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -168,11 +169,14 @@ class column_view_base {
    * @param[in] begin The starting index of the range (inclusive).
    * @param[in] end The index of the last element in the range (exclusive).
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
+   * @param[in] mr Memory resources used for temporary allocations
    * @return The count of null elements in the given range
    */
-  [[nodiscard]] size_type null_count(size_type begin,
-                                     size_type end,
-                                     cuda::stream_ref stream = cudf::get_default_stream()) const;
+  [[nodiscard]] size_type null_count(
+    size_type begin,
+    size_type end,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Indicates if the column contains null elements,
@@ -193,14 +197,17 @@ class column_view_base {
    * @param begin The starting index of the range (inclusive).
    * @param end The index of the last element in the range (exclusive).
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return true One or more elements are null in the range [begin, end)
    * @return false All elements are valid in the range [begin, end)
    */
-  [[nodiscard]] bool has_nulls(size_type begin,
-                               size_type end,
-                               cuda::stream_ref stream = cudf::get_default_stream()) const
+  [[nodiscard]] bool has_nulls(
+    size_type begin,
+    size_type end,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const
   {
-    return null_count(begin, end, stream) > 0;
+    return null_count(begin, end, stream, mr) > 0;
   }
 
   /**

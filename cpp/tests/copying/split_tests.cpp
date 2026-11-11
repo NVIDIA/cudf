@@ -11,6 +11,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/large_memory.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -36,6 +37,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 std::vector<cudf::size_type> splits_to_indices(std::vector<cudf::size_type> splits,
@@ -165,6 +167,36 @@ template <typename T>
 struct SplitTest : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(SplitTest, cudf::test::NumericTypes);
+
+struct SplitMemoryResourcesTest : public cudf::test::BaseFixture {};
+
+TEST_F(SplitMemoryResourcesTest, NullCounts)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> col{{1, 2, 3, 4, 5, 6}, {1, 0, 1, 1, 0, 1}};
+  cudf::table_view const tbl{{col}};
+  std::vector<cudf::size_type> const splits{2};
+
+  auto const [column_splits, table_splits] = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result        = std::pair{cudf::split(col, splits, stream, harness.resources()),
+                            cudf::split(tbl, {2}, stream, harness.resources())};
+    harness.synchronize(stream);
+    return result;
+  }();
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+
+  ASSERT_EQ(column_splits.size(), 2);
+  ASSERT_EQ(table_splits.size(), 2);
+  EXPECT_EQ(column_splits[0].null_count(), 1);
+  EXPECT_EQ(column_splits[1].null_count(), 1);
+  EXPECT_EQ(table_splits[0].column(0).null_count(), 1);
+  EXPECT_EQ(table_splits[1].column(0).null_count(), 1);
+}
 
 TYPED_TEST(SplitTest, SplitEndLessThanSize)
 {

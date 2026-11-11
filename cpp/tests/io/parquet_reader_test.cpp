@@ -212,16 +212,17 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   }
 
   // A chunked read runs the producer once per output chunk over the same scratch, each time with
-  // that chunk's row range rather than the pass's.
+  // that chunk's row range rather than the pass's. Chunks end only at page boundaries, so the
+  // bounded read is the one where the first chunk starts mid-page and the last ends mid-page.
   {
-    auto const read_chunked = [&] {
-      auto reader = cudf::io::chunked_parquet_reader(
-        1'024,
-        8'192,
-        cudf::io::parquet_reader_options::builder(
-          cudf::io::source_info{cudf::host_span<std::byte const>{
-            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
-          .build());
+    auto const read_chunked = [&](cudf::size_type skip, std::optional<cudf::size_type> rows) {
+      auto opts = cudf::io::parquet_reader_options::builder(
+                    cudf::io::source_info{cudf::host_span<std::byte const>{
+                      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                    .skip_rows(skip)
+                    .build();
+      if (rows) { opts.set_num_rows(*rows); }
+      auto reader = cudf::io::chunked_parquet_reader(1'024, 8'192, opts);
       std::vector<std::unique_ptr<cudf::table>> chunks;
       while (reader.has_next()) {
         chunks.push_back(reader.read_chunk().tbl);
@@ -233,15 +234,20 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
       }
       return std::pair{cudf::concatenate(views), std::move(chunks)};
     };
-    {
-      tmp_env_var const env{nz_map_env_var, "0"};
-      auto const [joined, keep] = read_chunked();
-      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, joined->view());
-    }
-    {
-      tmp_env_var const env{nz_map_env_var, "1"};
-      auto const [joined, keep] = read_chunked();
-      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, joined->view());
+    for (auto const* const nz_map : {"0", "1"}) {
+      SCOPED_TRACE(std::string{"nz map "} + nz_map);
+      tmp_env_var const env{nz_map_env_var, nz_map};
+      {
+        auto const [joined, keep] = read_chunked(0, std::nullopt);
+        EXPECT_GT(keep.size(), 1);
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, joined->view());
+      }
+      {
+        auto const [joined, keep] = read_chunked(1500, 4321);
+        EXPECT_GT(keep.size(), 1);
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::slice(expected, {1500, 1500 + 4321})[0],
+                                           joined->view());
+      }
     }
   }
 

@@ -567,7 +567,8 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
  * @param tokenizer Object used for counting and identifying delimiters and tokens
  * @param delimiter_fn Functor called on each byte to check for delimiters
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned objects' device memory
+ * @param mr Memory resources used to allocate the returned offsets' device memory; the returned
+ *        tokens use its temporary resource
  * @return Token offsets and a vector of string indices
  */
 template <typename Tokenizer, typename DelimiterFn>

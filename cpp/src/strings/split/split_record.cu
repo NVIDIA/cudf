@@ -250,6 +250,7 @@ struct rsplit_ws_extract_fn {
  * Three kernel launches: count tokens per string, prefix-sum into offsets, extract tokens.
  * The extract functor is constructed via make_extract once d_offsets and d_tokens are known.
  * Returns the same (offsets, tokens) pair as split_helper so callers are interchangeable.
+ * The offsets use the output resource of `mr` and the tokens use its temporary resource.
  */
 template <typename CountFn, typename MakeExtractFn>
 std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_per_row_impl(

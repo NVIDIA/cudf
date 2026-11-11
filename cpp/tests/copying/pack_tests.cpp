@@ -673,7 +673,8 @@ TEST_F(ExperimentalPackUnpackTest, StagingIsBoundedByStagingBudget)
 
 TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
 {
-  constexpr cudf::size_type rows = 256 * 1024;
+  // The INT64 column ends with a short block.
+  constexpr cudf::size_type rows = 256 * 1024 + 1000;
   std::vector<int32_t> values(rows, 7);
   std::vector<std::string> words(rows, "automatic-region-selection");
   // Each 64 KiB block of INT64 values alternates between one repeated value and full-width hashed
@@ -691,7 +692,7 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
   cudf::test::fixed_width_column_wrapper<int64_t> hashes(mixed, mixed + rows);
   auto const input = cudf::table_view{{numbers, strings, hashes}};
 
-  // A 1 MiB staging budget spreads the 32 INT64 blocks over several windows.
+  // A 1 MiB staging budget spreads the 33 INT64 blocks over several windows.
   auto options                 = make_options(cx::pack_compression::automatic);
   options.staging_buffer_bytes = 1024 * 1024;
   auto const packed            = pack_to_device(cx::prepare_pack(input, options));
@@ -720,7 +721,7 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
     return static_cast<cudf::type_id>(entry.type) == cudf::type_id::INT64;
   });
   ASSERT_NE(int64_entry, entries.end());
-  ASSERT_EQ(int64_entry->num_blocks, rows / block_values);
+  ASSERT_EQ(int64_entry->num_blocks, rows / block_values + 1);
   for (std::size_t block = 0; block < int64_entry->num_blocks; ++block) {
     auto const is_raw = (table[int64_entry->block_begin + block] >> 63) != 0;
     EXPECT_EQ(is_raw, block % 2 == 1) << block;

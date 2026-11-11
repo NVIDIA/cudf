@@ -129,4 +129,26 @@ TEST_F(ReductionTest, ReduceLto)
                                  (cudf::test::fixed_width_column_wrapper<int64_t>{{6}, {true}}));
 }
 
+TEST_F(ReductionTest, SegmentedReduceLto)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> input{1, 2, 3};
+  cudf::reduce_input const inputs[]{input};
+  auto offsets = cudf::detail::make_device_buffer(std::vector<int32_t>{0, 0, 3}, stream, mr());
+  cudf::data_type const states[]{cudf::data_type{cudf::type_id::INT64},
+                                 cudf::data_type{cudf::type_id::INT64}};
+  cudf::data_type const outputs[]{states[0], states[1], cudf::data_type{cudf::type_id::FLOAT64}};
+  cudf::reduce_udf const udf{reduction_fragments(),
+                             "tpch_q6_sales_segment_init",
+                             "sum_segment_update",
+                             "tpch_q6_sales_segment_merge",
+                             "tpch_q6_sales_segment_finalize"};
+  auto result = cudf::segmented_reduce_lto(
+    udf, cudf::null_aware::YES, inputs, offsets, states, outputs, 3, stream);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0],
+                                 (cudf::test::fixed_width_column_wrapper<int64_t>{{0}, {false}}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[3],
+                                 (cudf::test::fixed_width_column_wrapper<int64_t>{{6}, {true}}));
+}
+
 CUDF_TEST_PROGRAM_MAIN()

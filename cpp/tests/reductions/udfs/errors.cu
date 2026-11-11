@@ -18,6 +18,16 @@ __device__ errc error_update(size_type, optional_int64*, optional_int64*, option
   return errc::DIVISION_BY_ZERO;
 }
 
+__device__ errc checked_segment_update(size_type segment,
+                                       size_type row,
+                                       optional_int64* sum,
+                                       optional_int64* count,
+                                       optional_int32 value)
+{
+  if (segment == 2 && value && *value < 0) { return errc::ARITHMETIC_OVERFLOW; }
+  return sum_update(row, sum, count, value);
+}
+
 __device__ errc error_init(optional_int64* sum, optional_int64* count)
 {
   *sum   = cuda::std::nullopt;

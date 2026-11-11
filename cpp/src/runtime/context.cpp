@@ -37,7 +37,7 @@ int32_t get_runtime_version()
   return runtime_version;
 }
 
-int32_t get_current_device_compute_capability()
+context::device_properties get_current_device_properties()
 {
   int32_t device;
   CUDF_CUDA_TRY(cudaGetDevice(&device));
@@ -45,15 +45,17 @@ int32_t get_current_device_compute_capability()
   cudaDeviceProp props;
   CUDF_CUDA_TRY(cudaGetDeviceProperties(&props, device));
 
-  return props.major * 10 + props.minor;
+  return {.driver_version      = get_driver_version(),
+          .runtime_version     = get_runtime_version(),
+          .compute_capability  = props.major * 10 + props.minor,
+          .num_multiprocessors = props.multiProcessorCount};
 }
 
 }  // namespace
 
 context::context(context_config cfg, detail::init_flags flags)
   : _config{std::move(cfg)},
-    _device_properties{
-      get_driver_version(), get_runtime_version(), get_current_device_compute_capability()},
+    _device_properties{get_current_device_properties()},
     _nvrtc_version{0},
     _nvjitlink_version{0}
 {

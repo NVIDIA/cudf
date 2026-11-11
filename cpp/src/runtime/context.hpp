@@ -45,9 +45,10 @@ struct [[nodiscard]] context_config {
 class context {
  public:
   struct device_properties {
-    int32_t driver_version     = 0;
-    int32_t runtime_version    = 0;
-    int32_t compute_capability = 0;
+    int32_t driver_version      = 0;
+    int32_t runtime_version     = 0;
+    int32_t compute_capability  = 0;
+    int32_t num_multiprocessors = 0;
   };
 
  private:

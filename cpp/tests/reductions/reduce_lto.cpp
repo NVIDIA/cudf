@@ -80,6 +80,15 @@ cudf::reduce_udf tpch_q6_sales_udf()
           "tpch_q6_sales_finalize"};
 }
 
+cudf::reduce_udf segmented_tpch_q6_sales_udf()
+{
+  return {precompiled_fragments(),
+          "tpch_q6_sales_segment_init",
+          "tpch_q6_sales_segment_update",
+          "tpch_q6_sales_segment_merge",
+          "tpch_q6_sales_segment_finalize"};
+}
+
 cudf::reduce_udf sum_udf()
 {
   return {precompiled_fragments(),
@@ -156,6 +165,31 @@ TEST_F(ReduceLto, SeparateMemoryResources)
   EXPECT_GT(output_resource.get_bytes_counter().value, 0);
   EXPECT_GT(temporary_resource.get_bytes_counter().peak, 0);
   EXPECT_EQ(temporary_resource.get_bytes_counter().value, 0);
+}
+
+TEST_F(ReduceLto, SegmentBoundaries)
+{
+  wrapper<int32_t> values{1, 2, 3, 4};
+  cudf::reduce_input const inputs[]{values};
+  auto udf   = segmented_tpch_q6_sales_udf();
+  udf.update = "sum_segment_update";
+  struct boundary_case {
+    std::vector<int32_t> offsets;
+    int64_t sum;
+    int64_t count;
+  };
+  boundary_case const cases[]{{{0}, 0, 0}, {{1, 1}, 0, 0}, {{1, 3}, 5, 2}};
+  for (auto const& test : cases) {
+    SCOPED_TRACE(test.offsets.size());
+    auto offsets = cudf::detail::make_device_buffer(test.offsets, cudf::get_default_stream(), mr());
+    auto result  = cudf::segmented_reduce_lto(
+      udf, cudf::null_aware::YES, inputs, offsets, state_types, output_types, std::nullopt);
+    if (test.offsets.size() == 1) {
+      EXPECT_TRUE(result.empty());
+    } else {
+      expect_sum_count_avg(result, test.sum, test.count);
+    }
+  }
 }
 
 TEST_F(ReduceLto, OptionalStateLayout)
@@ -301,6 +335,33 @@ TEST_F(ReduceLto, FilterPushDownReduction)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0], (wrapper<int64_t>{{expected_sum}, {true}}));
 }
 
+TEST_F(ReduceLto, SegmentedFilter)
+{
+  wrapper<int32_t> values{10, -99, 20, 30, -99, 40};
+  constexpr int64_t expected_sums[]{0, 0, 20, 40};
+  constexpr int64_t expected_counts[]{0, 0, 1, 1};
+  auto packed = cudf::detail::make_device_buffer(
+    std::vector<cudf::bitmask_type>{0b100101}, cudf::get_default_stream(), mr());
+  auto offsets = cudf::detail::make_device_buffer(
+    std::vector<int32_t>{0, 0, 2, 4, 6}, cudf::get_default_stream(), mr());
+  cudf::reduce_input const inputs[]{values, cudf::user_data{packed.data()}};
+  auto udf   = segmented_tpch_q6_sales_udf();
+  udf.filter = "segment_mask_filter";
+  udf.update = "checked_segment_mask_update";
+  for (auto hint : {std::optional<cudf::size_type>{}, {2}}) {
+    auto result = cudf::segmented_reduce_lto(
+      udf, cudf::null_aware::YES, inputs, offsets, state_types, output_types, hint);
+    ASSERT_EQ(result.size(), std::size(expected_sums) * std::size(output_types));
+    for (size_t segment = 0; segment < std::size(expected_sums); ++segment) {
+      SCOPED_TRACE(segment);
+      expect_sum_count_avg(
+        std::span{result}.subspan(segment * std::size(output_types), std::size(output_types)),
+        expected_sums[segment],
+        expected_counts[segment]);
+    }
+  }
+}
+
 TEST_F(ReduceLto, ErrorHandling)
 {
   auto init         = sum_udf();
@@ -341,6 +402,32 @@ TEST_F(ReduceLto, ErrorHandling)
   }
 }
 
+TEST_F(ReduceLto, SegmentedErrorHandling)
+{
+  auto udf   = segmented_tpch_q6_sales_udf();
+  udf.update = "checked_segment_update";
+  for (int32_t rows : {3, 100'003}) {
+    SCOPED_TRACE(rows);
+    std::vector<int32_t> values(rows, 1);
+    values.back() = -1;
+    wrapper<int32_t> input(values.begin(), values.end());
+    cudf::reduce_input const inputs[]{input};
+    auto offsets = cudf::detail::make_device_buffer(
+      std::vector<int32_t>{0, 0, 1, rows}, cudf::get_default_stream(), mr());
+    // Exercise unknown lengths, the small-group path, and a split long segment.
+    for (auto hint : {std::optional<cudf::size_type>{}, {rows - 1}}) {
+      SCOPED_TRACE(hint.value_or(-1));
+      try {
+        auto result = cudf::segmented_reduce_lto(
+          udf, cudf::null_aware::YES, inputs, offsets, state_types, output_types, hint);
+        FAIL() << "A failure in the third segment must propagate across reduction phases";
+      } catch (cudf::evaluation_error const& error) {
+        EXPECT_EQ(error.error_code(), cudf::errc::ARITHMETIC_OVERFLOW);
+      }
+    }
+  }
+}
+
 TEST_F(ReduceLto, Assertions)
 {
   wrapper<int32_t> values{1, 2, 3};
@@ -353,12 +440,31 @@ TEST_F(ReduceLto, Assertions)
   EXPECT_THROW(
     cudf::reduce_lto(sum_udf(), cudf::null_aware::YES, mismatched, state_types, output_types),
     std::invalid_argument);
+
+  auto udf   = segmented_tpch_q6_sales_udf();
+  udf.update = "sum_segment_update";
+
+  // Even zero segments require one offset; an empty offsets span is invalid.
+  EXPECT_THROW(cudf::segmented_reduce_lto(
+                 udf, cudf::null_aware::YES, inputs, {}, state_types, output_types, std::nullopt),
+               std::invalid_argument);
+
+  auto offsets =
+    cudf::detail::make_device_buffer(std::vector<int32_t>{0, 3}, cudf::get_default_stream(), mr());
+
+  // A maximum segment size hint cannot be negative.
+  EXPECT_THROW(cudf::segmented_reduce_lto(
+                 udf, cudf::null_aware::YES, inputs, offsets, state_types, output_types, -1),
+               std::invalid_argument);
 }
 
 TEST_F(ReduceLto, UnsupportedTypes)
 {
   wrapper<int32_t> values{1, 2, 3};
   cudf::reduce_input const inputs[]{values};
+  auto offsets =
+    cudf::detail::make_device_buffer(std::vector<int32_t>{0, 3}, cudf::get_default_stream(), mr());
+
   for (auto type : {type_id::EMPTY, type_id::DICTIONARY32, type_id::LIST, type_id::STRUCT}) {
     SCOPED_TRACE(static_cast<int32_t>(type));
     data_type const unsupported[]{data_type{type}};
@@ -372,6 +478,26 @@ TEST_F(ReduceLto, UnsupportedTypes)
     EXPECT_THROW(
       cudf::reduce_lto(sum_udf(), cudf::null_aware::YES, inputs, state_types, unsupported),
       std::invalid_argument);
+
+    // Segmented reductions reject each unsupported state type as well.
+    EXPECT_THROW(cudf::segmented_reduce_lto(segmented_tpch_q6_sales_udf(),
+                                            cudf::null_aware::YES,
+                                            inputs,
+                                            offsets,
+                                            unsupported,
+                                            output_types,
+                                            std::nullopt),
+                 std::invalid_argument);
+
+    // Segmented output types follow the same support rules.
+    EXPECT_THROW(cudf::segmented_reduce_lto(segmented_tpch_q6_sales_udf(),
+                                            cudf::null_aware::YES,
+                                            inputs,
+                                            offsets,
+                                            state_types,
+                                            unsupported,
+                                            std::nullopt),
+                 std::invalid_argument);
   }
 }
 
@@ -515,6 +641,53 @@ TEST_F(ReduceLto, StringStateAndOutput)
   }
 }
 
+TEST_F(ReduceLto, SegmentedStringStateAndOutput)
+{
+  // Include empty, null, UTF-8, and empty-string groups, then a group requiring partial merges.
+  constexpr char const* expected_max[]{"", "b", "\xc3\xa9", "", "z"};
+  constexpr bool expected_valid[]{false, true, true, true, true};
+  constexpr int32_t expected_lengths[]{0, 1, 2, 0, 1};
+  data_type const states[]{data_type{type_id::STRING}};
+  data_type const outputs[]{states[0], data_type{type_id::INT32}};
+  cudf::reduce_udf const udf{precompiled_fragments(),
+                             "string_max_segment_init",
+                             "string_max_segment_update",
+                             "string_max_segment_merge",
+                             "string_max_segment_finalize"};
+
+  for (int32_t last_segment_size : {1, 100'000}) {
+    SCOPED_TRACE(last_segment_size);
+    std::vector<int32_t> const boundaries{0, 0, 2, 4, 5, 5 + last_segment_size};
+    std::vector<std::string> values(boundaries.back(), "a");
+    std::vector<bool> valid(values.size(), true);
+    values[0]     = "b";
+    values[1]     = "aa";
+    values[2]     = "ignored";
+    valid[2]      = false;
+    values[3]     = "\xc3\xa9";
+    values[4]     = "";
+    values.back() = "z";
+    cudf::test::strings_column_wrapper input(values.begin(), values.end(), valid.begin());
+    cudf::reduce_input const inputs[]{input};
+    auto offsets = cudf::detail::make_device_buffer(boundaries, cudf::get_default_stream(), mr());
+
+    for (auto hint : {std::optional<cudf::size_type>{}, {std::max(2, last_segment_size)}}) {
+      SCOPED_TRACE(hint.value_or(-1));
+      auto result = cudf::segmented_reduce_lto(
+        udf, cudf::null_aware::YES, inputs, offsets, states, outputs, hint);
+      ASSERT_EQ(result.size(), std::size(outputs) * std::size(expected_max));
+      for (size_t segment = 0; segment < std::size(expected_max); ++segment) {
+        SCOPED_TRACE(segment);
+        cudf::test::strings_column_wrapper expected({expected_max[segment]},
+                                                    {expected_valid[segment]});
+        wrapper<int32_t> length{{expected_lengths[segment]}, {expected_valid[segment]}};
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[std::size(outputs) * segment], expected);
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[std::size(outputs) * segment + 1], length);
+      }
+    }
+  }
+}
+
 TEST_F(ReduceLto, UserDataInput)
 {
   wrapper<int32_t> values{2, 4, 6};
@@ -533,6 +706,66 @@ TEST_F(ReduceLto, UserDataInput)
   expect_sum_count_avg(result, expected_sum, expected_count);
 }
 
+TEST_F(ReduceLto, SmallSegmented)
+{
+  std::vector<int32_t> boundaries{0, 0, 1, 3, 6, 11, 44};
+  std::vector<int32_t> values(boundaries.back(), 2);
+
+  constexpr int64_t expected_sums[]{0, 2, 4, 6, 10, 66};
+  constexpr int64_t expected_counts[]{0, 1, 2, 3, 5, 33};
+
+  wrapper<int32_t> input(values.begin(), values.end());
+  cudf::reduce_input const inputs[]{input};
+
+  auto offsets = cudf::detail::make_device_buffer(boundaries, cudf::get_default_stream(), mr());
+  auto udf     = segmented_tpch_q6_sales_udf();
+  udf.update   = "sum_segment_update";
+
+  auto result = cudf::segmented_reduce_lto(
+    udf, cudf::null_aware::YES, inputs, offsets, state_types, output_types, 33);
+
+  ASSERT_EQ(result.size(), std::size(output_types) * std::size(expected_sums));
+
+  for (size_t segment = 0; segment < std::size(expected_sums); ++segment) {
+    SCOPED_TRACE(segment);
+    expect_sum_count_avg(
+      std::span{result}.subspan(std::size(output_types) * segment, std::size(output_types)),
+      expected_sums[segment],
+      expected_counts[segment]);
+  }
+}
+
+TEST_F(ReduceLto, LargeSegmented)
+{
+  std::vector<int32_t> boundaries{0, 3, 100'003, 100'003, 250'003};
+  std::vector<int32_t> values(boundaries.back(), 1);
+
+  constexpr int64_t expected_sums[]{3, 100'000, 0, 150'000};
+  constexpr int64_t expected_counts[]{3, 100'000, 0, 150'000};
+
+  wrapper<int32_t> input(values.begin(), values.end());
+
+  cudf::reduce_input const inputs[]{input};
+  auto offsets = cudf::detail::make_device_buffer(boundaries, cudf::get_default_stream(), mr());
+
+  auto udf   = segmented_tpch_q6_sales_udf();
+  udf.update = "sum_segment_update";
+
+  for (auto hint : {std::optional<cudf::size_type>{}, {150'000}}) {
+    auto result = cudf::segmented_reduce_lto(
+      udf, cudf::null_aware::YES, inputs, offsets, state_types, output_types, hint);
+    ASSERT_EQ(result.size(), std::size(output_types) * std::size(expected_sums));
+
+    for (size_t segment = 0; segment < std::size(expected_sums); ++segment) {
+      SCOPED_TRACE(segment);
+      expect_sum_count_avg(
+        std::span{result}.subspan(std::size(output_types) * segment, std::size(output_types)),
+        expected_sums[segment],
+        expected_counts[segment]);
+    }
+  }
+}
+
 TEST_F(ReduceLto, TpchQ6Sales)
 {
   // WHERE active AND quantity > 0, then SUM/COUNT/AVG(price * quantity).
@@ -548,6 +781,41 @@ TEST_F(ReduceLto, TpchQ6Sales)
     cudf::reduce_lto(tpch_q6_sales_udf(), cudf::null_aware::YES, inputs, state_types, output_types);
 
   expect_sum_count_avg(result, expected_sum, expected_count);
+}
+
+TEST_F(ReduceLto, SegmentedTpchQ6Sales)
+{
+  // Apply the same query to each group, including an empty group and a fully filtered group.
+  wrapper<int32_t> price{{10, 20, 30, 40, 50, 60}, {true, false, true, true, true, true}};
+  wrapper<int32_t> quantity{{2, 1, 0, 2, -1, 3}, {true, true, true, true, false, true}};
+  wrapper<bool> active{{true, true, true, true, true, true}, {true, true, true, false, true, true}};
+  std::vector<int32_t> const boundaries{0, 0, 2, 4, 6};
+  constexpr int64_t expected_sums[]{0, 20, 0, 180};
+  constexpr int64_t expected_counts[]{0, 1, 0, 1};
+
+  cudf::reduce_input const inputs[]{price, quantity, active};
+
+  auto offsets = cudf::detail::make_device_buffer(boundaries, cudf::get_default_stream(), mr());
+
+  for (auto hint : {std::optional<cudf::size_type>{}, {2}}) {
+    auto result = cudf::segmented_reduce_lto(segmented_tpch_q6_sales_udf(),
+                                             cudf::null_aware::YES,
+                                             inputs,
+                                             offsets,
+                                             state_types,
+                                             output_types,
+                                             hint);
+
+    ASSERT_EQ(result.size(), std::size(output_types) * std::size(expected_sums));
+
+    for (size_t segment = 0; segment < std::size(expected_sums); ++segment) {
+      SCOPED_TRACE(segment);
+      expect_sum_count_avg(
+        std::span{result}.subspan(std::size(output_types) * segment, std::size(output_types)),
+        expected_sums[segment],
+        expected_counts[segment]);
+    }
+  }
 }
 
 TEST_F(ReduceLto, CudaSourceTpchQ6SalesNullsAndEmptyInput)

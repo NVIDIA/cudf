@@ -301,6 +301,8 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  * Initialize every independent state to its identity. Merge must be associative and preserve
  * that identity; update/merge order is unspecified. An empty filter symbol selects all rows.
  * A false selection or filter error skips update. Row indices refer to the input views.
+ * Every segmented callback also receives a leading zero-based segment ID, including for empty
+ * segments. Initialization and merging can each run multiple times for the same segment.
  *
  * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
  * State and outputs support fixed-width types and strings. Keep referenced string characters
@@ -347,6 +349,42 @@ std::vector<std::unique_ptr<column>> reduce_lto(
   std::span<reduce_input const> inputs,
   std::span<data_type const> state_types,
   std::span<data_type const> outputs,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Reduces each segment, returning independent single-row columns in segment/output order.
+ *
+ * Segment i covers [offsets[i], offsets[i+1]); equal offsets describe an empty segment.
+ * Offsets must contain at least one entry, be nonnegative/nondecreasing and stay within input
+ * bounds. The first offset may be nonzero and the last need not cover every input row.
+ *
+ * Results use result[segment * outputs.size() + output]. Zero segments return an empty vector;
+ * empty or fully filtered segments finalize the identity. Other contracts follow @ref reduce_lto,
+ * with a leading segment ID on every callback. With no column inputs, offsets define row bounds.
+ *
+ * @throws std::invalid_argument for mismatched lengths, unsupported state/output types,
+ * empty/oversized offsets, or a negative maximum-length hint
+ * @throws cudf::evaluation_error for callback failures
+ * @param udf Compiled fragments and callback symbols
+ * @param is_null_aware Whether values use optional wrappers
+ * @param inputs Inputs in callback order
+ * @param offsets Device segment boundaries, with num_segments + 1 entries
+ * @param state_types State fields in callback order
+ * @param outputs Returned types in finalization order
+ * @param max_segment_size Upper bound on every segment length, or std::nullopt when unknown
+ * @param stream Execution stream
+ * @param mr Output and temporary memory resources
+ * @return One single-row column per segment/output pair
+ */
+std::vector<std::unique_ptr<column>> segmented_reduce_lto(
+  reduce_udf const& udf,
+  null_aware is_null_aware,
+  std::span<reduce_input const> inputs,
+  device_span<size_type const> offsets,
+  std::span<data_type const> state_types,
+  std::span<data_type const> outputs,
+  std::optional<size_type> max_segment_size,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 

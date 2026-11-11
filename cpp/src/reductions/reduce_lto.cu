@@ -56,6 +56,8 @@
 namespace cudf {
 namespace {
 
+enum class reduction_kind : int8_t { scalar = 0, segmented = 1, small = 2 };
+
 constexpr int32_t default_block_size    = 8 * detail::warp_size;
 constexpr int32_t max_block_size        = 1024;
 constexpr int32_t reduction_table_index = 0;
@@ -64,16 +66,37 @@ constexpr size_t small_state_bytes       = 64;
 constexpr size_t medium_state_bytes      = 256;
 constexpr size_t max_shuffle_state_bytes = 512;
 
-constexpr int32_t single_block_rows_per_thread = 16;
+constexpr int32_t single_block_rows_per_thread   = 16;
+constexpr int32_t segment_rows_per_thread        = 32;
+constexpr int32_t max_blocks_per_segment         = 64;
+constexpr size_type small_group_max_segment_size = 128;
+constexpr size_t small_group_max_state_bytes     = 256;
 
 constexpr char const* scalar_kernel_id = "cudf/cpp/src/reductions/jit/reduce_kernel.cu";
+constexpr char const* segmented_kernel_id =
+  "cudf/cpp/src/reductions/jit/segmented_reduce_kernel.cu";
+constexpr char const* small_groups_segmented_kernel_id =
+  "cudf/cpp/src/reductions/jit/small_groups_segmented_reduce.cu";
 
 constexpr char const* udf_dispatcher_path = "cudf/cpp/src/jit/udf_dispatch.cu";
 
 constexpr char const* udf_dispatch_header    = "cudf/detail/udf_dispatch.cuh";
 constexpr char const* kernel_instance_header = "cudf/detail/kernel_instance.cuh";
 
-constexpr char const* scalar_kernel_name = "::cudf::jit::reduce_kernel";
+constexpr char const* scalar_kernel_name    = "::cudf::jit::reduce_kernel";
+constexpr char const* segmented_kernel_name = "::cudf::jit::segmented_reduce_kernel";
+constexpr char const* small_groups_segmented_kernel_name =
+  "::cudf::jit::small_groups_segmented_reduce_kernel";
+
+constexpr char const* kernel_source_path(reduction_kind kind)
+{
+  switch (kind) {
+    case reduction_kind::scalar: return scalar_kernel_id;
+    case reduction_kind::segmented: return segmented_kernel_id;
+    case reduction_kind::small: return small_groups_segmented_kernel_id;
+  }
+  CUDF_UNREACHABLE("Unsupported reduction kind");
+}
 
 struct value_reflection {
   std::string physical{};
@@ -109,11 +132,14 @@ struct callback_reflection {
 
 struct reduction_shape {
   std::optional<size_type> rows = std::nullopt;
+  size_type segments            = 1;
 };
 
 reduction_shape validate_reduce(std::span<reduce_input const> inputs,
                                 std::span<data_type const> states,
-                                std::span<data_type const> outputs)
+                                std::span<data_type const> outputs,
+                                std::optional<device_span<size_type const>> offsets = std::nullopt,
+                                std::optional<size_type> max_segment_size           = std::nullopt)
 {
   auto supported_type = [](data_type type) {
     return type.id() != type_id::EMPTY && (is_fixed_width(type) || type.id() == type_id::STRING);
@@ -136,6 +162,17 @@ reduction_shape validate_reduce(std::span<reduce_input const> inputs,
     }
   }
 
+  if (!offsets) { return result; }
+
+  CUDF_EXPECTS(!offsets->empty() &&
+                 offsets->size() - 1 <= static_cast<size_t>(std::numeric_limits<size_type>::max()),
+               "Offsets must contain num_segments + 1 entries",
+               std::invalid_argument);
+  CUDF_EXPECTS(!max_segment_size || *max_segment_size >= 0,
+               "Maximum segment size must be nonnegative",
+               std::invalid_argument);
+
+  result.segments = static_cast<size_type>(offsets->size() - 1);
   return result;
 }
 
@@ -323,6 +360,23 @@ std::string reflect_reduce_kernel(kernel_reflection const& spec, bool optional_v
     scalar_kernel_name, spec, optional_values, rtcx::reflect(spec.warp_reduce), spec.state);
 }
 
+std::string reflect_segmented_reduce_kernel(kernel_reflection const& spec, bool optional_values)
+{
+  return reflect_kernel_instance(
+    segmented_kernel_name, spec, optional_values, rtcx::reflect(spec.warp_reduce), spec.state);
+}
+
+std::string reflect_small_groups_segmented_reduce_kernel(kernel_reflection const& spec,
+                                                         bool optional_values,
+                                                         int32_t group_size)
+{
+  return reflect_kernel_instance(small_groups_segmented_kernel_name,
+                                 spec,
+                                 optional_values,
+                                 rtcx::reflect(group_size),
+                                 spec.state);
+}
+
 std::vector<value_reflection> reflect_pointer_parameters(std::span<value_reflection const> types)
 {
   std::vector<value_reflection> result;
@@ -333,9 +387,12 @@ std::vector<value_reflection> reflect_pointer_parameters(std::span<value_reflect
 }
 
 std::vector<value_reflection> reflect_callback_parameters(
-  std::span<value_reflection const> first = {}, std::span<value_reflection const> second = {})
+  bool segmented,
+  std::span<value_reflection const> first  = {},
+  std::span<value_reflection const> second = {})
 {
   std::vector<value_reflection> result;
+  if (segmented) { result.push_back({"::cudf::size_type", "::cudf::size_type"}); }
   result.insert(result.end(), first.begin(), first.end());
   result.insert(result.end(), second.begin(), second.end());
   return result;
@@ -358,20 +415,22 @@ callback_reflection reflect_callback(std::string_view stage,
 }
 
 callback_reflection reflect_init_callback(std::string_view symbol,
-                                          std::span<value_reflection const> state_pointers)
+                                          std::span<value_reflection const> state_pointers,
+                                          bool segmented)
 {
   return reflect_callback("CUDF_REDUCE_INIT",
                           "cudf_reduce_init",
                           "CUDF_REDUCE_INIT_UDF_PARAMS",
-                          reflect_callback_parameters(state_pointers),
+                          reflect_callback_parameters(segmented, state_pointers),
                           symbol);
 }
 
 callback_reflection reflect_update_callback(std::string_view symbol,
                                             std::span<value_reflection const> inputs,
-                                            std::span<value_reflection const> state_pointers)
+                                            std::span<value_reflection const> state_pointers,
+                                            bool segmented)
 {
-  auto parameters = reflect_callback_parameters();
+  auto parameters = reflect_callback_parameters(segmented);
   parameters.push_back({"::cudf::size_type", "::cudf::size_type"});
   parameters.insert(parameters.end(), state_pointers.begin(), state_pointers.end());
   parameters.insert(parameters.end(), inputs.begin(), inputs.end());
@@ -383,9 +442,10 @@ callback_reflection reflect_update_callback(std::string_view symbol,
 }
 
 callback_reflection reflect_filter_callback(std::string_view symbol,
-                                            std::span<value_reflection const> inputs)
+                                            std::span<value_reflection const> inputs,
+                                            bool segmented)
 {
-  auto parameters = reflect_callback_parameters();
+  auto parameters = reflect_callback_parameters(segmented);
   parameters.push_back({"::cudf::size_type", "::cudf::size_type"});
   parameters.push_back({"bool*", "bool*"});
   parameters.insert(parameters.end(), inputs.begin(), inputs.end());
@@ -398,42 +458,45 @@ callback_reflection reflect_filter_callback(std::string_view symbol,
 
 callback_reflection reflect_merge_callback(std::string_view symbol,
                                            std::span<value_reflection const> state_pointers,
-                                           std::span<value_reflection const> state_values)
+                                           std::span<value_reflection const> state_values,
+                                           bool segmented)
 {
   return reflect_callback("CUDF_REDUCE_MERGE",
                           "cudf_reduce_merge",
                           "CUDF_REDUCE_MERGE_UDF_PARAMS",
-                          reflect_callback_parameters(state_pointers, state_values),
+                          reflect_callback_parameters(segmented, state_pointers, state_values),
                           symbol);
 }
 
 callback_reflection reflect_finalize_callback(std::string_view symbol,
                                               std::span<value_reflection const> outputs,
-                                              std::span<value_reflection const> state_values)
+                                              std::span<value_reflection const> state_values,
+                                              bool segmented)
 {
   return reflect_callback("CUDF_REDUCE_FINALIZE",
                           "cudf_reduce_finalize",
                           "CUDF_REDUCE_FINALIZE_UDF_PARAMS",
-                          reflect_callback_parameters(outputs, state_values),
+                          reflect_callback_parameters(segmented, outputs, state_values),
                           symbol);
 }
 
 std::vector<callback_reflection> reflect_callbacks(std::span<value_reflection const> input_types,
                                                    std::span<value_reflection const> output_types,
                                                    std::span<value_reflection const> state_types,
-                                                   reduce_udf const& udf)
+                                                   reduce_udf const& udf,
+                                                   bool segmented)
 {
   auto outputs        = reflect_pointer_parameters(output_types);
   auto state_pointers = reflect_pointer_parameters(state_types);
 
   std::vector<callback_reflection> callbacks{
-    reflect_init_callback(udf.init, state_pointers),
-    reflect_update_callback(udf.update, input_types, state_pointers),
-    reflect_merge_callback(udf.merge, state_pointers, state_types),
-    reflect_finalize_callback(udf.finalize, outputs, state_types)};
+    reflect_init_callback(udf.init, state_pointers, segmented),
+    reflect_update_callback(udf.update, input_types, state_pointers, segmented),
+    reflect_merge_callback(udf.merge, state_pointers, state_types, segmented),
+    reflect_finalize_callback(udf.finalize, outputs, state_types, segmented)};
 
   if (!udf.filter.empty()) {
-    callbacks.push_back(reflect_filter_callback(udf.filter, input_types));
+    callbacks.push_back(reflect_filter_callback(udf.filter, input_types, segmented));
   }
 
   return callbacks;
@@ -485,9 +548,13 @@ extern "C" __device__ ::cudf::errc {}({})
   return get_kernel_fragment(udf_dispatcher_path, udf_dispatcher_path, names, headers, "");
 }
 
-kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string const& instance)
+kernel compile(reduction_kind kind,
+               kernel_reflection const& spec,
+               reduce_udf const& udf,
+               std::string const& instance)
 {
-  auto callbacks = reflect_callbacks(spec.input_types, spec.output_types, spec.state_types, udf);
+  auto callbacks = reflect_callbacks(
+    spec.input_types, spec.output_types, spec.state_types, udf, kind != reduction_kind::scalar);
 
   // Physical storage and launch specialization determine the kernel fragment. Logical UDF types
   // and entry-point names occur only in the independently cached dispatcher fragment.
@@ -513,9 +580,9 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
   char const* const names[]{kernel_instance_header};
   char const* const headers[]{source.c_str()};
 
-  std::string const path{scalar_kernel_id};
-  auto object   = get_kernel_fragment(path, path, names, headers, instance);
-  auto dispatch = compile_udf_dispatcher(callbacks);
+  std::string const path = kernel_source_path(kind);
+  auto object            = get_kernel_fragment(path, path, names, headers, instance);
+  auto dispatch          = compile_udf_dispatcher(callbacks);
 
   std::vector<rtcx::memory_fragment> fragments{
     {object->view(), rtcx::binary_type::LTO_IR, nullptr}};
@@ -750,6 +817,131 @@ void launch_reduce(kernel_ref kernel,
   }
 }
 
+void launch_segmented_reduce(kernel_ref kernel,
+                             reduction_launch_config config,
+                             size_type num_segments,
+                             size_type const* offsets,
+                             size_type max_segment_size,
+                             column_device_view_core const* inputs,
+                             mutable_column_device_view_core const* outputs,
+                             errc* errors,
+                             cuda::stream_ref stream,
+                             rmm::device_async_resource_ref mr)
+{
+  CUDF_FUNC_RANGE();
+
+  CUDF_EXPECTS(config.block_size >= detail::warp_size && config.block_size <= max_block_size &&
+                 (config.block_size & (config.block_size - 1)) == 0,
+               "Reduction block size must be a power of two between 32 and 1024",
+               std::invalid_argument);
+  CUDF_EXPECTS(
+    config.state_bytes > 0, "Reduction state size must be positive", std::invalid_argument);
+  CUDF_EXPECTS(num_segments >= 0 && max_segment_size >= 0,
+               "Segment count and maximum segment size must be nonnegative",
+               std::invalid_argument);
+
+  if (num_segments == 0) { return; }
+
+  auto occupancy = kernel.max_occupancy_config(0, config.block_size);
+  auto const sms = get_context().get_device_properties().num_multiprocessors;
+
+  int32_t blocks_per_segment = 1;
+
+  // Split segments only when one block per segment would leave some SMs without work.
+  if (num_segments < sms) {
+    // Estimate useful splitting from the length hint, targeting segment_rows_per_thread rows
+    // per thread. Shorter segments may need less work than this upper-bound estimate.
+    auto const work_blocks =
+      detail::div_rounding_up_safe(max_segment_size, config.block_size * segment_rows_per_thread);
+
+    // Give each segment a share of the occupancy-recommended grid so splitting fills that grid
+    // without unnecessarily increasing the number of partial states to merge.
+    auto const occupancy_blocks =
+      detail::div_rounding_up_safe<int32_t>(occupancy.min_grid_size, num_segments);
+
+    // Keep one block for empty or unknown lengths; cap splitting to bound storage and merge cost.
+    blocks_per_segment =
+      std::clamp(std::min(work_blocks, occupancy_blocks), 1, max_blocks_per_segment);
+  }
+
+  auto const tiles = static_cast<int64_t>(num_segments) * blocks_per_segment;
+  auto const grid  = std::clamp<int64_t>(tiles, 1, occupancy.min_grid_size);
+
+  cuda::device_buffer<std::byte> partials(stream, mr, tiles * config.state_bytes, cuda::no_init);
+  cuda::device_buffer<std::byte> result(
+    stream, mr, blocks_per_segment == 1 ? 0 : num_segments * config.state_bytes, cuda::no_init);
+  cuda::device_buffer<std::byte> scratch(
+    stream,
+    mr,
+    config.warp_reduce ? 0 : config.state_bytes * grid * config.block_size,
+    cuda::no_init);
+
+  auto launch = [&](jit::reduce::phase phase, void const* source, void* destination) {
+    kernel.launch_with({static_cast<uint32_t>(grid)},
+                       {static_cast<uint32_t>(config.block_size)},
+                       0,
+                       stream,
+                       phase,
+                       num_segments,
+                       offsets,
+                       inputs,
+                       outputs,
+                       blocks_per_segment,
+                       source,
+                       destination,
+                       scratch.data(),
+                       errors,
+                       true);
+  };
+
+  launch(jit::reduce::phase::REDUCE, nullptr, partials.data());
+
+  if (blocks_per_segment > 1) { launch(jit::reduce::phase::MERGE, partials.data(), result.data()); }
+}
+
+void launch_small_groups_segmented_reduce(kernel_ref kernel,
+                                          int32_t block_size,
+                                          int32_t group_size,
+                                          size_type num_segments,
+                                          size_type const* offsets,
+                                          column_device_view_core const* inputs,
+                                          mutable_column_device_view_core const* outputs,
+                                          errc* errors,
+                                          cuda::stream_ref stream)
+{
+  CUDF_FUNC_RANGE();
+
+  CUDF_EXPECTS(block_size >= detail::warp_size && block_size <= max_block_size &&
+                 (block_size & (block_size - 1)) == 0,
+               "Reduction block size must be a power of two between 32 and 1024",
+               std::invalid_argument);
+  CUDF_EXPECTS(
+    group_size >= 1 && group_size <= detail::warp_size && (group_size & (group_size - 1)) == 0,
+    "Reduction group size must be a power of two between 1 and 32",
+    std::invalid_argument);
+  CUDF_EXPECTS(num_segments >= 0, "Segment count must be nonnegative", std::invalid_argument);
+
+  if (num_segments == 0) { return; }
+
+  // No dynamic shared memory is needed. Each group handles one segment at a time, so size a
+  // single pass using groups_per_block, then cap the grid at the occupancy recommendation.
+  // The kernel's group-stride loop covers any remaining segments without launching more blocks.
+  auto occupancy              = kernel.max_occupancy_config(0, block_size);
+  auto const groups_per_block = block_size / group_size;
+  auto const blocks           = detail::div_rounding_up_safe(num_segments, groups_per_block);
+  auto const grid             = std::clamp<int32_t>(blocks, 1, occupancy.min_grid_size);
+
+  kernel.launch_with({static_cast<uint32_t>(grid)},
+                     {static_cast<uint32_t>(block_size)},
+                     0,
+                     stream,
+                     num_segments,
+                     offsets,
+                     inputs,
+                     outputs,
+                     errors);
+}
+
 }  // namespace
 
 std::vector<std::unique_ptr<column>> reduce_lto(reduce_udf const& udf,
@@ -767,7 +959,7 @@ std::vector<std::unique_ptr<column>> reduce_lto(reduce_udf const& udf,
   auto spec                  = reflect_kernel(inputs, state_types, types, optional_values);
   auto rows                  = shape.rows.value_or(0);
   auto instance              = reflect_reduce_kernel(spec, optional_values);
-  auto compiled              = compile(spec, udf, instance);
+  auto compiled              = compile(reduction_kind::scalar, spec, udf, instance);
 
   input_arguments in(inputs, stream, mr.get_temporary_mr());
   output_arguments out(types, 1, true, stream, mr);
@@ -784,6 +976,69 @@ std::vector<std::unique_ptr<column>> reduce_lto(reduce_udf const& udf,
                 mr.get_temporary_mr());
 
   return out.finalize(error.data(), stream, mr.get_output_mr());
+}
+
+std::vector<std::unique_ptr<column>> segmented_reduce_lto(reduce_udf const& udf,
+                                                          null_aware nulls,
+                                                          std::span<reduce_input const> inputs,
+                                                          device_span<size_type const> offsets,
+                                                          std::span<data_type const> state_types,
+                                                          std::span<data_type const> types,
+                                                          std::optional<size_type> max_segment_size,
+                                                          cuda::stream_ref stream,
+                                                          memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+
+  auto const optional_values = nulls == null_aware::YES;
+  auto shape = validate_reduce(inputs, state_types, types, offsets, max_segment_size);
+  auto spec  = reflect_kernel(inputs, state_types, types, optional_values);
+
+  auto segments = shape.segments;
+
+  if (segments == 0) { return {}; }
+
+  auto longest = max_segment_size.value_or(std::numeric_limits<size_type>::max());
+
+  bool const small = longest <= small_group_max_segment_size &&
+                     spec.state_layout.size <= small_group_max_state_bytes;
+
+  int32_t const group = std::bit_ceil<uint32_t>(std::clamp(longest, 1, detail::warp_size));
+
+  auto instance = small ? reflect_small_groups_segmented_reduce_kernel(spec, optional_values, group)
+                        : reflect_segmented_reduce_kernel(spec, optional_values);
+
+  auto compiled =
+    compile(small ? reduction_kind::small : reduction_kind::segmented, spec, udf, instance);
+
+  input_arguments in(inputs, stream, mr.get_temporary_mr());
+  output_arguments out(types, segments, true, stream, mr);
+  cuda::device_buffer<errc> errors(stream, mr.get_temporary_mr(), segments, cuda::no_init);
+
+  if (small) {
+    launch_small_groups_segmented_reduce(compiled.get(),
+                                         spec.block_size,
+                                         group,
+                                         segments,
+                                         offsets.data(),
+                                         in.views.data(),
+                                         out.views.data(),
+                                         errors.data(),
+                                         stream);
+  } else {
+    launch_segmented_reduce(compiled.get(),
+                            {spec.block_size, spec.state_layout.size, spec.warp_reduce},
+                            segments,
+                            offsets.data(),
+                            longest,
+                            in.views.data(),
+                            out.views.data(),
+                            errors.data(),
+                            stream,
+                            mr.get_temporary_mr());
+  }
+
+  return out.finalize(errors.data(), stream, mr.get_output_mr());
 }
 
 }  // namespace cudf

@@ -99,12 +99,13 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
       }();
 
       auto const input_dv_ptr = cudf::column_device_view::create(input, stream);
-      auto const result       = thrust::transform_reduce(rmm::exec_policy_nosync(stream),
-                                                   cuda::counting_iterator<cudf::size_type>{0},
-                                                   cuda::counting_iterator{input.size()},
-                                                   transform_fn{*input_dv_ptr},
-                                                   static_cast<OutputType>(init_value),
-                                                   cuda::std::plus<>{});
+      auto const result =
+        thrust::transform_reduce(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                 cuda::counting_iterator<cudf::size_type>{0},
+                                 cuda::counting_iterator{input.size()},
+                                 transform_fn{*input_dv_ptr},
+                                 static_cast<OutputType>(init_value),
+                                 cuda::std::plus<>{});
 
       auto output = cudf::make_numeric_scalar(output_dtype, stream, mr);
       static_cast<cudf::scalar_type_t<OutputType>*>(output.get())->set_value(result, stream);
@@ -250,14 +251,14 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
 
       auto const input_dv_ptr = cudf::column_device_view::create(input, stream);
       auto output             = cudf::make_numeric_column(
-        output_dtype, num_segments, cudf::mask_state::UNALLOCATED, stream);
+        output_dtype, num_segments, cudf::mask_state::UNALLOCATED, stream, mr.as_temporary());
 
       // Store row index if it is valid, otherwise store a negative value denoting a null row.
       cuda::device_buffer<cudf::size_type> valid_idx(
-        stream, cudf::get_current_device_resource_ref(), num_segments, cuda::no_init);
+        stream, mr.get_temporary_mr(), num_segments, cuda::no_init);
 
       thrust::transform(
-        rmm::exec_policy_nosync(stream),
+        rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
         cuda::counting_iterator<cudf::size_type>{0},
         cuda::counting_iterator{num_segments},
         cuda::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),

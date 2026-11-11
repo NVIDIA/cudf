@@ -96,14 +96,14 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
                                                     num_groups,
                                                     cudf::mask_state::UNALLOCATED,
                                                     stream,
-                                                    mr);
+                                                    mr.as_temporary());
 
       // Store row index if it is valid, otherwise store a negative value denoting a null row.
       cuda::device_buffer<cudf::size_type> valid_idx(
-        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
+        stream, mr.get_temporary_mr(), num_groups, cuda::no_init);
 
       thrust::transform(
-        rmm::exec_policy_nosync(stream),
+        rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
         cuda::counting_iterator<cudf::size_type>{0},
         cuda::counting_iterator{num_groups},
         cuda::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),

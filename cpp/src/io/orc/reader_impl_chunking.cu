@@ -11,12 +11,11 @@
 
 #include <cudf/detail/timezone.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -253,11 +252,10 @@ void reader_impl::preprocess_file(read_mode mode)
                          : std::string_view{};
 
   // Set up table for converting timestamp columns from local to UTC time
-  _file_itm_data.tz_table =
-    (has_timestamp_column && !_options.ignore_timezone_in_stripe_footer)
-      ? cudf::detail::make_timezone_transition_table(
-          {}, writer_timezone, _stream, cudf::get_current_device_resource_ref())
-      : std::make_unique<cudf::table>();
+  _file_itm_data.tz_table = (has_timestamp_column && !_options.ignore_timezone_in_stripe_footer)
+                              ? cudf::detail::make_timezone_transition_table(
+                                  {}, writer_timezone, _stream, _mr.as_temporary())
+                              : std::make_unique<cudf::table>();
 
   // The ORC epoch as it occurs in the writer's timezone. The data stream is stored relative to it,
   // so the negative timestamp borrow must be decided in that frame even with the timezone ignored
@@ -363,9 +361,7 @@ void reader_impl::preprocess_file(read_mode mode)
   // This will be used only for CHUNKED_READ mode when there is a read limit.
   // Otherwise, we do not need this since we just load all stripes.
   cudf::detail::hostdevice_vector<cumulative_size> total_stripe_sizes(
-    load_all_stripes ? std::size_t{0} : num_total_stripes,
-    _stream,
-    cudf::get_current_device_resource_ref());
+    load_all_stripes ? std::size_t{0} : num_total_stripes, _stream, _mr.as_temporary());
 
   for (std::size_t stripe_global_idx = 0; stripe_global_idx < num_total_stripes;
        ++stripe_global_idx) {
@@ -447,7 +443,7 @@ void reader_impl::preprocess_file(read_mode mode)
 
   // Compute the prefix sum of stripes' data sizes.
   total_stripe_sizes.host_to_device_async(_stream);
-  thrust::inclusive_scan(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(_stream, _mr),
                          total_stripe_sizes.d_begin(),
                          total_stripe_sizes.d_end(),
                          total_stripe_sizes.d_begin(),
@@ -635,7 +631,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
 
   // This is for estimating the decompressed sizes of the loaded stripes.
   cudf::detail::hostdevice_vector<cumulative_size_and_row> stripe_decomp_sizes(
-    stripe_count, _stream, cudf::get_current_device_resource_ref());
+    stripe_count, _stream, _mr.as_temporary());
 
   // Fill up the `cumulative_size_and_row` array with initial values.
   // Note: `hostdevice_vector::begin()` mirrors `std::vector::data()` using incorrect API name.
@@ -663,7 +659,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
       }
     }
     return cudf::detail::hostdevice_vector<compressed_stream_info>(
-      max_num_streams, _stream, cudf::get_current_device_resource_ref());
+      max_num_streams, _stream, _mr.as_temporary());
   }();
 
   for (std::size_t level = 0; level < num_levels; ++level) {
@@ -722,7 +718,7 @@ void reader_impl::load_next_stripe_data(read_mode mode)
 
   // Compute the prefix sum of stripe data sizes and rows.
   stripe_decomp_sizes.host_to_device_async(_stream);
-  thrust::inclusive_scan(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(_stream, _mr),
                          stripe_decomp_sizes.d_begin(),
                          stripe_decomp_sizes.d_end(),
                          stripe_decomp_sizes.d_begin(),

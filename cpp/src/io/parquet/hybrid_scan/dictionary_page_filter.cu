@@ -1076,15 +1076,12 @@ struct dictionary_caster {
             num_input_values, OCCUPANCY_FACTOR)));
       });
 
-    // Get the default device resource ref for temporary memory allocations
-    auto const default_mr = cudf::get_current_device_resource_ref();
-
     // Device vectors to store the running number of hash set slots and decoded values for all
     // dictionaries
     auto const set_offsets =
-      cudf::detail::make_device_buffer_async(host_set_offsets, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_set_offsets, stream, mr.as_temporary());
     auto const value_offsets =
-      cudf::detail::make_device_buffer_async(host_value_offsets, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_value_offsets, stream, mr.as_temporary());
 
     auto const total_set_storage_size = static_cast<std::size_t>(host_set_offsets.back());
     auto const total_num_values       = static_cast<std::size_t>(host_value_offsets.back());
@@ -1098,7 +1095,8 @@ struct dictionary_caster {
     set_storage.initialize_async(EMPTY_KEY_SENTINEL, {stream.get()});
 
     // Device vector to store the decoded values for all dictionaries
-    cuda::device_buffer<T> decoded_data{stream, default_mr, total_num_values, cuda::no_init};
+    cuda::device_buffer<T> decoded_data{
+      stream, mr.get_temporary_mr(), total_num_values, cuda::no_init};
     kernel_error error_code(stream);
 
     // Host vector of scalar device views from all literals
@@ -1108,10 +1106,12 @@ struct dictionary_caster {
       host_scalars.push_back(literal->get_value());
     });
     // Device vector of all scalars device views
-    auto const scalars = cudf::detail::make_device_buffer_async(host_scalars, stream, default_mr);
+    auto const scalars =
+      cudf::detail::make_device_buffer_async(host_scalars, stream, mr.as_temporary());
 
     // Device vector of all operators
-    auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, default_mr);
+    auto const d_operators =
+      cudf::detail::make_device_buffer_async(operators, stream, mr.as_temporary());
 
     // Device buffers to store the dictionary membership results for all predicates
     std::vector<rmm::device_buffer> results_buffers(total_num_literals);
@@ -1194,7 +1194,7 @@ struct dictionary_caster {
 
     // Device vector of pointers to the result buffers
     auto results_ptrs =
-      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, mr.as_temporary());
 
     // Query one predicate against all cuco hash sets of this column using a thread block
     query_dictionaries<T>
@@ -1235,9 +1235,6 @@ struct dictionary_caster {
     // Get the total number of scalars and literals
     auto const total_num_literals = static_cast<cudf::size_type>(literals.size());
 
-    // Get the default device resource ref for temporary memory allocations
-    auto const default_mr = cudf::get_current_device_resource_ref();
-
     // Host vector of scalar device views from all literals
     std::vector<ast::generic_scalar_device_view> host_scalars;
     host_scalars.reserve(total_num_literals);
@@ -1245,10 +1242,12 @@ struct dictionary_caster {
       host_scalars.push_back(literal->get_value());
     });
     // Device vector of all scalars device views
-    auto const scalars = cudf::detail::make_device_buffer_async(host_scalars, stream, default_mr);
+    auto const scalars =
+      cudf::detail::make_device_buffer_async(host_scalars, stream, mr.as_temporary());
 
     // Device vector of all operators
-    auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, default_mr);
+    auto const d_operators =
+      cudf::detail::make_device_buffer_async(operators, stream, mr.as_temporary());
 
     // Device buffers to store the dictionary membership results for all predicates
     std::vector<rmm::device_buffer> results_buffers(total_num_literals);
@@ -1266,7 +1265,7 @@ struct dictionary_caster {
 
     // Device vector of pointers to the result buffers
     auto results_ptrs =
-      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
+      cudf::detail::make_device_buffer_async(host_results_ptrs, stream, mr.as_temporary());
 
     // Error code for the dictionary decode kernel
     kernel_error error_code(stream);

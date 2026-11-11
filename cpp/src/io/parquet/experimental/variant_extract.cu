@@ -13,6 +13,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -32,7 +33,6 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -1205,7 +1205,7 @@ struct cast_variant_fn {
 
     auto* dp_s = d_status;
 
-    thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>(0),
                      cuda::counting_iterator<size_type>(num_rows),
                      [vals  = this->values,
@@ -1382,9 +1382,9 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
 
-  auto path_column      = build_path_column(steps, stream, temp_mr);
+  auto path_column      = build_path_column(steps, stream, mr.as_temporary());
   auto path_device_view = column_device_view::create(path_column->view(), stream);
 
   // Resolve children with respect to any slice/offset on the parent struct
@@ -1448,12 +1448,8 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
         [out_base, d_off = d_offsets.data()] __device__(size_type row) -> uint8_t* {
           return out_base + d_off[row];
         }));
-    cudf::detail::batched_memcpy_async(src_iter,
-                                       dst_iter,
-                                       d_sizes.begin(),
-                                       num_rows,
-                                       stream,
-                                       cudf::get_current_device_resource_ref());
+    cudf::detail::batched_memcpy_async(
+      src_iter, dst_iter, d_sizes.begin(), num_rows, stream, mr.as_temporary());
   }
 
   auto const null_count = num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
@@ -1549,7 +1545,7 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
     static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr.get_output_mr()};
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>(0),
     cuda::counting_iterator<size_type>(num_rows),
     static_cast<uint8_t*>(data.data()),
@@ -1609,7 +1605,7 @@ std::unique_ptr<column> extract_variant_field(column_view const& variant_column,
                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.as_temporary();
 
   if (status.has_value()) {
     // `status` is filled by `get_variant_field`, then read back by `cast_variant` as incoming

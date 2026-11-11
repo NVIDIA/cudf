@@ -604,17 +604,15 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
                    subpass_decomp_offset);
   }
 
-  auto const d_comp_in = cudf::detail::make_device_buffer_async(
-    comp_in, stream, cudf::get_current_device_resource_ref());
-  auto const d_comp_out = cudf::detail::make_device_buffer_async(
-    comp_out, stream, cudf::get_current_device_resource_ref());
+  auto const d_comp_in = cudf::detail::make_device_buffer_async(comp_in, stream, mr.as_temporary());
+  auto const d_comp_out =
+    cudf::detail::make_device_buffer_async(comp_out, stream, mr.as_temporary());
   cuda::device_buffer<codec_exec_result> comp_res(
-    stream, cudf::get_current_device_resource_ref(), num_comp_pages, cuda::no_init);
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    comp_res.begin(),
-    comp_res.end(),
-    codec_exec_result{0, codec_status::FAILURE});
+    stream, mr.get_temporary_mr(), num_comp_pages, cuda::no_init);
+  thrust::uninitialized_fill(cudf::detail::exec_policy_nosync(stream, mr),
+                             comp_res.begin(),
+                             comp_res.end(),
+                             codec_exec_result{0, codec_status::FAILURE});
 
   int32_t start_pos = 0;
   for (auto const& codec : codecs) {
@@ -634,16 +632,16 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
                                  codec.max_decompressed_size,
                                  codec.total_decomp_size,
                                  stream,
-                                 cudf::get_current_device_resource_ref());
+                                 mr.as_temporary());
 
     start_pos += codec.num_pages;
   }
   // now copy the uncompressed V2 def and rep level data
   if (curr_copy_page > 0) {
-    auto const d_copy_in = cudf::detail::make_device_buffer_async(
-      copy_in, stream, cudf::get_current_device_resource_ref());
-    auto const d_copy_out = cudf::detail::make_device_buffer_async(
-      copy_out, stream, cudf::get_current_device_resource_ref());
+    auto const d_copy_in =
+      cudf::detail::make_device_buffer_async(copy_in, stream, mr.as_temporary());
+    auto const d_copy_out =
+      cudf::detail::make_device_buffer_async(copy_out, stream, mr.as_temporary());
 
     auto const src_iter = cudf::detail::make_counting_transform_iterator(
       size_type{0},
@@ -659,12 +657,8 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
         [inputs = d_copy_in.data(), outputs = d_copy_out.data()] __device__(size_type i) {
           return inputs[i].size() < outputs[i].size() ? inputs[i].size() : outputs[i].size();
         }));
-    cudf::detail::batched_memcpy_async(src_iter,
-                                       dst_iter,
-                                       size_iter,
-                                       curr_copy_page,
-                                       stream,
-                                       cudf::get_current_device_resource_ref());
+    cudf::detail::batched_memcpy_async(
+      src_iter, dst_iter, size_iter, curr_copy_page, stream, mr.as_temporary());
   }
 
   CUDF_EXPECTS(
@@ -966,7 +960,7 @@ cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
   cuda::device_buffer<size_t> string_offset_sizes(
     stream, mr.get_output_mr(), pages.size(), cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     pages.begin(),
                     pages.end(),
                     string_offset_sizes.begin(),
@@ -986,7 +980,7 @@ cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
   cuda::device_buffer<size_t> level_decode_sizes(
     stream, mr.get_output_mr(), pages.size(), cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     pages.begin(),
                     pages.end(),
                     level_decode_sizes.begin(),

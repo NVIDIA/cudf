@@ -85,10 +85,10 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto input_device_view    = column_device_view::create(input, stream);
+  auto input_device_view = column_device_view::create(input, stream);
 
   auto input_row_is_null = [d_input = *input_device_view] __device__(auto i) {
     return d_input.is_null_nocheck(i);

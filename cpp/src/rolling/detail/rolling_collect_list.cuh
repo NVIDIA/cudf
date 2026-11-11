@@ -130,7 +130,8 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr);
 
 /**
  * @brief Purge entries for null inputs from gather_map, and adjust offsets.
@@ -174,7 +175,7 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
   // If gather_map collects null elements, and null_policy == EXCLUDE,
   // those elements must be filtered out, and offsets recomputed.
   if (null_handling == null_policy::EXCLUDE && input.has_nulls()) {
-    auto num_child_nulls = count_child_nulls(input, gather_map, stream);
+    auto num_child_nulls = count_child_nulls(input, gather_map, stream, mr);
     if (num_child_nulls != 0) {
       std::tie(gather_map, offsets) =
         purge_null_entries(input, *gather_map, *offsets, num_child_nulls, stream, mr);

@@ -12,6 +12,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -20,8 +21,6 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/std/iterator>
@@ -93,7 +92,7 @@ auto create_strings_device_views(host_span<column_view const> views,
   CUDF_CUDA_TRY(cudaMemsetAsync(
     d_partition_offsets.data(), 0, sizeof(size_t), stream.get()));  // zero first element
 
-  thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                                    device_views_ptr,
                                    device_views_ptr + views.size(),
                                    std::next(d_partition_offsets.begin()),
@@ -211,8 +210,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
 {
   CUDF_FUNC_RANGE();
   // Compute output sizes
-  auto const device_views =
-    create_strings_device_views(columns, stream, cudf::get_current_device_resource_ref());
+  auto const device_views         = create_strings_device_views(columns, stream, mr.as_temporary());
   auto const& d_views             = std::get<1>(device_views);
   auto const& d_input_offsets     = std::get<2>(device_views);
   auto const& d_partition_offsets = std::get<3>(device_views);
@@ -246,8 +244,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   }
 
   {  // Copy offsets columns with single kernel launch
-    cudf::detail::device_scalar<size_type> d_valid_count(
-      0, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<size_type> d_valid_count(0, stream, mr.get_temporary_mr());
 
     constexpr size_type block_size{256};
     cudf::detail::grid_1d config(offsets_count, block_size);

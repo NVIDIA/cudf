@@ -5,6 +5,7 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/replace.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -58,14 +59,16 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  auto d_input             = cudf::column_device_view::create(input.parent(), stream);
-  auto d_values_to_replace = cudf::column_device_view::create(values_to_replace.parent(), stream);
-  auto d_replacements      = cudf::column_device_view::create(replacement_values.parent(), stream);
+  auto d_input = cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto d_values_to_replace =
+    cudf::column_device_view::create(values_to_replace.parent(), stream, mr.as_temporary());
+  auto d_replacements =
+    cudf::column_device_view::create(replacement_values.parent(), stream, mr.as_temporary());
 
   auto indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     indices.begin(),

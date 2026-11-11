@@ -9,6 +9,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
@@ -244,12 +245,12 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
                                                    cudf::memory_resources mr)
 {
   auto results = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if ((input.chars_size(stream) / (input.size() - input.null_count())) < AVG_CHAR_BYTES_THRESHOLD) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       results.begin(),
@@ -299,7 +300,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
     }
   }
 
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto const d_start = start.is_valid(stream) ? cuda::std::optional<size_type>{start.value(stream)}
                                               : cuda::std::nullopt;
@@ -346,7 +347,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
     }
   }
 
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto const d_start =
     start.has_value() ? cuda::std::optional<size_type>{start.value()} : cuda::std::nullopt;

@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/char_types/char_types.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -79,7 +80,7 @@ std::unique_ptr<column> all_characters_of_type(strings_column_view const& input,
                                                cuda::stream_ref stream,
                                                cudf::memory_resources mr)
 {
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // create output column
   auto results = make_numeric_column(data_type{type_id::BOOL8},
@@ -92,7 +93,7 @@ std::unique_ptr<column> all_characters_of_type(strings_column_view const& input,
   auto d_flags = detail::get_character_flags_table(stream);
 
   // set the output values by checking the character types for each string
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     results->mutable_view().data<bool>(),
@@ -179,7 +180,8 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& str
   auto const strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(cudf::data_type{cudf::type_id::STRING});
 
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream);
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
   cudf::string_view d_replacement(replacement.data(), replacement.size());
   filter_chars_fn filterer{*strings_column,
                            detail::get_character_flags_table(stream),

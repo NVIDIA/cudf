@@ -16,6 +16,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -260,8 +261,8 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
   // hold a copy of the input (not expected to be very large)
   auto const output_mr = mr.get_output_mr();
   auto const temp_mr   = mr.get_temporary_mr();
-  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, output_mr);
-  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, output_mr);
+  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, mr);
+  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, mr);
 
   // build the vocabulary map: each row is a single term and is the key for the map
   auto vocab_map = std::make_unique<detail::vocabulary_map_type>(
@@ -308,7 +309,7 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
   // prefetch the [unk] vocab entry
   auto unk_ids = cuda::device_buffer<cudf::size_type>{stream, temp_mr, 2, cuda::no_init};
   auto d_map   = vocab_map->ref(cuco::op::find);
-  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     zero_itr,
                     zero_itr + unk_ids.size(),
                     unk_ids.begin(),
@@ -858,7 +859,7 @@ tokenized_words tokenize_words(WordsFn words,
     0, cuda::proclaim_return_type<int64_t>([input_offsets, first_offset] __device__(auto idx) {
       return input_offsets[idx] - first_offset;
     }));
-  thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       d_starts,
                       d_starts + num_words,
                       d_offsets,
@@ -905,8 +906,8 @@ std::unique_ptr<cudf::column> make_tokens_column(tokenized_words&& tokens,
     d_token_counts.begin(), d_token_counts.end(), stream, mr);
 
   auto const output_type = cudf::data_type{cudf::type_to_id<cudf::size_type>()};
-  auto output            = cudf::make_numeric_column(
-    output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto output =
+    cudf::make_numeric_column(output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
 
   if (num_words > 0) {
     // compute the output offset for each block of words
@@ -926,7 +927,7 @@ std::unique_ptr<cudf::column> make_tokens_column(tokenized_words&& tokens,
       CUDF_CUDA_TRY(cub::DeviceSegmentedReduce::Sum(
         counts_itr, d_block_offsets.begin(), grid.num_blocks, words_block_size, env));
     }
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            d_block_offsets.begin(),
                            d_block_offsets.end(),
                            d_block_offsets.begin());
@@ -973,7 +974,7 @@ cuda::device_buffer<cudf::bitmask_type> make_row_starts(cudf::strings_column_vie
   auto const input_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     input.size(),
     [input_offsets, first_offset, chars_size, d_row_starts = d_row_starts.data()] __device__(
@@ -1118,7 +1119,8 @@ tokenized_words compute_some_tokens(
   auto const d_input_chars = input.chars_begin(stream) + first_offset;
   auto const d_row_starts =
     make_row_starts(input, first_offset, chars_size, stream, mr.as_temporary());
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // count the words in each row (up to max_words_per_row) and convert to offsets
   auto d_offsets = cuda::device_buffer<int64_t>{

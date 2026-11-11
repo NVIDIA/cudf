@@ -13,6 +13,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/hashing/detail/murmurhash3_x64_128.cuh>
@@ -25,8 +26,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <nvtext/minhash.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
@@ -399,7 +398,7 @@ std::pair<cudf::size_type, cuda::device_buffer<cudf::size_type>> partition_input
   auto const temp_mr = mr.get_temporary_mr();
   auto indices =
     cuda::device_buffer<cudf::size_type>(stream, mr.get_output_mr(), size, cuda::no_init);
-  thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr), indices.begin(), indices.end());
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), indices.begin(), indices.end());
   cudf::size_type threshold_index = threshold_count < size ? size : 0;
 
   // if we counted a split of above/below threshold then
@@ -408,12 +407,12 @@ std::pair<cudf::size_type, cuda::device_buffer<cudf::size_type>> partition_input
     auto sizes = cuda::device_buffer<cudf::size_type>(stream, temp_mr, size, cuda::no_init);
     auto begin = cuda::counting_iterator<cudf::size_type>{0};
     auto end   = begin + size;
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr), begin, end, sizes.data(), tfn);
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr), begin, end, sizes.data(), tfn);
     // these 2 are slightly faster than using partition()
     thrust::sort_by_key(
-      rmm::exec_policy_nosync(stream, temp_mr), sizes.begin(), sizes.end(), indices.begin());
+      cudf::detail::exec_policy_nosync(stream, mr), sizes.begin(), sizes.end(), indices.begin());
     auto const lb = thrust::lower_bound(
-      rmm::exec_policy_nosync(stream, temp_mr), sizes.begin(), sizes.end(), wide_row_threshold);
+      cudf::detail::exec_policy_nosync(stream, mr), sizes.begin(), sizes.end(), wide_row_threshold);
     threshold_index = static_cast<cudf::size_type>(cuda::std::distance(sizes.begin(), lb));
   }
   return {threshold_index, std::move(indices)};
@@ -444,15 +443,16 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
   auto const output_type = cudf::data_type{cudf::type_to_id<hash_value_type>()};
   if (input.is_empty()) { return cudf::make_empty_column(output_type); }
 
-  auto const temp_mr   = mr.get_temporary_mr();
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results =
     cudf::make_numeric_column(output_type,
                               input.size() * static_cast<cudf::size_type>(parameter_a.size()),
                               cudf::mask_state::UNALLOCATED,
                               stream,
-                              mr.get_output_mr());
+                              mr);
   auto d_results = results->mutable_view().data<hash_value_type>();
 
   cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * block_size,
@@ -535,14 +535,14 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
   if (input.is_empty()) { return cudf::make_empty_column(output_type); }
 
   auto const temp_mr = mr.get_temporary_mr();
-  auto const d_input = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const d_input = cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results =
     cudf::make_numeric_column(output_type,
                               input.size() * static_cast<cudf::size_type>(parameter_a.size()),
                               cudf::mask_state::UNALLOCATED,
                               stream,
-                              mr.get_output_mr());
+                              mr);
   auto d_results = results->mutable_view().data<hash_value_type>();
 
   cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * block_size,
@@ -605,11 +605,10 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                                 cudf::memory_resources mr)
 {
   // build the offsets for the output lists column
-  auto const temp_mr   = mr.get_temporary_mr();
-  auto const output_mr = mr.get_output_mr();
-  auto const zero      = cudf::numeric_scalar<cudf::size_type>(0, true, stream, temp_mr);
-  auto const size      = cudf::numeric_scalar<cudf::size_type>(seeds_size, true, stream, temp_mr);
-  auto offsets         = cudf::detail::sequence(input.size() + 1, zero, size, stream, output_mr);
+  auto const zero = cudf::numeric_scalar<cudf::size_type>(0, true, stream, mr.as_temporary());
+  auto const size =
+    cudf::numeric_scalar<cudf::size_type>(seeds_size, true, stream, mr.as_temporary());
+  auto offsets = cudf::detail::sequence(input.size() + 1, zero, size, stream, mr);
   hashes->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
                         0);  // children have no nulls
 
@@ -621,7 +620,7 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                   cudf::detail::copy_bitmask(input, stream, mr));
   // expect this condition to be very rare
   if (input.null_count() > 0) {
-    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, output_mr);
+    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, mr);
   }
   return result;
 }

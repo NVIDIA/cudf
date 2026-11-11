@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/convert/convert_booleans.hpp>
 #include <cudf/strings/detail/converters.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -14,8 +15,6 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -39,7 +38,7 @@ std::unique_ptr<column> to_booleans(strings_column_view const& input,
                "Parameter true_string must not be empty.");
   auto d_true = string_view(true_string.data(), true_string.size());
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column copying the strings' null-mask
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
@@ -51,7 +50,7 @@ std::unique_ptr<column> to_booleans(strings_column_view const& input,
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     d_results,
@@ -123,7 +122,7 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
                "Parameter false_string must not be empty.");
   auto d_false = string_view(false_string.data(), false_string.size());
 
-  auto column   = column_device_view::create(booleans, stream);
+  auto column   = column_device_view::create(booleans, stream, mr.as_temporary());
   auto d_column = *column;
 
   // copy null mask

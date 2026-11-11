@@ -15,6 +15,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
@@ -31,7 +32,6 @@
 #include <nvtext/unicode_normalize.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
@@ -336,16 +336,17 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
     cudf::strings::detail::hex_to_integers(cudf::strings_column_view(unicode_data.column(0)),
                                            cudf::data_type{cudf::type_id::UINT32},
                                            stream,
-                                           temp_mr);
+                                           mr.as_temporary());
   auto d_codepoints = cuda::std::span<uint32_t const>(codepoints_col->view().data<uint32_t>(),
                                                       static_cast<std::size_t>(num_rows));
 
-  auto const d_ccc_col = cudf::column_device_view::create(unicode_data.column(1), stream, temp_mr);
+  auto const d_ccc_col =
+    cudf::column_device_view::create(unicode_data.column(1), stream, mr.as_temporary());
   auto const d_decomp_map =
-    cudf::column_device_view::create(unicode_data.column(2), stream, temp_mr);
+    cudf::column_device_view::create(unicode_data.column(2), stream, mr.as_temporary());
   bool const apply_compat =
     (form == unicode_normalization_form::NFKD || form == unicode_normalization_form::NFKC);
-  auto const policy   = rmm::exec_policy_nosync(stream, temp_mr);
+  auto const policy   = cudf::detail::exec_policy_nosync(stream, mr);
   auto const row_iter = cuda::make_counting_iterator(cudf::size_type{0});
 
   // Build Canonical Combining Class (CCC) table
@@ -1034,11 +1035,11 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
     cudf::strings::detail::get_first_and_last_offset(input, stream);
   auto const chars_size = last_offset - first_offset;
   auto const output_mr  = mr.get_output_mr();
-  if (chars_size == 0) { return std::make_unique<cudf::column>(input.parent(), stream, output_mr); }
+  if (chars_size == 0) { return std::make_unique<cudf::column>(input.parent(), stream, mr); }
 
   auto const& p          = *normalizer._impl;
   auto const temp_mr     = mr.get_temporary_mr();
-  auto const policy      = rmm::exec_policy_nosync(stream, temp_mr);
+  auto const policy      = cudf::detail::exec_policy_nosync(stream, mr);
   auto const byte_iter   = cuda::make_counting_iterator(int64_t{0});
   auto const d_raw_chars = input.chars_begin(stream) + first_offset;
   auto const chars_span  = cuda::std::span<char const>(d_raw_chars, chars_size);
@@ -1051,7 +1052,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
     auto nfc_qc_fn = detail::nfc_quick_check_fn{chars_span, p.ccc_table, p.compat_decomp_flags};
     if (!cudf::detail::any_of(
           byte_iter, byte_iter + chars_size, nfc_qc_fn, stream, mr.as_temporary())) {
-      return std::make_unique<cudf::column>(input.parent(), stream, output_mr);
+      return std::make_unique<cudf::column>(input.parent(), stream, mr);
     }
   }
 

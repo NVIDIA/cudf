@@ -132,7 +132,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
   string_view d_separator(separator.data(), separator.size());
   auto d_narep = get_scalar_device_view(const_cast<string_scalar&>(narep));
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto chars = [&] {
     // build the strings column and commandeer the chars column

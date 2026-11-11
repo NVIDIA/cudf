@@ -103,7 +103,7 @@ std::unique_ptr<column> pad(strings_column_view const& input,
   auto d_fill_char          = char_utf8{0};
   auto const fill_char_size = to_char_utf8(fill_char.data(), d_fill_char);
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto [offsets_column, chars] = [&] {
     if (side == side_type::LEFT) {
@@ -182,7 +182,7 @@ std::unique_ptr<column> zfill(strings_column_view const& input,
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
 
-  auto d_strings               = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto [offsets_column, chars] = make_strings_children(
     zfill_fn<constant_width>{*d_strings, constant_width{width}}, input.size(), stream, mr);
 
@@ -203,8 +203,8 @@ std::unique_ptr<column> zfill_by_widths(strings_column_view const& input,
                "widths column must be the same size as the input column",
                std::invalid_argument);
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
-  auto d_widths  = column_device_view::create(widths, stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto d_widths  = column_device_view::create(widths, stream, mr.as_temporary());
 
   auto [offsets_column, chars] = make_strings_children(
     zfill_fn<column_width>{*d_strings, column_width{*d_widths}}, input.size(), stream, mr);

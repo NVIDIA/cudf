@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/strings/detail/split_utils.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
@@ -249,6 +250,7 @@ struct rsplit_ws_extract_fn {
  * Three kernel launches: count tokens per string, prefix-sum into offsets, extract tokens.
  * The extract functor is constructed via make_extract once d_offsets and d_tokens are known.
  * Returns the same (offsets, tokens) pair as split_helper so callers are interchangeable.
+ * The offsets use the output resource of `mr` and the tokens use its temporary resource.
  */
 template <typename CountFn, typename MakeExtractFn>
 std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split_per_row_impl(
@@ -259,9 +261,9 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
   cudf::memory_resources mr)
 {
   auto const strings_count = d_strings.size();
-  auto const temp_mr       = cudf::get_current_device_resource_ref();
+  auto const temp_mr       = mr.get_temporary_mr();
   auto const iota_itr      = cuda::counting_iterator<size_type>{0};
-  auto const policy        = rmm::exec_policy_nosync(stream, temp_mr);
+  auto const policy        = cudf::detail::exec_policy_nosync(stream, mr);
 
   auto token_counts = cuda::device_buffer<size_type>(stream, temp_mr, strings_count, cuda::no_init);
   thrust::transform(policy, iota_itr, iota_itr + strings_count, token_counts.data(), count_fn);
@@ -270,8 +272,8 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
     cudf::detail::make_offsets_child_column(token_counts.begin(), token_counts.end(), stream, mr);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
-  auto tokens =
-    cuda::device_buffer<string_index_pair>(stream, mr.get_output_mr(), total_tokens, cuda::no_init);
+  auto tokens = cuda::device_buffer<string_index_pair>(
+    stream, mr.get_temporary_mr(), total_tokens, cuda::no_init);
   if (total_tokens > 0) {
     thrust::for_each_n(policy, iota_itr, strings_count, make_extract(d_offsets, tokens.data()));
   }
@@ -425,7 +427,7 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
   }
 
-  auto d_strings         = column_device_view::create(input.parent(), stream);
+  auto d_strings         = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto [offsets, tokens] = split_per_row<Forward>(*d_strings, d_delimiter, max_tokens, stream, mr);
   CUDF_EXPECTS(tokens.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "Size of output exceeds the column size limit",
@@ -459,7 +461,7 @@ std::unique_ptr<column> split_record_ws_per_row_fn(strings_column_view const& in
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
   }
 
-  auto d_strings         = column_device_view::create(input.parent(), stream);
+  auto d_strings         = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto [offsets, tokens] = split_ws_per_row<Forward>(*d_strings, max_tokens, stream, mr);
   CUDF_EXPECTS(tokens.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "Size of output exceeds the column size limit",
@@ -491,7 +493,7 @@ std::unique_ptr<column> split_record_impl(strings_column_view const& input,
         (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
       return split_record_ws_per_row_fn<Forward>(input, max_tokens, stream, mr);
     }
-    auto d_strings    = column_device_view::create(input.parent(), stream);
+    auto d_strings    = column_device_view::create(input.parent(), stream, mr.as_temporary());
     using ws_tok_t    = std::conditional_t<Forward, split_ws_tokenizer_fn, rsplit_ws_tokenizer_fn>;
     auto tokenizer    = ws_tok_t{*d_strings, max_tokens};
     auto delimiter_fn = whitespace_delimiter_fn{};
@@ -503,7 +505,7 @@ std::unique_ptr<column> split_record_impl(strings_column_view const& input,
     return split_record_per_row_fn<Forward>(input, delimiter.value(stream), max_tokens, stream, mr);
   }
 
-  auto d_strings    = column_device_view::create(input.parent(), stream);
+  auto d_strings    = column_device_view::create(input.parent(), stream, mr.as_temporary());
   using tok_t       = std::conditional_t<Forward, split_tokenizer_fn, rsplit_tokenizer_fn>;
   auto tokenizer    = tok_t{*d_strings, delimiter.size(), max_tokens};
   auto delimiter_fn = string_delimiter_fn{delimiter.value(stream)};

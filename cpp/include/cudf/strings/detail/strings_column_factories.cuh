@@ -10,6 +10,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/valid_if.cuh>
@@ -18,8 +19,6 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
@@ -119,7 +118,7 @@ std::unique_ptr<column> make_offsets_child_column_async(IndexPairIterator begin,
       return idx < strings_count ? string_index_pair{begin[idx]}.second : OutputType{0};
     });
   auto const input_it = cudf::detail::make_counting_transform_iterator(0, sizes);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          input_it,
                          input_it + strings_count + 1,
                          offsets->mutable_view().template data<OutputType>(),

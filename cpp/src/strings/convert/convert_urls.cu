@@ -128,7 +128,7 @@ std::unique_ptr<column> url_encode(strings_column_view const& input,
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
 
-  auto d_column = column_device_view::create(input.parent(), stream);
+  auto d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto [offsets_column, chars] =
     make_strings_children(url_encoder_fn{*d_column}, input.size(), stream, mr);
@@ -389,11 +389,11 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   auto const num_threadblocks =
     std::min(65536, cuda::ceil_div(strings_count, num_warps_per_threadblock));
 
-  auto const d_strings = column_device_view::create(strings.parent(), stream);
+  auto const d_strings = column_device_view::create(strings.parent(), stream, mr.as_temporary());
 
   // build offsets column by computing the output row sizes and scanning the results
-  auto row_sizes = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto row_sizes =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   url_decode_char_counter<num_warps_per_threadblock, char_block_size>
     <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, row_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());

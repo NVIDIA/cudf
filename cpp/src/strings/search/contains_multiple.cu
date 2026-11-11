@@ -9,6 +9,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cub/device/device_merge_sort.cuh>
@@ -187,14 +186,14 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
     not targets.is_empty(), "Must specify at least one target string.", std::invalid_argument);
   CUDF_EXPECTS(not targets.has_nulls(), "Target strings cannot be null", std::invalid_argument);
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
-  auto const d_targets = column_device_view::create(targets.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto const d_targets = column_device_view::create(targets.parent(), stream, mr.as_temporary());
 
   // copy the first byte of each target and sort them
-  auto first_bytes = cuda::device_buffer<u_char>(
-    stream, cudf::get_current_device_resource_ref(), targets.size(), cuda::no_init);
-  auto indices = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), targets.size(), cuda::no_init);
+  auto first_bytes =
+    cuda::device_buffer<u_char>(stream, mr.get_temporary_mr(), targets.size(), cuda::no_init);
+  auto indices =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), targets.size(), cuda::no_init);
   {
     auto tgt_itr = cuda::transform_iterator(
       d_targets->begin<string_view>(),
@@ -211,23 +210,20 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
     std::size_t tmp_bytes = 0;
     cub::DeviceMergeSort::SortPairsCopy(
       nullptr, tmp_bytes, tgt_itr, count_itr, keys_out, vals_out, num_items, cmp_op, sv);
-    auto tmp_stg = cuda::device_buffer<std::byte>(
-      stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
+    auto tmp_stg =
+      cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), tmp_bytes, cuda::no_init);
     cub::DeviceMergeSort::SortPairsCopy(
       tmp_stg.data(), tmp_bytes, tgt_itr, count_itr, keys_out, vals_out, num_items, cmp_op, sv);
   }
 
   // remove duplicates to help speed up lower_bound
-  auto offsets = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), targets.size(), cuda::no_init);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   offsets.begin(),
-                   offsets.end());
-  auto const end =
-    thrust::unique_by_key(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                          first_bytes.begin(),
-                          first_bytes.end(),
-                          offsets.begin());
+  auto offsets =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), targets.size(), cuda::no_init);
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), offsets.begin(), offsets.end());
+  auto const end = thrust::unique_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                                         first_bytes.begin(),
+                                         first_bytes.end(),
+                                         offsets.begin());
   auto const unique_count =
     static_cast<size_type>(cuda::std::distance(first_bytes.begin(), end.first));
 
@@ -248,8 +244,7 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
       });
     auto host_results_pointers =
       std::vector<bool*>(host_results_pointer_iter, host_results_pointer_iter + results.size());
-    return cudf::detail::make_device_buffer(
-      host_results_pointers, stream, cudf::get_current_device_resource_ref());
+    return cudf::detail::make_device_buffer(host_results_pointers, stream, mr.as_temporary());
   }();
 
   constexpr cudf::thread_index_type block_size = 256;
@@ -284,8 +279,8 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
       (targets.size() <= targets_threshold) ? (block_size * targets.size()) : 0;
     auto const work_mem_size =
       (targets.size() <= targets_threshold) ? 0 : tile_size * targets.size() * input.size();
-    auto working_memory = cuda::device_buffer<bool>(
-      stream, cudf::get_current_device_resource_ref(), work_mem_size, cuda::no_init);
+    auto working_memory =
+      cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), work_mem_size, cuda::no_init);
 
     cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * tile_size,
                                block_size};

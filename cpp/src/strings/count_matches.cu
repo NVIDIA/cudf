@@ -74,7 +74,7 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                             d_results,
                             strings_count,
                             stream,
-                            cudf::get_current_device_resource_ref());
+                            mr.as_temporary());
   } else {
     if (d_prog.is_empty_match_possible()) {
       launch_transform_kernel(count_fn<positional::BEGIN_END>{d_strings},
@@ -82,14 +82,14 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                               d_results,
                               strings_count,
                               stream,
-                              cudf::get_current_device_resource_ref());
+                              mr.as_temporary());
     } else {
       launch_transform_kernel(count_fn<positional::END_ONLY>{d_strings},
                               d_prog,
                               d_results,
                               strings_count,
                               stream,
-                              cudf::get_current_device_resource_ref());
+                              mr.as_temporary());
     }
   }
 
@@ -109,10 +109,10 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
 {
   auto const strings_count = d_strings.size();
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
     return count_matches(d_strings, *d_prog, strings_count, stream, mr);
   }
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
   return count_matches(d_strings, *d_prog, strings_count, stream, mr);
 }
 

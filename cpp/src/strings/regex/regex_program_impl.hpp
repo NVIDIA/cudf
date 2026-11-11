@@ -41,15 +41,19 @@ struct regex_device_builder {
     return p._impl->glushkov_prog.get() != nullptr;
   }
 
-  static auto create_prog_device(regex_program const& p, cuda::stream_ref stream)
+  static auto create_prog_device(regex_program const& p,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
   {
-    return detail::reprog_device::create(p._impl->prog, stream);
+    return detail::reprog_device::create(p._impl->prog, stream, mr);
   }
 
-  static auto create_gkprog_device(regex_program const& p, cuda::stream_ref stream)
+  static auto create_gkprog_device(regex_program const& p,
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
   {
     CUDF_EXPECTS(glushkov_fast_path_supported(p), "fast-path not supported");
-    return detail::gkprog_device::create(*p._impl->glushkov_prog, stream);
+    return detail::gkprog_device::create(*p._impl->glushkov_prog, stream, mr);
   }
 };
 

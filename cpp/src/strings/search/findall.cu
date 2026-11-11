@@ -115,7 +115,7 @@ std::unique_ptr<column> findall(strings_column_view const& input,
     return cudf::lists::detail::make_empty_lists_column(input.parent().type());
   }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // Builds the lists offsets column and the matches from a single, already-built
   // device regex program (avoids a redundant device program build for the count pass).
@@ -129,29 +129,26 @@ std::unique_ptr<column> findall(strings_column_view const& input,
     auto const d_offsets = offsets->view().template data<size_type>();
 
     cuda::device_buffer<string_index_pair> indices(
-      stream, cudf::get_current_device_resource_ref(), total_matches, cuda::no_init);
-    launch_for_each_kernel(make_functor(d_offsets, indices.data()),
-                           d_prog,
-                           input.size(),
-                           stream,
-                           cudf::get_current_device_resource_ref());
+      stream, mr.get_temporary_mr(), total_matches, cuda::no_init);
+    launch_for_each_kernel(
+      make_functor(d_offsets, indices.data()), d_prog, input.size(), stream, mr.as_temporary());
     return std::pair(std::move(offsets), std::move(indices));
   };
 
   auto [offsets, indices] = [&]() {
     if (groups == 1) {
-      auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+      auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
       return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
         return one_capture_fn{*d_strings, d_offsets, d_indices};
       });
     }
     if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+      auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
       return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
         return findall_fn{*d_strings, d_offsets, d_indices};
       });
     }
-    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
     return build_matches(*d_prog, [&](size_type const* d_offsets, string_index_pair* d_indices) {
       return findall_fn{*d_strings, d_offsets, d_indices};
     });
@@ -200,24 +197,16 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
   if (input.is_empty()) { return results; }
 
   auto d_results       = results->mutable_view().data<size_type>();
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings},
-                            *d_prog,
-                            d_results,
-                            input.size(),
-                            stream,
-                            cudf::get_current_device_resource_ref());
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
+    launch_transform_kernel(
+      find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream, mr.as_temporary());
   } else {
-    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings},
-                            *d_prog,
-                            d_results,
-                            input.size(),
-                            stream,
-                            cudf::get_current_device_resource_ref());
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
+    launch_transform_kernel(
+      find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream, mr.as_temporary());
   }
 
   return results;

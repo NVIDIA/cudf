@@ -230,7 +230,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
   if (output_count == 0) return make_empty_column(type_id::STRING);
 
   // build offsets column
-  auto const d_strings    = column_device_view::create(strings.parent(), stream, temp_mr);
+  auto const d_strings    = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto const d_in_offsets = cudf::detail::offsetalator_factory::make_input_iterator(
     strings.is_empty() ? make_empty_column(type_id::INT32)->view() : strings.offsets(),
     strings.offset());

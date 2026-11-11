@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/contains.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -16,8 +17,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -315,14 +314,14 @@ std::unique_ptr<column> like(strings_column_view const& input,
                                      mr);
   if (input.is_empty()) { return results; }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // string per thread for smaller strings
   auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
   if ((input.size() == input.null_count()) ||
       ((last_offset - first_offset) / (input.size() - input.null_count())) <
         AVG_CHAR_BYTES_THRESHOLD) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       results->mutable_view().data<bool>(),
@@ -370,9 +369,8 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
 {
-  auto const ptn = string_scalar(pattern, true, stream, cudf::get_current_device_resource_ref());
-  auto const esc =
-    string_scalar(escape_character, true, stream, cudf::get_current_device_resource_ref());
+  auto const ptn = string_scalar(pattern, true, stream, mr.as_temporary());
+  auto const esc = string_scalar(escape_character, true, stream, mr.as_temporary());
   return like(input, ptn, esc, stream, mr);
 }
 
@@ -397,7 +395,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                "Parameter escape_character must be a single character",
                std::invalid_argument);
 
-  auto const d_patterns   = column_device_view::create(patterns.parent(), stream);
+  auto const d_patterns = column_device_view::create(patterns.parent(), stream, mr.as_temporary());
   auto const patterns_itr = d_patterns->begin<string_view>();
   return like(input, patterns_itr, d_escape, stream, mr);
 }

@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/convert/int_cast.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -93,11 +94,11 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
                                      input.null_count(),
                                      stream,
                                      mr);
-  auto d_strings = column_device_view::create(input.parent(), stream);
-  auto d_results = mutable_column_device_view::create(*results, stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto d_results = mutable_column_device_view::create(*results, stream, mr.as_temporary());
 
   auto const type_size = static_cast<size_type>(cudf::size_of(output_type));
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      input.size(),
                      cast_to_integer_fn{*d_strings, *d_results, swap, type_size});
@@ -188,7 +189,7 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
                cudf::data_type_error);
   if (integers.size() == 0) { return make_empty_column(type_id::STRING); }
 
-  auto d_column        = column_device_view::create(integers, stream);
+  auto d_column        = column_device_view::create(integers, stream, mr.as_temporary());
   auto const type_size = static_cast<size_type>(cudf::size_of(integers.type()));
 
   auto [offsets, chars] = make_strings_children(

@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -165,7 +164,7 @@ void find_utility(strings_column_view const& input,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
 {
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_results = output.mutable_view().data<size_type>();
   if ((input.chars_size(stream) / (input.size() - input.null_count())) > AVG_CHAR_BYTES_THRESHOLD) {
     // warp-per-string runs faster for longer strings (but not shorter ones)
@@ -178,7 +177,7 @@ void find_utility(strings_column_view const& input,
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     // string-per-thread function
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -212,9 +211,9 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
 
   // special logic for empty target results
   if (d_target.empty()) {
-    auto d_strings = column_device_view::create(input.parent(), stream);
+    auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
     auto d_results = results->mutable_view().data<size_type>();
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -226,7 +225,7 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
   auto target_itr      = cuda::make_constant_iterator(d_target);
   using TargetIterator = decltype(target_itr);
   find_utility<TargetIterator, forward>(
-    input, target_itr, *results, start, stop, stream, cudf::get_current_device_resource_ref());
+    input, target_itr, *results, start, stop, stream, mr.as_temporary());
   results->set_null_count(input.null_count());
   return results;
 }
@@ -273,11 +272,11 @@ std::unique_ptr<column> find(strings_column_view const& input,
   if (input.size() == input.null_count()) { return results; }
 
   // call find utility with target iterator
-  auto d_targets  = column_device_view::create(target.parent(), stream);
+  auto d_targets  = column_device_view::create(target.parent(), stream, mr.as_temporary());
   auto target_itr = cudf::detail::make_null_replacement_iterator<string_view>(
     *d_targets, string_view{}, target.has_nulls());
   find_utility<decltype(target_itr), forward>(
-    input, target_itr, *results, start, -1, stream, cudf::get_current_device_resource_ref());
+    input, target_itr, *results, start, -1, stream, mr.as_temporary());
 
   // AND the bitmasks from input and target
   auto [null_mask, null_count] =
@@ -390,13 +389,13 @@ std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
   // fill the output with `false` unless the `d_target` is empty
   auto results_view = results->mutable_view();
   if (d_target.empty()) {
-    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                  results_view.begin<bool>(),
                  results_view.end<bool>(),
                  true);
   } else {
     // launch warp per string
-    auto const d_strings                   = column_device_view::create(input.parent(), stream);
+    auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
     constexpr thread_index_type block_size = 256;
     constexpr thread_index_type warp_size  = cudf::detail::warp_size;
     cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
@@ -436,16 +435,15 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   if (target.size() == 0)  // empty target string returns true
   {
-    auto const true_scalar =
-      make_fixed_width_scalar<bool>(true, stream, cudf::get_current_device_resource_ref());
-    auto results = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
+    auto const true_scalar = make_fixed_width_scalar<bool>(true, stream, mr.as_temporary());
+    auto results           = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
     results->set_null_mask(cudf::detail::copy_bitmask(strings.parent(), stream, mr),
                            strings.null_count());
     return results;
   }
 
   auto d_target       = string_view(target.data(), target.size());
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
@@ -457,7 +455,7 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     d_results,
@@ -496,9 +494,9 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   CUDF_EXPECTS(targets.size() == strings.size(),
                "strings and targets column must be the same size");
 
-  auto targets_column = column_device_view::create(targets.parent(), stream);
+  auto targets_column = column_device_view::create(targets.parent(), stream, mr.as_temporary());
   auto d_targets      = *targets_column;
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
@@ -511,7 +509,7 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings.size()},
     d_results,

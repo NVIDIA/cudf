@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/convert/convert_integers.hpp>
 #include <cudf/strings/detail/convert/int_to_string.cuh>
@@ -19,8 +20,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/limits>
@@ -107,7 +106,7 @@ struct dispatch_is_integer_fn {
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
   {
-    auto const d_column = column_device_view::create(input.parent(), stream);
+    auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
     auto results        = make_numeric_column(data_type{type_id::BOOL8},
                                        input.size(),
                                        cudf::detail::copy_bitmask(input.parent(), stream, mr),
@@ -117,13 +116,13 @@ struct dispatch_is_integer_fn {
 
     auto d_results = results->mutable_view().data<bool>();
     if (input.has_nulls()) {
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         d_column->pair_begin<string_view, true>(),
                         d_column->pair_end<string_view, true>(),
                         d_results,
                         string_to_integer_check_fn<T>{});
     } else {
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         d_column->pair_begin<string_view, false>(),
                         d_column->pair_end<string_view, false>(),
                         d_results,
@@ -151,7 +150,7 @@ std::unique_ptr<column> is_integer(strings_column_view const& input,
                                    cuda::stream_ref stream,
                                    cudf::memory_resources mr)
 {
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto results        = make_numeric_column(data_type{type_id::BOOL8},
                                      input.size(),
                                      cudf::detail::copy_bitmask(input.parent(), stream, mr),
@@ -162,13 +161,13 @@ std::unique_ptr<column> is_integer(strings_column_view const& input,
   auto d_results = results->mutable_view().data<bool>();
   if (input.has_nulls()) {
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       d_column->pair_begin<string_view, true>(),
       d_column->pair_end<string_view, true>(),
       d_results,
       [] __device__(auto const& p) { return p.second ? is_integer(p.first) : false; });
   } else {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       d_column->pair_begin<string_view, false>(),
                       d_column->pair_end<string_view, false>(),
                       d_results,
@@ -239,9 +238,10 @@ struct dispatch_to_integers_fn {
   template <cudf::concepts::integral_not_bool IntegerType>
   void operator()(column_device_view const& strings_column,
                   mutable_column_view& output_column,
-                  cuda::stream_ref stream) const
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const
   {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{strings_column.size()},
                       output_column.data<IntegerType>(),
@@ -249,7 +249,10 @@ struct dispatch_to_integers_fn {
   }
   // non-integer types throw an exception
   template <typename T>
-  void operator()(column_device_view const&, mutable_column_view&, cuda::stream_ref) const
+  void operator()(column_device_view const&,
+                  mutable_column_view&,
+                  cuda::stream_ref,
+                  cudf::memory_resources) const
   {
     CUDF_FAIL("Output for to_integers must be an integer type.");
   }
@@ -276,9 +279,11 @@ std::unique_ptr<column> to_integers(strings_column_view const& input,
                                      stream,
                                      mr);
   // Fill output column with integers
-  auto const strings_dev_view = column_device_view::create(input.parent(), stream);
-  auto results_view           = results->mutable_view();
-  type_dispatcher(output_type, dispatch_to_integers_fn{}, *strings_dev_view, results_view, stream);
+  auto const strings_dev_view =
+    column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto results_view = results->mutable_view();
+  type_dispatcher(
+    output_type, dispatch_to_integers_fn{}, *strings_dev_view, results_view, stream, mr);
 
   // Calling mutable_view() on a column invalidates it's null count so we need to set it back
   results->set_null_count(input.null_count());
@@ -346,7 +351,7 @@ struct dispatch_from_integers_fn {
                                      cudf::memory_resources mr) const
   {
     size_type strings_count = integers.size();
-    auto column             = column_device_view::create(integers, stream);
+    auto column             = column_device_view::create(integers, stream, mr.as_temporary());
     auto d_column           = *column;
 
     // copy the null mask

@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/split_utils.cuh>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/split/split.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -159,13 +158,13 @@ std::unique_ptr<table> split_fn(strings_column_view const& input,
   }
 
   // builds the offsets and the vector of all tokens
-  auto [offsets, tokens] = split_helper(input, tokenizer, delimiter_fn, stream, mr);
+  auto [offsets, tokens] = split_helper(input, tokenizer, delimiter_fn, stream, mr.as_temporary());
   auto const d_offsets   = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
   auto const d_tokens    = tokens.data();
 
   // compute the maximum number of tokens for any string
   auto const columns_count = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{input.size()},
     cuda::proclaim_return_type<size_type>([d_offsets] __device__(auto idx) -> size_type {
@@ -200,7 +199,7 @@ std::unique_ptr<table> build_table_from_tokens(strings_column_view const& input,
   auto const d_offsets     = cudf::detail::offsetalator_factory::make_input_iterator(offsets);
   auto const d_tokens      = tokens.data();
   auto const columns_count = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{input.size()},
     cuda::proclaim_return_type<size_type>([d_offsets] __device__(auto idx) -> size_type {
@@ -246,8 +245,8 @@ std::unique_ptr<table> split_impl(strings_column_view const& input,
 
   size_type const max_tokens = maxsplit > 0 ? maxsplit + 1 : std::numeric_limits<size_type>::max();
 
-  auto d_strings            = column_device_view::create(input.parent(), stream);
-  auto temp_mr              = cudf::get_current_device_resource_ref();
+  auto d_strings            = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto temp_mr              = mr.as_temporary();
   auto const non_null_count = input.size() - input.null_count();
   if (delimiter.size() == 0) {
     if (non_null_count > 0 &&

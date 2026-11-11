@@ -86,14 +86,16 @@ bool needs_stable_groups(aggregation::Kind kind)
  * @param column_0 The first column
  * @param column_1 The second column
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources; the new null mask is allocated from the temporary resource
  * @return tuple with new null mask (if null masks of input differ) and new column views
  */
 auto column_view_with_common_nulls(column_view const& column_0,
                                    column_view const& column_1,
-                                   cuda::stream_ref stream)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
-  auto [new_nullmask, null_count] = cudf::bitmask_and(
-    table_view{{column_0, column_1}}, stream, cudf::get_current_device_resource_ref());
+  auto [new_nullmask, null_count] =
+    cudf::bitmask_and(table_view{{column_0, column_1}}, stream, mr.as_temporary());
   if (null_count == 0) { return std::make_tuple(std::move(new_nullmask), column_0, column_1); }
   // The new null mask starts at bit 0, so a sliced column is viewed from its first row with no
   // offset. The view must keep pointing into the input's memory because the result cache keys on
@@ -197,13 +199,11 @@ void aggregate_result_functor::operator()<aggregation::HISTOGRAM>(aggregation co
       values, agg, detail::make_singleton_histograms(release_grouped_values(), stream, mr));
     return;
   }
-  cache.add_result(values,
-                   agg,
-                   detail::group_histogram(get_unordered_grouped_values(),
-                                           helper.group_labels(stream, mr),
-                                           num_groups,
-                                           stream,
-                                           mr.get_output_mr()));
+  cache.add_result(
+    values,
+    agg,
+    detail::group_histogram(
+      get_unordered_grouped_values(), helper.group_labels(stream, mr), num_groups, stream, mr));
 }
 
 template <>
@@ -223,7 +223,7 @@ void aggregate_result_functor::operator()<aggregation::QUANTILE>(aggregation con
                                         quantile_agg._quantiles,
                                         quantile_agg._interpolation,
                                         stream,
-                                        mr.get_output_mr());
+                                        mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -243,7 +243,7 @@ void aggregate_result_functor::operator()<aggregation::MEDIAN>(aggregation const
                                         {0.5},
                                         interpolation::LINEAR,
                                         stream,
-                                        mr.get_output_mr());
+                                        mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -260,7 +260,7 @@ void aggregate_result_functor::operator()<aggregation::NUNIQUE>(aggregation cons
                                       helper.group_offsets(stream, mr),
                                       nunique_agg._null_handling,
                                       stream,
-                                      mr.get_output_mr());
+                                      mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -349,7 +349,7 @@ void aggregate_result_functor::operator()<aggregation::COLLECT_SET>(aggregation 
                                            nans_equal,
                                            duplicate_keep_option::KEEP_ANY,
                                            stream,
-                                           mr.get_output_mr()));
+                                           mr));
 }
 
 /**
@@ -378,7 +378,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_LISTS>(aggregation 
                                              helper.group_offsets(stream, mr),
                                              helper.num_groups(stream, mr),
                                              stream,
-                                             mr.get_output_mr()));
+                                             mr));
 }
 
 /**
@@ -423,7 +423,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_SETS>(aggregation c
                                            merge_sets_agg._nans_equal,
                                            duplicate_keep_option::KEEP_ANY,
                                            stream,
-                                           mr.get_output_mr()));
+                                           mr));
 }
 
 /**
@@ -454,7 +454,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_M2>(aggregation con
                                           helper.group_offsets(stream, mr),
                                           helper.num_groups(stream, mr),
                                           stream,
-                                          mr.get_output_mr()));
+                                          mr));
 }
 
 /**
@@ -474,7 +474,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_HISTOGRAM>(aggregat
                                                  helper.group_offsets(stream, mr),
                                                  helper.num_groups(stream, mr),
                                                  stream,
-                                                 mr.get_output_mr()));
+                                                 mr));
 }
 
 /**
@@ -493,9 +493,12 @@ void aggregate_result_functor::operator()<aggregation::COVARIANCE>(aggregation c
   auto const& cov_agg = dynamic_cast<cudf::detail::covariance_aggregation const&>(agg);
   // Covariance only for valid values in both columns.
   // in non-identical null mask cases, this prevents caching of the results - STD, MEAN, COUNT.
-  auto const structs_values              = structs_column_view{values};
-  auto [_, values_child0, values_child1] = column_view_with_common_nulls(
-    structs_values.get_sliced_child(0, stream), structs_values.get_sliced_child(1, stream), stream);
+  auto const structs_values = structs_column_view{values};
+  auto [_, values_child0, values_child1] =
+    column_view_with_common_nulls(structs_values.get_sliced_child(0, stream),
+                                  structs_values.get_sliced_child(1, stream),
+                                  stream,
+                                  mr);
 
   auto mean_agg = make_mean_aggregation();
   aggregate_result_functor(values_child0, helper, cache, expose_intermediates, stream, mr)
@@ -545,9 +548,12 @@ void aggregate_result_functor::operator()<aggregation::CORRELATION>(aggregation 
 
   // Correlation only for valid values in both columns.
   // in non-identical null mask cases, this prevents caching of the results - STD, MEAN, COUNT
-  auto const structs_values              = structs_column_view{values};
-  auto [_, values_child0, values_child1] = column_view_with_common_nulls(
-    structs_values.get_sliced_child(0, stream), structs_values.get_sliced_child(1, stream), stream);
+  auto const structs_values = structs_column_view{values};
+  auto [_, values_child0, values_child1] =
+    column_view_with_common_nulls(structs_values.get_sliced_child(0, stream),
+                                  structs_values.get_sliced_child(1, stream),
+                                  stream,
+                                  mr);
 
   auto std_agg = make_std_aggregation();
   aggregate_result_functor(values_child0, helper, cache, expose_intermediates, stream, mr)
@@ -588,9 +594,7 @@ void aggregate_result_functor::operator()<aggregation::CORRELATION>(aggregation 
   auto const stddev1    = cache.get_result(values_child1, *std_agg);
   auto const covariance = cache.get_result(values, *cov_agg);
   cache.add_result(
-    values,
-    agg,
-    detail::group_correlation(covariance, stddev0, stddev1, stream, mr.get_output_mr()));
+    values, agg, detail::group_correlation(covariance, stddev0, stddev1, stream, mr));
 }
 
 /**
@@ -639,7 +643,7 @@ void aggregate_result_functor::operator()<aggregation::TDIGEST>(aggregation cons
                      helper.num_groups(stream, mr),
                      max_centroids,
                      stream,
-                     mr.get_output_mr()));
+                     mr));
 }
 
 /**
@@ -681,7 +685,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_TDIGEST>(aggregatio
                                                               helper.num_groups(stream, mr),
                                                               max_centroids,
                                                               stream,
-                                                              mr.get_output_mr()));
+                                                              mr));
 }
 
 template <>
@@ -695,7 +699,7 @@ void aggregate_result_functor::operator()<aggregation::BITWISE_AGG>(aggregation 
                                       helper.group_labels(stream, mr),
                                       helper.num_groups(stream, mr),
                                       stream,
-                                      mr.get_output_mr());
+                                      mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -707,12 +711,8 @@ void aggregate_result_functor::operator()<aggregation::TOP_K>(aggregation const&
   auto const k          = dynamic_cast<cudf::detail::top_k_aggregation const&>(agg).k;
   auto const topk_order = dynamic_cast<cudf::detail::top_k_aggregation const&>(agg).topk_order;
 
-  auto result = detail::group_top_k(k,
-                                    topk_order,
-                                    get_unordered_grouped_values(),
-                                    helper.group_offsets(stream, mr),
-                                    stream,
-                                    mr.get_output_mr());
+  auto result = detail::group_top_k(
+    k, topk_order, get_unordered_grouped_values(), helper.group_offsets(stream, mr), stream, mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -826,7 +826,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> detail::hash:
     }
   }
 
-  auto results = detail::extract_results(requests, cache, stream, mr.get_output_mr());
+  auto results = detail::extract_results(requests, cache, stream, mr);
 
   return std::pair(helper.distinct_keys(stream, mr), std::move(results));
 }

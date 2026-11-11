@@ -7,10 +7,9 @@
 #include <cudf/detail/groupby/group_replace_nulls.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/replace/nulls.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/replace.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -49,7 +48,7 @@ std::unique_ptr<column> group_replace_nulls(cudf::column_view const& value,
   auto func = cudf::detail::replace_policy_functor();
   cuda::std::equal_to<cudf::size_type> eq;
   if (replace_policy == cudf::replace_policy::PRECEDING) {
-    thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                   group_labels.begin(),
                                   group_labels.begin() + size,
                                   in_begin,
@@ -60,7 +59,7 @@ std::unique_ptr<column> group_replace_nulls(cudf::column_view const& value,
     auto gl_rbegin = cuda::std::make_reverse_iterator(group_labels.begin() + size);
     auto in_rbegin = cuda::std::make_reverse_iterator(in_begin + size);
     auto gm_rbegin = cuda::std::make_reverse_iterator(gm_begin + size);
-    thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                   gl_rbegin,
                                   gl_rbegin + size,
                                   in_rbegin,

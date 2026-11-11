@@ -67,13 +67,12 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
   agg_requests.front().aggregations.push_back(convert_to<cudf::groupby_aggregation>(aggr));
 
   auto group_by = cudf::groupby::groupby{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
-  auto aggregation_results =
-    group_by.aggregate(agg_requests, stream, cudf::get_current_device_resource_ref());
+  auto aggregation_results           = group_by.aggregate(agg_requests, stream, mr.as_temporary());
   auto const& aggregation_result_col = aggregation_results.second.front().results.front();
 
   using cudf::groupby::detail::groupby_helper;
   auto helper = groupby_helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
-  auto const& group_labels = helper.group_labels(stream, cudf::get_current_device_resource_ref());
+  auto const& group_labels = helper.group_labels(stream, mr);
 
   auto result_columns = cudf::detail::gather(cudf::table_view{{*aggregation_result_col}},
                                              group_labels,
@@ -95,18 +94,17 @@ std::unique_ptr<column> reduction_based_rolling_window(column_view const& input,
   auto const reduce_results = [&] {
     auto const return_dtype = cudf::detail::target_type(input.type(), aggr.kind);
     if (aggr.kind == aggregation::COUNT_ALL) {
-      return cudf::make_fixed_width_scalar(
-        input.size(), stream, cudf::get_current_device_resource_ref());
+      return cudf::make_fixed_width_scalar(input.size(), stream, mr.as_temporary());
     } else if (aggr.kind == aggregation::COUNT_VALID) {
       return cudf::make_fixed_width_scalar(
-        input.size() - input.null_count(), stream, cudf::get_current_device_resource_ref());
+        input.size() - input.null_count(), stream, mr.as_temporary());
     } else {
       return cudf::reduction::detail::reduce(input,
                                              *convert_to<cudf::reduce_aggregation>(aggr),
                                              return_dtype,
                                              std::nullopt,
                                              stream,
-                                             cudf::get_current_device_resource_ref());
+                                             mr.as_temporary());
     }
   }();
   // Blow up results into separate column.

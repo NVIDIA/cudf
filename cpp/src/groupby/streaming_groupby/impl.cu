@@ -20,6 +20,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/null_mask.hpp>
@@ -75,9 +76,10 @@ struct m2_functor {
                 SumType const* sum,
                 CountType const* count,
                 size_type size,
-                cuda::stream_ref stream) const noexcept
+                cuda::stream_ref stream,
+                cudf::memory_resources mr) const noexcept
   {
-    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::tabulate(cudf::detail::exec_policy_nosync(stream, mr),
                      target,
                      target + size,
                      [sum_sqr, sum, count] __device__(size_type const idx) {
@@ -96,7 +98,8 @@ struct m2_functor {
                   column_view const& sum_sqr,
                   column_view const& sum,
                   column_view const& count,
-                  cuda::stream_ref stream) const noexcept  //
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const noexcept  //
     requires(is_m2_supported<Source>())
   {
     using Target     = cudf::detail::target_type_t<Source, aggregation::M2>;
@@ -111,7 +114,8 @@ struct m2_functor {
              sum.begin<SumType>(),
              count.begin<CountType>(),
              target.size(),
-             stream);
+             stream,
+             mr);
   }
 };
 
@@ -127,7 +131,8 @@ std::unique_ptr<column> compute_raw_m2(data_type source_type,
                                     mask_state::UNALLOCATED,
                                     stream,
                                     mr);
-  type_dispatcher(source_type, m2_functor{}, output->mutable_view(), sum_sqr, sum, count, stream);
+  type_dispatcher(
+    source_type, m2_functor{}, output->mutable_view(), sum_sqr, sum, count, stream, mr);
   return output;
 }
 
@@ -349,8 +354,8 @@ std::unique_ptr<table> streaming_groupby::impl::make_aggregate_results(
     schema_columns.push_back(cudf::make_empty_column(type));
   }
   auto const schema = table{std::move(schema_columns)};
-  auto results      = detail::hash::create_results_table(
-    capacity, schema.view(), kinds, intermediates, stream, mr.get_output_mr());
+  auto results =
+    detail::hash::create_results_table(capacity, schema.view(), kinds, intermediates, stream, mr);
   // Future batches may introduce all-null groups even when the first values were valid.
   for (size_type i = 0; i < results->num_columns(); ++i) {
     auto& result = results->get_column(i);
@@ -404,7 +409,7 @@ void streaming_groupby::impl::ensure_aggregate_capacity(size_type required,
         mutable_table_device_view::create(next->mutable_view(), stream, mr.get_temporary_mr());
       // The pitch changes with capacity. Collapse live groups into the first new partial;
       // every other partial and padding row retains its identity.
-      thrust::for_each_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                          cuda::counting_iterator<int64_t>{0},
                          static_cast<int64_t>(old_groups) * _partials_per_group,
                          merge_partial_aggs_fn{nullptr,
@@ -464,7 +469,7 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(cuda::stream_
         mutable_table_view{{result->get_column(i).mutable_view()}}, stream, mr.get_temporary_mr());
       auto const partials = i < _num_grown_agg_columns ? 1 : _partials_per_group;
       thrust::for_each_n(
-        rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+        cudf::detail::exec_policy_nosync(stream, mr),
         cuda::counting_iterator<int64_t>{0},
         static_cast<int64_t>(size) * partials,
         merge_partial_aggs_fn{
@@ -488,7 +493,7 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(cuda::stream_
   // Finish the host copy as well: destructive finalization also retires the host vector.
   auto const kinds = cudf::detail::make_device_buffer(_agg_kinds, stream, mr.as_temporary());
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<int64_t>{0},
     static_cast<int64_t>(size) * _partials_per_group * _agg_kinds.size(),
     merge_partial_aggs_fn{
@@ -568,7 +573,7 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
                            cache.get_result(ar.values, *make_sum_aggregation()),
                            cache.get_result(ar.values, *make_count_aggregation()),
                            stream,
-                           mr.get_output_mr()));
+                           mr));
         }
       }
       cudf::detail::aggregation_dispatcher(agg.kind, finalizer, agg);
@@ -576,10 +581,9 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
     user_requests.push_back(std::move(ar));
   }
 
-  return {
-    std::move(keys),
-    detail::extract_results(
-      std::span<aggregation_request const>{user_requests}, cache, stream, mr.get_output_mr())};
+  return {std::move(keys),
+          detail::extract_results(
+            std::span<aggregation_request const>{user_requests}, cache, stream, mr)};
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
@@ -590,7 +594,7 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream, cudf::memory_resou
   _aggregate_done.wait(stream);
   try {
     auto result = finalize_gathered(
-      gather_distinct_keys(stream, mr.get_output_mr()), gather_agg_results(stream, mr), stream, mr);
+      gather_distinct_keys(stream, mr), gather_agg_results(stream, mr), stream, mr);
     record_result_read(stream);
     return result;
   } catch (...) {
@@ -603,7 +607,7 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream, cudf::memory_resou
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
 streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto keys = gather_distinct_keys(stream, mr.get_output_mr());
+  auto keys = gather_distinct_keys(stream, mr);
   _compacted_batches.clear();
   _empty_key_schema.reset();
 

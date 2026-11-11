@@ -14,8 +14,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/buffer>
 #include <cuda/execution>
@@ -163,7 +161,7 @@ void segmented_reduce(InputIterator d_in,
 
   // compute the result value from intermediate value in device
   thrust::transform(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_segments},
     d_out,

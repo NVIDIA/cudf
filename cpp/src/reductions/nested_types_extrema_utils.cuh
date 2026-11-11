@@ -95,7 +95,7 @@ class arg_minmax_binop_generator {
         std::vector<null_order>{DEFAULT_NULL_ORDER},
         cudf::structs::detail::column_nullability::MATCH_INCOMING,
         stream,
-        mr.get_output_mr())},
+        mr)},
       row_comparator{[&input_,
                       &input_tview     = input_tview,
                       &flattened_input = flattened_input,

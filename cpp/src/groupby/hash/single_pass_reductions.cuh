@@ -291,12 +291,8 @@ struct grouped_reduction_fn {
     std::vector<std::unique_ptr<column>> children;
     children.push_back(std::move(sum_child));
     children.push_back(std::move(overflow_child));
-    return create_structs_hierarchy(ctx.num_groups,
-                                    std::move(children),
-                                    null_count,
-                                    std::move(null_mask),
-                                    stream,
-                                    mr.get_output_mr());
+    return create_structs_hierarchy(
+      ctx.num_groups, std::move(children), null_count, std::move(null_mask), stream, mr);
   }
 
   template <typename T>

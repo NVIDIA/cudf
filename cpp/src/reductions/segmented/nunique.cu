@@ -89,7 +89,7 @@ std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
                                             add_op.get_binary_op(),
                                             0,
                                             stream,
-                                            cudf::get_current_device_resource_ref());
+                                            mr);
 
   // Compute the output null mask
   // - only empty segments are tagged as null

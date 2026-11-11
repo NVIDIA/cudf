@@ -9,6 +9,7 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/reduction/detail/reduction_functions.hpp>
 #include <cudf/reduction/detail/sum_overflow.cuh>
@@ -17,8 +18,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/numeric>
@@ -38,7 +37,7 @@ std::unique_ptr<cudf::scalar> make_sum_overflow_struct_scalar(
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.as_temporary();
 
   std::unique_ptr<cudf::scalar> sum_scalar;
   if constexpr (cudf::is_fixed_point<Source>()) {
@@ -91,22 +90,20 @@ std::unique_ptr<cudf::scalar> sum_overflow_impl(
   sum_overflow_result<DeviceType> result;
 
   if (col.has_nulls()) {
-    result = thrust::transform_reduce(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      counting_iter,
-      counting_iter + col.size(),
-      null_aware_to_sum_overflow<DeviceType>{*dcol},
-      initial_value,
-      overflow_sum_op<DeviceType>{});
+    result = thrust::transform_reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                      counting_iter,
+                                      counting_iter + col.size(),
+                                      null_aware_to_sum_overflow<DeviceType>{*dcol},
+                                      initial_value,
+                                      overflow_sum_op<DeviceType>{});
   } else {
     auto input_iter = dcol->begin<DeviceType>();
-    result          = thrust::transform_reduce(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      input_iter,
-      input_iter + col.size(),
-      to_sum_overflow<DeviceType>{},
-      initial_value,
-      overflow_sum_op<DeviceType>{});
+    result          = thrust::transform_reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                      input_iter,
+                                      input_iter + col.size(),
+                                      to_sum_overflow<DeviceType>{},
+                                      initial_value,
+                                      overflow_sum_op<DeviceType>{});
   }
 
   // On overflow the sum value is unspecified; the boolean flag is the source of truth.

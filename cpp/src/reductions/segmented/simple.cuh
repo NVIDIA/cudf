@@ -14,6 +14,7 @@
 #include <cudf/detail/unary.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/reduction/detail/segmented_reduction.cuh>
 #include <cudf/types.hpp>
@@ -89,25 +90,13 @@ std::unique_ptr<column> simple_segmented_reduction(
   if (col.has_nulls()) {
     auto f  = simple_op.template get_null_replacing_element_transformer<ResultType>();
     auto it = cuda::transform_iterator(dcol->pair_begin<InputType, true>(), f);
-    cudf::reduction::detail::segmented_reduce(it,
-                                              offsets.begin(),
-                                              offsets.end(),
-                                              outit,
-                                              binary_op,
-                                              initial_value,
-                                              stream,
-                                              cudf::get_current_device_resource_ref());
+    cudf::reduction::detail::segmented_reduce(
+      it, offsets.begin(), offsets.end(), outit, binary_op, initial_value, stream, mr);
   } else {
     auto f  = simple_op.template get_element_transformer<ResultType>();
     auto it = cuda::transform_iterator(dcol->begin<InputType>(), f);
-    cudf::reduction::detail::segmented_reduce(it,
-                                              offsets.begin(),
-                                              offsets.end(),
-                                              outit,
-                                              binary_op,
-                                              initial_value,
-                                              stream,
-                                              cudf::get_current_device_resource_ref());
+    cudf::reduction::detail::segmented_reduce(
+      it, offsets.begin(), offsets.end(), outit, binary_op, initial_value, stream, mr);
   }
 
   // Compute the output null mask
@@ -219,20 +208,19 @@ std::unique_ptr<column> fixed_point_segmented_reduction(
                                                   offsets,
                                                   null_policy::EXCLUDE,  // do not count nulls
                                                   stream,
-                                                  cudf::get_current_device_resource_ref());
+                                                  mr.as_temporary());
 
-      auto const max_count =
-        thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       counts.begin(),
-                       counts.end(),
-                       size_type{0},
-                       cuda::maximum<size_type>{});
+      auto const max_count = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                            counts.begin(),
+                                            counts.end(),
+                                            size_type{0},
+                                            cuda::maximum<size_type>{});
 
       auto const new_scale = numeric::scale_type{col.type().scale() * max_count};
 
       // adjust values in each segment to match the new scale
       auto const d_col = column_device_view::create(col, stream);
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         d_col->begin<InputType>(),
                         d_col->end<InputType>(),
                         d_col->begin<InputType>(),

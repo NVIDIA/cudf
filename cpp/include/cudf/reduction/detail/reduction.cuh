@@ -17,8 +17,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cub/device/device_reduce.cuh>
 #include <cuda/execution>
 #include <cuda/std/execution>
@@ -65,12 +63,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
   auto result              = std::make_unique<ScalarType>(initial_value, true, stream, mr);
 
   CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(
-    d_in,
-    result->data(),
-    num_items,
-    binary_op,
-    initial_value,
-    cudf::detail::make_env(stream, cudf::get_current_device_resource_ref())));
+    d_in, result->data(), num_items, binary_op, initial_value, cudf::detail::make_env(stream, mr)));
   return result;
 }
 
@@ -102,16 +95,15 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
-  auto dev_result          = cudf::detail::device_scalar<OutputType>{
-    initial_value, stream, cudf::get_current_device_resource_ref()};
+  auto dev_result =
+    cudf::detail::device_scalar<OutputType>{initial_value, stream, mr.get_temporary_mr()};
 
-  CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(
-    d_in,
-    dev_result.data(),
-    num_items,
-    binary_op,
-    initial_value,
-    cudf::detail::make_env(stream, cudf::get_current_device_resource_ref())));
+  CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(d_in,
+                                          dev_result.data(),
+                                          num_items,
+                                          binary_op,
+                                          initial_value,
+                                          cudf::detail::make_env(stream, mr)));
 
   return std::make_unique<cudf::string_scalar>(dev_result.value(stream), true, stream, mr);
 }
@@ -152,17 +144,17 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
   auto const initial_value = op.template get_identity<IntermediateType>();
 
   cudf::detail::device_scalar<IntermediateType> intermediate_result{
-    initial_value, stream, cudf::get_current_device_resource_ref()};
+    initial_value, stream, mr.get_temporary_mr()};
 
   auto const env = [&] {
     if constexpr (std::is_same_v<Op, op::variance> || std::is_same_v<Op, op::standard_deviation>) {
       return cudf::detail::make_env(
         stream,
-        cudf::get_current_device_resource_ref(),
+        mr,
         cuda::execution::tune(
           variance_reduce_policy<IntermediateType, std::remove_cv_t<decltype(binary_op)>>{}));
     } else {
-      return cudf::detail::make_env(stream, cudf::get_current_device_resource_ref());
+      return cudf::detail::make_env(stream, mr);
     }
   }();
   CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(
@@ -171,7 +163,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
   // compute the result value from intermediate value in device
   using ScalarType = cudf::scalar_type_t<OutputType>;
   auto result      = std::make_unique<ScalarType>(OutputType{0}, true, stream, mr);
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      intermediate_result.data(),
                      1,
                      [dres = result->data(), op, valid_count, ddof] __device__(auto i) {

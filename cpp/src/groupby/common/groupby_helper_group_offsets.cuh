@@ -9,12 +9,11 @@
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/primitive_common.cuh>
 #include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -34,7 +33,8 @@ size_type compact_group_offsets(bool* flags,
 
 size_type compute_nested_group_offsets(table_view const& keys,
                                        device_span<size_type> group_offsets,
-                                       cuda::stream_ref stream);
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr);
 
 /**
  * @brief Views the timestamp, duration, and 32- and 64-bit fixed-point columns of `keys` as
@@ -59,7 +59,7 @@ size_type mark_group_offsets(size_type size,
   auto result    = cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), size, cuda::no_init);
   auto const itr = cuda::counting_iterator<size_type>{0};
   thrust::transform(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     itr,
     itr + size,
     result.begin(),
@@ -72,11 +72,11 @@ size_type mark_group_offsets(size_type size,
 template <bool HasNested>
 size_type compute_group_offsets(table_view const& keys,
                                 device_span<size_type> group_offsets,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
-  auto const size           = keys.num_rows();
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto const temp_mr        = mr.get_temporary_mr();
+  auto const size    = keys.num_rows();
+  auto const temp_mr = mr.get_temporary_mr();
   if constexpr (!HasNested) {
     auto const integer_keys = table_view{as_integer_keys(keys)};
     if (cudf::detail::is_primitive_row_op_compatible(integer_keys)) {

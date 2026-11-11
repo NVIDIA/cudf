@@ -59,23 +59,27 @@ struct minmax_pair {
  * @param num_items number of items to reduce
  * @param binary_op binary operator used to reduce
  * @param stream CUDA stream to run kernels on.
+ * @param mr Memory resources; only the temporary resource is used
  * @return cudf::detail::device_scalar<OutputType>
  */
 template <typename Op,
           typename InputIterator,
           typename OutputType = cuda::std::iter_value_t<InputIterator>>
-auto reduce_device(InputIterator d_in, size_type num_items, Op binary_op, cuda::stream_ref stream)
+auto reduce_device(InputIterator d_in,
+                   size_type num_items,
+                   Op binary_op,
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr)
 {
   OutputType identity{};
-  cudf::detail::device_scalar<OutputType> result{
-    identity, stream, cudf::get_current_device_resource_ref()};
+  cudf::detail::device_scalar<OutputType> result{identity, stream, mr.get_temporary_mr()};
 
   // Allocate temporary storage
   size_t storage_bytes = 0;
   cub::DeviceReduce::Reduce(
     nullptr, storage_bytes, d_in, result.data(), num_items, binary_op, identity, stream.get());
-  auto temp_storage = cuda::device_buffer<std::byte>{
-    stream, cudf::get_current_device_resource_ref(), storage_bytes, cuda::no_init};
+  auto temp_storage =
+    cuda::device_buffer<std::byte>{stream, mr.get_temporary_mr(), storage_bytes, cuda::no_init};
 
   // Run reduction
   cub::DeviceReduce::Reduce(temp_storage.data(),
@@ -163,18 +167,18 @@ std::unique_ptr<cudf::scalar_type_t<T>> make_minmax_scalar(cudf::data_type type,
  * @tparam T The dictionary's key type
  */
 template <typename T>
-auto reduce_dictionary(column_view const& col, cuda::stream_ref stream)
+auto reduce_dictionary(column_view const& col, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto d_dictionary = column_device_view::create(col, stream);
   if (col.has_nulls()) {
     auto pair_to_minmax = cuda::make_transform_iterator(
       cudf::dictionary::detail::make_dictionary_pair_iterator<T>(*d_dictionary, true),
       create_minmax_with_nulls<T>{});
-    return reduce_device(pair_to_minmax, col.size(), minmax_binary_op<T>{}, stream);
+    return reduce_device(pair_to_minmax, col.size(), minmax_binary_op<T>{}, stream, mr);
   } else {
     auto col_to_minmax = cuda::make_transform_iterator(
       cudf::dictionary::detail::make_dictionary_iterator<T>(*d_dictionary), create_minmax<T>{});
-    return reduce_device(col_to_minmax, col.size(), minmax_binary_op<T>{}, stream);
+    return reduce_device(col_to_minmax, col.size(), minmax_binary_op<T>{}, stream, mr);
   }
 }
 
@@ -189,7 +193,7 @@ struct minmax_dictionary_functor {
                                                                          cudf::memory_resources mr)
   {
     using storage_type  = device_storage_type_t<T>;
-    auto dev_result     = reduce_dictionary<storage_type>(col, stream);
+    auto dev_result     = reduce_dictionary<storage_type>(col, stream, mr);
     auto const key_type = dictionary_column_view(col).keys().type();
     auto minimum        = make_minmax_scalar<T>(key_type, stream, mr);
     auto maximum        = make_minmax_scalar<T>(key_type, stream, mr);
@@ -203,7 +207,7 @@ struct minmax_dictionary_functor {
                                                                          cuda::stream_ref stream,
                                                                          cudf::memory_resources mr)
   {
-    auto dev_result        = reduce_dictionary<cudf::string_view>(col, stream);
+    auto dev_result        = reduce_dictionary<cudf::string_view>(col, stream, mr);
     auto const host_result = dev_result.value(stream);
     return {std::make_unique<string_scalar>(host_result.min_val, true, stream, mr),
             std::make_unique<string_scalar>(host_result.max_val, true, stream, mr)};
@@ -228,18 +232,18 @@ struct minmax_dictionary_functor {
  */
 struct minmax_functor {
   template <typename T>
-  auto reduce(column_view const& col, cuda::stream_ref stream)
+  auto reduce(column_view const& col, cuda::stream_ref stream, cudf::memory_resources mr)
   {
     auto device_col = column_device_view::create(col, stream);
     // compute minimum and maximum values
     if (col.has_nulls()) {
       auto pair_to_minmax = cuda::make_transform_iterator(
         cudf::detail::make_pair_iterator<T, true>(*device_col), create_minmax_with_nulls<T>{});
-      return reduce_device(pair_to_minmax, col.size(), minmax_binary_op<T>{}, stream);
+      return reduce_device(pair_to_minmax, col.size(), minmax_binary_op<T>{}, stream, mr);
     } else {
       auto col_to_minmax =
         cuda::make_transform_iterator(device_col->begin<T>(), create_minmax<T>{});
-      return reduce_device(col_to_minmax, col.size(), minmax_binary_op<T>{}, stream);
+      return reduce_device(col_to_minmax, col.size(), minmax_binary_op<T>{}, stream, mr);
     }
   }
 
@@ -249,7 +253,7 @@ struct minmax_functor {
   {
     using storage_type = device_storage_type_t<T>;
     // compute minimum and maximum values
-    auto dev_result = reduce<storage_type>(col, stream);
+    auto dev_result = reduce<storage_type>(col, stream, mr);
     // create output scalars
     auto minimum = make_minmax_scalar<T>(col.type(), stream, mr);
     auto maximum = make_minmax_scalar<T>(col.type(), stream, mr);
@@ -267,7 +271,7 @@ struct minmax_functor {
     cudf::column_view const& col, cuda::stream_ref stream, cudf::memory_resources mr)
   {
     // compute minimum and maximum values
-    auto dev_result = reduce<cudf::string_view>(col, stream);
+    auto dev_result = reduce<cudf::string_view>(col, stream, mr);
     // copy the minmax_pair to the host; does not copy the strings
     auto const host_result = dev_result.value(stream);
     // strings are copied to create the scalars here

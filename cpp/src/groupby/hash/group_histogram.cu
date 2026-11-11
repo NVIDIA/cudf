@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/reduction/detail/histogram.hpp>
 #include <cudf/structs/structs_column_view.hpp>
@@ -119,7 +120,7 @@ std::unique_ptr<column> make_singleton_histograms(std::unique_ptr<column> values
       offsets[index] = static_cast<int32_t>(value);
       if (index < num_groups) { counts[index] = 1; }
     }};
-  thrust::sequence(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    initialize,
                    initialize + offsets->size(),
                    size_type{0});

@@ -2037,6 +2037,14 @@ def test_concat_dictionary(d, axis):
     assert_eq(expected, result)
 
 
+def test_concat_dictionary_axis_0_unsupported(axis_0):
+    with pytest.raises(
+        NotImplementedError,
+        match="Can only concatenate dictionary input along axis=1",
+    ):
+        cudf.concat({"first": cudf.DataFrame({"a": [1, 2]})}, axis=axis_0)
+
+
 @pytest.mark.parametrize(
     "idx_cls, idx_data",
     [

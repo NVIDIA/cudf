@@ -42,12 +42,14 @@ namespace io::detail {
  * @param inputs List of uncompressed input buffers
  * @param results List of compression results
  * @param stream CUDA stream to use
+ * @param mr Memory resources used for temporary allocations
  * @return writer_compression_statistics
  */
 [[nodiscard]] writer_compression_statistics collect_compression_statistics(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<codec_exec_result const> results,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 }  // namespace io::detail
 }  // namespace CUDF_EXPORT cudf

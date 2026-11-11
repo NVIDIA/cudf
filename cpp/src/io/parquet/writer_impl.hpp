@@ -47,11 +47,13 @@ class writer::impl {
    * @param options Settings for controlling behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
   explicit impl(std::vector<std::unique_ptr<data_sink>> sinks,
                 parquet_writer_options const& options,
                 cudf::io::detail::single_write_mode mode,
-                cuda::stream_ref stream);
+                cuda::stream_ref stream,
+                cudf::memory_resources mr);
 
   /**
    * @brief Constructor with chunked writer options.
@@ -60,11 +62,13 @@ class writer::impl {
    * @param options Settings for controlling behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
   explicit impl(std::vector<std::unique_ptr<data_sink>> sinks,
                 chunked_parquet_writer_options const& options,
                 cudf::io::detail::single_write_mode mode,
-                cuda::stream_ref stream);
+                cuda::stream_ref stream,
+                cudf::memory_resources mr);
 
   /**
    * @brief Destructor to complete any incomplete write and release resources.
@@ -138,6 +142,7 @@ class writer::impl {
 
   // Cuda stream to be used
   cuda::stream_ref _stream;
+  cudf::memory_resources _mr;
 
   // Writer options.
   compression_type const _compression;

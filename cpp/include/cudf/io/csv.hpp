@@ -1852,9 +1852,11 @@ class csv_writer_options_builder {
  *
  * @param options Settings for controlling writing behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
 void write_csv(csv_writer_options const& options,
-               cuda::stream_ref stream = cudf::get_default_stream());
+               cuda::stream_ref stream   = cudf::get_default_stream(),
+               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /// @cond
 struct is_supported_csv_write_type_fn {

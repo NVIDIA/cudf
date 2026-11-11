@@ -69,11 +69,13 @@ json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
  * @param table The set of columns
  * @param options Settings for controlling behavior
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations
  */
 void write_json(data_sink* sink,
                 table_view const& table,
                 json_writer_options const& options,
-                cuda::stream_ref stream);
+                cuda::stream_ref stream,
+                cudf::memory_resources mr);
 
 /**
  * @brief Normalize single quotes to double quotes using FST

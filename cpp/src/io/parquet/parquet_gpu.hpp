@@ -1376,13 +1376,15 @@ void InitEncoderPages(cudf::detail::device_2dspan<EncColumnChunk> chunks,
  * @param[out] comp_out Compressor output buffers
  * @param[out] comp_res Compressor results
  * @param[in] stream CUDA stream to use
+ * @param[in] mr Memory resources used for temporary allocations
  */
 void EncodePages(device_span<EncPage> pages,
                  bool write_v2_headers,
                  device_span<device_span<uint8_t const>> comp_in,
                  device_span<device_span<uint8_t>> comp_out,
                  device_span<cudf::io::detail::codec_exec_result> comp_res,
-                 cuda::stream_ref stream);
+                 cuda::stream_ref stream,
+                 cudf::memory_resources mr);
 
 /**
  * @brief Launches kernel to make the compressed vs uncompressed chunk-level decision

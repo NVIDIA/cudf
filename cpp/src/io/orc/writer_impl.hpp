@@ -145,7 +145,9 @@ struct intermediate_statistics {
   {
   }
 
-  intermediate_statistics(orc_table_view const& table, cuda::stream_ref stream);
+  intermediate_statistics(orc_table_view const& table,
+                          cuda::stream_ref stream,
+                          cudf::memory_resources mr);
 
   intermediate_statistics(std::vector<col_stats_blob> rb,
                           cuda::device_buffer<statistics_chunk> sc,
@@ -187,7 +189,8 @@ struct persisted_statistics {
   void persist(uint64_t num_table_rows,
                single_write_mode write_mode,
                intermediate_statistics&& intermediate_stats,
-               cuda::stream_ref stream);
+               cuda::stream_ref stream,
+               cudf::memory_resources mr);
 
   std::vector<cuda::device_buffer<statistics_chunk>> stripe_stat_chunks;
   std::vector<cudf::detail::hostdevice_vector<statistics_merge_group>> stripe_stat_merge;
@@ -220,10 +223,11 @@ struct writer_timezone {
    * @brief Returns this timezone's offsets from UT over time, reading them on the first call.
    *
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return Transition table, as returned by `make_timezone_transition_table`; empty when writing
    * UTC, where the wall clock and the input instants coincide
    */
-  table_view ut_offsets(cuda::stream_ref stream) const;
+  table_view ut_offsets(cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Returns whether this timezone's wall clock coincides with the instants it is given.
@@ -232,8 +236,9 @@ struct writer_timezone {
    * to apply.
    *
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
-  [[nodiscard]] bool is_utc(cuda::stream_ref stream) const;
+  [[nodiscard]] bool is_utc(cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Resolves a timezone name into the epoch that timestamps are encoded relative to.
@@ -276,11 +281,13 @@ class writer::impl {
    * @param options Settings for controlling behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
   explicit impl(std::unique_ptr<data_sink> sink,
                 orc_writer_options const& options,
                 single_write_mode mode,
-                cuda::stream_ref stream);
+                cuda::stream_ref stream,
+                cudf::memory_resources mr);
 
   /**
    * @brief Constructor with chunked writer options.
@@ -289,11 +296,13 @@ class writer::impl {
    * @param options Settings for controlling behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
   explicit impl(std::unique_ptr<data_sink> sink,
                 chunked_orc_writer_options const& options,
                 single_write_mode mode,
-                cuda::stream_ref stream);
+                cuda::stream_ref stream,
+                cudf::memory_resources mr);
 
   /**
    * @brief Destructor to complete any incomplete write and release resources.
@@ -358,6 +367,7 @@ class writer::impl {
  private:
   // CUDA stream.
   cuda::stream_ref const _stream;
+  cudf::memory_resources const _mr;
 
   // Writer options.
   stripe_size_limits const _max_stripe_size;

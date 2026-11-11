@@ -36,7 +36,7 @@ from rmm.pylibrmm.stream cimport Stream
 from .gpumemoryview cimport gpumemoryview
 from .table cimport Table
 from .span import Span, is_span
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -360,7 +360,7 @@ cpdef PackedColumns pack(Table input, object stream: CudaStreamLike | None = Non
     cdef table_view c_input = input.view()
     with nogil:
         pack = move(make_unique[packed_columns](
-            cpp_pack(c_input, _cs, mr.get_mr())
+            cpp_pack(c_input, _cs, _get_memory_resources(mr))
         ))
     return PackedColumns.from_libcudf(move(pack), _stream, mr)
 

@@ -17,7 +17,7 @@ from pylibcudf.libcudf.strings.replace cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ cpdef Column replace(
             repl_str[0],
             maxrepl,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -128,7 +128,7 @@ cpdef Column replace_multiple(
             c_target,
             c_repl,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -179,7 +179,7 @@ cpdef Column replace_slice(
 
     if repl is None:
         repl = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef const string_scalar* scalar_str = <string_scalar*>(repl.c_obj.get())
@@ -192,7 +192,7 @@ cpdef Column replace_slice(
             start,
             stop,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

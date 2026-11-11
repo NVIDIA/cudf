@@ -13,7 +13,7 @@ from pylibcudf.libcudf.strings cimport combine as cpp_combine
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.table cimport Table
 from pylibcudf.libcudf.table.table_view cimport table_view
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ cpdef Column concatenate(
 
     if narep is None:
         narep = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
     cdef const string_scalar* c_narep = <const string_scalar*>(
         narep.c_obj.get()
@@ -92,7 +92,7 @@ cpdef Column concatenate(
     if ColumnOrScalar is Column:
         if col_narep is None:
             col_narep = Scalar.from_libcudf(
-                cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+                cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
             )
         c_col_narep = <const string_scalar*>(
             col_narep.c_obj.get()
@@ -108,7 +108,7 @@ cpdef Column concatenate(
                     dereference(c_col_narep),
                     separate_nulls,
                     _cs,
-                    mr.get_mr()
+                    _get_memory_resources(mr)
                 )
             )
     elif ColumnOrScalar is Scalar:
@@ -126,7 +126,7 @@ cpdef Column concatenate(
                     dereference(c_narep),
                     separate_nulls,
                     _cs,
-                    mr.get_mr()
+                    _get_memory_resources(mr)
                 )
             )
     else:
@@ -180,7 +180,7 @@ cpdef Column join_strings(
                 dereference(c_separator),
                 dereference(c_narep),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         )
 
@@ -259,7 +259,7 @@ cpdef Column join_list_elements(
                     separate_nulls,
                     empty_list_policy,
                     _cs,
-                    mr.get_mr()
+                    _get_memory_resources(mr)
                 )
             )
     elif ColumnOrScalar is Scalar:
@@ -274,7 +274,7 @@ cpdef Column join_list_elements(
                     separate_nulls,
                     empty_list_policy,
                     _cs,
-                    mr.get_mr()
+                    _get_memory_resources(mr)
                 )
             )
     else:

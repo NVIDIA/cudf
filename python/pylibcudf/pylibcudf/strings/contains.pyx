@@ -9,7 +9,7 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport contains as cpp_contains
 from pylibcudf.strings.regex_program cimport RegexProgram
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ cpdef Column contains_re(
             c_input,
             prog.c_obj.get()[0],
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -96,7 +96,7 @@ cpdef Column count_re(
             c_input,
             prog.c_obj.get()[0],
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -137,7 +137,7 @@ cpdef Column matches_re(
             c_input,
             prog.c_obj.get()[0],
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -190,7 +190,7 @@ cpdef Column like(
             c_pattern,
             c_escape_character,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     _stream.synchronize()
 

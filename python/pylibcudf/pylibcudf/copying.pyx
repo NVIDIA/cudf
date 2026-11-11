@@ -39,7 +39,7 @@ from rmm.pylibrmm.stream cimport Stream
 from .column cimport Column
 from .scalar cimport Scalar
 from .table cimport Table
-from .utils cimport _as_vector, _get_stream, _get_memory_resource
+from .utils cimport _as_vector, _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -112,7 +112,7 @@ cpdef Table gather(
             c_gather_map,
             bounds_policy,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -182,7 +182,7 @@ cpdef Table scatter(
                 c_scatter_map,
                 c_target_table,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         source_scalars = _as_vector(source)
@@ -194,7 +194,7 @@ cpdef Table scatter(
                 c_scatter_map,
                 c_target_table,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -279,7 +279,7 @@ cpdef Column allocate_like(
                 c_size,
                 policy,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -399,7 +399,7 @@ cpdef Column copy_range(
             input_end,
             target_begin,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -451,7 +451,7 @@ cpdef Column shift(
                 offset,
                 dereference(fill_value.c_obj),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -488,12 +488,12 @@ cpdef ColumnOrTable reverse(
     if ColumnOrTable is Column:
         c_input_column = input.view()
         with nogil:
-            c_col_result = cpp_copying.reverse(c_input_column, _cs, mr.get_mr())
+            c_col_result = cpp_copying.reverse(c_input_column, _cs, _get_memory_resources(mr))
         return Column.from_libcudf(move(c_col_result), _stream, mr)
     else:
         c_input_table = input.view()
         with nogil:
-            c_tbl_result = cpp_copying.reverse(c_input_table, _cs, mr.get_mr())
+            c_tbl_result = cpp_copying.reverse(c_input_table, _cs, _get_memory_resources(mr))
         return Table.from_libcudf(move(c_tbl_result), _stream, mr)
 
 
@@ -668,7 +668,7 @@ cpdef Column copy_if_else(
                 c_rhs_column,
                 c_boolean_mask,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif LeftCopyIfElseOperand is Column and RightCopyIfElseOperand is Scalar:
         c_lhs_column = lhs.view()
@@ -679,7 +679,7 @@ cpdef Column copy_if_else(
                 dereference(rhs.c_obj),
                 c_boolean_mask,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif LeftCopyIfElseOperand is Scalar and RightCopyIfElseOperand is Column:
         c_rhs_column = rhs.view()
@@ -690,7 +690,7 @@ cpdef Column copy_if_else(
                 c_rhs_column,
                 c_boolean_mask,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         c_boolean_mask = boolean_mask.view()
@@ -700,7 +700,7 @@ cpdef Column copy_if_else(
                 dereference(rhs.c_obj),
                 c_boolean_mask,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -766,7 +766,7 @@ cpdef Table boolean_mask_scatter(
                 c_target,
                 c_boolean_mask,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         source_scalars = _as_vector(input)
@@ -778,7 +778,7 @@ cpdef Table boolean_mask_scatter(
                 c_target,
                 c_boolean_mask,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
 
     return Table.from_libcudf(move(result), _stream, mr)
@@ -821,7 +821,7 @@ cpdef Scalar get_element(
     cdef column_view c_input_column = input_column.view()
     with nogil:
         c_output = cpp_copying.get_element(
-            c_input_column, index, _cs, mr.get_mr()
+            c_input_column, index, _cs, _get_memory_resources(mr)
         )
 
     return Scalar.from_libcudf(move(c_output))

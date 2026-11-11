@@ -33,7 +33,7 @@ from pylibcudf.table cimport Table
 
 from pylibcudf.types cimport DataType
 
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -702,7 +702,7 @@ cpdef TableWithMetadata read_csv(
     cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
-        c_result = move(cpp_read_csv(options.c_obj, _cs, mr.get_mr()))
+        c_result = move(cpp_read_csv(options.c_obj, _cs, _get_memory_resources(mr)))
 
     cdef TableWithMetadata tbl_meta = TableWithMetadata.from_libcudf(c_result, s, mr)
     return tbl_meta

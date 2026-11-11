@@ -13,7 +13,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from ..column cimport Column
-from ..utils cimport _get_stream, _get_memory_resource
+from ..utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -55,6 +55,6 @@ cpdef Column edit_distance(
     mr = _get_memory_resource(mr)
 
     with nogil:
-        c_result = cpp_edit_distance(c_strings, c_targets, _cs, mr.get_mr())
+        c_result = cpp_edit_distance(c_strings, c_targets, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(c_result), _stream, mr)

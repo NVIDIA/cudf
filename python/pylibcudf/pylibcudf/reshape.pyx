@@ -24,7 +24,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -68,7 +68,7 @@ cpdef Column interleave_columns(
     cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_interleave_columns(
-            c_source_table, _cs, mr.get_mr()
+            c_source_table, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -108,7 +108,7 @@ cpdef Table tile(
     cdef table_view c_source_table = source_table.view()
     with nogil:
         c_result = cpp_tile(
-            c_source_table, count, _cs, mr.get_mr()
+            c_source_table, count, _cs, _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

@@ -35,7 +35,7 @@ from pylibcudf.libcudf.io.text cimport byte_range_info
 from pylibcudf.libcudf.io.types cimport table_with_metadata
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport device_span, host_span
-from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from pylibcudf.utils cimport _get_memory_resource, _get_memory_resources, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -550,7 +550,7 @@ cdef class HybridScanReader:
             c_result = move(self.c_obj.get()[0].build_all_true_row_mask(
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             ))
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -588,7 +588,7 @@ cdef class HybridScanReader:
                 std_span[const_size_type](indices_vec.data(), indices_vec.size()),
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             ))
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -674,7 +674,7 @@ cdef class HybridScanReader:
                 mask_data_pages,
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
@@ -802,7 +802,7 @@ cdef class HybridScanReader:
                 mask_data_pages,
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
@@ -878,7 +878,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             ))
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
@@ -942,7 +942,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                _get_memory_resources(self.mr)
             )
 
     def materialize_filter_columns_chunk(
@@ -1033,7 +1033,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                _get_memory_resources(self.mr)
             )
 
     def setup_chunking_for_payload_pages(
@@ -1102,7 +1102,7 @@ cdef class HybridScanReader:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                _get_memory_resources(self.mr)
             )
 
     def materialize_payload_columns_chunk(

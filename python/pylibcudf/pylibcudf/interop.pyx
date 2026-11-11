@@ -22,7 +22,7 @@ from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -79,7 +79,7 @@ cpdef Table from_dlpack(
     # TODO: https://github.com/NVIDIA/cudf/issues/10874
     # TODO: https://github.com/NVIDIA/cudf/issues/10849
     with nogil:
-        c_result = cpp_from_dlpack(dlpack_tensor, _cs, mr.get_mr())
+        c_result = cpp_from_dlpack(dlpack_tensor, _cs, _get_memory_resources(mr))
 
     cdef Table result = Table.from_libcudf(move(c_result), _stream, mr)
     dlpack_tensor.deleter(dlpack_tensor)
@@ -123,7 +123,7 @@ cpdef object to_dlpack(Table input, object stream: CudaStreamLike | None = None,
 
     c_input = input.view()
     with nogil:
-        dlpack_tensor = cpp_to_dlpack(c_input, _cs, mr.get_mr())
+        dlpack_tensor = cpp_to_dlpack(c_input, _cs, _get_memory_resources(mr))
 
     return PyCapsule_New(
         dlpack_tensor,

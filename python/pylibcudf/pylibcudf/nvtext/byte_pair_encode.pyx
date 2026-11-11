@@ -16,7 +16,7 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
     make_string_scalar as cpp_make_string_scalar,
 )
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ cdef class BPEMergePairs:
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
-                cpp_load_merge_pairs(c_pairs, _cs, mr.get_mr())
+                cpp_load_merge_pairs(c_pairs, _cs, _get_memory_resources(mr))
             )
 
     __hash__ = None
@@ -99,7 +99,7 @@ cpdef Column byte_pair_encoding(
 
     if separator is None:
         separator = Scalar.from_libcudf(
-            cpp_make_string_scalar(" ".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar(" ".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef column_view c_input = input.view()
@@ -110,7 +110,7 @@ cpdef Column byte_pair_encoding(
                 dereference(merge_pairs.c_obj.get()),
                 dereference(<const string_scalar*>separator.c_obj.get()),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         )
 

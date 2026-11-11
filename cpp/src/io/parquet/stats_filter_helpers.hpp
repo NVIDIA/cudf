@@ -49,24 +49,18 @@ auto constexpr stats_cols_per_column = 4;
 [[nodiscard]] std::optional<bool> has_nans(std::optional<int64_t> nan_count);
 
 /**
- * @brief Checks whether a column chunk's min/max statistics have a defined order
+ * @brief Checks whether INT96 min/max stats have a defined order; always true for other types
  *
- * Per the Parquet spec, INT96 min/max (including the deprecated `min`/`max` fields) are only
- * ordered if the column declares `INT96_TIMESTAMP_ORDER`, and must be ignored otherwise.
+ * @throws std::invalid_argument if `leaf_idx` is out of bounds of the column orders
  *
- * @param metadata File metadata holding the column orders
+ * @param metadata File metadata
  * @param physical_type Physical type of the column chunk
- * @param leaf_idx Leaf column index, i.e. the column chunk's position in its row group
- * @return False if the min/max statistics must be ignored, true otherwise
+ * @param leaf_idx Leaf column index
+ * @return Whether the min/max statistics have a defined order
  */
-[[nodiscard]] inline bool has_ordered_min_max(FileMetaData const& metadata,
-                                              Type physical_type,
-                                              std::size_t leaf_idx)
-{
-  if (physical_type != Type::INT96) { return true; }
-  return metadata.column_orders.has_value() and leaf_idx < metadata.column_orders->size() and
-         (*metadata.column_orders)[leaf_idx].type == ColumnOrder::INT96_TIMESTAMP_ORDER;
-}
+[[nodiscard]] bool has_ordered_min_max(FileMetaData const& metadata,
+                                       Type physical_type,
+                                       std::size_t leaf_idx);
 
 /**
  * @brief Base utilities for converting and casting stats values

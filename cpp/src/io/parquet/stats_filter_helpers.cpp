@@ -12,7 +12,9 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cstddef>
 #include <optional>
+#include <stdexcept>
 
 namespace cudf::io::parquet::detail {
 
@@ -39,6 +41,16 @@ namespace {
 }
 
 }  // namespace
+
+bool has_ordered_min_max(FileMetaData const& metadata, Type physical_type, std::size_t leaf_idx)
+{
+  if (physical_type != Type::INT96) { return true; }
+  if (not metadata.column_orders.has_value()) { return false; }
+  CUDF_EXPECTS(leaf_idx < metadata.column_orders->size(),
+               "Parquet column orders must have one entry per leaf column",
+               std::invalid_argument);
+  return (*metadata.column_orders)[leaf_idx].type == ColumnOrder::INT96_TIMESTAMP_ORDER;
+}
 
 stats_columns_collector::stats_columns_collector(ast::expression const& expr,
                                                  std::span<cudf::data_type const> output_dtypes)

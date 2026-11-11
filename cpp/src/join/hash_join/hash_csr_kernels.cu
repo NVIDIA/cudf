@@ -121,17 +121,16 @@ struct padded_counts {
 }  // namespace
 
 std::pair<cuda::device_buffer<cuda::std::int64_t>, std::size_t> hash_csr_match_offsets(
-  device_span<size_type const> match_counts, cuda::stream_ref stream)
+  device_span<size_type const> match_counts, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto const temp_mr  = cudf::get_current_device_resource_ref();
   auto const num_rows = static_cast<size_type>(match_counts.size());
   // 64-bit indices keep the end offset's index in range when there are INT32_MAX probe rows
   auto const sizes = cuda::transform_iterator(cuda::counting_iterator<cuda::std::int64_t>{0},
                                               padded_counts{match_counts.data(), num_rows});
   cuda::device_buffer<cuda::std::int64_t> offsets(
-    stream, temp_mr, match_counts.size() + 1, cuda::no_init);
-  auto const output_size = cudf::detail::sizes_to_offsets(
-    sizes, sizes + num_rows + 1, offsets.begin(), 0, stream, temp_mr);
+    stream, mr.get_output_mr(), match_counts.size() + 1, cuda::no_init);
+  auto const output_size =
+    cudf::detail::sizes_to_offsets(sizes, sizes + num_rows + 1, offsets.begin(), 0, stream, mr);
   return {std::move(offsets), static_cast<std::size_t>(output_size)};
 }
 

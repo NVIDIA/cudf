@@ -76,8 +76,8 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
                      }
                    });
 
-  auto const output_size =
-    copy_reduction_results(reduction_results.data(), num_rows, output_indices.data(), keep, stream);
+  auto const output_size = copy_reduction_results(
+    reduction_results.data(), num_rows, output_indices.data(), keep, stream, mr);
   output_indices.resize(output_size, stream);
   return output_indices;
 }

@@ -90,7 +90,8 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
             nullptr,
             matched_groups,
             matched_build_rows.data(),
-            stream);
+            stream,
+            mr);
 
       // The count pass already tallied matched build rows. Preserve the exact complement size
       // for output allocation and full-join finalization before releasing its device scalar.
@@ -100,7 +101,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
         unmatched_right_rows =
           static_cast<size_type>(static_cast<cuda::std::uint64_t>(_right.num_rows()) - matched);
       }
-      return hash_csr_match_offsets(match_counts, stream);
+      return hash_csr_match_offsets(match_counts, stream, mr.as_temporary());
     }();
 
     auto const extra_capacity =

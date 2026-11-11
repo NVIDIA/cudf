@@ -81,14 +81,14 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
     auto const left_partition =
       cudf::slice(match_ctx.left_table(), {left_start_idx, left_end_idx})[0];
     validate_hash_join_probe(_right, left_partition, _has_nulls);
-    probe(join, left_partition, probed_groups, {}, nullptr, {}, nullptr, stream);
+    probe(join, left_partition, probed_groups, {}, nullptr, {}, nullptr, stream, mr);
   }
   auto const probe_groups = state == nullptr ? device_span<size_type const>{probed_groups}
                                              : device_span<size_type const>{state->groups}.subspan(
                                                  left_start_idx, partition_size);
 
-  auto const [offsets, output_size] =
-    hash_csr_match_offsets(match_counts.subspan(left_start_idx, partition_size), stream);
+  auto const [offsets, output_size] = hash_csr_match_offsets(
+    match_counts.subspan(left_start_idx, partition_size), stream, mr.as_temporary());
   return hash_csr_retrieve(join != join_kind::INNER_JOIN,
                            output_size,
                            offsets,

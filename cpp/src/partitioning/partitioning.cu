@@ -377,11 +377,11 @@ cuda::device_buffer<size_type> compute_gather_map(size_type num_rows,
                                                   size_type const* block_partition_sizes,
                                                   size_type const* scanned_block_partition_sizes,
                                                   size_type grid_size,
-                                                  cuda::stream_ref stream)
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   auto sequence = cuda::counting_iterator<cudf::size_type>{0};
-  cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  cuda::device_buffer<size_type> gather_map(stream, mr.get_output_mr(), num_rows, cuda::no_init);
 
   copy_block_partitions_impl(sequence,
                              gather_map.data(),
@@ -456,7 +456,8 @@ struct copy_block_partitions_dispatcher {
                                          block_partition_sizes,
                                          scanned_block_partition_sizes,
                                          grid_size,
-                                         stream);
+                                         stream,
+                                         mr.as_temporary());
 
     auto gather_table = cudf::detail::gather(cudf::table_view({input}),
                                              gather_map,
@@ -729,7 +730,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
                                            block_partition_sizes.data(),
                                            scanned_block_partition_sizes.data(),
                                            grid_size,
-                                           stream);
+                                           stream,
+                                           mr.as_temporary());
 
       // Handle bitmask using gather to take advantage of ballot_sync
       detail::gather_bitmask(

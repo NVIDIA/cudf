@@ -28,7 +28,8 @@ void hash_join<Hasher>::probe(join_kind join,
                               cuda::std::uint64_t* total,
                               device_span<cuda::std::uint32_t> matched_groups,
                               cuda::std::uint64_t* matched_build_rows,
-                              cuda::stream_ref stream) const
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr) const
 {
   auto const num_rows = static_cast<std::size_t>(left.num_rows());
   CUDF_EXPECTS((groups.empty() || groups.size() == num_rows) &&
@@ -38,10 +39,9 @@ void hash_join<Hasher>::probe(join_kind join,
                "Probe output sizes do not match the tables");
   auto const data_or_null = [](auto span) { return span.empty() ? nullptr : span.data(); };
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
-  auto const row_bitmask = cudf::detail::bitmask_and(left, stream, temp_mr).first;
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, mr.get_temporary_mr());
+  auto const row_bitmask = cudf::detail::bitmask_and(left, stream, mr.as_temporary()).first;
   auto const valid_rows  = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
 
   auto probe_rows = [&](auto equality, auto hasher) {
@@ -84,7 +84,7 @@ cudf::join_match_context hash_join<Hasher>::make_match_context(join_kind join,
                  match_counts->end(),
                  join == join_kind::INNER_JOIN ? 0 : 1);
   } else {
-    probe(join, left, groups, *match_counts, nullptr, {}, nullptr, stream);
+    probe(join, left, groups, *match_counts, nullptr, {}, nullptr, stream, mr);
   }
 
   return join_match_state::make_context(
@@ -100,7 +100,8 @@ template void hash_join<hash_join_hasher>::probe(join_kind,
                                                  cuda::std::uint64_t*,
                                                  device_span<cuda::std::uint32_t>,
                                                  cuda::std::uint64_t*,
-                                                 cuda::stream_ref) const;
+                                                 cuda::stream_ref,
+                                                 cudf::memory_resources) const;
 
 template cudf::join_match_context hash_join<hash_join_hasher>::make_match_context(
   join_kind, cudf::table_view const&, cuda::stream_ref, cudf::memory_resources) const;

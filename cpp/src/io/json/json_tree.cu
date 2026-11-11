@@ -21,7 +21,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
@@ -154,38 +153,34 @@ struct checked_token_level_output {
  * @tparam KeyType key type
  * @param keys keys to sort
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used to allocate the returned buffers' device memory
  * @return Sorted keys and indices producing that sorted order
  */
 template <typename IndexType = size_t, typename KeyType>
 std::pair<cuda::device_buffer<KeyType>, cuda::device_buffer<IndexType>> stable_sorted_key_order(
-  cudf::device_span<KeyType const> keys, cuda::stream_ref stream)
+  cudf::device_span<KeyType const> keys, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   // Determine temporary device storage requirements
-  cuda::device_buffer<KeyType> keys_buffer1(
-    stream, cudf::get_current_device_resource_ref(), keys.size(), cuda::no_init);
-  cuda::device_buffer<KeyType> keys_buffer2(
-    stream, cudf::get_current_device_resource_ref(), keys.size(), cuda::no_init);
+  cuda::device_buffer<KeyType> keys_buffer1(stream, mr.get_output_mr(), keys.size(), cuda::no_init);
+  cuda::device_buffer<KeyType> keys_buffer2(stream, mr.get_output_mr(), keys.size(), cuda::no_init);
   cuda::device_buffer<IndexType> order_buffer1(
-    stream, cudf::get_current_device_resource_ref(), keys.size(), cuda::no_init);
+    stream, mr.get_output_mr(), keys.size(), cuda::no_init);
   cuda::device_buffer<IndexType> order_buffer2(
-    stream, cudf::get_current_device_resource_ref(), keys.size(), cuda::no_init);
+    stream, mr.get_output_mr(), keys.size(), cuda::no_init);
   cub::DoubleBuffer<IndexType> order_buffer(order_buffer1.data(), order_buffer2.data());
   cub::DoubleBuffer<KeyType> keys_buffer(keys_buffer1.data(), keys_buffer2.data());
   size_t temp_storage_bytes = 0;
   cub::DeviceRadixSort::SortPairs(
     nullptr, temp_storage_bytes, keys_buffer, order_buffer, keys.size());
   cuda::device_buffer<std::byte> d_temp_storage(
-    stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
+    stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
 
-  thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-               keys.begin(),
-               keys.end(),
-               keys_buffer1.begin());
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   order_buffer1.begin(),
-                   order_buffer1.end());
+  thrust::copy(
+    cudf::detail::exec_policy_nosync(stream, mr), keys.begin(), keys.end(), keys_buffer1.begin());
+  thrust::sequence(
+    cudf::detail::exec_policy_nosync(stream, mr), order_buffer1.begin(), order_buffer1.end());
 
   cub::DeviceRadixSort::SortPairs(d_temp_storage.data(),
                                   temp_storage_bytes,
@@ -217,7 +212,8 @@ void propagate_first_sibling_to_other(cudf::device_span<TreeDepthT const> node_l
                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  auto [sorted_node_levels, sorted_order] = stable_sorted_key_order<size_type>(node_levels, stream);
+  auto [sorted_node_levels, sorted_order] =
+    stable_sorted_key_order<size_type>(node_levels, stream, mr.as_temporary());
   // instead of gather, using permutation_iterator, which is ~17% faster
 
   thrust::inclusive_scan_by_key(
@@ -553,20 +549,18 @@ std::pair<size_t, cuda::device_buffer<size_type>> remapped_field_nodes_after_uni
   device_span<SymbolT const> d_input,
   tree_meta_t const& d_tree,
   device_span<size_type const> keys,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   size_t num_keys = keys.size();
   if (num_keys == 0) {
     return {num_keys,
-            cuda::device_buffer<size_type>(
-              stream, cudf::get_current_device_resource_ref(), num_keys, cuda::no_init)};
+            cuda::device_buffer<size_type>(stream, mr.get_output_mr(), num_keys, cuda::no_init)};
   }
-  cuda::device_buffer<size_type> offsets(
-    stream, cudf::get_current_device_resource_ref(), num_keys, cuda::no_init);
-  cuda::device_buffer<size_type> lengths(
-    stream, cudf::get_current_device_resource_ref(), num_keys, cuda::no_init);
+  cuda::device_buffer<size_type> offsets(stream, mr.get_temporary_mr(), num_keys, cuda::no_init);
+  cuda::device_buffer<size_type> lengths(stream, mr.get_temporary_mr(), num_keys, cuda::no_init);
   auto offset_length_it = cuda::make_zip_iterator(offsets.data(), lengths.data());
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     keys.begin(),
                     keys.end(),
                     offset_length_it,
@@ -586,7 +580,7 @@ std::pair<size_t, cuda::device_buffer<size_type>> remapped_field_nodes_after_uni
                                         0,
                                         opt,
                                         stream,
-                                        cudf::get_current_device_resource_ref());
+                                        mr.as_temporary());
   // hash using iter, create a hashmap for 0-num_keys.
   // insert and find. -> array
   // store to static_map with keys as field key[index], and values as key[array[index]]
@@ -621,11 +615,10 @@ std::pair<size_t, cuda::device_buffer<size_type>> remapped_field_nodes_after_uni
                                   cuco::linear_probing<1, hasher_type>{d_hasher},
                                                                    {},
                                                                    {},
-                                  rmm::mr::polymorphic_allocator<char>{},
+                                  rmm::mr::polymorphic_allocator<char>{mr.get_temporary_mr()},
                                   stream.get()};
   auto const counting_iter                      = cuda::counting_iterator<size_type>{0};
-  cuda::device_buffer<size_type> found_keys(
-    stream, cudf::get_current_device_resource_ref(), num_keys, cuda::no_init);
+  cuda::device_buffer<size_type> found_keys(stream, mr.get_output_mr(), num_keys, cuda::no_init);
   key_set.insert_and_find_async(counting_iter,
                                 counting_iter + num_keys,
                                 found_keys.begin(),
@@ -733,7 +726,7 @@ cuda::device_buffer<size_type> hash_node_type_with_field_name(device_span<Symbol
     key_set.retrieve_all(keys.data(), stream.get());
 
     auto [num_unique_fields, found_keys] =
-      remapped_field_nodes_after_unicode_decode(d_input, d_tree, keys, stream);
+      remapped_field_nodes_after_unicode_decode(d_input, d_tree, keys, stream, mr.as_temporary());
 
     auto is_need_remap = num_unique_fields != static_cast<std::size_t>(num_keys);
     if (!is_need_remap) { return std::pair{false, make_map(size_type{0})}; }

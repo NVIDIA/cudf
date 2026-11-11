@@ -304,7 +304,8 @@ void scatter_offsets(tree_meta_t const& tree,
                      host_span<bool const> ignore_vals,
                      host_span<bool const> is_mixed,
                      hashmap_of_device_columns const& columns,
-                     cuda::stream_ref stream);
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr);
 
 std::map<std::string, schema_element> unified_schema(cudf::io::json_reader_options const& options)
 {
@@ -508,7 +509,8 @@ void make_device_json_column(device_span<SymbolT const> input,
                   ignore_vals,
                   is_mixed_pruned,
                   columns,
-                  stream);
+                  stream,
+                  mr);
 }
 
 [[nodiscard]] build_tree_result build_tree(device_json_column& root,
@@ -1018,12 +1020,12 @@ void scatter_offsets(tree_meta_t const& tree,
                      host_span<bool const> ignore_vals,
                      host_span<bool const> is_mixed_pruned,
                      hashmap_of_device_columns const& columns,
-                     cuda::stream_ref stream)
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto const temp_mr        = mr.get_temporary_mr();
-  auto const num_nodes      = col_ids.size();
-  auto const num_columns    = d_column_tree.node_categories.size();
+  auto const temp_mr     = mr.get_temporary_mr();
+  auto const num_nodes   = col_ids.size();
+  auto const num_columns = d_column_tree.node_categories.size();
   // move columns data to device.
   auto columns_data = cudf::detail::make_host_vector<json_column_data>(num_columns, stream);
   for (auto& [col_id, col_ref] : columns) {

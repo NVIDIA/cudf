@@ -11,6 +11,7 @@
 
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -24,8 +25,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/atomic>
 #include <cuda/buffer>
@@ -856,13 +855,14 @@ CUDF_KERNEL void __launch_bounds__(rowofs_block_dim)
 size_t __host__ count_blank_rows(cudf::io::parse_options_view const& opts,
                                  device_span<char const> data,
                                  device_span<uint64_t const> row_offsets,
-                                 cuda::stream_ref stream)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   auto const newline  = opts.skipblanklines ? opts.terminator : opts.comment;
   auto const comment  = opts.comment != '\0' ? opts.comment : newline;
   auto const carriage = (opts.skipblanklines && opts.terminator == '\n') ? '\r' : comment;
   return thrust::count_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     row_offsets.begin(),
     row_offsets.end(),
     [data = data, newline, comment, carriage] __device__(uint64_t const pos) {
@@ -874,14 +874,15 @@ size_t __host__ count_blank_rows(cudf::io::parse_options_view const& opts,
 device_span<uint64_t> __host__ remove_blank_rows(cudf::io::parse_options_view const& options,
                                                  device_span<char const> data,
                                                  device_span<uint64_t> row_offsets,
-                                                 cuda::stream_ref stream)
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr)
 {
   size_t d_size       = data.size();
   auto const newline  = options.skipblanklines ? options.terminator : options.comment;
   auto const comment  = options.comment != '\0' ? options.comment : newline;
   auto const carriage = (options.skipblanklines && options.terminator == '\n') ? '\r' : comment;
   auto new_end        = thrust::remove_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     row_offsets.begin(),
     row_offsets.end(),
     [data = data, d_size, newline, comment, carriage] __device__(uint64_t const pos) {
@@ -897,14 +898,15 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   device_span<column_parse::flags const> const column_flags,
   device_span<uint64_t const> const row_starts,
   size_t const num_active_columns,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   // Calculate actual block count to use based on records count
   int const block_size = csvparse_block_dim;
   int const grid_size  = (row_starts.size() + block_size - 1) / block_size;
 
   auto d_stats = cudf::detail::make_zeroed_device_buffer_async<column_type_histogram>(
-    num_active_columns, stream, cudf::get_current_device_resource_ref());
+    num_active_columns, stream, mr.as_temporary());
 
   data_type_detection<<<grid_size, block_size, 0, stream.get()>>>(
     options, data, column_flags, row_starts, d_stats);
@@ -964,11 +966,12 @@ uint32_t __host__ gather_row_offsets(parse_options_view const& options,
                                      size_t byte_range_start,
                                      size_t byte_range_end,
                                      size_t skip_rows,
-                                     cuda::stream_ref stream)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   uint32_t dim_grid = 1 + (chunk_size / rowofs_block_bytes);
   auto ctxtree      = cuda::device_buffer<packed_rowctx_t>(
-    stream, cudf::get_current_device_resource_ref(), dim_grid * bk_ctxtree_size, cuda::no_init);
+    stream, mr.get_temporary_mr(), dim_grid * bk_ctxtree_size, cuda::no_init);
 
   gather_row_offsets_gpu<<<dim_grid, rowofs_block_dim, 0, stream.get()>>>(
     row_ctx,

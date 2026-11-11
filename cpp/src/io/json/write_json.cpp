@@ -44,12 +44,13 @@
 namespace cudf::io::json::detail {
 
 std::unique_ptr<column> make_strings_column_from_host(host_span<std::string const> host_strings,
-                                                      cuda::stream_ref stream)
+                                                      cuda::stream_ref stream,
+                                                      cudf::memory_resources mr)
 {
   std::string const host_chars =
     std::accumulate(host_strings.begin(), host_strings.end(), std::string(""));
   auto d_chars = cudf::detail::make_device_uvector_async(
-    host_span<char const>{host_chars}, stream, cudf::get_current_device_resource_ref());
+    host_span<char const>{host_chars}, stream, mr.get_output_mr());
   std::vector<cudf::size_type> offsets(host_strings.size() + 1, 0);
   std::transform_inclusive_scan(host_strings.begin(),
                                 host_strings.end(),
@@ -57,7 +58,7 @@ std::unique_ptr<column> make_strings_column_from_host(host_span<std::string cons
                                 std::plus<cudf::size_type>{},
                                 [](auto& str) { return str.size(); });
   auto d_offsets = std::make_unique<cudf::column>(
-    cudf::detail::make_device_uvector(offsets, stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::make_device_uvector(offsets, stream, mr.get_output_mr()),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
   return cudf::make_strings_column(host_strings.size(),
@@ -69,7 +70,8 @@ std::unique_ptr<column> make_strings_column_from_host(host_span<std::string cons
 
 std::unique_ptr<column> make_column_names_column(host_span<column_name_info const> column_names,
                                                  size_type num_columns,
-                                                 cuda::stream_ref stream)
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr)
 {
   std::vector<std::string> unescaped_column_names;
   if (column_names.empty()) {
@@ -81,18 +83,17 @@ std::unique_ptr<column> make_column_names_column(host_span<column_name_info cons
                            std::back_inserter(unescaped_column_names),
                            [](column_name_info const& name_info) { return name_info.name; });
   }
-  auto unescaped_string_col = make_strings_column_from_host(unescaped_column_names, stream);
-  auto d_column             = column_device_view::create(*unescaped_string_col, stream);
-  return make_escaped_json_strings(
-    *d_column,
-    unescaped_string_col->size(),
-    unescaped_string_col->null_count(),
-    cudf::detail::copy_bitmask(
-      *unescaped_string_col, stream, cudf::get_current_device_resource_ref()),
-    true,
-    true,
-    stream,
-    cudf::get_current_device_resource_ref());
+  auto unescaped_string_col =
+    make_strings_column_from_host(unescaped_column_names, stream, mr.as_temporary());
+  auto d_column = column_device_view::create(*unescaped_string_col, stream);
+  return make_escaped_json_strings(*d_column,
+                                   unescaped_string_col->size(),
+                                   unescaped_string_col->null_count(),
+                                   cudf::detail::copy_bitmask(*unescaped_string_col, stream, mr),
+                                   true,
+                                   true,
+                                   stream,
+                                   mr);
 }
 
 std::unique_ptr<column> timestamp_to_strings(column_view const& column,
@@ -277,7 +278,8 @@ struct column_to_strings_fn {
                                      cudf::string_view row_end_wrap_value) const
   {
     auto const num_columns = std::distance(column_begin, column_end);
-    auto column_names      = make_column_names_column(children_names, num_columns, stream_);
+    auto column_names =
+      make_column_names_column(children_names, num_columns, stream_, mr_.as_temporary());
     auto column_names_view = column_names->view();
     std::vector<std::unique_ptr<cudf::column>> str_column_vec;
 

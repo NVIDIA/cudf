@@ -1451,7 +1451,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
     fst::detail::
       make_translation_table<max_translation_table_size, min_translated_out, max_translated_out>(
         to_stack_op::get_translation_table(stack_behavior)),
-    stream);
+    stream,
+    mr);
 
   // "Search" for relevant occurrence of brackets and braces that indicate the beginning/end
   // of structs/lists
@@ -1491,7 +1492,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
       root_symbol,
       read_symbol,
       json_in.size(),
-      stream);
+      stream,
+      mr);
   } else {
     fst::sparse_stack_op_to_top_of_stack<fst::stack_op_support::NO_RESET_SUPPORT, StackLevelT>(
       stack_ops.data(),
@@ -1501,7 +1503,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
       root_symbol,
       read_symbol,
       json_in.size(),
-      stream);
+      stream,
+      mr);
   }
 }
 
@@ -1520,7 +1523,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
     fst::detail::make_symbol_group_lut(token_filter::symbol_groups, sgid_op),
     fst::detail::make_transition_table(token_filter::transition_table),
     fst::detail::make_translation_functor<symbol_t, 0, 2>(token_filter::TransduceToken{}),
-    stream);
+    stream,
+    mr);
 
   auto const temp_mr = mr.get_temporary_mr();
   cudf::detail::device_scalar<SymbolOffsetT> d_num_selected_tokens(stream, temp_mr);
@@ -1612,7 +1616,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
       fst::detail::make_transition_table(fix_stack_of_excess_chars::transition_table),
       fst::detail::make_translation_functor<StackSymbolT, 1, 1>(
         fix_stack_of_excess_chars::TransduceInputOp{}),
-      stream);
+      stream,
+      mr);
     fix_stack_of_excess_chars.Transduce(zip_in,
                                         static_cast<SymbolOffsetT>(json_in.size()),
                                         stack_symbols.data(),
@@ -1634,7 +1639,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
     fst::detail::make_transition_table(tokenizer_pda::get_transition_table(format)),
     fst::detail::make_translation_table<max_translation_table_size, 0, 3>(
       tokenizer_pda::get_translation_table(recover_from_error)),
-    stream);
+    stream,
+    mr);
 
   // In case we're recovering on invalid JSON lines, post-processing the token stream requires to
   // see a JSON-line delimiter as the very first item

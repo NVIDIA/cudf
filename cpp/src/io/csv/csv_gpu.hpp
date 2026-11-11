@@ -9,6 +9,7 @@
 
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
 
@@ -135,6 +136,7 @@ inline __host__ __device__ rowctx64_t select_row_context(rowctx64_t sel_ctx,
  * @param byte_range_end In phase 2, store the number of rows beyond range in row_ctx
  * @param skip_rows Number of rows to skip (ignored in phase 1)
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  *
  * @return Number of row contexts
  */
@@ -149,7 +151,8 @@ uint32_t gather_row_offsets(cudf::io::parse_options_view const& options,
                             size_t byte_range_start,
                             size_t byte_range_end,
                             size_t skip_rows,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr);
 
 /**
  * Count the number of blank rows in the given row offset array
@@ -158,11 +161,13 @@ uint32_t gather_row_offsets(cudf::io::parse_options_view const& options,
  * @param data Character data buffer
  * @param row_offsets Row offsets in the character data buffer
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  */
 size_t count_blank_rows(cudf::io::parse_options_view const& options,
                         device_span<char const> data,
                         device_span<uint64_t const> row_offsets,
-                        cuda::stream_ref stream);
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr);
 
 /**
  * Remove blank rows in the given row offset array
@@ -171,11 +176,13 @@ size_t count_blank_rows(cudf::io::parse_options_view const& options,
  * @param data Character data buffer
  * @param row_offsets Row offsets in the character data buffer
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  */
 device_span<uint64_t> remove_blank_rows(cudf::io::parse_options_view const& options,
                                         device_span<char const> data,
                                         device_span<uint64_t> row_offsets,
-                                        cuda::stream_ref stream);
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr);
 
 /**
  * @brief Launches kernel for detecting possible dtype of each column of data
@@ -186,6 +193,7 @@ device_span<uint64_t> remove_blank_rows(cudf::io::parse_options_view const& opti
  * @param[in] row_offsets List of row data start positions (offsets)
  * @param[in] num_active_columns Number of active columns
  * @param[in] stream CUDA stream to use
+ * @param[in] mr Memory resources whose temporary resource is used for scratch allocations
  *
  * @return stats Histogram of each dtypes' occurrence for each column
  */
@@ -195,7 +203,8 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   device_span<column_parse::flags const> column_flags,
   device_span<uint64_t const> row_offsets,
   size_t const num_active_columns,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @brief Launches kernel for decoding row-column data

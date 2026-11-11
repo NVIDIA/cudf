@@ -251,18 +251,17 @@ std::size_t get_batch_size(std::size_t chunk_size)
  * @param d_data Device span in which to search for delimiter character
  * @param delimiter Delimiter character to search for
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  *
  * @return Position of first delimiter character in device array
  */
 size_type find_first_delimiter(device_span<char const> d_data,
                                char const delimiter,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
-  auto const first_delimiter_position =
-    thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                 d_data.begin(),
-                 d_data.end(),
-                 delimiter);
+  auto const first_delimiter_position = thrust::find(
+    cudf::detail::exec_policy_nosync(stream, mr), d_data.begin(), d_data.end(), delimiter);
   return first_delimiter_position != d_data.end()
            ? static_cast<size_type>(cuda::std::distance(d_data.begin(), first_delimiter_position))
            : -1;
@@ -328,7 +327,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
 
   auto const shift_for_nonzero_offset = std::min<std::int64_t>(chunk_offset, 1);
   auto const first_delim_pos =
-    chunk_offset == 0 ? 0 : find_first_delimiter(readbufspan, delimiter, stream);
+    chunk_offset == 0 ? 0 : find_first_delimiter(readbufspan, delimiter, stream, mr);
 
   // If we read till the end of the last source, we cannot be sure
   // if the last record read ends with a delimiter. In such cases, we add a delimiter
@@ -369,7 +368,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
                                        size_per_subchunk,
                                        delimiter,
                                        stream);
-        next_delim_pos = find_first_delimiter(readbufspan, delimiter, stream) + buffer_offset;
+        next_delim_pos = find_first_delimiter(readbufspan, delimiter, stream, mr) + buffer_offset;
         next_subchunk_start += size_per_subchunk;
       }
       if (next_delim_pos < buffer_offset) {

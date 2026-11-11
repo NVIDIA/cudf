@@ -98,7 +98,8 @@ void BM_FST_JSON(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -145,7 +146,8 @@ void BM_FST_JSON_no_outidx(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -188,7 +190,8 @@ void BM_FST_JSON_no_out(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -233,7 +236,8 @@ void BM_FST_JSON_no_str(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();

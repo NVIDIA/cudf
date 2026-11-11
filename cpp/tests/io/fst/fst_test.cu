@@ -173,7 +173,8 @@ TEST_F(FstTest, GroundTruth)
     cudf::io::fst::detail::make_translation_table<TT_NUM_STATES * NUM_SYMBOL_GROUPS,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   // Allocate device-side temporary storage & run algorithm
   parser.Transduce(d_input.data(),

@@ -8,6 +8,7 @@
 
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -15,7 +16,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_scan.cuh>
@@ -295,6 +295,7 @@ struct RemapEmptyStack {
  * @param[in] num_symbols_out The number of symbols that are supposed to be filled with
  * what-is-on-top-of-the-stack
  * @param[in] stream The cuda stream to which to dispatch the work
+ * @param[in] mr Memory resources whose temporary resource is used for scratch allocations
  */
 template <stack_op_support SupportResetOperation,
           typename StackLevelT,
@@ -310,9 +311,10 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                      StackSymbolT const empty_stack_symbol,
                                      StackSymbolT const read_symbol,
                                      std::size_t const num_symbols_out,
-                                     cuda::stream_ref stream)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
-  cuda::device_buffer<std::byte> temp_storage{stream, cudf::get_current_device_resource_ref()};
+  cuda::device_buffer<std::byte> temp_storage{stream, mr.get_temporary_mr()};
 
   // Type used to hold pairs of (stack_level, value) pairs
   using StackOpT = detail::StackOp<StackLevelT, StackSymbolT>;
@@ -451,18 +453,18 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
 
   if (temp_storage.size() < total_temp_storage_bytes) {
     temp_storage = cuda::device_buffer<std::byte>{
-      stream, cudf::get_current_device_resource_ref(), total_temp_storage_bytes, cuda::no_init};
+      stream, mr.get_temporary_mr(), total_temp_storage_bytes, cuda::no_init};
   }
   // Actual device buffer size, as we need to pass in an lvalue-ref to cub algorithms as
   // temp_storage_bytes
   total_temp_storage_bytes = temp_storage.size();
 
   cuda::device_buffer<SymbolPositionT> d_symbol_position_alt(
-    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_symbols_in, cuda::no_init);
   cuda::device_buffer<StackOpT> d_kv_ops_current{
-    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init};
+    stream, mr.get_temporary_mr(), num_symbols_in, cuda::no_init};
   cuda::device_buffer<StackOpT> d_kv_ops_alt(
-    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_symbols_in, cuda::no_init);
 
   //------------------------------------------------------------------------------
   // ALGORITHM
@@ -482,7 +484,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       detail::NewlineToResetStackSegmentOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op});
 
     cuda::device_buffer<StackSegmentT> key_segments(
-      stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
+      stream, mr.get_temporary_mr(), num_symbols_in, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
       temp_storage.data(),
       total_temp_storage_bytes,
@@ -550,7 +552,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
     stream.get()));
 
   // Fill the output tape with read-symbol
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                thrust::device_ptr<StackSymbolT>{d_top_of_stack},
                thrust::device_ptr<StackSymbolT>{d_top_of_stack + num_symbols_out},
                read_symbol);
@@ -561,7 +563,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
 
   // Scatter the stack symbols to the output tape (spots that are not scattered to have been
   // pre-filled with the read-symbol)
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   kv_op_to_stack_sym_it,
                   kv_op_to_stack_sym_it + num_symbols_in,
                   d_symbol_positions_db.Current(),

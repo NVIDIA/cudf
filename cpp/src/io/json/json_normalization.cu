@@ -305,7 +305,8 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
     fst::detail::make_transition_table(normalize_quotes::qna_state_tt),
     fst::detail::make_translation_functor<SymbolT, min_out, max_out>(
       normalize_quotes::TransduceToNormalizedQuotes{}),
-    stream);
+    stream,
+    mr);
 
   rmm::device_buffer outbuf(indata.size() * 2, stream, mr.get_output_mr());
   cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr.get_temporary_mr());
@@ -392,7 +393,8 @@ std::
                           fst::detail::make_transition_table(normalize_whitespace::wna_state_tt),
                           fst::detail::make_translation_functor<SymbolT, 0, 2>(
                             normalize_whitespace::TransduceToNormalizedWS{}),
-                          stream);
+                          stream,
+                          mr);
 
   cuda::device_buffer<size_type> outbuf_indices_storage(
     stream, mr.get_temporary_mr(), inbuf.size(), cuda::no_init);

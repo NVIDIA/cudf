@@ -82,8 +82,8 @@ class selected_buffer {
     : all{std::move(data)}, selected{selected_span}
   {
   }
-  explicit selected_buffer(cuda::stream_ref stream)
-    : all{stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init}, selected{all}
+  selected_buffer(cuda::stream_ref stream, cudf::memory_resources mr)
+    : all{stream, mr.get_output_mr(), 0, cuda::no_init}, selected{all}
   {
   }
 
@@ -256,6 +256,7 @@ constexpr std::array<uint8_t, 3> UTF8_BOM = {0xEF, 0xBB, 0xBF};
  *  @param[in] num_rows Number of rows to read; -1 means all
  *  @param[in] load_whole_file Indicates if the whole file should be read
  *  @param[in] stream CUDA stream used for device memory operations and kernel launches
+ *  @param[in] mr Memory resources used to allocate the returned buffers' device memory
  *  @return Input data and row offsets in the device memory
  */
 std::pair<selected_buffer<char>, selected_rows_offsets> load_data_and_gather_row_offsets(
@@ -270,7 +271,8 @@ std::pair<selected_buffer<char>, selected_rows_offsets> load_data_and_gather_row
   size_t skip_rows,
   int64_t num_rows,
   bool load_whole_file,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   constexpr size_t max_chunk_bytes = 64 * 1024 * 1024;  // 64MB
 
@@ -297,18 +299,17 @@ std::pair<selected_buffer<char>, selected_rows_offsets> load_data_and_gather_row
 
   cuda::device_buffer<char> d_data_storage{
     stream,
-    cudf::get_current_device_resource_ref(),
+    mr.get_output_mr(),
     (load_whole_file) ? data_size : std::min(buffer_size * 2, max_input_size),
     cuda::no_init};
   auto d_data = device_span<char>{d_data_storage.data(), 0};
   cuda::device_buffer<uint64_t> all_row_offsets_storage{
-    stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+    stream, mr.get_output_mr(), 0, cuda::no_init};
   auto all_row_offsets = device_span<uint64_t>{all_row_offsets_storage};
 
   auto const max_blocks =
     std::max<size_t>((buffer_size / cudf::io::csv::gpu::rowofs_block_bytes) + 1, 2);
-  cudf::detail::hostdevice_vector<uint64_t> row_ctx(
-    max_blocks, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<uint64_t> row_ctx(max_blocks, stream, mr.as_temporary());
   do {
     auto const target_pos = std::min(pos + max_chunk_bytes, max_input_size);
     auto const chunk_size = target_pos - pos;
@@ -352,7 +353,8 @@ std::pair<selected_buffer<char>, selected_rows_offsets> load_data_and_gather_row
                                                                    range_begin,
                                                                    range_end,
                                                                    skip_rows,
-                                                                   stream);
+                                                                   stream,
+                                                                   mr);
 
     cudf::detail::cuda_memcpy(
       host_span<uint64_t>(row_ctx.host_ptr(), row_ctx.size(), true).subspan(0, num_blocks),
@@ -390,7 +392,8 @@ std::pair<selected_buffer<char>, selected_rows_offsets> load_data_and_gather_row
                                              range_begin,
                                              range_end,
                                              skip_rows,
-                                             stream);
+                                             stream,
+                                             mr);
       // With byte range, we want to keep only one row out of the specified range
       if (range_end < data_size) {
         cudf::detail::cuda_memcpy(
@@ -416,7 +419,7 @@ std::pair<selected_buffer<char>, selected_rows_offsets> load_data_and_gather_row
       if (num_rows >= 0) {
         if (all_row_offsets.size() > header_rows + static_cast<size_t>(num_rows)) {
           size_t num_blanks = cudf::io::csv::gpu::count_blank_rows(
-            parse_opts.view(), d_data, all_row_offsets, stream);
+            parse_opts.view(), d_data, all_row_offsets, stream, mr);
           if (all_row_offsets.size() - num_blanks > header_rows + static_cast<size_t>(num_rows)) {
             // Got the desired number of rows
             break;
@@ -435,7 +438,7 @@ std::pair<selected_buffer<char>, selected_rows_offsets> load_data_and_gather_row
   } while (pos < max_input_size);
 
   auto const non_blank_row_offsets =
-    io::csv::gpu::remove_blank_rows(parse_opts.view(), d_data, all_row_offsets, stream);
+    io::csv::gpu::remove_blank_rows(parse_opts.view(), d_data, all_row_offsets, stream, mr);
   auto row_offsets =
     selected_rows_offsets{std::move(all_row_offsets_storage), non_blank_row_offsets};
 
@@ -474,7 +477,8 @@ std::pair<selected_buffer<char>, selected_rows_offsets> select_data_and_row_offs
   csv_reader_options const& reader_opts,
   std::vector<char>& header,
   parse_options const& parse_opts,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto range_offset  = reader_opts.get_byte_range_offset();
   auto range_size    = reader_opts.get_byte_range_size();
@@ -493,7 +497,9 @@ std::pair<selected_buffer<char>, selected_rows_offsets> select_data_and_row_offs
   CUDF_EXPECTS((range_offset == 0 || reader_opts.get_header() < 0),
                "byte_range offset with header not supported");
 
-  if (source->is_empty()) { return {selected_buffer<char>{stream}, selected_rows_offsets{stream}}; }
+  if (source->is_empty()) {
+    return {selected_buffer<char>{stream, mr}, selected_rows_offsets{stream, mr}};
+  }
 
   std::optional<host_span<char const>> h_data;
   std::vector<uint8_t> h_uncomp_data_owner;
@@ -552,7 +558,8 @@ std::pair<selected_buffer<char>, selected_rows_offsets> select_data_and_row_offs
                                                            (skip_rows > 0) ? skip_rows : 0,
                                                            num_rows,
                                                            load_whole_file,
-                                                           stream);
+                                                           stream,
+                                                           mr);
   auto& row_offsets      = data_row_offsets.second;
   // Exclude the rows that are to be skipped from the end
   if (skip_end_rows > 0 && static_cast<size_t>(skip_end_rows) < row_offsets.size()) {
@@ -608,7 +615,8 @@ void infer_column_types(parse_options const& parse_opts,
                         int32_t num_records,
                         data_type timestamp_type,
                         host_span<data_type> column_types,
-                        cuda::stream_ref stream)
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr)
 {
   if (num_records == 0) {
     for (auto col_idx = 0u; col_idx < column_flags.size(); ++col_idx) {
@@ -628,11 +636,11 @@ void infer_column_types(parse_options const& parse_opts,
   auto const column_stats = cudf::io::csv::gpu::detect_column_types(
     parse_opts.view(),
     data,
-    cudf::detail::make_device_buffer_async(
-      column_flags, stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::make_device_buffer_async(column_flags, stream, mr.as_temporary()),
     row_offsets,
     num_inferred_columns,
-    stream);
+    stream,
+    mr);
   stream.sync();
 
   auto inf_col_idx = 0;
@@ -822,7 +830,8 @@ cudf::detail::host_vector<data_type> determine_column_types(
   int32_t num_records,
   host_span<column_parse::flags> column_flags,
   cudf::size_type num_active_columns,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   std::vector<data_type> column_types(column_flags.size());
 
@@ -843,7 +852,8 @@ cudf::detail::host_vector<data_type> determine_column_types(
                      num_records,
                      reader_opts.get_timestamp_type(),
                      column_types,
-                     stream);
+                     stream,
+                     mr);
 
   // compact column_types to only include active columns
   auto active_col_types =
@@ -869,7 +879,7 @@ table_with_metadata read_csv(cudf::io::datasource* source,
 
   // Mutable because decoding unescapes quoted strings in place
   auto data_row_offsets =
-    select_data_and_row_offsets(source, reader_opts, header, parse_opts, stream);
+    select_data_and_row_offsets(source, reader_opts, header, parse_opts, stream, mr.as_temporary());
 
   auto& data              = data_row_offsets.first;
   auto const& row_offsets = data_row_offsets.second;
@@ -1047,7 +1057,8 @@ table_with_metadata read_csv(cudf::io::datasource* source,
                                                    num_records,
                                                    column_flags,
                                                    num_active_columns,
-                                                   stream);
+                                                   stream,
+                                                   mr);
 
   auto metadata    = table_metadata{};
   auto out_columns = std::vector<std::unique_ptr<cudf::column>>();

@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -420,7 +421,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
     auto rev_it_begin                   = cuda::std::make_reverse_iterator(bufsubspan.end());
     auto rev_it_end                     = cuda::std::make_reverse_iterator(bufsubspan.begin());
     auto const second_last_delimiter_it = thrust::find(
-      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), rev_it_begin, rev_it_end, delimiter);
+      cudf::detail::exec_policy_nosync(stream, mr), rev_it_begin, rev_it_end, delimiter);
     CUDF_EXPECTS(second_last_delimiter_it != rev_it_end,
                  "A single JSON line cannot be larger than the batch size limit");
     auto const last_line_size =

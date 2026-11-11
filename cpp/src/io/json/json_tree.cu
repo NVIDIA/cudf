@@ -11,6 +11,7 @@
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/hashing/detail/default_hash.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
@@ -220,7 +221,7 @@ void propagate_first_sibling_to_other(cudf::device_span<TreeDepthT const> node_l
   // instead of gather, using permutation_iterator, which is ~17% faster
 
   thrust::inclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     sorted_node_levels.begin(),
     sorted_node_levels.end(),
     cuda::make_permutation_iterator(parent_node_ids.begin(), sorted_order.begin()),
@@ -271,18 +272,16 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
   };
 
   // Look for ErrorBegin and report the point of error.
-  if (auto const error_count =
-        thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                      tokens.begin(),
-                      tokens.end(),
-                      token_t::ErrorBegin);
+  if (auto const error_count = thrust::count(cudf::detail::exec_policy_nosync(stream, mr),
+                                             tokens.begin(),
+                                             tokens.end(),
+                                             token_t::ErrorBegin);
       error_count > 0) {
-    auto const error_location =
-      thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   tokens.begin(),
-                   tokens.end(),
-                   token_t::ErrorBegin);
-    auto error_index = cudf::detail::make_host_vector<SymbolOffsetT>(
+    auto const error_location = thrust::find(cudf::detail::exec_policy_nosync(stream, mr),
+                                             tokens.begin(),
+                                             tokens.end(),
+                                             token_t::ErrorBegin);
+    auto error_index          = cudf::detail::make_host_vector<SymbolOffsetT>(
       device_span<SymbolOffsetT const>{
         token_indices.data() + cuda::std::distance(tokens.begin(), error_location), 1},
       stream);
@@ -311,7 +310,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
       cudf::detail::device_scalar<int32_t>(0, stream, cudf::get_current_device_resource_ref());
     auto const token_level_output_it = cuda::make_transform_output_iterator(
       token_levels.begin(), checked_token_level_output{depth_out_of_range.data()});
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            push_pop_it,
                            push_pop_it + num_tokens,
                            token_level_output_it,
@@ -376,7 +375,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
     };
 
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       node_token_ids.begin(),
       node_token_ids.end(),
       parent_node_ids.begin(),
@@ -481,7 +480,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
                                 stream,
                                 mrs.as_temporary());
 
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            token_levels.begin(),
                            token_levels.end(),
                            token_levels.begin());
@@ -502,7 +501,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
     // initialize first child parent token ids
     // translate token ids to node id using similar binary search.
     thrust::transform(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<NodeIndexT>{0},
       cuda::counting_iterator<NodeIndexT>{0} + num_nested,
       parent_node_ids.begin(),
@@ -534,7 +533,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
         return i + 1;
       });
     auto stencil = cuda::transform_iterator(token_id.begin(), is_nested_end{tokens.data()});
-    thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter_if(cudf::detail::exec_policy_nosync(stream, mr),
                        token_indices_it,
                        token_indices_it + num_nested,
                        parent_node_ids.begin(),
@@ -659,7 +658,7 @@ cuda::device_buffer<size_type> hash_node_type_with_field_name(device_span<Symbol
   CUDF_FUNC_RANGE();
 
   auto const num_nodes  = d_tree.node_categories.size();
-  auto const num_fields = thrust::count(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  auto const num_fields = thrust::count(cudf::detail::exec_policy_nosync(stream, mr),
                                         d_tree.node_categories.begin(),
                                         d_tree.node_categories.end(),
                                         node_t::NC_FN);
@@ -763,7 +762,7 @@ cuda::device_buffer<size_type> hash_node_type_with_field_name(device_span<Symbol
 
   // convert field nodes to node indices, and other nodes to enum value.
   cuda::device_buffer<size_type> node_type(stream, mr.get_output_mr(), num_nodes, cuda::no_init);
-  thrust::tabulate(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::tabulate(cudf::detail::exec_policy_nosync(stream, mr),
                    node_type.begin(),
                    node_type.end(),
                    [node_categories = d_tree.node_categories.data(),
@@ -790,7 +789,7 @@ get_array_children_indices(TreeDepthT row_array_children_level,
   // parent_node_id for each row will be same).
   // -> return their indices and their node id
   auto const num_nodes  = node_levels.size();
-  auto num_level2_nodes = thrust::count(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  auto num_level2_nodes = thrust::count(cudf::detail::exec_policy_nosync(stream, mr),
                                         node_levels.begin(),
                                         node_levels.end(),
                                         row_array_children_level);
@@ -810,7 +809,7 @@ get_array_children_indices(TreeDepthT row_array_children_level,
     mr.as_temporary());
   auto level2_parent_nodes =
     cuda::make_permutation_iterator(parent_node_ids.begin(), level2_nodes.cbegin());
-  thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::exclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                 level2_parent_nodes,
                                 level2_parent_nodes + num_level2_nodes,
                                 cuda::make_constant_iterator(NodeIndexT{1}),
@@ -871,7 +870,7 @@ std::pair<cuda::device_buffer<size_type>, cuda::device_buffer<size_type>> hash_n
     // or alternate method to hash it at node_type
     list_indices = cuda::device_buffer<size_type>(
       stream, cudf::get_current_device_resource_ref(), num_nodes, cuda::no_init);
-    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                     level2_indices.cbegin(),
                     level2_indices.cend(),
                     level2_nodes.cbegin(),
@@ -904,10 +903,8 @@ std::pair<cuda::device_buffer<size_type>, cuda::device_buffer<size_type>> hash_n
 
   cuda::device_buffer<hash_value_type> node_hash(
     stream, cudf::get_current_device_resource_ref(), num_nodes, cuda::no_init);
-  thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   node_hash.begin(),
-                   node_hash.end(),
-                   d_hasher);
+  thrust::tabulate(
+    cudf::detail::exec_policy_nosync(stream, mr), node_hash.begin(), node_hash.end(), d_hasher);
   auto const d_hashed_cache = [node_hash = node_hash.begin()] __device__(auto node_id) {
     return node_hash[node_id];
   };
@@ -1021,10 +1018,9 @@ std::pair<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<NodeIndexT>> gene
                           mr);
   }();
 
-  thrust::sort(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-               unique_keys.begin(),
-               unique_keys.end());
-  thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sort(
+    cudf::detail::exec_policy_nosync(stream, mr), unique_keys.begin(), unique_keys.end());
+  thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       unique_keys.begin(),
                       unique_keys.end(),
                       col_id.begin(),
@@ -1033,7 +1029,7 @@ std::pair<cuda::device_buffer<NodeIndexT>, cuda::device_buffer<NodeIndexT>> gene
 
   cuda::device_buffer<size_type> parent_col_id(
     stream, mr.get_output_mr(), num_nodes, cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     d_tree.parent_node_ids.begin(),
                     d_tree.parent_node_ids.end(),
                     parent_col_id.begin(),
@@ -1076,9 +1072,8 @@ cuda::device_buffer<size_type> compute_row_offsets(cuda::device_buffer<NodeIndex
 
   cuda::device_buffer<size_type> scatter_indices(
     stream, cudf::get_current_device_resource_ref(), num_nodes, cuda::no_init);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   scatter_indices.begin(),
-                   scatter_indices.end());
+  thrust::sequence(
+    cudf::detail::exec_policy_nosync(stream, mr), scatter_indices.begin(), scatter_indices.end());
 
   // array of arrays
   NodeIndexT const row_array_parent_level = is_enabled_lines ? 0 : 1;
@@ -1095,7 +1090,7 @@ cuda::device_buffer<size_type> compute_row_offsets(cuda::device_buffer<NodeIndex
 
   // Extract only list children. (nodes who's parent is a list/root)
   auto const list_parent_end =
-    thrust::remove_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::remove_if(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::make_zip_iterator(parent_col_id.begin(), scatter_indices.begin()),
                       cuda::make_zip_iterator(parent_col_id.end(), scatter_indices.end()),
                       d_tree.parent_node_ids.begin(),
@@ -1103,25 +1098,23 @@ cuda::device_buffer<size_type> compute_row_offsets(cuda::device_buffer<NodeIndex
   auto const num_list_parent = cuda::std::distance(
     cuda::make_zip_iterator(parent_col_id.begin(), scatter_indices.begin()), list_parent_end);
 
-  thrust::stable_sort_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    parent_col_id.begin(),
-    parent_col_id.begin() + num_list_parent,
-    scatter_indices.begin());
+  thrust::stable_sort_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                             parent_col_id.begin(),
+                             parent_col_id.begin() + num_list_parent,
+                             scatter_indices.begin());
 
   cuda::device_buffer<size_type> row_offsets(stream, mr.get_output_mr(), num_nodes, cuda::no_init);
   // TODO is it possible to generate list child_offsets too here?
   // write only 1st child offset to parent node id child_offsets?
-  thrust::exclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    parent_col_id.begin(),
-    parent_col_id.begin() + num_list_parent,
-    cuda::make_constant_iterator<size_type>(1),
-    row_offsets.begin());
+  thrust::exclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                                parent_col_id.begin(),
+                                parent_col_id.begin() + num_list_parent,
+                                cuda::make_constant_iterator<size_type>(1),
+                                row_offsets.begin());
 
   // Using scatter instead of sort.
   auto& temp_storage = parent_col_id;  // reuse parent_col_id as temp storage
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   row_offsets.begin(),
                   row_offsets.begin() + num_list_parent,
                   scatter_indices.begin(),
@@ -1130,7 +1123,7 @@ cuda::device_buffer<size_type> compute_row_offsets(cuda::device_buffer<NodeIndex
 
   // Propagate row offsets to non-list leaves from list's immediate children node by recursion
   thrust::transform_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<std::size_t>{0},
     cuda::counting_iterator{num_nodes},
     row_offsets.begin(),

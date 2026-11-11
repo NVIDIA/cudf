@@ -18,6 +18,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
 #include <cudf/io/csv.hpp>
@@ -31,8 +32,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -684,7 +683,7 @@ cuda::device_buffer<string_offset_pair<OffsetT>> make_null_string_indices(size_t
   cuda::device_buffer<string_offset_pair<OffsetT>> indices(
     stream, mr.get_output_mr(), size, cuda::no_init);
   // Short rows leave missing fields untouched; zero is a valid offset, not a null.
-  thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                indices.begin(),
                indices.end(),
                string_offset_pair<OffsetT>{});

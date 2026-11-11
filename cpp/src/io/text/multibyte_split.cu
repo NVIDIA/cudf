@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
@@ -25,8 +26,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_scan.cuh>
@@ -456,15 +455,15 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
           return new_offsets_unclamped;
         }
         // if we are in the last chunk, we need to find the first out-of-bounds offset
-        auto const it      = cuda::counting_iterator<output_offset>{};
-        auto const end_loc = *thrust::find_if(
-          rmm::exec_policy_nosync(scan_stream, cudf::get_current_device_resource_ref()),
-          it,
-          it + new_offsets_unclamped,
-          cuda::proclaim_return_type<bool>(
-            [row_offsets, byte_range_end] __device__(output_offset i) {
-              return row_offsets[i] >= byte_range_end;
-            }));
+        auto const it = cuda::counting_iterator<output_offset>{};
+        auto const end_loc =
+          *thrust::find_if(cudf::detail::exec_policy_nosync(scan_stream, mr),
+                           it,
+                           it + new_offsets_unclamped,
+                           cuda::proclaim_return_type<bool>(
+                             [row_offsets, byte_range_end] __device__(output_offset i) {
+                               return row_offsets[i] >= byte_range_end;
+                             }));
         // if we had no out-of-bounds offset, we copy all offsets
         if (end_loc == new_offsets_unclamped) { return end_loc; }
         // otherwise we copy only up to (including) the first out-of-bounds delimiter
@@ -486,10 +485,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
           chunk->data() + std::min<byte_offset>(sentinel - chunk_offset, chunk->size());
         auto const output_size = end - begin;
         auto char_output       = char_storage.next_output(scan_stream);
-        thrust::copy(rmm::exec_policy_nosync(scan_stream, cudf::get_current_device_resource_ref()),
-                     begin,
-                     end,
-                     char_output.begin());
+        thrust::copy(
+          cudf::detail::exec_policy_nosync(scan_stream, mr), begin, end, char_output.begin());
         char_storage.advance_output(output_size, scan_stream);
       }
 
@@ -542,7 +539,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   };
   if (insert_begin) { set_offset_value(0, 0); }
   if (insert_end) { set_offset_value(offsets->size() - 1, chars_bytes); }
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     global_offsets.begin(),
                     global_offsets.end(),
                     offsets_itr + insert_begin,

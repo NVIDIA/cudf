@@ -9,11 +9,10 @@
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/tokenize_json.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -281,7 +280,7 @@ void validate_token_stream(device_span<char const> d_input,
     [d_invalid = d_invalid.begin()] __device__(size_type i, bool x) -> void {
       if (x) { d_invalid[i] = true; }
     }));
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     count_it,
                     count_it + num_tokens,
                     conditional_invalidout_it,
@@ -301,7 +300,7 @@ void validate_token_stream(device_span<char const> d_input,
       return {static_cast<token_t>(tokens[i]), tokens[i] == token_t::LineEnd};
     });
 
-  thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform_inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                                    count_it,
                                    count_it + num_tokens,
                                    conditional_output_it,

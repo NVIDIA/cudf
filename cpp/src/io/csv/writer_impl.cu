@@ -20,6 +20,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/data_sink.hpp>
@@ -38,8 +39,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/cmath>
@@ -154,7 +153,7 @@ void write_compressed_to_sink(data_sink* out_sink,
 
   cuda::device_buffer<io::detail::codec_exec_result> d_results(
     stream, temp_mr, num_blocks, cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                d_results.begin(),
                d_results.end(),
                io::detail::codec_exec_result{0, io::detail::codec_status::FAILURE});

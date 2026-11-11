@@ -311,7 +311,7 @@ struct column_to_strings_fn {
                              narep,
                              options_.is_enabled_include_nulls(),
                              stream_,
-                             cudf::get_current_device_resource_ref());
+                             mr_);
   }
 
  private:

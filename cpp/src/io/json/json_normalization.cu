@@ -308,7 +308,7 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
     stream);
 
   rmm::device_buffer outbuf(indata.size() * 2, stream, mr.get_output_mr());
-  cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr.get_output_mr());
+  cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr.get_temporary_mr());
   parser.Transduce(reinterpret_cast<SymbolT const*>(indata.data()),
                    static_cast<SymbolOffsetT>(indata.size()),
                    static_cast<SymbolT*>(outbuf.data()),
@@ -341,16 +341,15 @@ std::
     5. Return updated buffer, segment lengths and updated segment offsets
    */
   cuda::device_buffer<size_type> inbuf_lengths(
-    stream, cudf::get_current_device_resource_ref(), col_lengths.size(), cuda::no_init);
+    stream, mr.get_output_mr(), col_lengths.size(), cuda::no_init);
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(
     inbuf_lengths.data(), col_lengths.data(), col_lengths.size_bytes(), stream));
   std::size_t inbuf_lengths_size = inbuf_lengths.size();
   size_type inbuf_size           = thrust::reduce(
     cudf::detail::exec_policy_nosync(stream, mr), inbuf_lengths.begin(), inbuf_lengths.end());
-  cuda::device_buffer<char> inbuf(
-    stream, cudf::get_current_device_resource_ref(), inbuf_size, cuda::no_init);
+  cuda::device_buffer<char> inbuf(stream, mr.get_output_mr(), inbuf_size, cuda::no_init);
   cuda::device_buffer<size_type> inbuf_offsets(
-    stream, cudf::get_current_device_resource_ref(), inbuf_lengths_size, cuda::no_init);
+    stream, mr.get_output_mr(), inbuf_lengths_size, cuda::no_init);
   thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          inbuf_lengths.begin(),
                          inbuf_lengths.end(),
@@ -396,9 +395,9 @@ std::
                           stream);
 
   cuda::device_buffer<size_type> outbuf_indices_storage(
-    stream, mr.get_output_mr(), inbuf.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), inbuf.size(), cuda::no_init);
   auto outbuf_indices = device_span<size_type>{outbuf_indices_storage};
-  cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr.get_output_mr());
+  cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr.get_temporary_mr());
   parser.Transduce(inbuf.data(),
                    static_cast<SymbolOffsetT>(inbuf.size()),
                    cuda::make_discard_iterator(),

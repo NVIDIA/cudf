@@ -1670,7 +1670,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
     tokens.set_element(0, token_t::LineEnd, stream);
     validate_token_stream(json_in, tokens, tokens_indices, options, stream, mr);
     auto [filtered_tokens, filtered_tokens_indices] =
-      process_token_stream(tokens, tokens_indices, stream, cudf::get_current_device_resource_ref());
+      process_token_stream(tokens, tokens_indices, stream, mr);
     tokens         = std::move(filtered_tokens);
     tokens_indices = std::move(filtered_tokens_indices);
   }

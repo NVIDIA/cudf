@@ -288,7 +288,7 @@ size_type find_first_delimiter(device_span<char const> d_data,
  * @param sources Data sources to read from
  * @param reader_opts JSON reader options with range offset and range size
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources whose temporary resource is used for scratch allocations
+ * @param mr Memory resources used to allocate the returned buffers' device memory
  * @returns A pair of data source owning buffers together enclosing the bytes read. The second
  * buffer may or may not be empty depending on the condition described above.
  */
@@ -317,7 +317,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
   std::size_t buffer_size =
     std::min(total_source_size, chunk_size + num_subchunks_prealloced * size_per_subchunk) +
     num_extra_delimiters;
-  rmm::device_buffer buffer(buffer_size, stream);
+  rmm::device_buffer buffer(buffer_size, stream, mr.get_output_mr());
   device_span<char> bufspan(reinterpret_cast<char*>(buffer.data()), buffer.size());
 
   // Offset within buffer indicating first read position
@@ -345,7 +345,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
   // entire line until the first delimiter is encountered at the end of the line.
   if (first_delim_pos == -1) {
     // return empty owning datasource buffer
-    auto empty_buf = rmm::device_buffer(0, stream);
+    auto empty_buf = rmm::device_buffer(0, stream, mr.get_output_mr());
     return std::make_pair(datasource::owning_buffer<rmm::device_buffer>(std::move(empty_buf)),
                           std::nullopt);
   } else if (!should_load_till_last_source) {
@@ -434,7 +434,8 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
       bufsubspan.data() +
         static_cast<std::size_t>(cuda::std::distance(second_last_delimiter_it, rev_it_end)),
       last_line_size + 1,
-      stream);
+      stream,
+      mr.get_output_mr());
 
     auto buffer_data        = buffer.data();
     auto second_buffer_data = second_buffer.data();
@@ -666,11 +667,8 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
 
   if (batch_offsets.size() <= 2) {
     // single batch
-    auto has_inserted = insert_partial_tables(read_batch(sources,
-                                                         batched_reader_opts,
-                                                         stream,
-                                                         cudf::get_current_device_resource_ref(),
-                                                         diagnostics_out));
+    auto has_inserted =
+      insert_partial_tables(read_batch(sources, batched_reader_opts, stream, mr, diagnostics_out));
     if (!has_inserted) {
       return table_with_metadata{std::make_unique<table>(std::vector<std::unique_ptr<column>>{}),
                                  {std::vector<column_name_info>{}}};
@@ -679,11 +677,7 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
     // multiple batches
     batched_reader_opts.set_byte_range_offset(batch_offsets[0]);
     batched_reader_opts.set_byte_range_size(batch_offsets[1] - batch_offsets[0]);
-    insert_partial_tables(read_batch(sources,
-                                     batched_reader_opts,
-                                     stream,
-                                     cudf::get_current_device_resource_ref(),
-                                     diagnostics_out));
+    insert_partial_tables(read_batch(sources, batched_reader_opts, stream, mr, diagnostics_out));
 
     auto& tbl = partial_tables.back().tbl;
     std::vector<column_view> children;

@@ -303,7 +303,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 
   if (byte_range.is_empty()) { return make_empty_column(type_id::STRING); }
 
-  auto device_delim = cudf::string_scalar(delimiter, true, stream, mr);
+  auto device_delim = cudf::string_scalar(delimiter, true, stream, mr.as_temporary());
 
   std::string sorted_delim{delimiter};
   std::sort(sorted_delim.begin(), sorted_delim.end());
@@ -499,8 +499,9 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 
     cudf::detail::join_streams(streams, stream);
 
-    auto chars          = char_storage.gather(stream, mr);
-    auto global_offsets = row_offset_storage.gather<cuda::device_buffer<byte_offset>>(stream, mr);
+    auto chars = char_storage.gather(stream, mr);
+    auto global_offsets =
+      row_offset_storage.gather<cuda::device_buffer<byte_offset>>(stream, mr.as_temporary());
     return std::pair{std::move(global_offsets), std::move(chars)};
   }();
 

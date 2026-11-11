@@ -1336,178 +1336,442 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Calculate the sin, output is the same type as input.
+   * @deprecated Use {@link #sin(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector sin() {
-    return unaryOp(UnaryOp.SIN);
+    return sin(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the sin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector sin(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.SIN, stream, mr);
   }
 
   /**
    * Calculate the cos, output is the same type as input.
+   * @deprecated Use {@link #cos(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector cos() {
-    return unaryOp(UnaryOp.COS);
+    return cos(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the cos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector cos(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.COS, stream, mr);
   }
 
   /**
    * Calculate the tan, output is the same type as input.
+   * @deprecated Use {@link #tan(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector tan() {
-    return unaryOp(UnaryOp.TAN);
+    return tan(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the tan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector tan(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.TAN, stream, mr);
   }
 
   /**
    * Calculate the arcsin, output is the same type as input.
+   * @deprecated Use {@link #arcsin(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arcsin() {
-    return unaryOp(UnaryOp.ARCSIN);
+    return arcsin(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the arcsin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arcsin(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCSIN, stream, mr);
   }
 
   /**
    * Calculate the arccos, output is the same type as input.
+   * @deprecated Use {@link #arccos(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arccos() {
-    return unaryOp(UnaryOp.ARCCOS);
+    return arccos(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the arccos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arccos(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCCOS, stream, mr);
   }
 
   /**
    * Calculate the arctan, output is the same type as input.
+   * @deprecated Use {@link #arctan(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arctan() {
-    return unaryOp(UnaryOp.ARCTAN);
+    return arctan(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the arctan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arctan(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCTAN, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic sin, output is the same type as input.
+   * @deprecated Use {@link #sinh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector sinh() {
-    return unaryOp(UnaryOp.SINH);
+    return sinh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic sin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector sinh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.SINH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic cos, output is the same type as input.
+   * @deprecated Use {@link #cosh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector cosh() {
-    return unaryOp(UnaryOp.COSH);
+    return cosh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic cos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector cosh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.COSH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic tan, output is the same type as input.
+   * @deprecated Use {@link #tanh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector tanh() {
-    return unaryOp(UnaryOp.TANH);
+    return tanh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic tan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector tanh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.TANH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic arcsin, output is the same type as input.
+   * @deprecated Use {@link #arcsinh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arcsinh() {
-    return unaryOp(UnaryOp.ARCSINH);
+    return arcsinh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic arcsin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arcsinh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCSINH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic arccos, output is the same type as input.
+   * @deprecated Use {@link #arccosh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arccosh() {
-    return unaryOp(UnaryOp.ARCCOSH);
+    return arccosh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic arccos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arccosh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCCOSH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic arctan, output is the same type as input.
+   * @deprecated Use {@link #arctanh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arctanh() {
-    return unaryOp(UnaryOp.ARCTANH);
+    return arctanh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic arctan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arctanh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCTANH, stream, mr);
   }
 
   /**
    * Calculate the exp, output is the same type as input.
+   * @deprecated Use {@link #exp(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector exp() {
-    return unaryOp(UnaryOp.EXP);
+    return exp(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the exp, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector exp(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.EXP, stream, mr);
   }
 
   /**
    * Calculate the log, output is the same type as input.
+   * @deprecated Use {@link #log(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector log() {
-    return unaryOp(UnaryOp.LOG);
+    return log(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the log, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector log(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.LOG, stream, mr);
   }
 
   /**
    * Calculate the log with base 2, output is the same type as input.
+   * @deprecated Use {@link #log2(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector log2() {
+    return log2(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the log with base 2, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector log2(Cuda.Stream stream, MemoryResources mr) {
     try (Scalar base = Scalar.fromInt(2)) {
-      return binaryOp(BinaryOp.LOG_BASE, base, getType(), Cuda.DEFAULT_STREAM,
-          MemoryResources.CURRENT);
+      return binaryOp(BinaryOp.LOG_BASE, base, getType(), stream, mr);
     }
   }
 
   /**
    * Calculate the log with base 10, output is the same type as input.
+   * @deprecated Use {@link #log10(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector log10() {
+    return log10(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the log with base 10, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector log10(Cuda.Stream stream, MemoryResources mr) {
     try (Scalar base = Scalar.fromInt(10)) {
-      return binaryOp(BinaryOp.LOG_BASE, base, getType(), Cuda.DEFAULT_STREAM,
-          MemoryResources.CURRENT);
+      return binaryOp(BinaryOp.LOG_BASE, base, getType(), stream, mr);
     }
   }
 
   /**
    * Calculate the sqrt, output is the same type as input.
+   * @deprecated Use {@link #sqrt(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector sqrt() {
-    return unaryOp(UnaryOp.SQRT);
+    return sqrt(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the sqrt, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector sqrt(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.SQRT, stream, mr);
   }
 
   /**
    * Calculate the cube root, output is the same type as input.
+   * @deprecated Use {@link #cbrt(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector cbrt() {
-    return unaryOp(UnaryOp.CBRT);
+    return cbrt(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the cube root, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector cbrt(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.CBRT, stream, mr);
   }
 
   /**
    * Calculate the ceil, output is the same type as input.
+   * @deprecated Use {@link #ceil(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector ceil() {
-    return unaryOp(UnaryOp.CEIL);
+    return ceil(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the ceil, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector ceil(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.CEIL, stream, mr);
   }
 
   /**
    * Calculate the floor, output is the same type as input.
+   * @deprecated Use {@link #floor(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector floor() {
-    return unaryOp(UnaryOp.FLOOR);
+    return floor(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the floor, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector floor(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.FLOOR, stream, mr);
   }
 
   /**
    * Calculate the abs, output is the same type as input.
+   * @deprecated Use {@link #abs(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector abs() {
-    return unaryOp(UnaryOp.ABS);
+    return abs(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the abs, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector abs(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ABS, stream, mr);
   }
 
   /**
    * Rounds a floating-point argument to the closest integer value, but returns it as a float.
+   * @deprecated Use {@link #rint(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector rint() {
-    return unaryOp(UnaryOp.RINT);
+    return rint(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Rounds a floating-point argument to the closest integer value, but returns it as a float.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector rint(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.RINT, stream, mr);
   }
 
   /**
    * Count the number of set bit for each integer value.
+   * @deprecated Use {@link #bitCount(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector bitCount() {
-    return unaryOp(UnaryOp.BIT_COUNT);
+    return bitCount(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Count the number of set bit for each integer value.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector bitCount(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.BIT_COUNT, stream, mr);
   }
 
   /**
    * Invert the bits, output is the same type as input.
    * For BOOL8 type, this is equivalent to logical not (UnaryOp.NOT), but this does not
    * matter since Spark does not support bitwise inverting on boolean type.
+   * @deprecated Use {@link #bitInvert(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector bitInvert() {
-    return unaryOp(UnaryOp.BIT_INVERT);
+    return bitInvert(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Invert the bits, output is the same type as input.
+   * For BOOL8 type, this is equivalent to logical not (UnaryOp.NOT), but this does not
+   * matter since Spark does not support bitwise inverting on boolean type.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector bitInvert(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.BIT_INVERT, stream, mr);
   }
 
   /**
@@ -2384,9 +2648,21 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns a vector of the logical `not` of each value in the input
    * column (this)
+   * @deprecated Use {@link #not(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector not() {
-    return unaryOp(UnaryOp.NOT);
+    return not(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Returns a vector of the logical `not` of each value in the input
+   * column (this)
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector not(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.NOT, stream, mr);
   }
 
   /////////////////////////////////////////////////////////////////////////////

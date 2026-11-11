@@ -205,6 +205,26 @@ public class MemoryResourcesTest extends CudfTestBase {
   }
 
   @Test
+  void testUnaryAndBinaryWrappers() {
+    try (ColumnVector doubles = ColumnVector.fromDoubles(-1.5, 0.25, 4.0);
+         ColumnVector ints = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector others = ColumnVector.fromInts(3, 2, 1);
+         Scalar two = Scalar.fromInt(2)) {
+      checkColumn(() -> doubles.abs(), () -> doubles.abs(stream, mr));
+      checkColumn(() -> doubles.sin(), () -> doubles.sin(stream, mr));
+      checkColumn(() -> doubles.ceil(), () -> doubles.ceil(stream, mr));
+      checkColumn(() -> doubles.log2(), () -> doubles.log2(stream, mr));
+      checkColumn(() -> ints.bitInvert(), () -> ints.bitInvert(stream, mr));
+      checkColumn(() -> ints.add(others), () -> ints.add(others, stream, mr));
+      checkColumn(() -> ints.mul(two), () -> ints.mul(two, stream, mr));
+      checkColumn(() -> ints.sub(others, DType.INT64),
+          () -> ints.sub(others, DType.INT64, stream, mr));
+      checkColumn(() -> ints.equalTo(others), () -> ints.equalTo(others, stream, mr));
+      checkColumn(() -> two.pow(ints), () -> two.pow(ints, stream, mr));
+    }
+  }
+
+  @Test
   void testCastToSameType() {
     try (ColumnVector ints = ColumnVector.fromInts(1, 2, 3)) {
       try (ColumnVector same = ints.castTo(DType.INT32, stream, MemoryResources.CURRENT)) {

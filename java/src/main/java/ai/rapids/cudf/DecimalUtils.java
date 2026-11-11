@@ -61,7 +61,7 @@ public class DecimalUtils {
     BigDecimal upperBound = boundPair.getValue();
     try (ColumnVector over = greaterThan(input, upperBound);
          ColumnVector under = lessThan(input, lowerBound)) {
-      return over.or(under);
+      return over.or(under, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
     }
   }
 
@@ -96,7 +96,7 @@ public class DecimalUtils {
       }
     }
     try (Scalar scalarRhs = Scalar.fromDecimal(roundedRhs.unscaledValue(), lhs.getType())) {
-      return lhs.lessThan(scalarRhs);
+      return lhs.lessThan(scalarRhs, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
     }
   }
 
@@ -150,7 +150,7 @@ public class DecimalUtils {
       }
     }
     try (Scalar scalarRhs = Scalar.fromDecimal(roundedRhs.unscaledValue(), lhs.getType())) {
-      return lhs.greaterThan(scalarRhs);
+      return lhs.greaterThan(scalarRhs, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
     }
   }
 }

@@ -125,7 +125,7 @@ std::unique_ptr<column> filter_characters(
   cuda::device_buffer<char_range> table =
     cudf::detail::make_device_buffer(htable, stream, mr.as_temporary());
 
-  auto d_strings = column_device_view::create(strings.parent(), stream);
+  auto d_strings = column_device_view::create(strings.parent(), stream, mr.as_temporary());
 
   // this utility calls the strip_fn to build the offsets and chars columns
   filter_fn ffn{*d_strings, keep_characters, table.cbegin(), table.cend(), d_replacement};

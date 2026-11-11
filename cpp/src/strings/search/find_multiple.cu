@@ -41,9 +41,9 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
     "Size of output exceeds the column size limit",
     std::overflow_error);
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
-  auto targets_column = column_device_view::create(targets.parent(), stream);
+  auto targets_column = column_device_view::create(targets.parent(), stream, mr.as_temporary());
   auto d_targets      = *targets_column;
 
   auto const total_count = static_cast<size_type>(total_elements);

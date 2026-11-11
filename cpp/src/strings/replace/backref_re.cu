@@ -115,7 +115,7 @@ std::unique_ptr<column> replace_with_backrefs(strings_column_view const& input,
   string_scalar repl_scalar(parse_result.first, true, stream, mr.as_temporary());
   string_view const d_repl_template = repl_scalar.value(stream);
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   using BackRefIterator        = decltype(backrefs.begin());
   auto [offsets_column, chars] = make_strings_children(

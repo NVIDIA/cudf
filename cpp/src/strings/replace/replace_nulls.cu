@@ -39,7 +39,7 @@ std::unique_ptr<column> replace_nulls(strings_column_view const& input,
 
   string_view d_repl(repl.data(), repl.size());
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
 
   // build offsets column

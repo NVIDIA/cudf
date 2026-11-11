@@ -99,7 +99,7 @@ std::unique_ptr<column> translate(
   cuda::device_buffer<translate_table> table =
     cudf::detail::make_device_buffer(htable, stream, mr.as_temporary());
 
-  auto d_strings = column_device_view::create(strings.parent(), stream);
+  auto d_strings = column_device_view::create(strings.parent(), stream, mr.as_temporary());
 
   auto [offsets_column, chars] = make_strings_children(
     translate_fn{*d_strings, table.cbegin(), table.cend()}, strings.size(), stream, mr);

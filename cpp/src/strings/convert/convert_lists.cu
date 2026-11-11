@@ -205,9 +205,10 @@ std::unique_ptr<column> format_list_column(lists_column_view const& input,
   auto stack_buffer = cuda::device_buffer<stack_item>(
     stream, mr.get_temporary_mr(), input.size() * depth, cuda::no_init);
 
-  auto const d_input      = column_device_view::create(input.parent(), stream);
-  auto const d_separators = column_device_view::create(separators.parent(), stream);
-  auto const d_na_rep     = na_rep.value(stream);
+  auto const d_input = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto const d_separators =
+    column_device_view::create(separators.parent(), stream, mr.as_temporary());
+  auto const d_na_rep = na_rep.value(stream);
 
   auto [offsets_column, chars] = make_strings_children(
     format_lists_fn{*d_input, *d_separators, d_na_rep, stack_buffer.data(), depth},

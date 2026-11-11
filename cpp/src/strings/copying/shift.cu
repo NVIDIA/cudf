@@ -89,7 +89,7 @@ std::unique_ptr<column> shift(strings_column_view const& input,
   if (std::abs(offset) > input.size()) { offset = input.size(); }
 
   // build the output offsets by computing the sizes of each output row
-  auto const d_input = column_device_view::create(input.parent(), stream);
+  auto const d_input = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto sizes_itr     = cudf::detail::make_counting_transform_iterator(
     0, output_sizes_fn{*d_input, d_fill_str, offset});
   auto [offsets_column, total_bytes] = cudf::strings::detail::make_offsets_child_column(

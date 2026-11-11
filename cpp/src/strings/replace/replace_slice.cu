@@ -80,7 +80,7 @@ std::unique_ptr<column> replace_slice(strings_column_view const& input,
 
   string_view d_repl(repl.data(), repl.size());
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // this utility calls the given functor to build the offsets and chars columns
   auto [offsets_column, chars] = make_strings_children(

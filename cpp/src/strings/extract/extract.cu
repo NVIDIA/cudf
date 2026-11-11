@@ -88,7 +88,7 @@ std::unique_ptr<table> extract(strings_column_view const& input,
     stream, mr.get_temporary_mr(), input.size() * groups, cuda::no_init);
   auto d_indices = cudf::detail::device_2dspan<string_index_pair>(indices, groups);
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if (!input.is_empty()) {
     launch_for_each_kernel(
@@ -164,7 +164,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
   auto indices = cuda::device_buffer<string_index_pair>(
     stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   launch_transform_kernel(extract_single_fn{*d_strings, group},
                           *d_prog,

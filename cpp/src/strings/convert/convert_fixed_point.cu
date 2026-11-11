@@ -123,7 +123,7 @@ struct dispatch_to_fixed_point_fn {
   {
     using DecimalType = device_storage_type_t<T>;
 
-    auto const d_column = column_device_view::create(input.parent(), stream);
+    auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
     // create output column
     auto results   = make_fixed_point_column(output_type,
@@ -228,7 +228,7 @@ struct dispatch_from_fixed_point_fn {
   {
     using DecimalType = device_storage_type_t<T>;  // underlying value type
 
-    auto const d_column = column_device_view::create(input, stream);
+    auto const d_column = column_device_view::create(input, stream, mr.as_temporary());
 
     auto [offsets, chars] =
       make_strings_children(from_fixed_point_fn<DecimalType>{*d_column}, input.size(), stream, mr);
@@ -283,7 +283,7 @@ struct dispatch_is_fixed_point_fn {
   {
     using DecimalType = device_storage_type_t<T>;
 
-    auto const d_column = column_device_view::create(input.parent(), stream);
+    auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
     // create output column
     auto results   = make_numeric_column(data_type{type_id::BOOL8},

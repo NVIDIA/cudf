@@ -57,9 +57,9 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
     std::invalid_argument);
 
   if (target_end == target_begin) { return std::make_unique<column>(target.parent(), stream, mr); }
-  auto source_device_view = column_device_view::create(source.parent(), stream);
+  auto source_device_view = column_device_view::create(source.parent(), stream, mr.as_temporary());
   auto d_source           = *source_device_view;
-  auto target_device_view = column_device_view::create(target.parent(), stream);
+  auto target_device_view = column_device_view::create(target.parent(), stream, mr.as_temporary());
   auto d_target           = *target_device_view;
 
   // create null mask

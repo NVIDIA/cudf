@@ -94,8 +94,8 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
                                      input.null_count(),
                                      stream,
                                      mr);
-  auto d_strings = column_device_view::create(input.parent(), stream);
-  auto d_results = mutable_column_device_view::create(*results, stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto d_results = mutable_column_device_view::create(*results, stream, mr.as_temporary());
 
   auto const type_size = static_cast<size_type>(cudf::size_of(output_type));
   thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
@@ -189,7 +189,7 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
                cudf::data_type_error);
   if (integers.size() == 0) { return make_empty_column(type_id::STRING); }
 
-  auto d_column        = column_device_view::create(integers, stream);
+  auto d_column        = column_device_view::create(integers, stream, mr.as_temporary());
   auto const type_size = static_cast<size_type>(cudf::size_of(integers.type()));
 
   auto [offsets, chars] = make_strings_children(

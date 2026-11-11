@@ -106,7 +106,7 @@ struct dispatch_is_integer_fn {
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
   {
-    auto const d_column = column_device_view::create(input.parent(), stream);
+    auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
     auto results        = make_numeric_column(data_type{type_id::BOOL8},
                                        input.size(),
                                        cudf::detail::copy_bitmask(input.parent(), stream, mr),
@@ -150,7 +150,7 @@ std::unique_ptr<column> is_integer(strings_column_view const& input,
                                    cuda::stream_ref stream,
                                    cudf::memory_resources mr)
 {
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto results        = make_numeric_column(data_type{type_id::BOOL8},
                                      input.size(),
                                      cudf::detail::copy_bitmask(input.parent(), stream, mr),
@@ -279,8 +279,9 @@ std::unique_ptr<column> to_integers(strings_column_view const& input,
                                      stream,
                                      mr);
   // Fill output column with integers
-  auto const strings_dev_view = column_device_view::create(input.parent(), stream);
-  auto results_view           = results->mutable_view();
+  auto const strings_dev_view =
+    column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto results_view = results->mutable_view();
   type_dispatcher(
     output_type, dispatch_to_integers_fn{}, *strings_dev_view, results_view, stream, mr);
 
@@ -350,7 +351,7 @@ struct dispatch_from_integers_fn {
                                      cudf::memory_resources mr) const
   {
     size_type strings_count = integers.size();
-    auto column             = column_device_view::create(integers, stream);
+    auto column             = column_device_view::create(integers, stream, mr.as_temporary());
     auto d_column           = *column;
 
     // copy the null mask

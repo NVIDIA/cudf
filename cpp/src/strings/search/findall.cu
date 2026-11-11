@@ -115,7 +115,7 @@ std::unique_ptr<column> findall(strings_column_view const& input,
     return cudf::lists::detail::make_empty_lists_column(input.parent().type());
   }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // Builds the lists offsets column and the matches from a single, already-built
   // device regex program (avoids a redundant device program build for the count pass).
@@ -197,7 +197,7 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
   if (input.is_empty()) { return results; }
 
   auto d_results       = results->mutable_view().data<size_type>();
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());

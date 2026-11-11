@@ -76,8 +76,9 @@ std::unique_ptr<column> counts_fn(strings_column_view const& strings,
                                      mr);
   auto d_lengths = results->mutable_view().data<int32_t>();
   // input column device view
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream);
-  auto d_strings      = *strings_column;
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
+  auto d_strings = *strings_column;
   // fill in the lengths
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
@@ -137,7 +138,8 @@ std::unique_ptr<column> count_characters_parallel(strings_column_view const& inp
                                      mr);
 
   auto const d_lengths = results->mutable_view().data<size_type>();
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream);
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // fill in the lengths
   constexpr thread_index_type block_size = 256;
@@ -213,7 +215,7 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
                                     cuda::stream_ref stream,
                                     cudf::memory_resources mr)
 {
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_column       = *strings_column;
 
   // create offsets vector to account for each string's character length

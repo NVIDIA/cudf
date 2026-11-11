@@ -186,8 +186,8 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
     not targets.is_empty(), "Must specify at least one target string.", std::invalid_argument);
   CUDF_EXPECTS(not targets.has_nulls(), "Target strings cannot be null", std::invalid_argument);
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
-  auto const d_targets = column_device_view::create(targets.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto const d_targets = column_device_view::create(targets.parent(), stream, mr.as_temporary());
 
   // copy the first byte of each target and sort them
   auto first_bytes =

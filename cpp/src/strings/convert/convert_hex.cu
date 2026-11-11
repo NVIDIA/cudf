@@ -168,7 +168,7 @@ struct dispatch_integers_to_hex_fn {
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
   {
-    auto const d_column = column_device_view::create(input, stream);
+    auto const d_column = column_device_view::create(input, stream, mr.as_temporary());
 
     auto [offsets_column, chars] =
       make_strings_children(integer_to_hex_fn<IntegerType>{*d_column}, input.size(), stream, mr);
@@ -198,7 +198,7 @@ std::unique_ptr<column> hex_to_integers(strings_column_view const& strings,
 {
   size_type strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(output_type);
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create integer output column copying the strings null-mask
   auto results      = make_numeric_column(output_type,
@@ -218,7 +218,7 @@ std::unique_ptr<column> is_hex(strings_column_view const& strings,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_column       = *strings_column;
   // create output column
   auto results   = make_numeric_column(data_type{type_id::BOOL8},

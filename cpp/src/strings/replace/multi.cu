@@ -309,7 +309,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    cudf::memory_resources mr)
 {
   cudf::memory_resources mrs{mr};
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto const strings_count = input.size();
   auto const chars_bytes =
@@ -485,9 +485,9 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
                                                 cuda::stream_ref stream,
                                                 cudf::memory_resources mr)
 {
-  auto d_strings      = column_device_view::create(input.parent(), stream);
-  auto d_targets      = column_device_view::create(targets.parent(), stream);
-  auto d_replacements = column_device_view::create(repls.parent(), stream);
+  auto d_strings      = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto d_targets      = column_device_view::create(targets.parent(), stream, mr.as_temporary());
+  auto d_replacements = column_device_view::create(repls.parent(), stream, mr.as_temporary());
 
   auto [offsets_column, chars] = make_strings_children(
     replace_multi_fn{*d_strings, *d_targets, *d_replacements}, input.size(), stream, mr);

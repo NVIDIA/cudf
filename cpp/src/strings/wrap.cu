@@ -92,7 +92,7 @@ std::unique_ptr<column> wrap(strings_column_view const& strings,
   auto strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
 
-  auto strings_column  = column_device_view::create(strings.parent(), stream);
+  auto strings_column  = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_column        = *strings_column;
   size_type null_count = strings.null_count();
 

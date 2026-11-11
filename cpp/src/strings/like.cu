@@ -314,7 +314,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                                      mr);
   if (input.is_empty()) { return results; }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // string per thread for smaller strings
   auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
@@ -395,7 +395,7 @@ std::unique_ptr<column> like(strings_column_view const& input,
                "Parameter escape_character must be a single character",
                std::invalid_argument);
 
-  auto const d_patterns   = column_device_view::create(patterns.parent(), stream);
+  auto const d_patterns = column_device_view::create(patterns.parent(), stream, mr.as_temporary());
   auto const patterns_itr = d_patterns->begin<string_view>();
   return like(input, patterns_itr, d_escape, stream, mr);
 }

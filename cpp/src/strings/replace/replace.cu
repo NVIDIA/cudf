@@ -266,7 +266,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    cudf::memory_resources mr)
 {
   cudf::memory_resources mrs{mr};
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto const strings_count = input.size();
   auto const chars_offset  = get_offset_value(input.offsets(), input.offset(), stream);
@@ -461,7 +461,7 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
                                                 cuda::stream_ref stream,
                                                 cudf::memory_resources mr)
 {
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto [offsets_column, chars] = make_strings_children(
     replace_fn<TargetIter, ReplIter>{*d_strings, target_iter, repl_iter, maxrepl, d_valid_mask},
@@ -541,8 +541,8 @@ std::unique_ptr<column> replace(strings_column_view const& input,
   }();
   auto const d_valid_mask = has_any_nulls ? null_mask.data() : nullptr;
 
-  auto d_targets = column_device_view::create(targets.parent(), stream);
-  auto d_repls   = column_device_view::create(repls.parent(), stream);
+  auto d_targets = column_device_view::create(targets.parent(), stream, mr.as_temporary());
+  auto d_repls   = column_device_view::create(repls.parent(), stream, mr.as_temporary());
 
   auto result = replace_string_parallel(input,
                                         d_targets->begin<string_view>(),

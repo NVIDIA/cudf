@@ -59,7 +59,7 @@ std::unique_ptr<column> fill(strings_column_view const& input,
   CUDF_EXPECTS(begin <= end, "Parameters [begin,end) have invalid range values");
   if (begin == end) { return std::make_unique<column>(input.parent(), stream, mr); }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const d_value   = cudf::get_scalar_device_view(const_cast<string_scalar&>(value));
 
   auto fn = fill_fn{*d_strings, begin, end, d_value};

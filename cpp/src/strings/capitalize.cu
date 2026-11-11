@@ -332,7 +332,7 @@ std::unique_ptr<column> capitalize(strings_column_view const& input,
 {
   CUDF_EXPECTS(delimiters.is_valid(stream), "Delimiter must be a valid string");
   if (input.is_empty()) return make_empty_column(type_id::STRING);
-  auto const d_column     = column_device_view::create(input.parent(), stream);
+  auto const d_column     = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const d_delimiters = delimiters.value(stream);
   return capitalizer(capitalize_fn{*d_column, d_delimiters, stream}, input, stream, mr);
 }
@@ -343,7 +343,7 @@ std::unique_ptr<column> title(strings_column_view const& input,
                               cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
-  auto d_column = column_device_view::create(input.parent(), stream);
+  auto d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   return capitalizer(title_fn{*d_column, sequence_type, stream}, input, stream, mr);
 }
 
@@ -358,7 +358,7 @@ std::unique_ptr<column> is_title(strings_column_view const& input,
                                      input.null_count(),
                                      stream,
                                      mr);
-  auto d_column = column_device_view::create(input.parent(), stream);
+  auto d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},

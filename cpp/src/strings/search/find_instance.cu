@@ -100,7 +100,7 @@ std::unique_ptr<column> find_instance(strings_column_view const& input,
   if (input.size() == input.null_count()) { return results; }
 
   auto d_target  = target.value(stream);
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_results = results->mutable_view().data<size_type>();
 
   constexpr thread_index_type block_size = 256;

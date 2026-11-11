@@ -68,7 +68,7 @@ std::unique_ptr<column> count(strings_column_view const& input,
   // if input is empty or all-null then we are done
   if (input.size() == input.null_count()) { return results; }
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_results = results->mutable_view().data<size_type>();
 
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),

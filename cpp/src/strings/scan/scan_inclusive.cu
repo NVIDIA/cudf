@@ -73,7 +73,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
-  auto d_input = column_device_view::create(input, stream);
+  auto d_input = column_device_view::create(input, stream, mr.as_temporary());
 
   // build indices of the scan operation results
   cuda::device_buffer<size_type> result_map(

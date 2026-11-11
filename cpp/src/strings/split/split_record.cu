@@ -426,7 +426,7 @@ std::unique_ptr<column> split_record_per_row_fn(strings_column_view const& input
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
   }
 
-  auto d_strings         = column_device_view::create(input.parent(), stream);
+  auto d_strings         = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto [offsets, tokens] = split_per_row<Forward>(*d_strings, d_delimiter, max_tokens, stream, mr);
   CUDF_EXPECTS(tokens.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "Size of output exceeds the column size limit",
@@ -460,7 +460,7 @@ std::unique_ptr<column> split_record_ws_per_row_fn(strings_column_view const& in
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
   }
 
-  auto d_strings         = column_device_view::create(input.parent(), stream);
+  auto d_strings         = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto [offsets, tokens] = split_ws_per_row<Forward>(*d_strings, max_tokens, stream, mr);
   CUDF_EXPECTS(tokens.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "Size of output exceeds the column size limit",
@@ -492,7 +492,7 @@ std::unique_ptr<column> split_record_impl(strings_column_view const& input,
         (input.chars_size(stream) / non_null_count) < AVG_CHAR_BYTES_THRESHOLD) {
       return split_record_ws_per_row_fn<Forward>(input, max_tokens, stream, mr);
     }
-    auto d_strings    = column_device_view::create(input.parent(), stream);
+    auto d_strings    = column_device_view::create(input.parent(), stream, mr.as_temporary());
     using ws_tok_t    = std::conditional_t<Forward, split_ws_tokenizer_fn, rsplit_ws_tokenizer_fn>;
     auto tokenizer    = ws_tok_t{*d_strings, max_tokens};
     auto delimiter_fn = whitespace_delimiter_fn{};
@@ -504,7 +504,7 @@ std::unique_ptr<column> split_record_impl(strings_column_view const& input,
     return split_record_per_row_fn<Forward>(input, delimiter.value(stream), max_tokens, stream, mr);
   }
 
-  auto d_strings    = column_device_view::create(input.parent(), stream);
+  auto d_strings    = column_device_view::create(input.parent(), stream, mr.as_temporary());
   using tok_t       = std::conditional_t<Forward, split_tokenizer_fn, rsplit_tokenizer_fn>;
   auto tokenizer    = tok_t{*d_strings, delimiter.size(), max_tokens};
   auto delimiter_fn = string_delimiter_fn{delimiter.value(stream)};

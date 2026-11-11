@@ -180,7 +180,7 @@ std::unique_ptr<table> partition(strings_column_view const& strings,
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
   auto strings_count = strings.size();
   if (strings_count == 0) return std::make_unique<table>(std::vector<std::unique_ptr<column>>());
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   string_view d_delimiter(delimiter.data(), delimiter.size());
   auto left_indices = cuda::device_buffer<string_index_pair>(
     stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
@@ -210,7 +210,7 @@ std::unique_ptr<table> rpartition(strings_column_view const& strings,
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
   auto strings_count = strings.size();
   if (strings_count == 0) return std::make_unique<table>(std::vector<std::unique_ptr<column>>());
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   string_view d_delimiter(delimiter.data(), delimiter.size());
   auto left_indices = cuda::device_buffer<string_index_pair>(
     stream, mr.get_temporary_mr(), strings_count, cuda::no_init);

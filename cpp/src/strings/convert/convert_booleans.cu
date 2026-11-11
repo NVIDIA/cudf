@@ -38,7 +38,7 @@ std::unique_ptr<column> to_booleans(strings_column_view const& input,
                "Parameter true_string must not be empty.");
   auto d_true = string_view(true_string.data(), true_string.size());
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column copying the strings' null-mask
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
@@ -122,7 +122,7 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
                "Parameter false_string must not be empty.");
   auto d_false = string_view(false_string.data(), false_string.size());
 
-  auto column   = column_device_view::create(booleans, stream);
+  auto column   = column_device_view::create(booleans, stream, mr.as_temporary());
   auto d_column = *column;
 
   // copy null mask

@@ -216,7 +216,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
   // Fast-path: literal-only patterns bypass the regex engine entirely
   auto const [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY) {
-    auto const delim = string_scalar(literal, true, stream);
+    auto const delim = string_scalar(literal, true, stream, mr.as_temporary());
     return direction == split_direction::FORWARD
              ? cudf::strings::detail::split(input, delim, maxsplit, stream, mr)
              : cudf::strings::detail::rsplit(input, delim, maxsplit, stream, mr);
@@ -230,7 +230,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
     return std::make_unique<table>(std::move(results));
   }
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // get the split tokens from the input column; this also computes the match counts
   // and converts them into offsets, using a single device regex program build
@@ -290,14 +290,14 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
   // Fast-path: literal-only patterns bypass the regex engine entirely
   auto const [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY) {
-    auto const delim = string_scalar(literal, true, stream);
+    auto const delim = string_scalar(literal, true, stream, mr.as_temporary());
     return direction == split_direction::FORWARD
              ? cudf::strings::detail::split_record(input, delim, maxsplit, stream, mr)
              : cudf::strings::detail::rsplit_record(input, delim, maxsplit, stream, mr);
   }
 
   auto const strings_count = input.size();
-  auto d_strings           = column_device_view::create(input.parent(), stream);
+  auto d_strings           = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // get the split tokens from the input column; this also computes the match counts
   // and converts them into offsets, using a single device regex program build

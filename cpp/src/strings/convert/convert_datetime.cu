@@ -434,7 +434,7 @@ std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
 
   CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.", std::invalid_argument);
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results = make_timestamp_column(timestamp_type,
                                        input.size(),
@@ -673,7 +673,7 @@ std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
 
   CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.", std::invalid_argument);
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results   = make_numeric_column(data_type{type_id::BOOL8},
                                      strings_count,
@@ -1131,7 +1131,7 @@ std::unique_ptr<column> from_timestamps(column_view const& timestamps,
                "Invalid size for format names.",
                std::invalid_argument);
 
-  auto const d_names = column_device_view::create(names.parent(), stream);
+  auto const d_names = column_device_view::create(names.parent(), stream, mr.as_temporary());
 
   // This API supports a few more specifiers than to_timestamps.
   // clang-format off
@@ -1139,7 +1139,7 @@ std::unique_ptr<column> from_timestamps(column_view const& timestamps,
     specifier_map{{'V', 2}, {'G', 4}, {'a', 3}, {'A', 3}, {'b', 3}, {'B', 3}});
   // clang-format on
   auto const d_format_items = compiler.format_items();
-  auto const d_timestamps   = column_device_view::create(timestamps, stream);
+  auto const d_timestamps   = column_device_view::create(timestamps, stream, mr.as_temporary());
 
   // dispatcher is called to handle the different timestamp types
   auto [offsets_column, chars] = cudf::type_dispatcher(timestamps.type(),

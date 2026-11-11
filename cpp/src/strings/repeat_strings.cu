@@ -149,7 +149,7 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
   // If `repeat_times == 1`, just make a copy of the input.
   if (repeat_times == 1) { return std::make_unique<column>(input.parent(), stream, mr); }
 
-  auto const strings_dv_ptr = column_device_view::create(input.parent(), stream);
+  auto const strings_dv_ptr = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const fn = compute_size_and_repeat_fn{*strings_dv_ptr, repeat_times, input.has_nulls()};
 
   auto [offsets_column, chars] =
@@ -226,8 +226,9 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
   auto const strings_count = input.size();
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }
 
-  auto const strings_dv_ptr      = column_device_view::create(input.parent(), stream);
-  auto const repeat_times_dv_ptr = column_device_view::create(repeat_times, stream);
+  auto const strings_dv_ptr = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto const repeat_times_dv_ptr =
+    column_device_view::create(repeat_times, stream, mr.as_temporary());
   auto const repeat_times_iter =
     cudf::detail::indexalator_factory::make_input_iterator(repeat_times);
   auto const fn =

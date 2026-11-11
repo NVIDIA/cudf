@@ -59,9 +59,11 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  auto d_input             = cudf::column_device_view::create(input.parent(), stream);
-  auto d_values_to_replace = cudf::column_device_view::create(values_to_replace.parent(), stream);
-  auto d_replacements      = cudf::column_device_view::create(replacement_values.parent(), stream);
+  auto d_input = cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto d_values_to_replace =
+    cudf::column_device_view::create(values_to_replace.parent(), stream, mr.as_temporary());
+  auto d_replacements =
+    cudf::column_device_view::create(replacement_values.parent(), stream, mr.as_temporary());
 
   auto indices = cuda::device_buffer<string_index_pair>(
     stream, mr.get_temporary_mr(), input.size(), cuda::no_init);

@@ -63,7 +63,7 @@ std::unique_ptr<column> contains_impl(strings_column_view const& input,
   if (input.is_empty()) { return results; }
 
   auto d_results       = results->mutable_view().data<bool>();
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
@@ -139,7 +139,7 @@ std::unique_ptr<column> count_re(strings_column_view const& input,
     return count(input, target, stream, mr);
   }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto result = count_matches(*d_strings, prog, stream, mr);
   if (input.has_nulls()) {

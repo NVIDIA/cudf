@@ -173,7 +173,7 @@ std::unique_ptr<column> split_part(strings_column_view const& input,
   CUDF_EXPECTS(
     index >= 0, "Parameter index must be greater than or equal to 0", std::invalid_argument);
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   if (delimiter.size() == 0) {
     auto tokenizer    = split_part_ws_tokenizer_fn{*d_strings, index};
     auto delimiter_fn = whitespace_delimiter_fn{};

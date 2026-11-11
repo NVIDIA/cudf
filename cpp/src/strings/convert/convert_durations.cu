@@ -401,7 +401,7 @@ struct dispatch_from_durations_fn {
     auto d_format_items = compiler.compiled_format_items();
 
     size_type strings_count = durations.size();
-    auto column             = column_device_view::create(durations, stream);
+    auto column             = column_device_view::create(durations, stream, mr.as_temporary());
     auto d_column           = *column;
 
     // copy null mask
@@ -698,7 +698,7 @@ std::unique_ptr<column> to_durations(strings_column_view const& input,
 
   CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.");
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_column       = *strings_column;
 
   auto results      = make_duration_column(duration_type,

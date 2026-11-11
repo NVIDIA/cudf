@@ -91,7 +91,7 @@ std::unique_ptr<column> to_floats(strings_column_view const& input,
   if (strings_count == 0) {
     return make_numeric_column(output_type, 0, mask_state::UNALLOCATED, stream, mr);
   }
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create float output column copying the strings null-mask
   auto results      = make_numeric_column(output_type,
@@ -389,7 +389,7 @@ struct dispatch_from_floats_fn {
                                      cudf::memory_resources mr) const
   {
     size_type strings_count = floats.size();
-    auto column             = column_device_view::create(floats, stream);
+    auto column             = column_device_view::create(floats, stream, mr.as_temporary());
     auto d_column           = *column;
 
     // copy the null mask
@@ -445,7 +445,7 @@ std::unique_ptr<column> is_float(strings_column_view const& input,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_column       = *strings_column;
   // create output column
   auto results   = make_numeric_column(data_type{type_id::BOOL8},

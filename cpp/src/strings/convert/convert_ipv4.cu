@@ -71,7 +71,7 @@ std::unique_ptr<column> ipv4_to_integers(strings_column_view const& input,
     return make_numeric_column(data_type{type_id::UINT32}, 0, mask_state::UNALLOCATED, stream, mr);
   }
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   // create output column copying the strings' null-mask
   auto results   = make_numeric_column(data_type{type_id::UINT32},
                                      strings_count,
@@ -156,7 +156,7 @@ std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
 
   CUDF_EXPECTS(integers.type().id() == type_id::UINT32, "Input column must be UINT32 type");
 
-  auto d_column = column_device_view::create(integers, stream);
+  auto d_column = column_device_view::create(integers, stream, mr.as_temporary());
   auto [offsets_column, chars] =
     make_strings_children(integers_to_ipv4_fn{*d_column}, integers.size(), stream, mr);
 
@@ -171,7 +171,7 @@ std::unique_ptr<column> is_ipv4(strings_column_view const& input,
                                 cuda::stream_ref stream,
                                 cudf::memory_resources mr)
 {
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_column       = *strings_column;
   // create output column
   auto results   = make_numeric_column(data_type{type_id::BOOL8},

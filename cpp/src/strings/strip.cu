@@ -59,7 +59,7 @@ std::unique_ptr<column> strip(strings_column_view const& input,
   CUDF_EXPECTS(to_strip.is_valid(stream), "Parameter to_strip must be valid");
   string_view const d_to_strip(to_strip.data(), to_strip.size());
 
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto result = cuda::device_buffer<string_index_pair>(
     stream, mr.get_temporary_mr(), input.size(), cuda::no_init);

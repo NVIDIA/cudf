@@ -164,7 +164,7 @@ void find_utility(strings_column_view const& input,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
 {
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_results = output.mutable_view().data<size_type>();
   if ((input.chars_size(stream) / (input.size() - input.null_count())) > AVG_CHAR_BYTES_THRESHOLD) {
     // warp-per-string runs faster for longer strings (but not shorter ones)
@@ -211,7 +211,7 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
 
   // special logic for empty target results
   if (d_target.empty()) {
-    auto d_strings = column_device_view::create(input.parent(), stream);
+    auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
     auto d_results = results->mutable_view().data<size_type>();
     thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
@@ -272,7 +272,7 @@ std::unique_ptr<column> find(strings_column_view const& input,
   if (input.size() == input.null_count()) { return results; }
 
   // call find utility with target iterator
-  auto d_targets  = column_device_view::create(target.parent(), stream);
+  auto d_targets  = column_device_view::create(target.parent(), stream, mr.as_temporary());
   auto target_itr = cudf::detail::make_null_replacement_iterator<string_view>(
     *d_targets, string_view{}, target.has_nulls());
   find_utility<decltype(target_itr), forward>(
@@ -395,7 +395,7 @@ std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
                  true);
   } else {
     // launch warp per string
-    auto const d_strings                   = column_device_view::create(input.parent(), stream);
+    auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
     constexpr thread_index_type block_size = 256;
     constexpr thread_index_type warp_size  = cudf::detail::warp_size;
     cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
@@ -443,7 +443,7 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   }
 
   auto d_target       = string_view(target.data(), target.size());
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
@@ -494,9 +494,9 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   CUDF_EXPECTS(targets.size() == strings.size(),
                "strings and targets column must be the same size");
 
-  auto targets_column = column_device_view::create(targets.parent(), stream);
+  auto targets_column = column_device_view::create(targets.parent(), stream, mr.as_temporary());
   auto d_targets      = *targets_column;
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},

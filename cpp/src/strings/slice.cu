@@ -247,7 +247,7 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
   auto results = cuda::device_buffer<string_index_pair>(
     stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if ((input.chars_size(stream) / (input.size() - input.null_count())) < AVG_CHAR_BYTES_THRESHOLD) {
     thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
@@ -300,7 +300,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
     }
   }
 
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto const d_start = start.is_valid(stream) ? cuda::std::optional<size_type>{start.value(stream)}
                                               : cuda::std::nullopt;
@@ -347,7 +347,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
     }
   }
 
-  auto const d_column = column_device_view::create(input.parent(), stream);
+  auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto const d_start =
     start.has_value() ? cuda::std::optional<size_type>{start.value()} : cuda::std::nullopt;

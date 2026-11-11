@@ -14,6 +14,7 @@
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/hashing/detail/xxhash_64.cuh>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -24,8 +25,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuda/buffer>
@@ -178,7 +177,7 @@ struct bloom_filter_caster {
     auto constexpr bytes_per_block = sizeof(word_type) * policy_type::words_per_block;
 
     // Query literal in bloom filters from each column chunk (row group).
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<std::size_t>{0},
                       cuda::counting_iterator{total_row_groups},
                       results.begin(),

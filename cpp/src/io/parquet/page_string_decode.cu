@@ -11,6 +11,7 @@
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/strings/detail/gather.cuh>
 #include <cudf/utilities/memory_resource.hpp>
@@ -1046,7 +1047,7 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
     // page's chunk of the temp buffer
     cuda::device_buffer<int64_t> page_string_offsets(
       stream, mr.get_temporary_mr(), pages.size(), cuda::no_init);
-    thrust::transform_exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform_exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                                      pages.device_begin(),
                                      pages.device_end(),
                                      page_string_offsets.begin(),
@@ -1059,7 +1060,7 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
       stream, temp_string_buf.memory_resource(), total_size, cuda::no_init);
 
     // now use the offsets array to set each page's temp_string_buf pointers
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       pages.device_begin(),
                       pages.device_end(),
                       page_string_offsets.begin(),

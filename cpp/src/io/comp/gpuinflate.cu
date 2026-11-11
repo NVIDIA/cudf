@@ -38,10 +38,9 @@ Mark Adler    madler@alumni.caltech.edu
 #include "io/utilities/block_utils.cuh"
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -1209,11 +1208,11 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
   auto const temp_mr   = mr.get_temporary_mr();
   cuda::device_buffer<std::size_t> order(stream, output_mr, inputs.size(), cuda::no_init);
   thrust::sequence(
-    rmm::exec_policy_nosync(stream, temp_mr), order.data(), (order.data() + order.size()));
+    cudf::detail::exec_policy_nosync(stream, mr), order.data(), (order.data() + order.size()));
 
   // Precompute costs to avoid repeated computation during sorting
   cuda::device_buffer<double> costs(stream, temp_mr, inputs.size(), cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::make_zip_iterator(inputs.begin(), outputs.begin()),
                     cuda::make_zip_iterator(inputs.end(), outputs.end()),
                     costs.begin(),
@@ -1223,7 +1222,7 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
                       return cost_model::task_device_cost(input.size(), output.size(), task_type);
                     });
 
-  thrust::sort(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::sort(cudf::detail::exec_policy_nosync(stream, mr),
                order.begin(),
                order.end(),
                [costs = costs.data()] __device__(std::size_t a, std::size_t b) {
@@ -1232,7 +1231,7 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
 
   cuda::device_buffer<device_span<uint8_t const>> sorted_inputs(
     stream, output_mr, inputs.size(), cuda::no_init);
-  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                  order.begin(),
                  order.end(),
                  inputs.begin(),
@@ -1240,7 +1239,7 @@ sorted_codec_parameters sort_tasks(device_span<device_span<uint8_t const> const>
 
   cuda::device_buffer<device_span<uint8_t>> sorted_outputs(
     stream, output_mr, outputs.size(), cuda::no_init);
-  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                  order.begin(),
                  order.end(),
                  outputs.begin(),
@@ -1343,7 +1342,7 @@ void copy_results_to_original_order(device_span<codec_exec_result const> sorted_
                                     cuda::stream_ref stream,
                                     cudf::memory_resources mr)
 {
-  thrust::scatter(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   sorted_results.begin(),
                   sorted_results.end(),
                   order.begin(),

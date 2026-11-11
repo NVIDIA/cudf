@@ -14,6 +14,7 @@
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/detail/avro.hpp>
@@ -22,8 +23,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/stream>
@@ -190,7 +189,7 @@ cuda::device_buffer<std::uint8_t> decompress_data(
       meta.block_list.size(), stream, mr.get_temporary_mr());
     auto inflate_stats = cudf::detail::hostdevice_vector<codec_exec_result>(
       meta.block_list.size(), stream, mr.get_temporary_mr());
-    thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                  inflate_stats.d_begin(),
                  inflate_stats.d_end(),
                  codec_exec_result{0, codec_status::FAILURE});
@@ -297,7 +296,7 @@ cuda::device_buffer<std::uint8_t> decompress_data(
       stream, mr.get_output_mr(), uncompressed_data_size, cuda::no_init);
     cuda::device_buffer<device_span<uint8_t>> decompressed_blocks(
       stream, mr.get_temporary_mr(), num_blocks, cuda::no_init);
-    thrust::tabulate(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::tabulate(cudf::detail::exec_policy_nosync(stream, mr),
                      decompressed_blocks.begin(),
                      decompressed_blocks.end(),
                      [off  = uncompressed_offsets.device_ptr(),
@@ -308,7 +307,7 @@ cuda::device_buffer<std::uint8_t> decompress_data(
 
     cuda::device_buffer<codec_exec_result> decomp_results(
       stream, mr.get_temporary_mr(), num_blocks, cuda::no_init);
-    thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                  decomp_results.begin(),
                  decomp_results.end(),
                  codec_exec_result{0, codec_status::FAILURE});
@@ -321,7 +320,7 @@ cuda::device_buffer<std::uint8_t> decompress_data(
                uncompressed_data_size,
                stream,
                mr.as_temporary());
-    CUDF_EXPECTS(thrust::equal(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    CUDF_EXPECTS(thrust::equal(cudf::detail::exec_policy_nosync(stream, mr),
                                uncompressed_sizes.d_begin(),
                                uncompressed_sizes.d_end(),
                                decomp_results.begin(),

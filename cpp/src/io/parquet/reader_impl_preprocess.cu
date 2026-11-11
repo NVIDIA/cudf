@@ -18,12 +18,11 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memset.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -92,11 +91,11 @@ void reader_impl::build_string_dict_indices()
   // compute number of indices per chunk and a summed total
   cuda::device_buffer<size_t> str_dict_index_count(
     _stream, _mr.get_temporary_mr(), pass.chunks.size() + 1, cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+  thrust::fill(cudf::detail::exec_policy_nosync(_stream, _mr),
                str_dict_index_count.begin(),
                str_dict_index_count.end(),
                0);
-  thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                    pass.pages.d_begin(),
                    pass.pages.d_end(),
                    set_str_dict_index_count{str_dict_index_count, pass.chunks});
@@ -112,7 +111,7 @@ void reader_impl::build_string_dict_indices()
 
   // convert to offsets
   cuda::device_buffer<size_t>& str_dict_index_offsets = str_dict_index_count;
-  thrust::exclusive_scan(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(_stream, _mr),
                          str_dict_index_offsets.begin(),
                          str_dict_index_offsets.end(),
                          str_dict_index_offsets.begin(),
@@ -124,7 +123,7 @@ void reader_impl::build_string_dict_indices()
 
   auto iter = cuda::counting_iterator<size_t>{0};
   thrust::for_each(
-    rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(_stream, _mr),
     iter,
     iter + pass.chunks.size(),
     set_str_dict_index_ptr{
@@ -551,7 +550,7 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
   cuda::device_buffer<size_t> d_page_offset_counts(
     _stream, _mr.get_temporary_mr(), num_pages, cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(_stream, _mr),
                     cuda::counting_iterator<size_t>{0},
                     cuda::counting_iterator<size_t>{num_pages},
                     d_page_offset_counts.begin(),
@@ -560,7 +559,7 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
   // Compute prefix sum (exclusive scan) to get indices for each page
   subpass.page_string_offset_indices =
     cuda::device_buffer<size_t>(_stream, _mr.get_temporary_mr(), num_pages, cuda::no_init);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(_stream, _mr),
                          d_page_offset_counts.begin(),
                          d_page_offset_counts.end(),
                          subpass.page_string_offset_indices.begin());
@@ -802,14 +801,14 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
   // absolute row index for the whole file. chunk_row in PageInfo is relative to the beginning of
   // the chunk. so in the kernels, chunk.start_row + page.chunk_row gives us the absolute row index
   if (is_estimate_row_counts == is_estimate_row_counts::YES) {
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      pass.pages.d_begin(),
                      pass.pages.d_end(),
                      set_list_row_count_estimate{pass.chunks});
     auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
     auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
     thrust::exclusive_scan_by_key(
-      rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+      cudf::detail::exec_policy_nosync(_stream, _mr),
       key_input,
       key_input + pass.pages.size(),
       page_input,
@@ -820,14 +819,14 @@ void reader_impl::generate_list_column_row_counts(is_estimate_row_counts is_esti
     // as we march through the subpasses, we will find that every column cleanly ends up the
     // expected row count at the row group boundary and our split computations work correctly.
     auto iter = cuda::counting_iterator<size_t>{0};
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      iter,
                      iter + pass.pages.size(),
                      set_final_row_count{pass.pages, pass.chunks});
   } else {
     // If column indexes are available, we don't need to estimate PageInfo::num_rows for lists and
     // can instead translate known PageInfo::chunk_row to PageInfo::num_rows
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      cuda::counting_iterator<size_t>{0},
                      cuda::counting_iterator{pass.pages.size()},
                      compute_page_num_rows_from_chunk_rows{pass.pages, pass.chunks});
@@ -912,7 +911,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // copy our now-correct row counts  back to the base pages stored in the pass.
   // only need to do this if we are not processing the whole pass in one subpass
   if (!subpass.single_subpass) {
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      iter,
                      iter + subpass.pages.size(),
                      update_pass_num_rows{pass.pages, subpass.pages, subpass.page_src_index});
@@ -926,7 +925,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   auto key_input  = cuda::transform_iterator(pass.pages.d_begin(), get_page_chunk_idx{});
   auto page_input = cuda::transform_iterator(pass.pages.d_begin(), get_page_num_rows{});
   thrust::exclusive_scan_by_key(
-    rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(_stream, _mr),
     key_input,
     key_input + pass.pages.size(),
     page_input,
@@ -938,7 +937,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // page looks like it starts past the end of the pass and is never read at all. This condition is
   // where setup_next_pass forced it: generate_list_column_row_counts(is_estimate_row_counts::YES).
   if (pass.has_compressed_data and _input_pass_read_limit != 0 and not _has_offset_index) {
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      iter,
                      iter + pass.pages.size(),
                      set_final_row_count{pass.pages, pass.chunks});
@@ -947,7 +946,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // copy chunk_row into the subpass pages
   // only need to do this if we are not processing the whole pass in one subpass
   if (!subpass.single_subpass) {
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      iter,
                      iter + subpass.pages.size(),
                      update_subpass_chunk_row{pass.pages, subpass.pages, subpass.page_src_index});
@@ -994,7 +993,7 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
                                       _stream);
     }
     // set str_bytes_all
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      cuda::counting_iterator<size_type>(0),
                      cuda::counting_iterator<size_type>(subpass.pages.size()),
                      set_str_bytes_all{subpass.pages, subpass_page_mask_span()});
@@ -1188,7 +1187,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
       // Number of keys processed in this iteration
       auto const num_keys_this_iter = std::min<size_t>(num_keys_per_iter, num_keys - key_start);
       thrust::transform(
-        rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+        cudf::detail::exec_policy_nosync(_stream, _mr),
         cuda::counting_iterator<size_t>{key_start},
         cuda::counting_iterator<size_t>{key_start + num_keys_this_iter},
         size_input.begin(),
@@ -1210,7 +1209,7 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                                   _mr.as_temporary());
 
       // For nested hierarchies, compute per-page start offset
-      thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+      thrust::exclusive_scan_by_key(cudf::detail::exec_policy_nosync(_stream, _mr),
                                     reduction_keys,
                                     reduction_keys + num_keys_this_iter,
                                     size_input.cbegin(),
@@ -1326,7 +1325,7 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
 
   // do scan by key to calculate string offsets for each page
   thrust::exclusive_scan_by_key(
-    rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(_stream, _mr),
     page_keys,
     page_keys + subpass.pages.size(),
     val_iter,

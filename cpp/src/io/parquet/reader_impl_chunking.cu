@@ -10,9 +10,8 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -246,7 +245,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
       cuda::device_buffer<page_span> page_indices(
         _stream, _mr.get_temporary_mr(), num_columns, cuda::no_init);
       auto iter = cuda::counting_iterator<size_t>{0};
-      thrust::transform(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+      thrust::transform(cudf::detail::exec_policy_nosync(_stream, _mr),
                         iter,
                         iter + num_columns,
                         page_indices.begin(),
@@ -262,7 +261,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
       _stream, _mr.get_temporary_mr(), pass.pages.size(), cuda::no_init);
     auto page_keys = make_page_key_iterator(pass.pages);
     auto page_size = cuda::transform_iterator(pass.pages.d_begin(), get_page_input_size{});
-    thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(_stream, _mr),
                                   page_keys,
                                   page_keys + pass.pages.size(),
                                   page_size,
@@ -291,7 +290,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
 
     auto iter               = cuda::counting_iterator<size_t>{0};
     auto const pass_max_row = pass.skip_rows + pass.num_rows;
-    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                      iter,
                      iter + pass.pages.size(),
                      set_row_index{pass.chunks, pass.pages, c_info, pass_max_row});
@@ -327,7 +326,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
     auto iter = cuda::counting_iterator<size_t>{0};
     cuda::device_buffer<size_t> dst_offsets(
       _stream, _mr.get_temporary_mr(), num_columns + 1, cuda::no_init);
-    thrust::transform_exclusive_scan(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+    thrust::transform_exclusive_scan(cudf::detail::exec_policy_nosync(_stream, _mr),
                                      iter,
                                      iter + num_columns + 1,
                                      dst_offsets.begin(),
@@ -335,7 +334,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
                                      0,
                                      cuda::std::plus<size_t>{});
     thrust::for_each(
-      rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+      cudf::detail::exec_policy_nosync(_stream, _mr),
       iter,
       iter + total_pages,
       copy_subpass_page{
@@ -602,7 +601,7 @@ void reader_impl::compute_output_chunks_for_subpass()
     _stream, _mr.get_temporary_mr(), subpass.pages.size(), cuda::no_init);
   auto page_input = cuda::transform_iterator(subpass.pages.device_begin(), get_page_output_size{});
   auto page_keys  = make_page_key_iterator(subpass.pages);
-  thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+  thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(_stream, _mr),
                                 page_keys,
                                 page_keys + subpass.pages.size(),
                                 page_input,
@@ -615,7 +614,7 @@ void reader_impl::compute_output_chunks_for_subpass()
   // maximum row is beyond our expected subpass max row, which will cause an out of
   // bounds index in compute_page_splits_by_row.
   auto const subpass_max_row = subpass.skip_rows + subpass.num_rows;
-  thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(_stream, _mr),
                    iter,
                    iter + subpass.pages.size(),
                    set_row_index{pass.chunks, subpass.pages, c_info, subpass_max_row});

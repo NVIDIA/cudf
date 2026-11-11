@@ -9,6 +9,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
@@ -16,7 +17,6 @@
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
@@ -173,7 +173,7 @@ std::unique_ptr<cudf::column> synthesize_row_group_index_column(
   auto output            = cudf::make_fixed_width_column(
     output_type, source_indices.size(), mask_state::UNALLOCATED, stream, mr.get_output_mr());
   auto output_view = output->mutable_view();
-  thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::exclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                 source_indices.begin<column_type>(),
                                 source_indices.end<column_type>(),
                                 cuda::make_constant_iterator(column_type{1}),

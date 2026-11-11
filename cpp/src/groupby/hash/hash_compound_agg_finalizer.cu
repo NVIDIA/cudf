@@ -158,8 +158,7 @@ void finalize_var_std(hash_compound_agg_finalizer const& finalizer,
   auto const m2_result    = finalizer.cache->get_result(finalizer.col, *m2_agg);
   auto const count_result = finalizer.cache->get_result(finalizer.col, *count_agg);
 
-  auto output =
-    compute_fn(m2_result, count_result, ddof, finalizer.stream, finalizer.mr.get_output_mr());
+  auto output = compute_fn(m2_result, count_result, ddof, finalizer.stream, finalizer.mr);
   finalizer.cache->add_result(finalizer.col, agg, std::move(output));
 }
 

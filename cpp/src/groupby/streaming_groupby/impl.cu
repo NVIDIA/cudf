@@ -354,8 +354,8 @@ std::unique_ptr<table> streaming_groupby::impl::make_aggregate_results(
     schema_columns.push_back(cudf::make_empty_column(type));
   }
   auto const schema = table{std::move(schema_columns)};
-  auto results      = detail::hash::create_results_table(
-    capacity, schema.view(), kinds, intermediates, stream, mr.get_output_mr());
+  auto results =
+    detail::hash::create_results_table(capacity, schema.view(), kinds, intermediates, stream, mr);
   // Future batches may introduce all-null groups even when the first values were valid.
   for (size_type i = 0; i < results->num_columns(); ++i) {
     auto& result = results->get_column(i);
@@ -573,7 +573,7 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
                            cache.get_result(ar.values, *make_sum_aggregation()),
                            cache.get_result(ar.values, *make_count_aggregation()),
                            stream,
-                           mr.get_output_mr()));
+                           mr));
         }
       }
       cudf::detail::aggregation_dispatcher(agg.kind, finalizer, agg);
@@ -581,10 +581,9 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
     user_requests.push_back(std::move(ar));
   }
 
-  return {
-    std::move(keys),
-    detail::extract_results(
-      std::span<aggregation_request const>{user_requests}, cache, stream, mr.get_output_mr())};
+  return {std::move(keys),
+          detail::extract_results(
+            std::span<aggregation_request const>{user_requests}, cache, stream, mr)};
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
@@ -595,7 +594,7 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream, cudf::memory_resou
   _aggregate_done.wait(stream);
   try {
     auto result = finalize_gathered(
-      gather_distinct_keys(stream, mr.get_output_mr()), gather_agg_results(stream, mr), stream, mr);
+      gather_distinct_keys(stream, mr), gather_agg_results(stream, mr), stream, mr);
     record_result_read(stream);
     return result;
   } catch (...) {
@@ -608,7 +607,7 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream, cudf::memory_resou
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
 streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto keys = gather_distinct_keys(stream, mr.get_output_mr());
+  auto keys = gather_distinct_keys(stream, mr);
   _compacted_batches.clear();
   _empty_key_schema.reset();
 

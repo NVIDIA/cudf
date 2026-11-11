@@ -199,13 +199,11 @@ void aggregate_result_functor::operator()<aggregation::HISTOGRAM>(aggregation co
       values, agg, detail::make_singleton_histograms(release_grouped_values(), stream, mr));
     return;
   }
-  cache.add_result(values,
-                   agg,
-                   detail::group_histogram(get_unordered_grouped_values(),
-                                           helper.group_labels(stream, mr),
-                                           num_groups,
-                                           stream,
-                                           mr.get_output_mr()));
+  cache.add_result(
+    values,
+    agg,
+    detail::group_histogram(
+      get_unordered_grouped_values(), helper.group_labels(stream, mr), num_groups, stream, mr));
 }
 
 template <>
@@ -225,7 +223,7 @@ void aggregate_result_functor::operator()<aggregation::QUANTILE>(aggregation con
                                         quantile_agg._quantiles,
                                         quantile_agg._interpolation,
                                         stream,
-                                        mr.get_output_mr());
+                                        mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -245,7 +243,7 @@ void aggregate_result_functor::operator()<aggregation::MEDIAN>(aggregation const
                                         {0.5},
                                         interpolation::LINEAR,
                                         stream,
-                                        mr.get_output_mr());
+                                        mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -262,7 +260,7 @@ void aggregate_result_functor::operator()<aggregation::NUNIQUE>(aggregation cons
                                       helper.group_offsets(stream, mr),
                                       nunique_agg._null_handling,
                                       stream,
-                                      mr.get_output_mr());
+                                      mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -351,7 +349,7 @@ void aggregate_result_functor::operator()<aggregation::COLLECT_SET>(aggregation 
                                            nans_equal,
                                            duplicate_keep_option::KEEP_ANY,
                                            stream,
-                                           mr.get_output_mr()));
+                                           mr));
 }
 
 /**
@@ -380,7 +378,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_LISTS>(aggregation 
                                              helper.group_offsets(stream, mr),
                                              helper.num_groups(stream, mr),
                                              stream,
-                                             mr.get_output_mr()));
+                                             mr));
 }
 
 /**
@@ -425,7 +423,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_SETS>(aggregation c
                                            merge_sets_agg._nans_equal,
                                            duplicate_keep_option::KEEP_ANY,
                                            stream,
-                                           mr.get_output_mr()));
+                                           mr));
 }
 
 /**
@@ -456,7 +454,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_M2>(aggregation con
                                           helper.group_offsets(stream, mr),
                                           helper.num_groups(stream, mr),
                                           stream,
-                                          mr.get_output_mr()));
+                                          mr));
 }
 
 /**
@@ -476,7 +474,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_HISTOGRAM>(aggregat
                                                  helper.group_offsets(stream, mr),
                                                  helper.num_groups(stream, mr),
                                                  stream,
-                                                 mr.get_output_mr()));
+                                                 mr));
 }
 
 /**
@@ -596,9 +594,7 @@ void aggregate_result_functor::operator()<aggregation::CORRELATION>(aggregation 
   auto const stddev1    = cache.get_result(values_child1, *std_agg);
   auto const covariance = cache.get_result(values, *cov_agg);
   cache.add_result(
-    values,
-    agg,
-    detail::group_correlation(covariance, stddev0, stddev1, stream, mr.get_output_mr()));
+    values, agg, detail::group_correlation(covariance, stddev0, stddev1, stream, mr));
 }
 
 /**
@@ -647,7 +643,7 @@ void aggregate_result_functor::operator()<aggregation::TDIGEST>(aggregation cons
                      helper.num_groups(stream, mr),
                      max_centroids,
                      stream,
-                     mr.get_output_mr()));
+                     mr));
 }
 
 /**
@@ -689,7 +685,7 @@ void aggregate_result_functor::operator()<aggregation::MERGE_TDIGEST>(aggregatio
                                                               helper.num_groups(stream, mr),
                                                               max_centroids,
                                                               stream,
-                                                              mr.get_output_mr()));
+                                                              mr));
 }
 
 template <>
@@ -703,7 +699,7 @@ void aggregate_result_functor::operator()<aggregation::BITWISE_AGG>(aggregation 
                                       helper.group_labels(stream, mr),
                                       helper.num_groups(stream, mr),
                                       stream,
-                                      mr.get_output_mr());
+                                      mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -715,12 +711,8 @@ void aggregate_result_functor::operator()<aggregation::TOP_K>(aggregation const&
   auto const k          = dynamic_cast<cudf::detail::top_k_aggregation const&>(agg).k;
   auto const topk_order = dynamic_cast<cudf::detail::top_k_aggregation const&>(agg).topk_order;
 
-  auto result = detail::group_top_k(k,
-                                    topk_order,
-                                    get_unordered_grouped_values(),
-                                    helper.group_offsets(stream, mr),
-                                    stream,
-                                    mr.get_output_mr());
+  auto result = detail::group_top_k(
+    k, topk_order, get_unordered_grouped_values(), helper.group_offsets(stream, mr), stream, mr);
   cache.add_result(values, agg, std::move(result));
 }
 
@@ -834,7 +826,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> detail::hash:
     }
   }
 
-  auto results = detail::extract_results(requests, cache, stream, mr.get_output_mr());
+  auto results = detail::extract_results(requests, cache, stream, mr);
 
   return std::pair(helper.distinct_keys(stream, mr), std::move(results));
 }

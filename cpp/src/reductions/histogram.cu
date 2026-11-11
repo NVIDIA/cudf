@@ -140,7 +140,7 @@ compute_row_frequencies(table_view const& input,
 
   // Construct a vector to store reduced counts and init to zero
   cuda::device_buffer<histogram_count_type> reduction_results(
-    stream, mr.get_output_mr(), num_rows, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
   thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, temp_mr),
                              reduction_results.begin(),
                              reduction_results.end(),

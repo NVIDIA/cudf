@@ -96,7 +96,8 @@ struct quantiles_functor {
     auto values_view     = column_device_view::create(values, stream);
     auto group_size_view = column_device_view::create(group_sizes, stream);
     auto result_view     = mutable_column_device_view::create(result->mutable_view(), stream);
-    auto null_count = cudf::detail::device_scalar<cudf::size_type>(0, stream, mr.get_output_mr());
+    auto null_count =
+      cudf::detail::device_scalar<cudf::size_type>(0, stream, mr.get_temporary_mr());
 
     // For each group, calculate quantile
     if (!cudf::is_dictionary(values.type())) {

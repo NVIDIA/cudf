@@ -225,7 +225,7 @@ struct group_scan_functor<K, cudf::struct_view> {
     if (values.has_nulls()) {
       for (std::unique_ptr<column>& child : scanned_children) {
         child = structs::detail::superimpose_and_sanitize_nulls(
-          values.null_mask(), values.null_count(), std::move(child), stream, mr.get_output_mr());
+          values.null_mask(), values.null_count(), std::move(child), stream, mr);
       }
     }
 
@@ -234,7 +234,7 @@ struct group_scan_functor<K, cudf::struct_view> {
                                     values.null_count(),
                                     cudf::detail::copy_bitmask(values, stream, mr.get_output_mr()),
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
   }
 };
 

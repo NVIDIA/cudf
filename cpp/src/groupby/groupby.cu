@@ -213,9 +213,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggr
 
   verify_valid_requests(requests);
 
-  if (_keys.num_rows() == 0) {
-    return {empty_like(_keys), empty_results(requests, stream, mr.get_output_mr())};
-  }
+  if (_keys.num_rows() == 0) { return {empty_like(_keys), empty_results(requests, stream, mr)}; }
 
   return detail::hash::groupby(requests, helper(), stream, mr);
 }
@@ -234,7 +232,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
   verify_valid_requests(requests);
 
   if (_keys.num_rows() == 0) {
-    return std::pair(empty_like(_keys), empty_results(requests, stream, mr.get_output_mr()));
+    return std::pair(empty_like(_keys), empty_results(requests, stream, mr));
   }
 
   return scan_grouped(requests, stream, mr);
@@ -328,19 +326,15 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
   helper().grouped_order(false, stream, mr);
   std::vector<std::unique_ptr<column>> results;
   auto const& group_offsets = helper().group_offsets(stream, mr);
-  std::transform(cuda::counting_iterator<cudf::size_type>{0},
-                 cuda::counting_iterator{values.num_columns()},
-                 std::back_inserter(results),
-                 [&](size_type i) {
-                   auto grouped_values =
-                     helper().grouped_values(values.column(i), stream, mr.as_temporary());
-                   return cudf::detail::segmented_shift(grouped_values->view(),
-                                                        group_offsets,
-                                                        offsets[i],
-                                                        fill_values[i].get(),
-                                                        stream,
-                                                        mr.get_output_mr());
-                 });
+  std::transform(
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{values.num_columns()},
+    std::back_inserter(results),
+    [&](size_type i) {
+      auto grouped_values = helper().grouped_values(values.column(i), stream, mr.as_temporary());
+      return cudf::detail::segmented_shift(
+        grouped_values->view(), group_offsets, offsets[i], fill_values[i].get(), stream, mr);
+    });
 
   return std::pair(helper().grouped_keys(stream, mr),
                    std::make_unique<cudf::table>(std::move(results)));

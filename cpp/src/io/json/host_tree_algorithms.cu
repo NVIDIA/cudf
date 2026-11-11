@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -19,8 +20,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -72,7 +71,7 @@ cuda::device_buffer<NodeIndexT> get_values_column_indices(TreeDepthT const row_a
   auto col_id_location = cuda::make_permutation_iterator(col_ids.begin(), level2_nodes.begin());
   cuda::device_buffer<NodeIndexT> values_column_indices(
     stream, mr.get_output_mr(), num_columns, cuda::no_init);
-  thrust::scatter(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   level2_indices.begin(),
                   level2_indices.end(),
                   col_id_location,
@@ -104,7 +103,7 @@ std::vector<std::string> copy_strings_to_host_sync(
     stream, mr.get_temporary_mr(), num_strings, cuda::no_init);
   auto d_offset_pairs = cuda::make_zip_iterator(node_range_begin.begin(), node_range_end.begin());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     d_offset_pairs,
     d_offset_pairs + num_strings,
     cuda::make_zip_iterator(string_offsets.begin(), string_lengths.begin()),
@@ -137,7 +136,7 @@ std::vector<std::string> copy_strings_to_host_sync(
       cuda::device_buffer<int64_t>(stream, mr.get_temporary_mr(), scv.size() + 1, cuda::no_init);
     auto offset_itr =
       cudf::detail::offsetalator_factory::make_input_iterator(scv.offsets(), scv.offset());
-    thrust::copy(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::copy(cudf::detail::exec_policy_nosync(stream, mr),
                  offset_itr,
                  offset_itr + scv.size() + 1,
                  d_offsets.begin());
@@ -185,14 +184,12 @@ cuda::device_buffer<uint8_t> is_all_nulls_each_column(device_span<SymbolT const>
   auto const num_nodes = col_ids.size();
   auto const num_cols  = d_column_tree.node_categories.size();
   cuda::device_buffer<uint8_t> is_all_nulls(stream, mr.get_output_mr(), num_cols, cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-               is_all_nulls.begin(),
-               is_all_nulls.end(),
-               true);
+  thrust::fill(
+    cudf::detail::exec_policy_nosync(stream, mr), is_all_nulls.begin(), is_all_nulls.end(), true);
 
   auto parse_opt = parsing_options(options, stream);
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     num_nodes,
     [options           = parse_opt.view(),
@@ -307,7 +304,8 @@ void scatter_offsets(tree_meta_t const& tree,
                      host_span<bool const> ignore_vals,
                      host_span<bool const> is_mixed,
                      hashmap_of_device_columns const& columns,
-                     cuda::stream_ref stream);
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr);
 
 std::map<std::string, schema_element> unified_schema(cudf::io::json_reader_options const& options)
 {
@@ -372,22 +370,19 @@ void make_device_json_column(device_span<SymbolT const> input,
   bool const is_enabled_lines                 = options.is_enabled_lines();
   bool const is_enabled_mixed_types_as_string = options.is_enabled_mixed_types_as_string();
   // make a copy
-  auto sorted_col_ids = cuda::device_buffer<NodeIndexT>(
-    stream, cudf::get_current_device_resource_ref(), col_ids.size(), cuda::no_init);
+  auto sorted_col_ids =
+    cuda::device_buffer<NodeIndexT>(stream, mr.get_temporary_mr(), col_ids.size(), cuda::no_init);
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(
     sorted_col_ids.data(), col_ids.data(), col_ids.size_bytes(), stream));
 
   // sort by {col_id} on {node_ids} stable
   cuda::device_buffer<NodeIndexT> node_ids(
-    stream, cudf::get_current_device_resource_ref(), col_ids.size(), cuda::no_init);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   node_ids.begin(),
-                   node_ids.end());
-  thrust::stable_sort_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    sorted_col_ids.begin(),
-    sorted_col_ids.end(),
-    node_ids.begin());
+    stream, mr.get_temporary_mr(), col_ids.size(), cuda::no_init);
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), node_ids.begin(), node_ids.end());
+  thrust::stable_sort_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                             sorted_col_ids.begin(),
+                             sorted_col_ids.end(),
+                             node_ids.begin());
 
   NodeIndexT const row_array_parent_col_id =
     get_row_array_parent_col_id(col_ids, is_enabled_lines, stream);
@@ -402,27 +397,19 @@ void make_device_json_column(device_span<SymbolT const> input,
                           is_array_of_arrays,
                           row_array_parent_col_id,
                           stream,
-                          cudf::get_current_device_resource_ref());
+                          mr.as_temporary());
 
-  auto num_columns = d_unique_col_ids.size();
-  std::vector<std::string> column_names =
-    copy_strings_to_host_sync(input,
-                              d_column_tree.node_range_begin,
-                              d_column_tree.node_range_end,
-                              stream,
-                              cudf::get_current_device_resource_ref());
+  auto num_columns                      = d_unique_col_ids.size();
+  std::vector<std::string> column_names = copy_strings_to_host_sync(
+    input, d_column_tree.node_range_begin, d_column_tree.node_range_end, stream, mr.as_temporary());
   // array of arrays column names
   if (is_array_of_arrays) {
     auto const unique_col_ids = cudf::detail::make_host_vector_async(d_unique_col_ids, stream);
     auto const column_parent_ids =
       cudf::detail::make_host_vector_async(d_column_tree.parent_node_ids, stream);
     TreeDepthT const row_array_children_level = is_enabled_lines ? 1 : 2;
-    auto values_column_indices                = get_values_column_indices(row_array_children_level,
-                                                           tree,
-                                                           col_ids,
-                                                           num_columns,
-                                                           stream,
-                                                           cudf::get_current_device_resource_ref());
+    auto values_column_indices                = get_values_column_indices(
+      row_array_children_level, tree, col_ids, num_columns, stream, mr.as_temporary());
     auto h_values_column_indices = cudf::detail::make_host_vector(values_column_indices, stream);
     std::transform(unique_col_ids.begin(),
                    unique_col_ids.end(),
@@ -439,13 +426,8 @@ void make_device_json_column(device_span<SymbolT const> input,
   auto const is_str_column_all_nulls = [&, &column_tree = d_column_tree]() {
     if (is_enabled_mixed_types_as_string) {
       return cudf::detail::make_std_vector(
-        is_all_nulls_each_column(input,
-                                 column_tree,
-                                 tree,
-                                 col_ids,
-                                 options,
-                                 stream,
-                                 cudf::get_current_device_resource_ref()),
+        is_all_nulls_each_column(
+          input, column_tree, tree, col_ids, options, stream, mr.as_temporary()),
         stream);
     }
     return std::vector<uint8_t>();
@@ -527,7 +509,8 @@ void make_device_json_column(device_span<SymbolT const> input,
                   ignore_vals,
                   is_mixed_pruned,
                   columns,
-                  stream);
+                  stream,
+                  mr);
 }
 
 [[nodiscard]] build_tree_result build_tree(device_json_column& root,
@@ -577,18 +560,17 @@ void make_device_json_column(device_span<SymbolT const> input,
         stream, col.string_offsets.memory_resource(), num_rows, cuda::no_init);
       col.string_lengths = cuda::device_buffer<size_type>(
         stream, col.string_lengths.memory_resource(), num_rows, cuda::no_init);
-      thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                          cuda::counting_iterator<size_type>{0},
                          num_rows,
                          initialize_string_offsets_and_lengths_fn{col.string_offsets.data(),
                                                                   col.string_lengths.data()});
     } else if (column_category == NC_LIST) {
       col.child_offsets.resize(max_row_offsets[i] + 2, stream);
-      thrust::uninitialized_fill(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        col.child_offsets.begin(),
-        col.child_offsets.end(),
-        0);
+      thrust::uninitialized_fill(cudf::detail::exec_policy_nosync(stream, mr),
+                                 col.child_offsets.begin(),
+                                 col.child_offsets.end(),
+                                 0);
     }
     col.num_rows = max_row_offsets[i] + 1;
     col.validity =
@@ -1038,12 +1020,12 @@ void scatter_offsets(tree_meta_t const& tree,
                      host_span<bool const> ignore_vals,
                      host_span<bool const> is_mixed_pruned,
                      hashmap_of_device_columns const& columns,
-                     cuda::stream_ref stream)
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto const temp_mr        = mr.get_temporary_mr();
-  auto const num_nodes      = col_ids.size();
-  auto const num_columns    = d_column_tree.node_categories.size();
+  auto const temp_mr     = mr.get_temporary_mr();
+  auto const num_nodes   = col_ids.size();
+  auto const num_columns = d_column_tree.node_categories.size();
   // move columns data to device.
   auto columns_data = cudf::detail::make_host_vector<json_column_data>(num_columns, stream);
   for (auto& [col_id, col_ref] : columns) {
@@ -1061,7 +1043,7 @@ void scatter_offsets(tree_meta_t const& tree,
 
   // 3. scatter string offsets to respective columns, set validity bits
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     num_nodes,
     [column_categories = d_column_tree.node_categories.begin(),
@@ -1132,7 +1114,7 @@ void scatter_offsets(tree_meta_t const& tree,
   auto const num_list_children = cuda::std::distance(
     cuda::make_zip_iterator(node_ids.begin(), parent_col_ids.begin()), list_children_end);
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     num_list_children,
     [node_ids          = node_ids.begin(),
@@ -1152,12 +1134,12 @@ void scatter_offsets(tree_meta_t const& tree,
       }
     });
 
-  thrust::stable_sort_by_key(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::stable_sort_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                              parent_col_ids.begin(),
                              parent_col_ids.begin() + num_list_children,
                              node_ids.begin());
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     num_list_children,
     [node_ids        = node_ids.begin(),
@@ -1184,13 +1166,13 @@ void scatter_offsets(tree_meta_t const& tree,
   for (auto& [id, col_ref] : columns) {
     auto& col = col_ref.get();
     if (col.type == json_col_t::StringColumn) {
-      thrust::inclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                              col.string_offsets.begin(),
                              col.string_offsets.end(),
                              col.string_offsets.begin(),
                              cuda::maximum<json_column::row_offset_t>{});
     } else if (col.type == json_col_t::ListColumn) {
-      thrust::inclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                              col.child_offsets.begin(),
                              col.child_offsets.end(),
                              col.child_offsets.begin(),

@@ -20,6 +20,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/data_sink.hpp>
@@ -38,8 +39,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/cmath>
@@ -154,7 +153,7 @@ void write_compressed_to_sink(data_sink* out_sink,
 
   cuda::device_buffer<io::detail::codec_exec_result> d_results(
     stream, temp_mr, num_blocks, cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                d_results.begin(),
                d_results.end(),
                io::detail::codec_exec_result{0, io::detail::codec_status::FAILURE});
@@ -276,10 +275,8 @@ struct column_to_strings_fn {
   template <cudf::concepts::boolean column_type>
   std::unique_ptr<column> operator()(column_view const& column) const
   {
-    string_scalar true_string{
-      options_.get_true_value(), true, stream_, cudf::get_current_device_resource_ref()};
-    string_scalar false_string{
-      options_.get_false_value(), true, stream_, cudf::get_current_device_resource_ref()};
+    string_scalar true_string{options_.get_true_value(), true, stream_, mr_.as_temporary()};
+    string_scalar false_string{options_.get_false_value(), true, stream_, mr_.as_temporary()};
     return cudf::strings::detail::from_booleans(column, true_string, false_string, stream_, mr_);
   }
 
@@ -293,10 +290,8 @@ struct column_to_strings_fn {
     }
 
     // handle special characters: {delimiter, '\n', "} in row:
-    string_scalar delimiter{std::string{options_.get_inter_column_delimiter()},
-                            true,
-                            stream_,
-                            cudf::get_current_device_resource_ref()};
+    string_scalar delimiter{
+      std::string{options_.get_inter_column_delimiter()}, true, stream_, mr_.as_temporary()};
 
     auto d_column = column_device_view::create(column_v, stream_);
     escape_strings_fn fn{*d_column, delimiter.value(stream_)};
@@ -464,14 +459,9 @@ void write_chunked_begin(data_sink* out_sink,
     if (compression != compression_type::NONE) {
       // the compressor operates on device memory, so the header needs to be copied to the device
       auto const d_header = cudf::detail::make_device_buffer_async(
-        host_span<char const>{header}, stream, cudf::get_current_device_resource_ref());
-      write_compressed_to_sink(out_sink,
-                               d_header,
-                               {},
-                               compression,
-                               options.get_compression_block_size(),
-                               stream,
-                               cudf::get_current_device_resource_ref());
+        host_span<char const>{header}, stream, mr.as_temporary());
+      write_compressed_to_sink(
+        out_sink, d_header, {}, compression, options.get_compression_block_size(), stream, mr);
     } else {
       out_sink->host_write(header.data(), header.size());
     }
@@ -497,32 +487,37 @@ void write_chunked(data_sink* out_sink,
 
   CUDF_EXPECTS(str_column_view.size() > 0, "Unexpected empty strings column.");
 
-  cudf::string_scalar newline{
-    options.get_line_terminator(), true, stream, cudf::get_current_device_resource_ref()};
+  cudf::string_scalar newline{options.get_line_terminator(), true, stream, mr.as_temporary()};
 
   // use strings concatenate to build the final CSV output in device memory
   auto contents_w_nl = [&] {
     auto const total_size =
       str_column_view.chars_size(stream) + (newline.size() * str_column_view.size());
-    auto const empty_str = string_scalar("", true, stream, cudf::get_current_device_resource_ref());
+    auto const empty_str = string_scalar("", true, stream, mr.as_temporary());
     // use join_strings when the output will be less than 2GB
     if (total_size < static_cast<int64_t>(std::numeric_limits<size_type>::max())) {
-      return cudf::strings::detail::join_strings(str_column_view, newline, empty_str, stream, mr)
+      return cudf::strings::detail::join_strings(
+               str_column_view, newline, empty_str, stream, mr.as_temporary())
         ->release();
     }
-    auto nl_col = cudf::make_column_from_scalar(
-      newline, str_column_view.size(), stream, cudf::get_current_device_resource_ref());
+    auto nl_col =
+      cudf::make_column_from_scalar(newline, str_column_view.size(), stream, mr.as_temporary());
     // convert the last element into an empty string by resetting the last offset value
     auto& offsets     = nl_col->child(strings_column_view::offsets_column_index);
     auto offsets_view = offsets.mutable_view();
-    cudf::fill_in_place(offsets_view,
-                        offsets.size() - 1,  // set the last element with
-                        offsets.size(),      // the value from 2nd to last element
-                        *cudf::detail::get_element(offsets.view(), offsets.size() - 2, stream, mr),
-                        stream);
+    cudf::fill_in_place(
+      offsets_view,
+      offsets.size() - 1,  // set the last element with
+      offsets.size(),      // the value from 2nd to last element
+      *cudf::detail::get_element(offsets.view(), offsets.size() - 2, stream, mr.as_temporary()),
+      stream);
     auto const nl_tbl = cudf::table_view({str_column_view.parent(), nl_col->view()});
-    return cudf::strings::detail::concatenate(
-             nl_tbl, empty_str, empty_str, strings::separator_on_nulls::NO, stream, mr)
+    return cudf::strings::detail::concatenate(nl_tbl,
+                                              empty_str,
+                                              empty_str,
+                                              strings::separator_on_nulls::NO,
+                                              stream,
+                                              mr.as_temporary())
       ->release();
   }();
   auto const total_num_bytes = contents_w_nl.data->size();
@@ -542,7 +537,7 @@ void write_chunked(data_sink* out_sink,
       compression,
       block_size,
       stream,
-      cudf::get_current_device_resource_ref());
+      mr);
   }
 
   write_to_sink(out_sink, data, stream);

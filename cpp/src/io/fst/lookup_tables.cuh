@@ -846,8 +846,9 @@ class Dfa {
   Dfa(SymbolGroupIdInitT const& sgid_lut_init,
       TransitionTableInitT const& transition_table_init,
       TranslationTableInitT const& translation_table_init,
-      cuda::stream_ref stream)
-    : init_data{single_item, stream, cudf::get_current_device_resource_ref()}
+      cuda::stream_ref stream,
+      cudf::memory_resources mr)
+    : init_data{single_item, stream, mr.as_temporary()}
   {
     *init_data.host_ptr() = {sgid_lut_init, transition_table_init, translation_table_init};
     init_data.host_to_device_async(stream);
@@ -876,6 +877,7 @@ class Dfa {
    * @param seed_state The DFA's starting state. For streaming DFAs this corresponds to the
    * "end-state" of the previous invocation of the algorithm.
    * @param stream CUDA stream to launch kernels within. Default is the null-stream.
+   * @param mr Memory resources whose temporary resource is used for scratch allocations
    */
   template <typename SymbolItT,
             typename TransducedOutItT,
@@ -888,10 +890,11 @@ class Dfa {
                  TransducedIndexOutItT d_out_idx_it,
                  TransducedCountOutItT d_num_transduced_out_it,
                  uint32_t const seed_state,
-                 cuda::stream_ref stream)
+                 cuda::stream_ref stream,
+                 cudf::memory_resources mr)
   {
     std::size_t temp_storage_bytes = 0;
-    cuda::device_buffer<std::byte> temp_storage{stream, cudf::get_current_device_resource_ref()};
+    cuda::device_buffer<std::byte> temp_storage{stream, mr.get_temporary_mr()};
     DeviceTransduce(nullptr,
                     temp_storage_bytes,
                     this->get_device_view(),
@@ -905,7 +908,7 @@ class Dfa {
 
     if (temp_storage.size() < temp_storage_bytes) {
       temp_storage = cuda::device_buffer<std::byte>{
-        stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
+        stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init};
     }
 
     DeviceTransduce(temp_storage.data(),
@@ -939,6 +942,7 @@ class Dfa {
  * @param translation_table_init Object used to initialize the translation table
  * @param stream The stream used to allocate and initialize device-side memory that is used to
  * initialize the lookup tables
+ * @param mr Memory resources whose temporary resource is used for the lookup tables
  * @return A DFA of type `Dfa`.
  */
 template <typename SymbolGroupIdInitT,
@@ -947,10 +951,11 @@ template <typename SymbolGroupIdInitT,
 auto make_fst(SymbolGroupIdInitT const& sgid_lut_init,
               TransitionTableInitT const& transition_table_init,
               TranslationTableInitT const& translation_table_init,
-              cuda::stream_ref stream)
+              cuda::stream_ref stream,
+              cudf::memory_resources mr)
 {
   return Dfa<SymbolGroupIdInitT, TransitionTableInitT, TranslationTableInitT>(
-    sgid_lut_init, transition_table_init, translation_table_init, stream);
+    sgid_lut_init, transition_table_init, translation_table_init, stream, mr);
 }
 
 }  // namespace cudf::io::fst::detail

@@ -35,10 +35,10 @@ void gather_column_buffer::allocate_strings_data(bool memset_data, cuda::stream_
   // produce its outputs, _strings is actually a temporary. As a result, we
   // do not pass the provided mr to the call to
   // make_zeroed_device_buffer_async here and instead let it use the
-  // default rmm memory resource.
+  // temporary memory resource.
   _strings = std::make_unique<cuda::device_buffer<string_index_pair>>(
     cudf::detail::make_zeroed_device_buffer_async<string_index_pair>(
-      size, stream, cudf::get_current_device_resource_ref()));
+      size, stream, _mr.as_temporary()));
 }
 
 std::unique_ptr<column> gather_column_buffer::make_string_column_impl(cuda::stream_ref stream)

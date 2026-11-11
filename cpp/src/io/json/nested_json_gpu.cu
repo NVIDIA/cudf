@@ -12,6 +12,7 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
@@ -26,7 +27,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -1451,7 +1451,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
     fst::detail::
       make_translation_table<max_translation_table_size, min_translated_out, max_translated_out>(
         to_stack_op::get_translation_table(stack_behavior)),
-    stream);
+    stream,
+    mr);
 
   // "Search" for relevant occurrence of brackets and braces that indicate the beginning/end
   // of structs/lists
@@ -1462,7 +1463,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
                                   cuda::make_discard_iterator(),
                                   d_num_stack_ops.data(),
                                   to_stack_op::start_state,
-                                  stream);
+                                  stream,
+                                  mr);
 
   // Copy back to actual number of stack operations
   auto num_stack_ops = d_num_stack_ops.value(stream);
@@ -1479,7 +1481,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
                                   stack_op_indices.data(),
                                   cuda::make_discard_iterator(),
                                   to_stack_op::start_state,
-                                  stream);
+                                  stream,
+                                  mr);
 
   // Stack operations with indices are converted to top of the stack for each character in the input
   if (stack_behavior == stack_behavior_t::ResetOnDelimiter) {
@@ -1491,7 +1494,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
       root_symbol,
       read_symbol,
       json_in.size(),
-      stream);
+      stream,
+      mr);
   } else {
     fst::sparse_stack_op_to_top_of_stack<fst::stack_op_support::NO_RESET_SUPPORT, StackLevelT>(
       stack_ops.data(),
@@ -1501,7 +1505,8 @@ void get_stack_context(device_span<SymbolT const> json_in,
       root_symbol,
       read_symbol,
       json_in.size(),
-      stream);
+      stream,
+      mr);
   }
 }
 
@@ -1520,7 +1525,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
     fst::detail::make_symbol_group_lut(token_filter::symbol_groups, sgid_op),
     fst::detail::make_transition_table(token_filter::transition_table),
     fst::detail::make_translation_functor<symbol_t, 0, 2>(token_filter::TransduceToken{}),
-    stream);
+    stream,
+    mr);
 
   auto const temp_mr = mr.get_temporary_mr();
   cudf::detail::device_scalar<SymbolOffsetT> d_num_selected_tokens(stream, temp_mr);
@@ -1544,17 +1550,18 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
     cuda::make_discard_iterator(),
     d_num_selected_tokens.data(),
     token_filter::start_state,
-    stream);
+    stream,
+    mr);
 
   auto const num_total_tokens = d_num_selected_tokens.value(stream);
   rmm::device_uvector<PdaTokenT> tokens_out{num_total_tokens, stream, mr.get_output_mr()};
   rmm::device_uvector<SymbolOffsetT> token_indices_out{
     num_total_tokens, stream, mr.get_output_mr()};
-  thrust::copy(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::copy(cudf::detail::exec_policy_nosync(stream, mr),
                filtered_tokens_out.end() - num_total_tokens,
                filtered_tokens_out.end(),
                tokens_out.data());
-  thrust::copy(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::copy(cudf::detail::exec_policy_nosync(stream, mr),
                filtered_token_indices_out.end() - num_total_tokens,
                filtered_token_indices_out.end(),
                token_indices_out.data());
@@ -1589,17 +1596,12 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
 
   // Memory holding the top-of-stack stack context for the input
   cuda::device_buffer<StackSymbolT> stack_symbols(
-    stream, cudf::get_current_device_resource_ref(), json_in.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), json_in.size(), cuda::no_init);
 
   // Identify what is the stack context for each input character (JSON-root, struct, or list)
   auto const stack_behavior =
     recover_from_error ? stack_behavior_t::ResetOnDelimiter : stack_behavior_t::PushPopWithoutReset;
-  get_stack_context(json_in,
-                    stack_symbols.data(),
-                    stack_behavior,
-                    delimiter,
-                    stream,
-                    cudf::get_current_device_resource_ref());
+  get_stack_context(json_in, stack_symbols.data(), stack_behavior, delimiter, stream, mr);
 
   // Input to the full pushdown automaton finite-state transducer, where a input symbol comprises
   // the combination of a character from the JSON input together with the stack context for that
@@ -1617,14 +1619,16 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
       fst::detail::make_transition_table(fix_stack_of_excess_chars::transition_table),
       fst::detail::make_translation_functor<StackSymbolT, 1, 1>(
         fix_stack_of_excess_chars::TransduceInputOp{}),
-      stream);
+      stream,
+      mr);
     fix_stack_of_excess_chars.Transduce(zip_in,
                                         static_cast<SymbolOffsetT>(json_in.size()),
                                         stack_symbols.data(),
                                         cuda::make_discard_iterator(),
                                         cuda::make_discard_iterator(),
                                         fix_stack_of_excess_chars::start_state,
-                                        stream);
+                                        stream,
+                                        mr);
 
     // Make sure memory of the FST's lookup tables isn't freed before the FST completes
     stream.sync();
@@ -1639,7 +1643,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
     fst::detail::make_transition_table(tokenizer_pda::get_transition_table(format)),
     fst::detail::make_translation_table<max_translation_table_size, 0, 3>(
       tokenizer_pda::get_translation_table(recover_from_error)),
-    stream);
+    stream,
+    mr);
 
   // In case we're recovering on invalid JSON lines, post-processing the token stream requires to
   // see a JSON-line delimiter as the very first item
@@ -1647,8 +1652,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
     (format == tokenizer_pda::json_format_cfg_t::JSON_LINES_RECOVER ? 1 : 0);
 
   // Perform a PDA-transducer pass
-  cudf::detail::device_scalar<std::size_t> num_written_tokens{
-    stream, cudf::get_current_device_resource_ref()};
+  cudf::detail::device_scalar<std::size_t> num_written_tokens{stream, mr.get_temporary_mr()};
 
   // Run FST to estimate the size of output buffers
   json_to_tokens_fst.Transduce(zip_in,
@@ -1657,7 +1661,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                cuda::make_discard_iterator(),
                                num_written_tokens.data(),
                                tokenizer_pda::start_state,
-                               stream);
+                               stream,
+                               mr);
 
   auto const num_total_tokens = num_written_tokens.value(stream) + delimiter_offset;
   rmm::device_uvector<PdaTokenT> tokens{num_total_tokens, stream, mr.get_output_mr()};
@@ -1670,14 +1675,14 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                tokens_indices.data() + delimiter_offset,
                                cuda::make_discard_iterator(),
                                tokenizer_pda::start_state,
-                               stream);
+                               stream,
+                               mr);
 
   if (delimiter_offset == 1) {
     tokens.set_element(0, token_t::LineEnd, stream);
-    validate_token_stream(
-      json_in, tokens, tokens_indices, options, stream, cudf::get_current_device_resource_ref());
+    validate_token_stream(json_in, tokens, tokens_indices, options, stream, mr);
     auto [filtered_tokens, filtered_tokens_indices] =
-      process_token_stream(tokens, tokens_indices, stream, cudf::get_current_device_resource_ref());
+      process_token_stream(tokens, tokens_indices, stream, mr);
     tokens         = std::move(filtered_tokens);
     tokens_indices = std::move(filtered_tokens_indices);
   }
@@ -2140,10 +2145,10 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
                    "string offset, string length mismatch");
 
       // Move string_offsets and string_lengths to GPU
-      auto d_string_offsets = cudf::detail::make_device_buffer_async(
-        json_col.string_offsets, stream, cudf::get_current_device_resource_ref());
-      auto d_string_lengths = cudf::detail::make_device_buffer_async(
-        json_col.string_lengths, stream, cudf::get_current_device_resource_ref());
+      auto d_string_offsets =
+        cudf::detail::make_device_buffer_async(json_col.string_offsets, stream, mr.as_temporary());
+      auto d_string_lengths =
+        cudf::detail::make_device_buffer_async(json_col.string_lengths, stream, mr.as_temporary());
 
       // Prepare iterator that returns (string_offset, string_length)-tuples
       auto offset_length_it =

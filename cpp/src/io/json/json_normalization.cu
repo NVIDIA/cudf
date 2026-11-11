@@ -8,12 +8,12 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/io/detail/json.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_copy.cuh>
 #include <cuda/atomic>
@@ -305,17 +305,19 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
     fst::detail::make_transition_table(normalize_quotes::qna_state_tt),
     fst::detail::make_translation_functor<SymbolT, min_out, max_out>(
       normalize_quotes::TransduceToNormalizedQuotes{}),
-    stream);
+    stream,
+    mr);
 
   rmm::device_buffer outbuf(indata.size() * 2, stream, mr.get_output_mr());
-  cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr.get_output_mr());
+  cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr.get_temporary_mr());
   parser.Transduce(reinterpret_cast<SymbolT const*>(indata.data()),
                    static_cast<SymbolOffsetT>(indata.size()),
                    static_cast<SymbolT*>(outbuf.data()),
                    cuda::make_discard_iterator(),
                    outbuf_size.data(),
                    normalize_quotes::start_state,
-                   stream);
+                   stream,
+                   mr);
 
   outbuf.resize(outbuf_size.value(stream), stream);
   datasource::owning_buffer<rmm::device_buffer> outdata(std::move(outbuf));
@@ -341,19 +343,16 @@ std::
     5. Return updated buffer, segment lengths and updated segment offsets
    */
   cuda::device_buffer<size_type> inbuf_lengths(
-    stream, cudf::get_current_device_resource_ref(), col_lengths.size(), cuda::no_init);
+    stream, mr.get_output_mr(), col_lengths.size(), cuda::no_init);
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(
     inbuf_lengths.data(), col_lengths.data(), col_lengths.size_bytes(), stream));
   std::size_t inbuf_lengths_size = inbuf_lengths.size();
-  size_type inbuf_size =
-    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   inbuf_lengths.begin(),
-                   inbuf_lengths.end());
-  cuda::device_buffer<char> inbuf(
-    stream, cudf::get_current_device_resource_ref(), inbuf_size, cuda::no_init);
+  size_type inbuf_size           = thrust::reduce(
+    cudf::detail::exec_policy_nosync(stream, mr), inbuf_lengths.begin(), inbuf_lengths.end());
+  cuda::device_buffer<char> inbuf(stream, mr.get_output_mr(), inbuf_size, cuda::no_init);
   cuda::device_buffer<size_type> inbuf_offsets(
-    stream, cudf::get_current_device_resource_ref(), inbuf_lengths_size, cuda::no_init);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    stream, mr.get_output_mr(), inbuf_lengths_size, cuda::no_init);
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          inbuf_lengths.begin(),
                          inbuf_lengths.end(),
                          inbuf_offsets.begin(),
@@ -379,7 +378,7 @@ std::
                              inbuf_lengths_size,
                              stream.get());
     cuda::device_buffer<std::byte> temp_storage(
-      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
+      stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
     cub::DeviceCopy::Batched(temp_storage.data(),
                              temp_storage_bytes,
                              input_it,
@@ -395,19 +394,21 @@ std::
                           fst::detail::make_transition_table(normalize_whitespace::wna_state_tt),
                           fst::detail::make_translation_functor<SymbolT, 0, 2>(
                             normalize_whitespace::TransduceToNormalizedWS{}),
-                          stream);
+                          stream,
+                          mr);
 
   cuda::device_buffer<size_type> outbuf_indices_storage(
-    stream, mr.get_output_mr(), inbuf.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), inbuf.size(), cuda::no_init);
   auto outbuf_indices = device_span<size_type>{outbuf_indices_storage};
-  cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr.get_output_mr());
+  cudf::detail::device_scalar<SymbolOffsetT> outbuf_indices_size(stream, mr.get_temporary_mr());
   parser.Transduce(inbuf.data(),
                    static_cast<SymbolOffsetT>(inbuf.size()),
                    cuda::make_discard_iterator(),
                    outbuf_indices.data(),
                    outbuf_indices_size.data(),
                    normalize_whitespace::start_state,
-                   stream);
+                   stream,
+                   mr);
 
   auto const num_deletions = outbuf_indices_size.value(stream);
   outbuf_indices           = outbuf_indices.subspan(0, num_deletions);
@@ -415,7 +416,7 @@ std::
   // now these indices need to be removed
   // TODO: is there a better way to do this?
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     outbuf_indices.begin(),
     outbuf_indices.end(),
     [inbuf_offsets_begin = inbuf_offsets.begin(),
@@ -428,13 +429,13 @@ std::
     });
 
   auto stencil = cudf::detail::make_zeroed_device_buffer_async<bool>(
-    static_cast<std::size_t>(inbuf_size), stream, cudf::get_current_device_resource_ref());
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    static_cast<std::size_t>(inbuf_size), stream, mr.as_temporary());
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   cuda::make_constant_iterator(true),
                   cuda::make_constant_iterator(true) + num_deletions,
                   outbuf_indices.begin(),
                   stencil.begin());
-  thrust::remove_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::remove_if(cudf::detail::exec_policy_nosync(stream, mr),
                     inbuf.begin(),
                     inbuf.end(),
                     stencil.begin(),
@@ -443,7 +444,7 @@ std::
   // the normalized data.
   // TODO: Resize again once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
 
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          inbuf_lengths.begin(),
                          inbuf_lengths.end(),
                          inbuf_offsets.begin(),

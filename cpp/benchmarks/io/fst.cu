@@ -98,7 +98,8 @@ void BM_FST_JSON(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -110,7 +111,8 @@ void BM_FST_JSON(nvbench::state& state)
                      out_indexes_gpu.device_ptr(),
                      output_gpu_size.device_ptr(),
                      start_state,
-                     stream.get());
+                     stream.get(),
+                     cudf::get_current_device_resource_ref());
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -145,7 +147,8 @@ void BM_FST_JSON_no_outidx(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -157,7 +160,8 @@ void BM_FST_JSON_no_outidx(nvbench::state& state)
                      cuda::make_discard_iterator(),
                      output_gpu_size.device_ptr(),
                      start_state,
-                     stream.get());
+                     stream.get(),
+                     cudf::get_current_device_resource_ref());
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -188,7 +192,8 @@ void BM_FST_JSON_no_out(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -200,7 +205,8 @@ void BM_FST_JSON_no_out(nvbench::state& state)
                      cuda::make_discard_iterator(),
                      output_gpu_size.device_ptr(),
                      start_state,
-                     stream.get());
+                     stream.get(),
+                     cudf::get_current_device_resource_ref());
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
@@ -233,7 +239,8 @@ void BM_FST_JSON_no_str(nvbench::state& state)
     cudf::io::fst::detail::make_translation_table<max_translation_table_size,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -245,7 +252,8 @@ void BM_FST_JSON_no_str(nvbench::state& state)
                      out_indexes_gpu.device_ptr(),
                      output_gpu_size.device_ptr(),
                      start_state,
-                     stream.get());
+                     stream.get(),
+                     cudf::get_current_device_resource_ref());
   });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");

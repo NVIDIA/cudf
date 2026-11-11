@@ -19,6 +19,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/detail/json.hpp>
@@ -37,7 +38,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -298,7 +298,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
   auto const total_strings = num_strviews_per_row * num_rows;
   auto const total_rows    = num_rows * strings_columns.num_columns();
   cuda::device_buffer<string_view> d_strviews(
-    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_strings, cuda::no_init);
   if (strings_columns.num_columns() > 0) {
     struct_scatter_strings_fn scatter_fn{*tbl_device_view,
                                          *d_column_names,
@@ -311,13 +311,13 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
                                          include_nulls,
                                          d_strviews.begin()};
     // scatter row_prefix, row_suffix, column_name:, value, value_separator as string_views
-    thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      cuda::counting_iterator<size_type>{total_rows},
                      scatter_fn);
   } else {
     thrust::for_each(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<size_type>{0},
       cuda::counting_iterator<size_type>{num_rows},
       [d_strviews = d_strviews.begin(), row_prefix, row_suffix, num_strviews_per_row] __device__(
@@ -330,23 +330,22 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
   if (!include_nulls) {
     // if previous column was null, then we skip the value separator
     cuda::device_buffer<bool> d_str_separator(
-      stream, cudf::get_current_device_resource_ref(), total_rows, cuda::no_init);
+      stream, mr.get_temporary_mr(), total_rows, cuda::no_init);
     auto row_num = cudf::detail::make_counting_transform_iterator(
       0,
       cuda::proclaim_return_type<size_type>([tbl = *tbl_device_view] __device__(auto idx)
                                               -> size_type { return idx / tbl.num_columns(); }));
     auto validity_iterator =
       cudf::detail::make_counting_transform_iterator(0, validity_fn{*tbl_device_view});
-    thrust::exclusive_scan_by_key(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      row_num,
-      row_num + total_rows,
-      validity_iterator,
-      d_str_separator.begin(),
-      false,
-      cuda::std::equal_to<size_type>{},
-      cuda::std::logical_or<bool>{});
-    thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                                  row_num,
+                                  row_num + total_rows,
+                                  validity_iterator,
+                                  d_str_separator.begin(),
+                                  false,
+                                  cuda::std::equal_to<size_type>{},
+                                  cuda::std::logical_or<bool>{});
+    thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      cuda::counting_iterator<size_type>{total_rows},
                      [write_separator = d_str_separator.begin(),
@@ -373,7 +372,7 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
     0, cuda::proclaim_return_type<size_type>([num_strviews_per_row] __device__(size_type const i) {
       return i * num_strviews_per_row;
     }));
-  thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                  d_strview_offsets,
                  d_strview_offsets + row_string_offsets.size(),
                  old_offsets.begin<size_type>(),
@@ -473,7 +472,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
   auto const num_offsets      = offsets.size();
 
   cuda::device_buffer<size_type> d_strview_offsets(
-    stream, cudf::get_current_device_resource_ref(), num_offsets, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_offsets, cuda::no_init);
   auto num_strings_per_list = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<size_type>(
@@ -482,7 +481,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
         auto const length = offsets[idx + 1] - offsets[idx];
         return length == 0 ? 2 : (2 + length + length - 1);
       }));
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          num_strings_per_list,
                          num_strings_per_list + num_offsets,
                          d_strview_offsets.begin());
@@ -494,10 +493,10 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
   cudf::detail::sync_stream(stream);
 
   cuda::device_buffer<string_view> d_strviews(
-    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_strings, cuda::no_init);
   // scatter null_list and list_prefix, list_suffix
   auto col_device_view = cudf::column_device_view::create(lists_strings.parent(), stream);
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    cuda::counting_iterator<size_type>{0},
                    cuda::counting_iterator<size_type>{num_lists},
                    [col = *col_device_view,
@@ -516,10 +515,10 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
                    });
 
   // scatter string and separator
-  auto labels = cudf::lists::detail::generate_labels(
-    lists_strings, num_strings, stream, cudf::get_current_device_resource_ref());
+  auto labels =
+    cudf::lists::detail::generate_labels(lists_strings, num_strings, stream, mr.as_temporary());
   auto d_strings_children = cudf::column_device_view::create(strings_children, stream);
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    cuda::counting_iterator<size_type>{0},
                    cuda::counting_iterator<size_type>{num_strings},
                    scatter_fn{*col_device_view,
@@ -536,7 +535,7 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
   // gather from offset and create a new string column
   auto old_offsets = strings_column_view(joined_col->view()).offsets();
   rmm::device_uvector<size_type> row_string_offsets(num_offsets, stream, mr.get_output_mr());
-  thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                  d_strview_offsets.begin(),
                  d_strview_offsets.end(),
                  old_offsets.begin<size_type>(),

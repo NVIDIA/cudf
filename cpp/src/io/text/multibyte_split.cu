@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
@@ -25,8 +26,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_scan.cuh>
@@ -304,7 +303,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 
   if (byte_range.is_empty()) { return make_empty_column(type_id::STRING); }
 
-  auto device_delim = cudf::string_scalar(delimiter, true, stream, mr);
+  auto device_delim = cudf::string_scalar(delimiter, true, stream, mr.as_temporary());
 
   std::string sorted_delim{delimiter};
   std::sort(sorted_delim.begin(), sorted_delim.end());
@@ -336,10 +335,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     // best when at least 32 more than max possible concurrent tiles, due to rolling `invalid`s
     auto const concurrency = 2;
     auto num_tile_states   = std::max(32, TILES_PER_CHUNK * concurrency + 32);
-    auto tile_multistates =
-      scan_tile_state<multistate>(num_tile_states, stream, cudf::get_current_device_resource_ref());
-    auto tile_offsets = scan_tile_state<output_offset>(
-      num_tile_states, stream, cudf::get_current_device_resource_ref());
+    auto tile_multistates = scan_tile_state<multistate>(num_tile_states, stream, mr.as_temporary());
+    auto tile_offsets = scan_tile_state<output_offset>(num_tile_states, stream, mr.as_temporary());
 
     multibyte_split_init_kernel<<<TILES_PER_CHUNK,
                                   THREADS_PER_TILE,
@@ -373,9 +370,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     // amortize output chunk allocations over 8 worst-case outputs. This limits the overallocation
     constexpr auto max_growth = 8;
     output_builder<byte_offset> row_offset_storage(
-      ITEMS_PER_CHUNK, max_growth, stream, cudf::get_current_device_resource_ref());
-    output_builder<char> char_storage(
-      ITEMS_PER_CHUNK, max_growth, stream, cudf::get_current_device_resource_ref());
+      ITEMS_PER_CHUNK, max_growth, stream, mr.as_temporary());
+    output_builder<char> char_storage(ITEMS_PER_CHUNK, max_growth, stream, mr.as_temporary());
 
     auto streams = cudf::detail::fork_streams(stream, concurrency);
 
@@ -456,15 +452,15 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
           return new_offsets_unclamped;
         }
         // if we are in the last chunk, we need to find the first out-of-bounds offset
-        auto const it      = cuda::counting_iterator<output_offset>{};
-        auto const end_loc = *thrust::find_if(
-          rmm::exec_policy_nosync(scan_stream, cudf::get_current_device_resource_ref()),
-          it,
-          it + new_offsets_unclamped,
-          cuda::proclaim_return_type<bool>(
-            [row_offsets, byte_range_end] __device__(output_offset i) {
-              return row_offsets[i] >= byte_range_end;
-            }));
+        auto const it = cuda::counting_iterator<output_offset>{};
+        auto const end_loc =
+          *thrust::find_if(cudf::detail::exec_policy_nosync(scan_stream, mr),
+                           it,
+                           it + new_offsets_unclamped,
+                           cuda::proclaim_return_type<bool>(
+                             [row_offsets, byte_range_end] __device__(output_offset i) {
+                               return row_offsets[i] >= byte_range_end;
+                             }));
         // if we had no out-of-bounds offset, we copy all offsets
         if (end_loc == new_offsets_unclamped) { return end_loc; }
         // otherwise we copy only up to (including) the first out-of-bounds delimiter
@@ -486,10 +482,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
           chunk->data() + std::min<byte_offset>(sentinel - chunk_offset, chunk->size());
         auto const output_size = end - begin;
         auto char_output       = char_storage.next_output(scan_stream);
-        thrust::copy(rmm::exec_policy_nosync(scan_stream, cudf::get_current_device_resource_ref()),
-                     begin,
-                     end,
-                     char_output.begin());
+        thrust::copy(
+          cudf::detail::exec_policy_nosync(scan_stream, mr), begin, end, char_output.begin());
         char_storage.advance_output(output_size, scan_stream);
       }
 
@@ -505,8 +499,9 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 
     cudf::detail::join_streams(streams, stream);
 
-    auto chars          = char_storage.gather(stream, mr);
-    auto global_offsets = row_offset_storage.gather<cuda::device_buffer<byte_offset>>(stream, mr);
+    auto chars = char_storage.gather(stream, mr);
+    auto global_offsets =
+      row_offset_storage.gather<cuda::device_buffer<byte_offset>>(stream, mr.as_temporary());
     return std::pair{std::move(global_offsets), std::move(chars)};
   }();
 
@@ -542,7 +537,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   };
   if (insert_begin) { set_offset_value(0, 0); }
   if (insert_end) { set_offset_value(offsets->size() - 1, chars_bytes); }
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     global_offsets.begin(),
                     global_offsets.end(),
                     offsets_itr + insert_begin,

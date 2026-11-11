@@ -162,10 +162,7 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
   // Unfortunately, CUB's segmented sort functions cannot accept iterators.
   // We have to build a pre-filled sequence of indices as input.
   auto sorted_indices = cudf::detail::sequence(
-    input.size(),
-    numeric_scalar<size_type>{0, true, stream, cudf::get_current_device_resource_ref()},
-    stream,
-    mr);
+    input.size(), numeric_scalar<size_type>{0, true, stream, mr.as_temporary()}, stream, mr);
   auto indices_view = sorted_indices->mutable_view();
 
   cudf::type_dispatcher<dispatch_storage_type>(input.type(),
@@ -269,8 +266,8 @@ std::unique_ptr<column> segmented_sorted_order_common(
   }
 
   // Get segment id of each element in all segments.
-  auto segment_ids = get_segment_indices(
-    keys.num_rows(), segment_offsets, stream, cudf::get_current_device_resource_ref());
+  auto segment_ids =
+    get_segment_indices(keys.num_rows(), segment_offsets, stream, mr.as_temporary());
 
   // insert segment id before all columns.
   std::vector<column_view> keys_with_segid;
@@ -311,13 +308,8 @@ std::unique_ptr<table> segmented_sort_by_key_common(table_view const& values,
 {
   CUDF_EXPECTS(values.num_rows() == keys.num_rows(),
                "Mismatch in number of rows for values and keys");
-  auto sorted_order =
-    segmented_sorted_order_common<method>(keys,
-                                          segment_offsets,
-                                          column_order,
-                                          null_precedence,
-                                          stream,
-                                          cudf::get_current_device_resource_ref());
+  auto sorted_order = segmented_sorted_order_common<method>(
+    keys, segment_offsets, column_order, null_precedence, stream, mr.as_temporary());
   // Gather segmented sort of child value columns
   return detail::gather(values,
                         sorted_order->view(),

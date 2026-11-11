@@ -92,8 +92,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> conditional_join_anti_semi(
     join_size = size.value(stream);
   }
 
-  cudf::detail::device_scalar<std::size_t> write_index(
-    0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<std::size_t> write_index(0, stream, mr.get_temporary_mr());
 
   auto left_indices =
     std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, mr.get_output_mr());
@@ -239,8 +238,7 @@ conditional_join(table_view const& left,
       std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
   }
 
-  cudf::detail::device_scalar<std::size_t> write_index(
-    0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<std::size_t> write_index(0, stream, mr.get_temporary_mr());
 
   auto left_indices =
     std::make_unique<rmm::device_uvector<size_type>>(join_size, stream, mr.get_output_mr());

@@ -39,8 +39,6 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
                  static_cast<std::size_t>(haystack.num_columns()) == null_precedence.size(),
                "Mismatch between number of columns and null precedence.");
 
-  auto const temp_mr = mr.get_temporary_mr();
-
   // Allocate result column
   auto result       = make_numeric_column(data_type{type_to_id<size_type>()},
                                     needles.num_rows(),
@@ -57,7 +55,8 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
 
   // This utility will ensure all corresponding dictionary columns have matching keys.
   // It will return any new dictionary columns created as well as updated table_views.
-  auto const matched = dictionary::detail::match_dictionaries({haystack, needles}, stream, temp_mr);
+  auto const matched =
+    dictionary::detail::match_dictionaries({haystack, needles}, stream, mr.as_temporary());
   auto const& matched_haystack = matched.second.front();
   auto const& matched_needles  = matched.second.back();
 

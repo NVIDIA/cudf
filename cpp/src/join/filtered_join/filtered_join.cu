@@ -133,7 +133,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
 {
   cudf::scoped_range range{"filtered_join::semi_anti_join"};
 
-  auto const temp_mr           = cudf::get_current_device_resource_ref();
+  auto const temp_mr           = mr.get_temporary_mr();
   auto const preprocessed_left = [&left, stream, temp_mr] {
     cudf::scoped_range range{"filtered_join::semi_anti_join::preprocessed_left"};
     return cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
@@ -144,8 +144,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
   if (_right_mode == row_operator_mode::PRIMITIVE) {
     query_right_table_primitive(left, preprocessed_left, contains_map_span, stream);
   } else if (_right_mode == row_operator_mode::NESTED) {
-    query_right_table_nested(
-      left, preprocessed_left, contains_map_span, stream, cudf::get_current_device_resource_ref());
+    query_right_table_nested(left, preprocessed_left, contains_map_span, stream, mr);
   } else {
     query_right_table_flat(left, preprocessed_left, contains_map_span, stream);
   }

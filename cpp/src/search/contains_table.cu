@@ -37,7 +37,7 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
   auto const needles_has_nulls  = has_nested_nulls(needles);
   auto const has_any_nulls      = haystack_has_nulls || needles_has_nulls;
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   auto const preprocessed_needles =
     cudf::detail::row::equality::preprocessed_table::create(needles, stream, temp_mr);
   auto const preprocessed_haystack =

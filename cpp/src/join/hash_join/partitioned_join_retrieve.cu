@@ -75,10 +75,8 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   // Contexts created by a factory cache the matching groups; others probe the partition again.
   // TODO: Remove the probe when the deprecated join_match_context constructor is removed in 27.02
   // (#20958).
-  cuda::device_buffer<size_type> probed_groups(stream,
-                                               cudf::get_current_device_resource_ref(),
-                                               state == nullptr ? partition_size : 0,
-                                               cuda::no_init);
+  cuda::device_buffer<size_type> probed_groups(
+    stream, mr.get_temporary_mr(), state == nullptr ? partition_size : 0, cuda::no_init);
   if (state == nullptr) {
     auto const left_partition =
       cudf::slice(match_ctx.left_table(), {left_start_idx, left_end_idx})[0];

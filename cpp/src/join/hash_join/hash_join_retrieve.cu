@@ -65,7 +65,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
     }
   }
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   std::optional<size_type> unmatched_right_rows;
   // Release retrieval scratch before full-join finalization allocates its match flags.
   auto join_indices = [&] {

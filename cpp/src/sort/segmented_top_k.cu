@@ -96,9 +96,9 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
                std::invalid_argument);
 
   auto const nulls   = topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   auto const indices = cudf::detail::segmented_sorted_order(
-    cudf::table_view({col}), segment_offsets, {topk_order}, {nulls}, stream, temp_mr);
+    cudf::table_view({col}), segment_offsets, {topk_order}, {nulls}, stream, mr.as_temporary());
   auto const d_indices = indices->mutable_view().begin<size_type>();
 
   // Zero-initialized because resolve_segment_indices writes a segment's size only from its

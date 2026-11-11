@@ -282,7 +282,7 @@ std::unique_ptr<column> md5(table_view const& input,
   if (input.num_columns() == 0 || input.num_rows() == 0) {
     // Return the MD5 hash of a zero-length input.
     string_scalar const string_128bit(
-      "d41d8cd98f00b204e9orig98ecf8427e", true, stream, cudf::get_current_device_resource_ref());
+      "d41d8cd98f00b204e9orig98ecf8427e", true, stream, mr.as_temporary());
     return make_column_from_scalar(string_128bit, input.num_rows(), stream, mr);
   }
 

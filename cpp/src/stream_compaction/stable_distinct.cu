@@ -32,12 +32,8 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
     return empty_like(input);
   }
 
-  auto const distinct_indices = detail::distinct_indices(input.select(keys),
-                                                         keep,
-                                                         nulls_equal,
-                                                         nans_equal,
-                                                         stream,
-                                                         cudf::get_current_device_resource_ref());
+  auto const distinct_indices = detail::distinct_indices(
+    input.select(keys), keep, nulls_equal, nans_equal, stream, mr.as_temporary());
 
   // The only difference between this implementation and the unstable version
   // is that the stable implementation must retain the input order. The
@@ -47,8 +43,8 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
   // the need to sort the distinct indices, which is slower.
 
   auto const output_markers = [&] {
-    auto markers = cuda::device_buffer<bool>(
-      stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
+    auto markers =
+      cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), input.num_rows(), cuda::no_init);
     thrust::uninitialized_fill(
       cudf::detail::exec_policy_nosync(stream, mr), markers.begin(), markers.end(), false);
     thrust::scatter(

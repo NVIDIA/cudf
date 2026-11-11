@@ -154,7 +154,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
   // output-sized scatter. Other join implementations use this fallback to derive the same flags
   // from their materialized right indices.
   auto computed_matches = cudf::detail::make_zeroed_device_buffer_async<size_type>(
-    right_matches ? 0 : right_table_num_rows, stream, cudf::get_current_device_resource_ref());
+    right_matches ? 0 : right_table_num_rows, stream, mr.get_temporary_mr());
   if (!right_matches) {
     thrust::scatter_if(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::make_constant_iterator(size_type{1}),

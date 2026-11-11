@@ -235,11 +235,11 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
     left_table_num_rows, stream, mr.get_output_mr());
 
   auto found_indices = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), left_table_num_rows, cuda::no_init);
+    stream, mr.get_temporary_mr(), left_table_num_rows, cuda::no_init);
   auto const found_begin = cuda::make_transform_output_iterator(found_indices.begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
-    left, stream, cudf::get_current_device_resource_ref());
+  auto preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, mr.get_temporary_mr());
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =
       cudf::detail::row::primitive::row_hasher{nullate::DYNAMIC{has_nulls}, preprocessed_left};
@@ -256,7 +256,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                                _nulls_equal,
                                found_begin,
                                stream,
-                               cudf::get_current_device_resource_ref());
+                               mr);
   } else {
     auto const two_table_equal =
       cudf::detail::row::equality::two_table_comparator(preprocessed_left, _preprocessed_right);
@@ -277,7 +277,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                                  _nulls_equal,
                                  found_begin,
                                  stream,
-                                 cudf::get_current_device_resource_ref());
+                                 mr);
     } else {
       auto const device_comparator =
         two_table_equal.equal_to<false>(nullate::DYNAMIC{has_nulls}, _nulls_equal);
@@ -289,7 +289,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                                  _nulls_equal,
                                  found_begin,
                                  stream,
-                                 cudf::get_current_device_resource_ref());
+                                 mr);
     }
   }
 
@@ -335,8 +335,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
   auto const output_begin =
     cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
-    left, stream, cudf::get_current_device_resource_ref());
+  auto preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, mr.get_temporary_mr());
 
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =
@@ -355,7 +355,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
                                _nulls_equal,
                                output_begin,
                                stream,
-                               cudf::get_current_device_resource_ref());
+                               mr);
   } else {
     // If right table is empty, return left table
     if (this->_right.num_rows() == 0) {
@@ -383,7 +383,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
                                    _nulls_equal,
                                    output_begin,
                                    stream,
-                                   cudf::get_current_device_resource_ref());
+                                   mr);
       } else {
         auto const device_comparator =
           two_table_equal.equal_to<false>(nullate::DYNAMIC{has_nulls}, _nulls_equal);
@@ -395,7 +395,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
                                    _nulls_equal,
                                    output_begin,
                                    stream,
-                                   cudf::get_current_device_resource_ref());
+                                   mr);
       }
     }
   }

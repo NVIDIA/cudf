@@ -41,8 +41,8 @@ bool is_sorted(cudf::table_view const& in,
     // Using a temporary buffer for intermediate transform results from the lambda containing
     // the comparator speeds up compile-time significantly over using the comparator directly
     // in thrust::is_sorted.
-    auto d_results = cuda::device_buffer<bool>(
-      stream, cudf::get_current_device_resource_ref(), in.num_rows(), cuda::no_init);
+    auto d_results =
+      cuda::device_buffer<bool>(stream, mrs.get_temporary_mr(), in.num_rows(), cuda::no_init);
     thrust::transform(cudf::detail::exec_policy_nosync(stream, mrs),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{in.num_rows()},

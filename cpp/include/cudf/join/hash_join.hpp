@@ -215,12 +215,15 @@ class hash_join {
    *
    * @param left The left table, from which the tuples are probed
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return The exact number of output when performing an inner join between two tables with
    * `left` and `right` as the join keys .
    */
   [[nodiscard]] std::size_t inner_join_size(
-    cudf::table_view const& left, cuda::stream_ref stream = cudf::get_default_stream()) const;
+    cudf::table_view const& left,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * Returns the exact number of matches (rows) when performing a left join with the specified left
@@ -231,12 +234,15 @@ class hash_join {
    *
    * @param left The left table, from which the tuples are probed
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return The exact number of output when performing a left join between two tables with `left`
    * and `right` as the join keys .
    */
   [[nodiscard]] std::size_t left_join_size(
-    cudf::table_view const& left, cuda::stream_ref stream = cudf::get_default_stream()) const;
+    cudf::table_view const& left,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * Returns the exact number of matches (rows) when performing a full join with the specified left

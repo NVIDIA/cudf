@@ -9,12 +9,14 @@ namespace cudf::detail {
 
 template <typename Hasher>
 std::size_t hash_join<Hasher>::left_join_size(cudf::table_view const& left,
-                                              cuda::stream_ref stream) const
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr) const
 {
-  return this->template join_size<join_kind::LEFT_JOIN>(left, stream);
+  return this->template join_size<join_kind::LEFT_JOIN>(left, stream, mr);
 }
 
 template std::size_t hash_join<hash_join_hasher>::left_join_size(cudf::table_view const& left,
-                                                                 cuda::stream_ref stream) const;
+                                                                 cuda::stream_ref stream,
+                                                                 cudf::memory_resources mr) const;
 
 }  // namespace cudf::detail

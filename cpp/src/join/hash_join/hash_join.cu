@@ -251,14 +251,18 @@ hash_join::full_join(cudf::table_view const& left,
   return _impl->full_join(left, output_size, stream, mr);
 }
 
-std::size_t hash_join::inner_join_size(cudf::table_view const& left, cuda::stream_ref stream) const
+std::size_t hash_join::inner_join_size(cudf::table_view const& left,
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr) const
 {
-  return _impl->inner_join_size(left, stream);
+  return _impl->inner_join_size(left, stream, mr);
 }
 
-std::size_t hash_join::left_join_size(cudf::table_view const& left, cuda::stream_ref stream) const
+std::size_t hash_join::left_join_size(cudf::table_view const& left,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr) const
 {
-  return _impl->left_join_size(left, stream);
+  return _impl->left_join_size(left, stream, mr);
 }
 
 std::size_t hash_join::full_join_size(cudf::table_view const& left,

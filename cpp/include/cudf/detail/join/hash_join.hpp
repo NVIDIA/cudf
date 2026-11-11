@@ -118,13 +118,15 @@ class hash_join {
    * @copydoc cudf::hash_join::inner_join_size
    */
   [[nodiscard]] std::size_t inner_join_size(cudf::table_view const& left,
-                                            cuda::stream_ref stream) const;
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr) const;
 
   /**
    * @copydoc cudf::hash_join::left_join_size
    */
   [[nodiscard]] std::size_t left_join_size(cudf::table_view const& left,
-                                           cuda::stream_ref stream) const;
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr) const;
 
   /**
    * @copydoc cudf::hash_join::full_join_size
@@ -235,9 +237,6 @@ class hash_join {
                 std::optional<std::size_t> output_size,
                 cuda::stream_ref stream,
                 cudf::memory_resources mr) const;
-
-  template <join_kind Join>
-  [[nodiscard]] std::size_t join_size(cudf::table_view const& left, cuda::stream_ref stream) const;
 
   template <join_kind Join>
   /// Every allocation here is temporary and comes from `mr`.

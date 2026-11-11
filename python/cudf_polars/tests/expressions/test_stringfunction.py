@@ -349,6 +349,34 @@ def test_to_datetime(
 
 
 @pytest.mark.parametrize(
+    "format",
+    [
+        "%Y-%m-%dT%H:%M:%S%#z",
+        "%#z",
+        # A literal "%%" does not cancel a following "%#" flag.
+        "%Y-%m-%d %%%#z",
+    ],
+)
+def test_to_datetime_unsupported_format_raises(engine: pl.GPUEngine, format):
+    df = pl.LazyFrame({"a": ["2020-01-01T00:00:00Z", "invalid"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime, format, strict=False, cache=False)
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_to_datetime_escaped_percent_hash(engine: pl.GPUEngine):
+    # "%%" is a literal "%", so "%%#" is not the "#" flag. The literal suffix
+    # is "#x" rather than "#z": Polars matches the "%#z" substring of "%%#z"
+    # as a timezone directive and rejects every conversion.
+    df = pl.LazyFrame({"a": ["2020-01-01 %#x", "2021-06-15 %#x"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime("ms"), "%Y-%m-%d %%#x", cache=False)
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
     "target, repl",
     [("a", "a"), ("Wı", "☺"), ("FG", ""), ("doesnotexist", "blahblah")],  # noqa: RUF001
 )
@@ -1093,4 +1121,26 @@ def test_split_regex_not_supported(engine: pl.GPUEngine):
 def test_escape_regex(engine: pl.GPUEngine, data):
     lf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.String)})
     q = lf.select(pl.col("a").str.escape_regex())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("s").str.contains(""),
+        pl.col("s").str.find(""),
+        pl.col("s").str.head(0),
+        pl.col("s").str.tail(0),
+        pl.col("s").cast(pl.Int64, strict=False),
+    ],
+)
+def test_sliced_input_with_nulls(engine: pl.GPUEngine, expr):
+    # sort().slice() hands the expression a column with a nonzero offset.
+    ldf = pl.LazyFrame(
+        {
+            "s": ["0", None, "2", "3", "x", "5", None, "7", "x", "9"],
+            "k": range(10),
+        }
+    )
+    q = ldf.sort("k").slice(3, 6).select(expr)
     assert_gpu_result_equal(q, engine=engine)

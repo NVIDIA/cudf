@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <limits>
 
 namespace nvtext {
@@ -968,7 +969,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   std::size_t temp_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
     nullptr, temp_bytes, d_counts, d_output, chars_size, stream.get()));
-  auto temp_storage = rmm::device_buffer(temp_bytes, stream, temp_mr);
+  auto temp_storage = cuda::device_buffer<std::byte>(stream, temp_mr, temp_bytes, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
     temp_storage.data(), temp_bytes, d_counts, d_output, chars_size, stream.get()));
 

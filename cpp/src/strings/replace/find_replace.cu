@@ -56,7 +56,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   cudf::strings_column_view const& values_to_replace,
   cudf::strings_column_view const& replacement_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto d_input             = cudf::column_device_view::create(input.parent(), stream);
   auto d_values_to_replace = cudf::column_device_view::create(values_to_replace.parent(), stream);

@@ -35,7 +35,7 @@ struct str_cudf_column_scalar_fn {
   std::string operator()(cudf::column_view col,
                          cudf::size_type index,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cudf::memory_resources mr)
   {
     std::unique_ptr<cudf::scalar> scalar = cudf::get_element(col, index, stream, mr);
     if (!scalar->is_valid(stream)) { return "null"; }
@@ -49,7 +49,7 @@ struct str_cudf_column_scalar_fn {
   std::string operator()(cudf::column_view /* col */,
                          cudf::size_type /* index */,
                          cuda::stream_ref /* stream */,
-                         rmm::device_async_resource_ref /* mr */
+                         cudf::memory_resources /* mr */
   )
   {
     RAPIDSMPF_FAIL("not implemented");
@@ -102,12 +102,12 @@ struct cudf_column_data_size_fn {
 std::string str(cudf::column_view col,
                 cudf::size_type index,
                 cuda::stream_ref stream,
-                rmm::device_async_resource_ref mr)
+                cudf::memory_resources mr)
 {
   return cudf::type_dispatcher(col.type(), str_cudf_column_scalar_fn{}, col, index, stream, mr);
 }
 
-std::string str(cudf::column_view col, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::string str(cudf::column_view col, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   std::stringstream ss;
   ss << "Column([";
@@ -119,7 +119,7 @@ std::string str(cudf::column_view col, cuda::stream_ref stream, rmm::device_asyn
   return ss.str();
 }
 
-std::string str(cudf::table_view tbl, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::string str(cudf::table_view tbl, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   std::stringstream ss;
   ss << "Table([";

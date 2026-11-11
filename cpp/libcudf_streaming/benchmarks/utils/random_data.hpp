@@ -71,7 +71,7 @@ std::unique_ptr<cudf::column> random_column(cudf::size_type nrows,
                                             std::int32_t min_val,
                                             std::int32_t max_val,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cudf::memory_resources mr);
 
 /**
  * @brief Generates a random numeric table (std::int32_t).
@@ -94,7 +94,7 @@ cudf::table random_table(cudf::size_type ncolumns,
                          std::int32_t min_val,
                          std::int32_t max_val,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr);
+                         cudf::memory_resources mr);
 
 /**
  * @brief Fill a rapidsmpf buffer with random data (std::int32_t).

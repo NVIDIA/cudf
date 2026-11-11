@@ -5,6 +5,7 @@
 
 #pragma once
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
@@ -90,7 +91,7 @@ struct device_bloom_filter {
    */
   void add(cudf::table_view const& values_to_hash,
            cuda::stream_ref stream,
-           rmm::device_async_resource_ref mr);
+           cudf::memory_resources mr);
 
   /**
    * @brief Merge two filters, computing their union.
@@ -113,7 +114,7 @@ struct device_bloom_filter {
    */
   [[nodiscard]] cuda::device_buffer<bool> contains(cudf::table_view const& values,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr) const;
+                                                   cudf::memory_resources mr) const;
 
   /**
    * @brief @return Pointer to the underlying storage.

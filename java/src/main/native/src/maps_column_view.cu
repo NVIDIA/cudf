@@ -50,14 +50,11 @@ std::unique_ptr<column> get_values_for_impl(maps_column_view const& maps_view,
   auto const values_ = maps_view.values();
   CUDF_EXPECTS(lookup_keys.type().id() == keys_.child().type().id(),
                "Lookup keys must have the same type as the keys of the map column.");
-  auto key_indices              = cudf::lists::index_of(keys_,
-                                           lookup_keys,
-                                           lists::duplicate_find_option::FIND_LAST,
-                                           stream,
-                                           cudf::get_current_device_resource_ref());
+  auto key_indices = cudf::lists::index_of(
+    keys_, lookup_keys, lists::duplicate_find_option::FIND_LAST, stream, mr.as_temporary());
   auto constexpr absent_offset  = size_type{-1};
   auto constexpr nullity_offset = std::numeric_limits<size_type>::min();
-  thrust::replace(rmm::exec_policy_nosync(stream),
+  thrust::replace(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                   key_indices->mutable_view().template begin<size_type>(),
                   key_indices->mutable_view().template end<size_type>(),
                   absent_offset,
@@ -91,10 +88,9 @@ std::unique_ptr<column> contains_impl(maps_column_view const& maps_view,
   auto const keys = maps_view.keys();
   CUDF_EXPECTS(lookup_keys.type().id() == keys.child().type().id(),
                "Lookup keys must have the same type as the keys of the map column.");
-  auto const contains =
-    cudf::lists::contains(keys, lookup_keys, stream, cudf::get_current_device_resource_ref());
+  auto const contains = cudf::lists::contains(keys, lookup_keys, stream, mr.as_temporary());
   // Replace nulls with BOOL8{false};
-  auto const scalar_false = cudf::numeric_scalar<bool>{false, true, stream};
+  auto const scalar_false = cudf::numeric_scalar<bool>{false, true, stream, mr.as_temporary()};
   return cudf::replace_nulls(contains->view(), scalar_false, stream, mr);
 }
 

@@ -142,11 +142,11 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& string
   if (tokens_counts == 0)  // if no input strings, return an empty column
     return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
 
-  auto const temp_mr  = mr.get_temporary_mr();
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
   // the indices may not be in order so we need to build a sorted map
-  auto sorted_rows =
-    cudf::detail::stable_sorted_order(cudf::table_view({row_indices}), {}, {}, stream, temp_mr);
+  auto sorted_rows = cudf::detail::stable_sorted_order(
+    cudf::table_view({row_indices}), {}, {}, stream, mr.as_temporary());
   auto const d_row_map = sorted_rows->view().data<cudf::size_type>();
 
   // create offsets for the tokens for each output string

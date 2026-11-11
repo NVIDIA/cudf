@@ -183,11 +183,11 @@ std::unique_ptr<table> partition(strings_column_view const& strings,
   auto strings_column = column_device_view::create(strings.parent(), stream);
   string_view d_delimiter(delimiter.data(), delimiter.size());
   auto left_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   auto delim_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   auto right_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   partition_fn partitioner(
     *strings_column, d_delimiter, left_indices, delim_indices, right_indices);
 
@@ -213,11 +213,11 @@ std::unique_ptr<table> rpartition(strings_column_view const& strings,
   auto strings_column = column_device_view::create(strings.parent(), stream);
   string_view d_delimiter(delimiter.data(), delimiter.size());
   auto left_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   auto delim_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   auto right_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   rpartition_fn partitioner(
     *strings_column, d_delimiter, left_indices, delim_indices, right_indices);
   thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),

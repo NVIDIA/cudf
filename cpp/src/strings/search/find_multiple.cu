@@ -71,12 +71,12 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
                     });
   results->set_null_count(0);
 
-  auto offsets = cudf::detail::sequence(
-    strings_count + 1,
-    numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
-    numeric_scalar<int32_t>(targets_count, true, stream, cudf::get_current_device_resource_ref()),
-    stream,
-    mr);
+  auto offsets =
+    cudf::detail::sequence(strings_count + 1,
+                           numeric_scalar<int32_t>(0, true, stream, mr.as_temporary()),
+                           numeric_scalar<int32_t>(targets_count, true, stream, mr.as_temporary()),
+                           stream,
+                           mr);
   return make_lists_column(strings_count,
                            std::move(offsets),
                            std::move(results),

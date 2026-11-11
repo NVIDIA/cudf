@@ -1119,7 +1119,8 @@ tokenized_words compute_some_tokens(
   auto const d_input_chars = input.chars_begin(stream) + first_offset;
   auto const d_row_starts =
     make_row_starts(input, first_offset, chars_size, stream, mr.as_temporary());
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // count the words in each row (up to max_words_per_row) and convert to offsets
   auto d_offsets = cuda::device_buffer<int64_t>{

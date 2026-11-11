@@ -64,7 +64,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(
   auto d_replacements      = cudf::column_device_view::create(replacement_values.parent(), stream);
 
   auto indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},

@@ -316,10 +316,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     get_offset_value(input.offsets(), input.offset() + strings_count, stream) -
     get_offset_value(input.offsets(), input.offset(), stream);
 
-  auto d_targets =
-    create_string_vector_from_column(targets, stream, cudf::get_current_device_resource_ref());
-  auto d_replacements =
-    create_string_vector_from_column(repls, stream, cudf::get_current_device_resource_ref());
+  auto d_targets      = create_string_vector_from_column(targets, stream, mr.as_temporary());
+  auto d_replacements = create_string_vector_from_column(repls, stream, mr.as_temporary());
 
   replace_multi_parallel_fn fn{
     *d_strings,
@@ -330,7 +328,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
 
   // Count the number of targets in the entire column.
   // Note this may over-count in the case where a target spans adjacent strings.
-  cudf::detail::device_scalar<int64_t> d_count(0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<int64_t> d_count(0, stream, mr.get_temporary_mr());
   auto const num_blocks = cudf::detail::div_rounding_up_safe(
     cudf::detail::div_rounding_up_safe(chars_bytes, static_cast<int64_t>(bytes_per_thread)),
     block_size);
@@ -342,10 +340,10 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   // TODO: Replace these with resizable buffers once https://github.com/NVIDIA/cccl/issues/12051 is
   // resolved
   cuda::device_buffer<int64_t> targets_positions_storage(
-    stream, cudf::get_current_device_resource_ref(), target_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), target_count, cuda::no_init);
   auto targets_positions = device_span<int64_t>{targets_positions_storage};
   cuda::device_buffer<size_type> targets_indices_storage(
-    stream, cudf::get_current_device_resource_ref(), target_count, cuda::no_init);
+    stream, mr.get_temporary_mr(), target_count, cuda::no_init);
   auto targets_indices = device_span<size_type>{targets_indices_storage};
 
   // cudf::detail::make_counting_transform_iterator hardcodes size_type
@@ -364,14 +362,14 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   auto d_targets_indices = targets_indices.data();
 
   // create a vector of offsets to each string's set of target positions
-  auto const targets_offsets = create_offsets_from_positions(
-    input, targets_positions, stream, cudf::get_current_device_resource_ref());
+  auto const targets_offsets =
+    create_offsets_from_positions(input, targets_positions, stream, mr.as_temporary());
   auto const d_targets_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(targets_offsets->view());
 
   // compute the number of string segments produced by replace in each string
-  auto counts = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto counts =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
@@ -391,7 +389,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
 
   // build a vector of all the positions for all the strings
   auto indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_strings, cuda::no_init);
   auto d_indices = indices.data();
   auto d_sizes   = counts.data();  // reusing this vector to hold output sizes now
   thrust::for_each_n(

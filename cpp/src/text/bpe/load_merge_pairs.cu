@@ -170,7 +170,7 @@ std::unique_ptr<bpe_merge_pairs::bpe_merge_pairs_impl> create_bpe_merge_pairs_im
   auto const space = std::string(" ");  // workaround to ARM issue
   auto pairs =
     cudf::strings::split_record(input,
-                                cudf::string_scalar(space, true, stream, mr.get_temporary_mr()),
+                                cudf::string_scalar(space, true, stream, mr.as_temporary()),
                                 1,
                                 stream,
                                 mr.get_output_mr());

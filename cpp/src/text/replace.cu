@@ -327,7 +327,8 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
     cudf::data_type{cudf::type_id::INT64}, tmp_size + 1, tmp_offsets.data(), nullptr, 0)});
   auto const tmp_strings = cudf::column_view(
     cudf::data_type{cudf::type_id::STRING}, tmp_size, input_chars, nullptr, 0, 0, children);
-  auto const d_tmp_strings = cudf::column_device_view::create(tmp_strings, stream, temp_mr);
+  auto const d_tmp_strings =
+    cudf::column_device_view::create(tmp_strings, stream, mr.as_temporary());
 
   // compute indices to the actual output rows
   auto indices =
@@ -377,11 +378,12 @@ std::unique_ptr<cudf::column> replace_tokens(cudf::strings_column_view const& in
 
   if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
 
-  auto const temp_mr   = mr.get_temporary_mr();
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
-  auto const d_targets = cudf::column_device_view::create(targets.parent(), stream, temp_mr);
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto const d_targets =
+    cudf::column_device_view::create(targets.parent(), stream, mr.as_temporary());
   auto const d_replacements =
-    cudf::column_device_view::create(replacements.parent(), stream, temp_mr);
+    cudf::column_device_view::create(replacements.parent(), stream, mr.as_temporary());
   auto const d_delimiter = cudf::string_view(delimiter.data(), delimiter.size());
 
   replace_tokens_fn replacer{*d_strings,
@@ -406,7 +408,7 @@ std::unique_ptr<cudf::column> filter_tokens(cudf::strings_column_view const& inp
   if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
 
   auto const d_strings =
-    cudf::column_device_view::create(input.parent(), stream, mr.get_temporary_mr());
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const d_replacement = cudf::string_view(replacement.data(), replacement.size());
   auto const d_delimiter   = cudf::string_view(delimiter.data(), delimiter.size());
 

@@ -203,7 +203,7 @@ std::unique_ptr<column> format_list_column(lists_column_view const& input,
 
   // create stack memory for processing nested lists
   auto stack_buffer = cuda::device_buffer<stack_item>(
-    stream, cudf::get_current_device_resource_ref(), input.size() * depth, cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size() * depth, cuda::no_init);
 
   auto const d_input      = column_device_view::create(input.parent(), stream);
   auto const d_separators = column_device_view::create(separators.parent(), stream);

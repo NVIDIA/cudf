@@ -57,8 +57,7 @@ std::unique_ptr<column> scatter(SourceIterator begin,
   if (target.is_empty()) return make_empty_column(type_id::STRING);
 
   // create vector of string_view's to scatter into
-  auto target_vector =
-    create_string_vector_from_column(target, stream, cudf::get_current_device_resource_ref());
+  auto target_vector = create_string_vector_from_column(target, stream, mr.as_temporary());
 
   // this ensures empty strings are not mapped to nulls in the make_strings_column function
   auto const size = cuda::std::distance(begin, end);

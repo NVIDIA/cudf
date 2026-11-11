@@ -113,14 +113,14 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            cuda::stream_ref stream,
                            cudf::memory_resources mr)
 {
-  auto output_sizes = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto output_sizes =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   size_and_exec_fn.d_sizes = output_sizes.data();
 
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(strings_count);
 
-  auto d_buffer = cuda::device_buffer<std::byte>(
-    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
+  auto d_buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
   auto const shmem_size = d_prog.compute_shared_memory_size();
   cudf::detail::grid_1d grid{thread_count, 256};

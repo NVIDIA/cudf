@@ -87,8 +87,7 @@ std::unique_ptr<column> to_floats(strings_column_view const& input,
 {
   size_type strings_count = input.size();
   if (strings_count == 0) {
-    return make_numeric_column(
-      output_type, 0, mask_state::UNALLOCATED, stream, cudf::get_current_device_resource_ref());
+    return make_numeric_column(output_type, 0, mask_state::UNALLOCATED, stream, mr);
   }
   auto strings_column = column_device_view::create(input.parent(), stream);
   auto d_strings      = *strings_column;

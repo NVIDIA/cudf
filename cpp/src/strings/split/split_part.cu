@@ -145,7 +145,7 @@ std::unique_ptr<column> split_part_fn(strings_column_view const& input,
 
   // get just the indexed value of each element
   auto d_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},

@@ -443,8 +443,9 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
   auto const output_type = cudf::data_type{cudf::type_to_id<hash_value_type>()};
   if (input.is_empty()) { return cudf::make_empty_column(output_type); }
 
-  auto const temp_mr   = mr.get_temporary_mr();
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results =
     cudf::make_numeric_column(output_type,
@@ -534,7 +535,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
   if (input.is_empty()) { return cudf::make_empty_column(output_type); }
 
   auto const temp_mr = mr.get_temporary_mr();
-  auto const d_input = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const d_input = cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results =
     cudf::make_numeric_column(output_type,
@@ -604,11 +605,11 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                                 cudf::memory_resources mr)
 {
   // build the offsets for the output lists column
-  auto const temp_mr   = mr.get_temporary_mr();
   auto const output_mr = mr.get_output_mr();
-  auto const zero      = cudf::numeric_scalar<cudf::size_type>(0, true, stream, temp_mr);
-  auto const size      = cudf::numeric_scalar<cudf::size_type>(seeds_size, true, stream, temp_mr);
-  auto offsets         = cudf::detail::sequence(input.size() + 1, zero, size, stream, output_mr);
+  auto const zero      = cudf::numeric_scalar<cudf::size_type>(0, true, stream, mr.as_temporary());
+  auto const size =
+    cudf::numeric_scalar<cudf::size_type>(seeds_size, true, stream, mr.as_temporary());
+  auto offsets = cudf::detail::sequence(input.size() + 1, zero, size, stream, output_mr);
   hashes->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
                         0);  // children have no nulls
 

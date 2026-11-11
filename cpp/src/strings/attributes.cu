@@ -218,7 +218,7 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
 
   // create offsets vector to account for each string's character length
   cuda::device_buffer<size_type> offsets(
-    stream, cudf::get_current_device_resource_ref(), input.size() + 1, cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size() + 1, cuda::no_init);
   thrust::transform_inclusive_scan(
     cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},

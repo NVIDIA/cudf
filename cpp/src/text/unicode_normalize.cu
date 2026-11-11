@@ -336,13 +336,14 @@ unicode_normalizer::unicode_normalizer(cudf::table_view const& unicode_data,
     cudf::strings::detail::hex_to_integers(cudf::strings_column_view(unicode_data.column(0)),
                                            cudf::data_type{cudf::type_id::UINT32},
                                            stream,
-                                           temp_mr);
+                                           mr.as_temporary());
   auto d_codepoints = cuda::std::span<uint32_t const>(codepoints_col->view().data<uint32_t>(),
                                                       static_cast<std::size_t>(num_rows));
 
-  auto const d_ccc_col = cudf::column_device_view::create(unicode_data.column(1), stream, temp_mr);
+  auto const d_ccc_col =
+    cudf::column_device_view::create(unicode_data.column(1), stream, mr.as_temporary());
   auto const d_decomp_map =
-    cudf::column_device_view::create(unicode_data.column(2), stream, temp_mr);
+    cudf::column_device_view::create(unicode_data.column(2), stream, mr.as_temporary());
   bool const apply_compat =
     (form == unicode_normalization_form::NFKD || form == unicode_normalization_form::NFKC);
   auto const policy   = cudf::detail::exec_policy_nosync(stream, mr);

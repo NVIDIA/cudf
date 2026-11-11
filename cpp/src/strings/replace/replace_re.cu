@@ -105,8 +105,7 @@ std::unique_ptr<column> replace_re(strings_column_view const& input,
 
   auto [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY) {
-    auto const target =
-      cudf::string_scalar(literal, true, stream, cudf::get_current_device_resource_ref());
+    auto const target = cudf::string_scalar(literal, true, stream, mr.as_temporary());
     return replace(input, target, replacement, maxrepl, stream, mr);
   }
 

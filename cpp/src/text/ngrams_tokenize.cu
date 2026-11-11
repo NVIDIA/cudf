@@ -142,9 +142,10 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
   auto strings_count = strings.size();
   if (strings.is_empty()) return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
 
-  auto const temp_mr  = mr.get_temporary_mr();
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
-  auto d_strings      = *strings_column;
+  auto const temp_mr = mr.get_temporary_mr();
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
+  auto d_strings = *strings_column;
 
   // Example for comments with ngrams=2
   // ["a bb ccc","dd e"] => ["a_bb", "bb_ccc", "dd_e"]

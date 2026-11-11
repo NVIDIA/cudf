@@ -582,19 +582,17 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
   auto delimiter_positions = [&] {
     if constexpr (std::is_same_v<DelimiterFn, string_delimiter_fn>) {
       return find_string_delimiter_positions(
-        input, delimiter_fn.d_delimiter, stream, cudf::get_current_device_resource_ref());
+        input, delimiter_fn.d_delimiter, stream, mr.as_temporary());
     } else if constexpr (std::is_same_v<std::remove_cvref_t<DelimiterFn>,
                                         whitespace_delimiter_fn>) {
-      return find_whitespace_delimiter_positions(
-        input, stream, cudf::get_current_device_resource_ref());
+      return find_whitespace_delimiter_positions(input, stream, mr.as_temporary());
     } else {
       auto [first_offset, last_offset] = get_first_and_last_offset(input, stream);
       auto const chars_bytes           = last_offset - first_offset;
       delimiter_fn.d_chars             = input.chars_begin(stream) + first_offset;
       delimiter_fn.chars_bytes         = chars_bytes;
 
-      cudf::detail::device_scalar<int64_t> d_count(
-        0, stream, cudf::get_current_device_resource_ref());
+      cudf::detail::device_scalar<int64_t> d_count(0, stream, mr.get_temporary_mr());
       if (chars_bytes > 0) {
         constexpr int64_t block_size         = 512;
         constexpr size_type bytes_per_thread = 4;
@@ -606,7 +604,7 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
         CUDF_CUDA_TRY(cudaGetLastError());
       }
       auto positions = cuda::device_buffer<int64_t>(
-        stream, cudf::get_current_device_resource_ref(), d_count.value(stream), cuda::no_init);
+        stream, mr.get_temporary_mr(), d_count.value(stream), cuda::no_init);
       cudf::detail::copy_if_async(cuda::counting_iterator<int64_t>{0},
                                   cuda::counting_iterator<int64_t>{chars_bytes},
                                   positions.begin(),
@@ -624,8 +622,8 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
     cudf::detail::offsetalator_factory::make_input_iterator(delimiter_offsets->view());
 
   // compute the number of tokens per string
-  auto token_counts = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+  auto token_counts =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   auto d_positions     = delimiter_positions.data();
   auto const zero_iter = cuda::counting_iterator<size_type>{0};
   thrust::transform(
@@ -645,7 +643,7 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
 
   // build a vector of all the token positions for all the strings
   auto tokens = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), total_tokens, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_tokens, cuda::no_init);
   auto d_tokens = tokens.data();
   auto get_tokens_fn =
     [tokenizer, d_tokens_offsets, d_positions, d_delimiter_offsets, d_tokens] __device__(

@@ -361,8 +361,9 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   if (input.size() == input.null_count()) { return cudf::make_empty_column(output_type); }
 
   // count the tokens per string and build the offsets from the counts
-  auto const temp_mr     = mr.get_temporary_mr();
-  auto const d_strings   = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const d_delimiter = delimiter.value(stream);
   auto map_ref           = vocabulary._impl->get_map_ref();
 
@@ -444,7 +445,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   auto const tmp_input = cudf::column_view(
     input.parent().type(), total_count, d_input_chars, nullptr, 0, 0, {tmp_offsets->view()});
 
-  auto const d_tmp_strings = cudf::column_device_view::create(tmp_input, stream, temp_mr);
+  auto const d_tmp_strings = cudf::column_device_view::create(tmp_input, stream, mr.as_temporary());
 
   auto tokens = cudf::make_numeric_column(
     output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());

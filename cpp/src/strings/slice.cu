@@ -245,7 +245,7 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
                                                    cudf::memory_resources mr)
 {
   auto results = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
   auto const d_column = column_device_view::create(input.parent(), stream);
 

@@ -210,8 +210,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
 {
   CUDF_FUNC_RANGE();
   // Compute output sizes
-  auto const device_views =
-    create_strings_device_views(columns, stream, cudf::get_current_device_resource_ref());
+  auto const device_views         = create_strings_device_views(columns, stream, mr.as_temporary());
   auto const& d_views             = std::get<1>(device_views);
   auto const& d_input_offsets     = std::get<2>(device_views);
   auto const& d_partition_offsets = std::get<3>(device_views);
@@ -245,8 +244,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   }
 
   {  // Copy offsets columns with single kernel launch
-    cudf::detail::device_scalar<size_type> d_valid_count(
-      0, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<size_type> d_valid_count(0, stream, mr.get_temporary_mr());
 
     constexpr size_type block_size{256};
     cudf::detail::grid_1d config(offsets_count, block_size);

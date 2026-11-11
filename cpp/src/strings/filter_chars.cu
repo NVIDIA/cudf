@@ -123,7 +123,7 @@ std::unique_ptr<column> filter_characters(
       return char_range{entry.first, entry.second};
     });
   cuda::device_buffer<char_range> table =
-    cudf::detail::make_device_buffer(htable, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::make_device_buffer(htable, stream, mr.as_temporary());
 
   auto d_strings = column_device_view::create(strings.parent(), stream);
 

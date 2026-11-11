@@ -225,7 +225,7 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
   auto target_itr      = cuda::make_constant_iterator(d_target);
   using TargetIterator = decltype(target_itr);
   find_utility<TargetIterator, forward>(
-    input, target_itr, *results, start, stop, stream, cudf::get_current_device_resource_ref());
+    input, target_itr, *results, start, stop, stream, mr.as_temporary());
   results->set_null_count(input.null_count());
   return results;
 }
@@ -276,7 +276,7 @@ std::unique_ptr<column> find(strings_column_view const& input,
   auto target_itr = cudf::detail::make_null_replacement_iterator<string_view>(
     *d_targets, string_view{}, target.has_nulls());
   find_utility<decltype(target_itr), forward>(
-    input, target_itr, *results, start, -1, stream, cudf::get_current_device_resource_ref());
+    input, target_itr, *results, start, -1, stream, mr.as_temporary());
 
   // AND the bitmasks from input and target
   auto [null_mask, null_count] =
@@ -435,9 +435,8 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   if (target.size() == 0)  // empty target string returns true
   {
-    auto const true_scalar =
-      make_fixed_width_scalar<bool>(true, stream, cudf::get_current_device_resource_ref());
-    auto results = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
+    auto const true_scalar = make_fixed_width_scalar<bool>(true, stream, mr.as_temporary());
+    auto results           = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
     results->set_null_mask(cudf::detail::copy_bitmask(strings.parent(), stream, mr),
                            strings.null_count());
     return results;

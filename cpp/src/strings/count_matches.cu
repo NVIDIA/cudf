@@ -74,7 +74,7 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                             d_results,
                             strings_count,
                             stream,
-                            cudf::get_current_device_resource_ref());
+                            mr.as_temporary());
   } else {
     if (d_prog.is_empty_match_possible()) {
       launch_transform_kernel(count_fn<positional::BEGIN_END>{d_strings},
@@ -82,14 +82,14 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                               d_results,
                               strings_count,
                               stream,
-                              cudf::get_current_device_resource_ref());
+                              mr.as_temporary());
     } else {
       launch_transform_kernel(count_fn<positional::END_ONLY>{d_strings},
                               d_prog,
                               d_results,
                               strings_count,
                               stream,
-                              cudf::get_current_device_resource_ref());
+                              mr.as_temporary());
     }
   }
 

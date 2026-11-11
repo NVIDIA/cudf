@@ -102,7 +102,7 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
   cudf::string_view d_delimiter(delimiter.data(), delimiter.size());
   auto strings_column =
-    cudf::column_device_view::create(strings.parent(), stream, mr.get_temporary_mr());
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
   return tokenize_fn(strings.size(), strings_tokenizer{*strings_column, d_delimiter}, stream, mr);
 }
 
@@ -115,7 +115,7 @@ std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& stri
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
   cudf::string_view d_delimiter(delimiter.data(), delimiter.size());
   auto strings_column =
-    cudf::column_device_view::create(strings.parent(), stream, mr.get_temporary_mr());
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
   return token_count_fn(
     strings.size(), strings_tokenizer{*strings_column, d_delimiter}, stream, mr);
 }
@@ -128,9 +128,10 @@ std::unique_ptr<cudf::column> tokenize(cudf::strings_column_view const& strings,
 {
   CUDF_EXPECTS(delimiters.size() > 0, "Parameter delimiters must not be empty");
   CUDF_EXPECTS(!delimiters.has_nulls(), "Parameter delimiters must not have nulls");
-  auto const temp_mr     = mr.get_temporary_mr();
-  auto strings_column    = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
-  auto delimiters_column = cudf::column_device_view::create(delimiters.parent(), stream, temp_mr);
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
+  auto delimiters_column =
+    cudf::column_device_view::create(delimiters.parent(), stream, mr.as_temporary());
   return tokenize_fn(
     strings.size(),
     multi_delimiter_strings_tokenizer{*strings_column,
@@ -148,9 +149,10 @@ std::unique_ptr<cudf::column> count_tokens(cudf::strings_column_view const& stri
 {
   CUDF_EXPECTS(delimiters.size() > 0, "Parameter delimiters must not be empty");
   CUDF_EXPECTS(!delimiters.has_nulls(), "Parameter delimiters must not have nulls");
-  auto const temp_mr     = mr.get_temporary_mr();
-  auto strings_column    = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
-  auto delimiters_column = cudf::column_device_view::create(delimiters.parent(), stream, temp_mr);
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
+  auto delimiters_column =
+    cudf::column_device_view::create(delimiters.parent(), stream, mr.as_temporary());
   return token_count_fn(
     strings.size(),
     multi_delimiter_strings_tokenizer{*strings_column,
@@ -188,9 +190,8 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
     strings_column.parent().data<uint8_t>();  // unsigned is necessary for checking bits
   d_chars += offset;
 
-  auto const temp_mr = mr.get_temporary_mr();
   auto const character_counts =
-    cudf::strings::detail::count_characters(strings_column, stream, temp_mr);
+    cudf::strings::detail::count_characters(strings_column, stream, mr.as_temporary());
   auto [list_offsets, num_characters] =
     cudf::detail::make_offsets_child_column(character_counts->view().begin<cudf::size_type>(),
                                             character_counts->view().end<cudf::size_type>(),

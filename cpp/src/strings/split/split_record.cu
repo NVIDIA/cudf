@@ -260,7 +260,7 @@ std::pair<std::unique_ptr<column>, cuda::device_buffer<string_index_pair>> split
   cudf::memory_resources mr)
 {
   auto const strings_count = d_strings.size();
-  auto const temp_mr       = cudf::get_current_device_resource_ref();
+  auto const temp_mr       = mr.get_temporary_mr();
   auto const iota_itr      = cuda::counting_iterator<size_type>{0};
   auto const policy        = cudf::detail::exec_policy_nosync(stream, mr);
 

@@ -100,8 +100,8 @@ std::unique_ptr<cudf::column> is_letter(cudf::strings_column_view const& strings
                                   stream,
                                   mr.get_output_mr());
   // set values into output column
-  auto const temp_mr  = mr.get_temporary_mr();
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{strings.size()},
@@ -216,8 +216,8 @@ std::unique_ptr<cudf::column> porter_stemmer_measure(cudf::strings_column_view c
                                   stream,
                                   mr.get_output_mr());
   // compute measures into output column
-  auto const temp_mr  = mr.get_temporary_mr();
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
   thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator<cudf::size_type>{strings.size()},

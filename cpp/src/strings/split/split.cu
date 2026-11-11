@@ -246,7 +246,7 @@ std::unique_ptr<table> split_impl(strings_column_view const& input,
   size_type const max_tokens = maxsplit > 0 ? maxsplit + 1 : std::numeric_limits<size_type>::max();
 
   auto d_strings            = column_device_view::create(input.parent(), stream);
-  auto temp_mr              = cudf::get_current_device_resource_ref();
+  auto temp_mr              = mr.as_temporary();
   auto const non_null_count = input.size() - input.null_count();
   if (delimiter.size() == 0) {
     if (non_null_count > 0 &&

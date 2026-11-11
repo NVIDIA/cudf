@@ -128,8 +128,7 @@ std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& 
   if (strings.is_empty()) return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
 
   // create device column
-  auto d_strings =
-    cudf::column_device_view::create(strings.parent(), stream, mr.get_temporary_mr());
+  auto d_strings = cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
 
   // build offsets and children using the normalize_space_fn
   auto [offsets_column, chars] = cudf::strings::detail::make_strings_children(

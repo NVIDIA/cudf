@@ -343,7 +343,8 @@ std::pair<cuda::device_buffer<uint32_t>, cuda::device_buffer<int64_t>> hash_subs
 {
   auto const output_mr = mr.get_output_mr();
   auto const temp_mr   = mr.get_temporary_mr();
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // count substrings
   auto offsets = cuda::device_buffer<int64_t>(stream, output_mr, input.size() + 1, cuda::no_init);

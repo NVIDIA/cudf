@@ -243,8 +243,8 @@ std::unique_ptr<cudf::column> edit_distance(cudf::strings_column_view const& inp
 
   // create device columns from the input columns
   auto const temp_mr = mr.get_temporary_mr();
-  auto d_strings     = cudf::column_device_view::create(input.parent(), stream, temp_mr);
-  auto d_targets     = cudf::column_device_view::create(targets.parent(), stream, temp_mr);
+  auto d_strings     = cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto d_targets = cudf::column_device_view::create(targets.parent(), stream, mr.as_temporary());
 
   // calculate the size of the compute-buffer
   cuda::device_buffer<std::ptrdiff_t> offsets(stream, temp_mr, input.size() + 1, cuda::no_init);

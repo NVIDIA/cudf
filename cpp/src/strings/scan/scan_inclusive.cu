@@ -77,7 +77,7 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
 
   // build indices of the scan operation results
   cuda::device_buffer<size_type> result_map(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{input.size()},

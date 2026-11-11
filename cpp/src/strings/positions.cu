@@ -31,8 +31,8 @@ std::unique_ptr<column> create_offsets_from_positions(strings_column_view const&
     cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
 
   // first, create a vector of string indices for each position
-  auto indices = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), positions.size(), cuda::no_init);
+  auto indices =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), positions.size(), cuda::no_init);
   thrust::upper_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       d_offsets,
                       d_offsets + input.size(),
@@ -41,8 +41,8 @@ std::unique_ptr<column> create_offsets_from_positions(strings_column_view const&
                       indices.begin());
 
   // compute position offsets per string
-  auto counts = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+  auto counts =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   // memset to zero-out the counts for any null-entries or strings with no positions
   thrust::uninitialized_fill(
     cudf::detail::exec_policy_nosync(stream, mr), counts.begin(), counts.end(), 0);

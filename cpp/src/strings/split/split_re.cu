@@ -137,8 +137,7 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
   auto const strings_count = d_strings.size();
   auto const max_tokens    = maxsplit > 0 ? maxsplit : std::numeric_limits<size_type>::max();
 
-  auto const counts =
-    count_matches(d_strings, d_prog, strings_count, stream, mr.get_temporary_mr());
+  auto const counts   = count_matches(d_strings, d_prog, strings_count, stream, mr.as_temporary());
   auto const d_counts = counts->view().template data<size_type>();
 
   // convert match counts to token offsets
@@ -235,8 +234,8 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
 
   // get the split tokens from the input column; this also computes the match counts
   // and converts them into offsets, using a single device regex program build
-  auto [tokens, offsets] = generate_tokens(
-    *d_strings, prog, direction, maxsplit, stream, cudf::get_current_device_resource_ref());
+  auto [tokens, offsets] =
+    generate_tokens(*d_strings, prog, direction, maxsplit, stream, mr.as_temporary());
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // the output column count is the maximum number of tokens generated for any input string

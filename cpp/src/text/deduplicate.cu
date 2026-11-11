@@ -271,7 +271,7 @@ std::unique_ptr<cudf::column> resolve_duplicates(cudf::strings_column_view const
 {
   CUDF_EXPECTS(min_width > 8, "min_width should be at least 8", std::invalid_argument);
 
-  auto d_strings = cudf::column_device_view::create(input.parent(), stream, mr.get_temporary_mr());
+  auto d_strings = cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto [first_offset, last_offset] =
     cudf::strings::detail::get_first_and_last_offset(input, stream);
   auto const d_input_chars = input.chars_begin(stream) + first_offset;

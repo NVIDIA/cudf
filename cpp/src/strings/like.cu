@@ -369,9 +369,8 @@ std::unique_ptr<column> like(strings_column_view const& input,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
 {
-  auto const ptn = string_scalar(pattern, true, stream, cudf::get_current_device_resource_ref());
-  auto const esc =
-    string_scalar(escape_character, true, stream, cudf::get_current_device_resource_ref());
+  auto const ptn = string_scalar(pattern, true, stream, mr.as_temporary());
+  auto const esc = string_scalar(escape_character, true, stream, mr.as_temporary());
   return like(input, ptn, esc, stream, mr);
 }
 

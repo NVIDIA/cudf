@@ -877,8 +877,11 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   if (input.is_empty()) { return cudf::make_empty_column(cudf::type_id::STRING); }
   auto const temp_mr = mr.get_temporary_mr();
   if (input.chars_size(stream) == 0) {  // all rows are empty or null
-    auto result = cudf::make_column_from_scalar(
-      cudf::string_scalar("", true, stream, temp_mr), input.size(), stream, mr.get_output_mr());
+    auto result =
+      cudf::make_column_from_scalar(cudf::string_scalar("", true, stream, mr.as_temporary()),
+                                    input.size(),
+                                    stream,
+                                    mr.get_output_mr());
     result->set_null_mask(cudf::detail::copy_bitmask(input.parent(), stream, mr),
                           input.null_count());
     return result;
@@ -890,12 +893,14 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
 
   // the chars data for null rows would otherwise be encoded and written to the output
   if (input.has_nulls() && cudf::detail::has_nonempty_nulls(input.parent(), stream)) {
-    auto const sanitized = cudf::detail::purge_nonempty_nulls(input.parent(), stream, temp_mr);
+    auto const sanitized =
+      cudf::detail::purge_nonempty_nulls(input.parent(), stream, mr.as_temporary());
     return detail::byte_pair_encoding(
       cudf::strings_column_view(sanitized->view()), merge_pairs, separator, stream, mr);
   }
 
-  auto const d_strings = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto const first_offset  = (input.offset() == 0) ? 0L
                                                    : cudf::strings::detail::get_offset_value(

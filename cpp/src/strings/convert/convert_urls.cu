@@ -392,8 +392,8 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   auto const d_strings = column_device_view::create(strings.parent(), stream);
 
   // build offsets column by computing the output row sizes and scanning the results
-  auto row_sizes = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
+  auto row_sizes =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
   url_decode_char_counter<num_warps_per_threadblock, char_block_size>
     <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, row_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());

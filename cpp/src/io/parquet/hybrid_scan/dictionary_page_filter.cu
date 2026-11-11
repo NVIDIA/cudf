@@ -1466,7 +1466,8 @@ aggregate_reader_metadata::apply_dictionary_filter(
   std::span<data_type const> output_dtypes,
   std::span<int const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -1492,7 +1493,7 @@ aggregate_reader_metadata::apply_dictionary_filter(
   std::vector<std::unique_ptr<cudf::column>> dictionary_membership_columns;
 
   // Memory resource to allocate dictionary membership columns with
-  auto const mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.as_temporary();
 
   // Dictionary column index currently being processed
   cudf::size_type dictionary_col_idx = 0;
@@ -1524,7 +1525,7 @@ aggregate_reader_metadata::apply_dictionary_filter(
                                                                        literals[input_col_idx],
                                                                        operators[input_col_idx],
                                                                        stream,
-                                                                       mr);
+                                                                       temp_mr);
 
       // Add the built columns to the vector of columns
       dictionary_membership_columns.insert(dictionary_membership_columns.end(),
@@ -1541,7 +1542,7 @@ aggregate_reader_metadata::apply_dictionary_filter(
   // Filter dictionary membership table with the DictionaryAST expression and collect
   // filtered row group indices
   return parquet::detail::collect_filtered_row_group_indices(
-    dictionary_membership_table, dictionary_expr.value(), input_row_group_indices, stream);
+    dictionary_membership_table, dictionary_expr.value(), input_row_group_indices, stream, mr);
 }
 
 dictionary_literals_collector::dictionary_literals_collector(

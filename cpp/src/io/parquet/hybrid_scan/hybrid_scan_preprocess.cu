@@ -13,13 +13,12 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_transform.cuh>
 #include <cuda/buffer>
@@ -45,22 +44,24 @@ using parquet::detail::PageInfo;
  * @param dict_page_data Device spans of dictionary page data, one per input column chunk. Empty
  *                       for column chunks without a dictionary page
  * @param stream CUDA stream
+ * @param mr Memory resources used for temporary allocations
  */
 void decode_dictionary_page_headers(
   cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
   cudf::detail::hostdevice_span<PageInfo> pages,
   std::span<cudf::device_span<uint8_t const> const> dict_page_data,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
-  auto const page_data = cudf::detail::make_device_buffer_async(
-    dict_page_data, stream, cudf::get_current_device_resource_ref());
+  auto const page_data =
+    cudf::detail::make_device_buffer_async(dict_page_data, stream, mr.as_temporary());
 
   // Exactly one dictionary page per column chunk
   cuda::device_buffer<size_type> chunk_page_offsets(
-    stream, cudf::get_current_device_resource_ref(), chunks.size() + 1, cuda::no_init);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    stream, mr.get_temporary_mr(), chunks.size() + 1, cuda::no_init);
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    chunk_page_offsets.begin(),
                    chunk_page_offsets.end(),
                    0);
@@ -84,7 +85,7 @@ void decode_dictionary_page_headers(
 
   // Point each chunk at its dictionary page. A chunk whose span is empty keeps a zeroed page and is
   // not pruned with. A non-empty span must hold a dictionary page.
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    cuda::counting_iterator<cuda::std::size_t>(0),
                    cuda::counting_iterator<cuda::std::size_t>(chunks.size()),
                    [chunks     = chunks.device_begin(),
@@ -262,7 +263,8 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
   std::span<int const> dictionary_col_schemas,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   // Create row group information for the input row group indices
   auto const row_groups_info = std::get<2>(_extended_metadata->select_row_groups(
@@ -281,7 +283,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
   // Initialize column chunk descriptors
   auto chunks = cudf::detail::hostdevice_vector<cudf::io::parquet::detail::ColumnChunkDesc>(
-    total_column_chunks, stream, cudf::get_current_device_resource_ref());
+    total_column_chunks, stream, mr.as_temporary());
   auto chunk_idx = 0;
 
   // For all row groups
@@ -345,13 +347,12 @@ hybrid_scan_reader_impl::prepare_dictionaries(
   chunks.host_to_device_async(stream);
 
   // Create page infos for each column chunk's dictionary page
-  cudf::detail::hostdevice_vector<PageInfo> pages(
-    total_column_chunks, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<PageInfo> pages(total_column_chunks, stream, mr.as_temporary());
   CUDF_CUDA_TRY(
     cudaMemsetAsync(pages.device_ptr(), 0, pages.size() * sizeof(PageInfo), stream.get()));
 
   // Decode dictionary page headers
-  decode_dictionary_page_headers(chunks, pages, dictionary_page_data, stream);
+  decode_dictionary_page_headers(chunks, pages, dictionary_page_data, stream, mr);
 
   return {has_compressed_data, std::move(chunks), std::move(pages)};
 }

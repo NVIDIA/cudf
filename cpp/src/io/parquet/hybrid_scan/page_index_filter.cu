@@ -345,7 +345,8 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   cudf::column_view const& row_mask,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<input_column_info const> input_columns,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -364,7 +365,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     std::overflow_error);
 
   // Return an empty vector if all rows are required
-  if (are_all_rows_retained(row_mask, stream)) { return thrust::host_vector<bool>{}; }
+  if (are_all_rows_retained(row_mask, stream, mr)) { return thrust::host_vector<bool>{}; }
 
   // Collect column schema indices from the input columns.
   auto column_schema_indices = std::vector<size_type>(input_columns.size());
@@ -453,7 +454,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   auto data_page_mask = thrust::host_vector<bool>{};
 
   auto const row_range_mask =
-    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, stream);
+    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, stream, mr);
   if (row_range_mask.empty()) { return data_page_mask; }
 
   data_page_mask.reserve(page_row_offsets.size() - num_columns);

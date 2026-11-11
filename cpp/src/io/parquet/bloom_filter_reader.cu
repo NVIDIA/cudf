@@ -565,7 +565,8 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> bloom_filter_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   // Convert AST to BloomfilterAST expression with reference to bloom filter membership
   // in above `bloom_filter_membership_table`
@@ -589,7 +590,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
                          [&](auto const schema_idx) { return get_schema(schema_idx).type_length; });
 
   // The membership table is only used within this function
-  auto const mr = cudf::memory_resources{cudf::get_current_device_resource_ref()};
+  auto const temp_mr = mr.as_temporary();
 
   // Copy bloom filter bitset spans to device
   auto const device_bloom_filter_data =
@@ -619,7 +620,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
       // Add a column for all literals associated with an equality column
       for (auto const& literal : literals[input_col_idx]) {
         bloom_filter_membership_columns.emplace_back(cudf::type_dispatcher<dispatch_storage_type>(
-          dtype, bloom_filter_col, equality_col_idx, dtype, literal, stream, mr));
+          dtype, bloom_filter_col, equality_col_idx, dtype, literal, stream, temp_mr));
       }
       equality_col_idx++;
     });
@@ -630,7 +631,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   // Filter bloom filter membership table with the BloomfilterAST expression and collect
   // filtered row group indices
   return collect_filtered_row_group_indices(
-    bloom_filter_membership_table, bloom_filter_expr.value(), input_row_group_indices, stream);
+    bloom_filter_membership_table, bloom_filter_expr.value(), input_row_group_indices, stream, mr);
 }
 
 equality_literals_collector::equality_literals_collector(

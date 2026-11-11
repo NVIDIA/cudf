@@ -675,11 +675,12 @@ std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_in
   cudf::table_view table,
   std::reference_wrapper<ast::expression const> ast_expr,
   std::span<std::vector<size_type> const> input_row_group_indices,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   // Filter the input table using AST expression
-  auto predicate_col = cudf::detail::compute_column(
-    table, ast_expr.get(), stream, cudf::get_current_device_resource_ref());
+  auto predicate_col =
+    cudf::detail::compute_column(table, ast_expr.get(), stream, mr.as_temporary());
   auto predicate = predicate_col->view();
   CUDF_EXPECTS(predicate.type().id() == cudf::type_id::BOOL8,
                "Filter expression must return a boolean column");

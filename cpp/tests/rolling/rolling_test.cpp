@@ -905,6 +905,28 @@ TYPED_TEST(RollingMinMaxNaNTest, NaNPropagates)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_max, variable_max->view());
 }
 
+TYPED_TEST(RollingMinMaxNaNTest, Dictionary)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  using wrapper      = cudf::test::fixed_width_column_wrapper<T>;
+
+  // MIN/MAX of a dictionary column select rows by their keys; a window containing a NaN
+  // produces NaN
+  auto const input =
+    cudf::test::dictionary_column_wrapper<T>({T{3}, NaN, NaN, T{2}, T{1}}, {1, 1, 1, 1, 1});
+  auto const rolling = [&](cudf::rolling_aggregation const& agg) {
+    auto const result = cudf::rolling_window(input, 2, 0, 1, agg);
+    return cudf::dictionary::decode(cudf::dictionary_column_view(result->view()));
+  };
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    wrapper{T{3}, NaN, NaN, NaN, T{1}},
+    rolling(*cudf::make_min_aggregation<cudf::rolling_aggregation>())->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    wrapper{T{3}, NaN, NaN, NaN, T{2}},
+    rolling(*cudf::make_max_aggregation<cudf::rolling_aggregation>())->view());
+}
+
 TYPED_TEST(RollingVarStdTest, SimpleStaticVarianceStd)
 {
 #define XXX 0  // NULL stub

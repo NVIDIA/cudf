@@ -651,3 +651,33 @@ TEST_F(PartitionTestNotTyped, BinaryStringSmallSchemas)
                        offsets);
   }
 }
+
+TEST_F(PartitionTestNotTyped, DirectFixedWidthSlices)
+{
+  constexpr int rows = 1025;
+  std::vector<int16_t> values(rows + 7), expected;
+  std::vector<int32_t> bins(rows);
+  std::vector<bool> valid(rows + 7), expected_valid;
+  for (int i = 0; i < rows + 7; ++i) {
+    values[i] = i;
+    valid[i]  = i % 11 != 0;
+  }
+  std::vector<cudf::size_type> offsets{0};
+  for (int i = 0; i < rows; ++i)
+    bins[i] = i % 3 == 0;
+  for (int part = 0; part < 2; ++part) {
+    for (int i = 0; i < rows; ++i)
+      if (bins[i] == part) {
+        expected.push_back(values[i + 7]);
+        expected_valid.push_back(valid[i + 7]);
+      }
+    offsets.push_back(expected.size());
+  }
+  fixed_width_column_wrapper<int16_t> owner(values.begin(), values.end(), valid.begin());
+  auto input = cudf::slice(cudf::column_view{owner}, {7, rows + 7})[0];
+  fixed_width_column_wrapper<int16_t> output(
+    expected.begin(), expected.end(), expected_valid.begin());
+  fixed_width_column_wrapper<int32_t> map(bins.begin(), bins.end());
+  run_partition_test(
+    cudf::table_view{{input, input}}, map, 2, cudf::table_view{{output, output}}, offsets);
+}

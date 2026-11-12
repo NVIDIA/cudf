@@ -4,13 +4,19 @@
 #include "partition_policy.hpp"
 
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cub/block/block_scan.cuh>
+#include <cub/device/device_histogram.cuh>
 #include <cub/device/device_partition.cuh>
+#include <cub/device/device_scan.cuh>
+#include <cuda/atomic>
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <thrust/scan.h>
@@ -19,6 +25,8 @@ namespace cudf::detail::partition_map_plan {
 using algorithm       = partition_policy::algorithm;
 constexpr int threads = 256, tile_rows = 1'024, warps = 8, bins = 256;
 
+// The same contiguous warp ordering as PR1: four 32-row rounds per warp.
+// Histogram-only instantiation discards ranks; rank instantiation retains them in registers.
 template <bool Rank, typename MapType>
 __device__ void local_tile(MapType const* map,
                            int n,
@@ -97,6 +105,25 @@ CUDF_KERNEL void get_offsets(int32_t const* counts, int blocks, int p, int n, in
   if (threadIdx.x == 0) offsets[p] = n;
 }
 
+template <typename Sink, typename MapType>
+CUDF_KERNEL void scatter_saved(MapType const* map,
+                               uint16_t const* ranks,
+                               int32_t const* offsets,
+                               int n,
+                               int blocks,
+                               int p,
+                               Sink sink)
+{
+  __shared__ int base[bins];
+  if (threadIdx.x < p) base[threadIdx.x] = offsets[size_t(threadIdx.x) * blocks + blockIdx.x];
+  __syncthreads();
+#pragma unroll
+  for (int j = 0; j < 4; ++j) {
+    int i = blockIdx.x * tile_rows + j * threads + threadIdx.x;
+    if (i < n) sink(i, base[map[i]] + ranks[i]);
+  }
+}
+
 template <int Tiles, bool Reorder = false, typename Sink, typename MapType, typename Offsets>
 CUDF_KERNEL void scatter_recompute(MapType const* map, Offsets offsets, int n, int p, Sink sink)
 {
@@ -136,29 +163,29 @@ CUDF_KERNEL void scatter_recompute(MapType const* map, Offsets offsets, int n, i
   }
 }
 
-inline void scan(int32_t* ptr, size_t count, cuda::stream_ref stream)
+template <typename Sink, typename MapType>
+CUDF_KERNEL void scatter_reserve(MapType const* map, int n, int p, int32_t* cursors, Sink sink)
 {
-  // Same Thrust in-place scan policy as PR1.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                         ptr,
-                         ptr + count,
-                         ptr);
-}
-
-template <int Tiles, bool Reorder = false, typename Sink, typename MapType>
-void recompute(
-  MapType const* map, int n, int p, Sink sink, int32_t* offsets, cuda::stream_ref stream)
-{
-  int blocks = (n - 1) / (tile_rows * Tiles) + 1;
-  rmm::device_uvector<int32_t> counts(size_t(p) * blocks, stream);
-  count_tiles<Tiles, false>
-    <<<blocks, threads, 0, stream.get()>>>(map, n, p, nullptr, counts.data());
-  CUDF_CUDA_TRY(cudaPeekAtLastError());
-  scan(counts.data(), counts.size(), stream);
-  get_offsets<<<1, threads, 0, stream.get()>>>(counts.data(), blocks, p, n, offsets);
-  scatter_recompute<Tiles, Reorder>
-    <<<blocks, threads, 0, stream.get()>>>(map, counts.data(), n, p, sink);
-  CUDF_CUDA_TRY(cudaPeekAtLastError());
+  __shared__ int hist[warps][bins], base[bins];
+  int rank[4], keys[4];
+  int start = blockIdx.x * tile_rows;
+  local_tile<true>(map, n, start, p, hist, rank, keys);
+  if (threadIdx.x < p) {
+    int q = threadIdx.x, sum = 0;
+#pragma unroll
+    for (int w = 0; w < warps; ++w) {
+      int c      = hist[w][q];
+      hist[w][q] = sum;
+      sum += c;
+    }
+    if (sum) base[q] = atomicAdd(cursors + q, sum);
+  }
+  __syncthreads();
+#pragma unroll
+  for (int j = 0; j < 4; ++j) {
+    int i = start + (threadIdx.x / 32) * 128 + j * 32 + threadIdx.x % 32;
+    if (i < n) sink(i, base[keys[j]] + hist[threadIdx.x / 32][keys[j]] + rank[j]);
+  }
 }
 
 template <typename Emit>
@@ -197,6 +224,44 @@ std::vector<int> binary(Map const* map, int n, Emit sink, cuda::stream_ref strea
   return {0, count, n};
 }
 
+inline void scan(int32_t* ptr, size_t count, cuda::stream_ref stream)
+{
+  // Same Thrust in-place scan policy as PR1.
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                         ptr,
+                         ptr + count,
+                         ptr);
+}
+
+template <typename MapType>
+inline void global_hist(MapType const* map, int n, int p, int32_t* offsets, cuda::stream_ref stream)
+{
+  size_t bytes = 0;
+  CUDF_CUDA_TRY(cudaMemsetAsync(offsets + p, 0, sizeof(int), stream.get()));
+  CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(
+    nullptr, bytes, map, offsets, p + 1, 0, p, n, stream.get()));
+  rmm::device_buffer tmp(bytes, stream);
+  CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(
+    tmp.data(), bytes, map, offsets, p + 1, 0, p, n, stream.get()));
+  scan(offsets, p + 1, stream);
+}
+
+template <int Tiles, bool Reorder = false, typename Sink, typename MapType>
+void recompute(
+  MapType const* map, int n, int p, Sink sink, int32_t* offsets, cuda::stream_ref stream)
+{
+  int blocks = (n - 1) / (tile_rows * Tiles) + 1;
+  rmm::device_uvector<int32_t> counts(size_t(p) * blocks, stream);
+  count_tiles<Tiles, false>
+    <<<blocks, threads, 0, stream.get()>>>(map, n, p, nullptr, counts.data());
+  CUDF_CUDA_TRY(cudaPeekAtLastError());
+  scan(counts.data(), counts.size(), stream);
+  get_offsets<<<1, threads, 0, stream.get()>>>(counts.data(), blocks, p, n, offsets);
+  scatter_recompute<Tiles, Reorder>
+    <<<blocks, threads, 0, stream.get()>>>(map, counts.data(), n, p, sink);
+  CUDF_CUDA_TRY(cudaPeekAtLastError());
+}
+
 template <typename MapType, typename Sink>
 std::vector<size_type> run(MapType const* map,
                            size_type n,
@@ -211,15 +276,32 @@ std::vector<size_type> run(MapType const* map,
     CUDF_EXPECTS(p == 2, "Binary plan requires two partitions");
     return binary(map, n, sink, stream);
   }
+  int const blocks = (n - 1) / tile_rows + 1;
   rmm::device_uvector<int32_t> offsets(p + 1, stream);
-  if (method == algorithm::recompute) {
+  if (method == algorithm::saved) {
+    rmm::device_uvector<uint16_t> ranks(n, stream);
+    rmm::device_uvector<int32_t> counts(size_t(p) * blocks, stream);
+    count_tiles<1, true>
+      <<<blocks, threads, 0, stream.get()>>>(map, n, p, ranks.data(), counts.data());
+    CUDF_CUDA_TRY(cudaPeekAtLastError());
+    scan(counts.data(), counts.size(), stream);
+    get_offsets<<<1, threads, 0, stream.get()>>>(counts.data(), blocks, p, n, offsets.data());
+    scatter_saved<<<blocks, threads, 0, stream.get()>>>(
+      map, ranks.data(), counts.data(), n, blocks, p, sink);
+    CUDF_CUDA_TRY(cudaPeekAtLastError());
+  } else if (method == algorithm::recompute)
     recompute<1>(map, n, p, sink, offsets.data(), stream);
-  } else if (method == algorithm::super2) {
+  else if (method == algorithm::super2)
     recompute<2>(map, n, p, sink, offsets.data(), stream);
-  } else {
-    CUDF_FAIL("Unsupported partition plan");
-  }
-  CUDF_CUDA_TRY(cudaPeekAtLastError());
+  else if (method == algorithm::reserve) {
+    global_hist(map, n, p, offsets.data(), stream);
+    rmm::device_uvector<int32_t> cursors(p + 1, stream);
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+      cursors.data(), offsets.data(), (p + 1) * sizeof(int32_t), stream));
+    scatter_reserve<<<blocks, threads, 0, stream.get()>>>(map, n, p, cursors.data(), sink);
+    CUDF_CUDA_TRY(cudaPeekAtLastError());
+  } else
+    CUDF_FAIL("Unknown block partition plan");
   return cudf::detail::make_std_vector(offsets, stream);
 }
 }  // namespace cudf::detail::partition_map_plan

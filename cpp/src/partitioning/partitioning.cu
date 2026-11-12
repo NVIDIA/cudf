@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "partition_fixed_width.cuh"
 #include "partition_identity.cuh"
 #include "partition_map_plan.cuh"
 #include "partition_policy.hpp"
@@ -918,6 +919,20 @@ struct dispatch_map_type {
     if (auto output = cudf::detail::partition_strings_plan::partition<MapType>(
           t, partition_map, num_partitions, stream, mr)) {
       return std::move(*output);
+    }
+
+    auto plan = cudf::detail::partition_policy::select_partition_plan(t, num_partitions);
+    if (plan && plan->direct && !plan->reordered) {
+      auto launch = [&](auto sink) {
+        return cudf::detail::partition_map_plan::run(partition_map.begin<MapType>(),
+                                                     t.num_rows(),
+                                                     num_partitions,
+                                                     plan->method,
+                                                     sink,
+                                                     false,
+                                                     stream);
+      };
+      return cudf::detail::partition_fixed::partition(t, launch, stream, mr);
     }
 
     // Build a histogram of the number of rows in each partition

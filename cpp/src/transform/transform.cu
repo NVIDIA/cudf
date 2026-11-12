@@ -86,7 +86,7 @@ void launch(cudf::kernel const& kernel,
             bitmask_type const* stencil,
             column_device_view_core const* input_cols,
             mutable_column_device_view_core const* output_cols,
-            error_int* max_error,
+            int32_t* max_error,
             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
@@ -197,7 +197,7 @@ void run(kernel const& kernel,
          bitmask_type const* d_stencil,
          std::span<input_column_view const> inputs,
          std::span<output_column> outputs,
-         error_int* d_max_error,
+         int32_t* d_max_error,
          cuda::stream_ref stream,
          cudf::memory_resources mr)
 {
@@ -214,7 +214,7 @@ void run_lto(
   bitmask_type const* stencil,
   std::span<input_column_view const> inputs,
   std::span<output_column> outputs,
-  error_int* max_error,
+  int32_t* max_error,
   transform_udf const& udf,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
@@ -685,8 +685,8 @@ std::unique_ptr<table> execute_transform(kernel const& kernel,
                                          std::move(string_offsets),
                                          stream,
                                          mr);
-  cudf::detail::device_scalar<error_int> error(
-    static_cast<error_int>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<int32_t> error(
+    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
   jit_transform::run(kernel,
                      row_size,
                      stencil.has_value() && stencil->second > 0 ? stencil->first : nullptr,
@@ -785,8 +785,8 @@ static std::unique_ptr<table> execute_lto_transform(
                                          mr);
   auto precompiled =
     dispatch_lto_kernel_fragment(is_null_aware == null_aware::YES, udf.indexed, inputs, columns);
-  cudf::detail::device_scalar<error_int> error(
-    static_cast<error_int>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<int32_t> error(
+    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
   jit_transform::run_lto(precompiled,
                          row_size,
                          stencil.has_value() && stencil->second > 0 ? stencil->first : nullptr,

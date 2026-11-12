@@ -28,7 +28,7 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
                                    cudf::size_type const* __restrict__ right_indices,
                                    cudf::column_device_view_core const* __restrict__ columns,
                                    bool* __restrict__ predicate_results,
-                                   error_int* __restrict__ max_error,
+                                   int32_t* __restrict__ max_error,
                                    RowOperation&& operation)
 {
   // Keep this sentinel consistent with cudf/join/join.hpp without including its host APIs.
@@ -82,7 +82,7 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
 
   if (thread_error == errc::SUCCESS) { return; }
 
-  atomicMax(max_error, static_cast<error_int>(thread_error));
+  atomicMax(max_error, static_cast<int32_t>(thread_error));
 }
 
 }  // namespace cudf::detail

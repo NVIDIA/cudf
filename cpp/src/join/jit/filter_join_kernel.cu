@@ -30,7 +30,7 @@ extern "C" __global__ void cudf_kernel_entry(
   cudf::size_type const* __restrict__ right_indices,
   cudf::column_device_view_core const* __restrict__ columns,
   bool* __restrict__ predicate_results,
-  cudf::error_int* __restrict__ max_error)
+  int32_t* __restrict__ max_error)
 {
   CUDF_KERNEL_INSTANCE(num_rows,
                        left_indices,

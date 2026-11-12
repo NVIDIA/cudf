@@ -38,7 +38,7 @@ extern "C" __global__ void cudf_kernel_entry(
   cudf::bitmask_type const* __restrict__ stencil,
   cudf::column_device_view_core const* __restrict__ input_cols,
   cudf::mutable_column_device_view_core const* __restrict__ output_cols,
-  cudf::error_int* __restrict__ max_error)
+  int32_t* __restrict__ max_error)
 {
   CUDF_KERNEL_INSTANCE(row_size,
                        stencil,

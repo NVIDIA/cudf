@@ -37,7 +37,7 @@ __device__ void transform_kernel(size_type row_size,
                                  bitmask_type const* __restrict__ stencil,
                                  column_device_view_core const* __restrict__ input_cols,
                                  mutable_column_device_view_core const* __restrict__ output_cols,
-                                 error_int* __restrict__ max_error,
+                                 int32_t* __restrict__ max_error,
                                  RowOperation&& operation)
 {
   constexpr auto all_fixed_width_repr_compatible = []<typename... A>() {
@@ -111,7 +111,7 @@ __device__ void transform_kernel(size_type row_size,
 
   if (thread_error == errc::SUCCESS) { return; }
 
-  atomicMax(max_error, static_cast<error_int>(thread_error));
+  atomicMax(max_error, static_cast<int32_t>(thread_error));
 }
 
 }  // namespace cudf::detail

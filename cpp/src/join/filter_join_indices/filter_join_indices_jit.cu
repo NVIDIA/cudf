@@ -145,8 +145,8 @@ void launch_join_filter_kernel(kernel const& kernel,
   cudf::size_type const* right_indices_ptr         = right_indices.data();
   cudf::column_device_view_core const* columns_ptr = device_views.data();
 
-  cudf::detail::device_scalar<error_int> d_max_error(
-    static_cast<error_int>(errc::SUCCESS), stream, mr.get_temporary_mr());
+  cudf::detail::device_scalar<int32_t> d_max_error(
+    static_cast<int32_t>(errc::SUCCESS), stream, mr.get_temporary_mr());
   auto max_error_ptr = d_max_error.data();
 
   void* args[]{&num_rows,

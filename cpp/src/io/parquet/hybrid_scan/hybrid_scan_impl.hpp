@@ -558,13 +558,15 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param[in,out] out_columns The columns for building the output table
    * @param[in,out] row_mask Boolean column indicating which rows need to be read after page-pruning
    *                         for filter columns, or after materialize step for payload columns
+   * @param[in] mr Memory resources for the decoded columns
    * @return The output table along with columns' metadata
    */
   template <typename RowMaskView>
   table_with_metadata finalize_output(read_columns_mode columns_mode,
                                       table_metadata& out_metadata,
                                       std::vector<std::unique_ptr<column>>& out_columns,
-                                      RowMaskView row_mask);
+                                      RowMaskView row_mask,
+                                      cudf::memory_resources mr);
 
   /**
    * @brief Read a chunk of data and return an output table.
@@ -582,16 +584,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   table_with_metadata read_chunk_internal(read_mode mode,
                                           read_columns_mode columns_mode,
                                           RowMaskView row_mask);
-
-  /**
-   * @brief Check if all rows are pruned (all valid and false)
-   *
-   * @param row_mask Input row mask column
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @return True if all rows are pruned
-   */
-  [[nodiscard]] bool are_all_rows_pruned(cudf::column_view const& row_mask,
-                                         cuda::stream_ref stream) const;
 
   /**
    * @brief Updates the output row mask such that out_row_mask[i + out_row_mask_offset] = true if
@@ -627,6 +619,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   std::vector<cudf::io::detail::inline_column_buffer> _original_output_buffers_template;
 
   cudf::size_type _row_mask_offset{0};
+  bool _all_payload_rows_retained{false};
   bool _output_chunk_produced{false};
 
   // Currently selected columns, if any

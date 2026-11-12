@@ -67,18 +67,6 @@ compute_page_row_offsets_and_colchunk_page_offsets(
   std::span<size_type const> schema_indices_per_source);
 
 /**
- * @brief Checks whether every row is retained by the boolean row mask
- *
- * Null entries in the row mask are treated as surviving rows
- *
- * @param retention_mask Boolean column indicating retained rows
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @return Boolean indicating whether every row is retained
- */
-[[nodiscard]] bool are_all_rows_retained(cudf::column_view const& retention_mask,
-                                         cuda::stream_ref stream);
-
-/**
  * @brief Computes a mask indicating which row ranges contain at least one selected row
  *
  * Null entries in the row mask are treated as surviving rows

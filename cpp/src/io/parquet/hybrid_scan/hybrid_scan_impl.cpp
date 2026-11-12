@@ -13,6 +13,7 @@
 #include "runtime/context.hpp"
 
 #include <cudf/copying.hpp>
+#include <cudf/detail/gather.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
@@ -40,6 +41,8 @@ namespace cudf::io::parquet::hybrid_scan::detail {
 
 using io::detail::inline_column_buffer;
 using parquet::detail::ColumnChunkDesc;
+using parquet::detail::compute_filtered_row_indices;
+using parquet::detail::count_filtered_rows;
 using parquet::detail::decode_kernel_mask;
 using parquet::detail::file_intermediate_data;
 using parquet::detail::PageInfo;
@@ -736,8 +739,16 @@ void hybrid_scan_reader_impl::prepare_materialization(
     _expr_conv = build_normalized_expression(options);
   }
 
+  auto const num_retained_rows =
+    is_all_columns ? row_mask.size() : count_filtered_rows(row_mask, null_policy::INCLUDE, stream);
+
+  // Payload columns are copied by the row mask only if it prunes rows, so they are decoded to the
+  // temporary resource only then
+  _all_payload_rows_retained =
+    columns_mode == read_columns_mode::PAYLOAD_COLUMNS and num_retained_rows == row_mask.size();
+
   // Return early if all rows are pruned
-  if (not is_all_columns and are_all_rows_pruned(row_mask, stream)) {
+  if (num_retained_rows == 0 and not is_all_columns) {
     auto const empty_row_groups =
       std::vector<std::vector<size_type>>(row_group_indices.size(), std::vector<size_type>{});
     prepare_data(mode, empty_row_groups, {}, {});
@@ -756,11 +767,12 @@ void hybrid_scan_reader_impl::prepare_materialization(
                  "Page-level I/O for payload columns requires offset indexes to be present");
   }
 
-  // Sparse page I/O infers the data page mask from the page data
-  auto const retention_mask =
-    (mask_data_pages == use_data_page_mask::YES and not is_all_columns and not _sparse_page_io)
-      ? std::optional{row_mask}
-      : std::nullopt;
+  // Sparse page I/O infers the data page mask from the page data. No pages are pruned if all rows
+  // are retained
+  auto const retention_mask = (mask_data_pages == use_data_page_mask::YES and not is_all_columns and
+                               not _sparse_page_io and num_retained_rows != row_mask.size())
+                                ? std::optional{row_mask}
+                                : std::nullopt;
   prepare_data(mode, row_group_indices, column_chunk_data, retention_mask);
 }
 
@@ -977,7 +989,8 @@ void hybrid_scan_reader_impl::reset_internal_state()
   _strings_to_categorical  = false;
   _reader_column_schema.reset();
 
-  _row_mask_offset = 0;
+  _row_mask_offset           = 0;
+  _all_payload_rows_retained = false;
 
   _expr_conv = parquet_filter_normalizer{};
   _mr        = cudf::get_current_device_resource_ref();
@@ -1072,6 +1085,11 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
     return result;
   }
 
+  auto const mr =
+    (columns_mode == read_columns_mode::PAYLOAD_COLUMNS and not _all_payload_rows_retained)
+      ? _mr.as_temporary()
+      : _mr;
+
   // If `_output_metadata` has been constructed, just copy it over.
   auto out_metadata = _output_metadata ? table_metadata{*_output_metadata} : table_metadata{};
   out_metadata.schema_info.resize(_output_buffers.size());
@@ -1098,7 +1116,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
       std::vector<std::size_t>(_file_itm_data.num_rows_per_source.size(), 0);
 
     // Finalize output
-    return finalize_output(columns_mode, out_metadata, out_columns, row_mask);
+    return finalize_output(columns_mode, out_metadata, out_columns, row_mask, mr);
   }
 
   auto& pass            = *_pass_itm_data;
@@ -1125,26 +1143,14 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
   preprocess_chunk_strings(mode, read_info);
 
   // Allocate memory buffers for the output columns.
-  allocate_columns(mode, read_info.skip_rows, read_info.num_rows);
+  allocate_columns(mode, read_info.skip_rows, read_info.num_rows, mr);
 
   // Parse data into the output buffers.
   decode_page_data(mode, read_info.skip_rows, read_info.num_rows);
 
   // Create the final output cudf columns.
   for (std::size_t i = 0; i < _output_buffers.size(); ++i) {
-    auto metadata           = _reader_column_schema.has_value()
-                                ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
-                                : std::nullopt;
-    auto const& schema      = _extended_metadata->get_schema(_output_column_schemas[i]);
-    auto const logical_type = schema.logical_type.value_or(LogicalType{});
-    // FIXED_LEN_BYTE_ARRAY never read as string.
-    // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY
-    // as binary and not strings, this test needs to change.
-    if (schema.type == Type::FIXED_LEN_BYTE_ARRAY and logical_type.type != LogicalType::DECIMAL) {
-      metadata = std::make_optional<reader_column_schema>();
-      metadata->set_convert_binary_to_strings(false);
-      metadata->set_type_length(schema.type_length);
-    }
+    auto const metadata = output_column_schema(i);
     // Only construct `out_metadata` if `_output_metadata` has not been cached.
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
@@ -1155,7 +1161,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
   }
 
   out_columns = cudf::structs::detail::enforce_null_consistency(
-    std::move(out_columns), _stream, _mr.get_output_mr());
+    std::move(out_columns), _stream, mr.get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -1167,7 +1173,7 @@ table_with_metadata hybrid_scan_reader_impl::read_chunk_internal(read_mode mode,
   }
 
   // Add empty columns if needed. Filter output columns based on filter.
-  return finalize_output(columns_mode, out_metadata, out_columns, row_mask);
+  return finalize_output(columns_mode, out_metadata, out_columns, row_mask, mr);
 }
 
 template <typename RowMaskView>
@@ -1175,7 +1181,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   read_columns_mode columns_mode,
   table_metadata& out_metadata,
   std::vector<std::unique_ptr<column>>& out_columns,
-  RowMaskView row_mask)
+  RowMaskView row_mask,
+  cudf::memory_resources mr)
 {
   // Create empty columns as needed (this can happen if we've ended up with no actual data to
   // read)
@@ -1183,10 +1190,16 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
       out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr.get_output_mr()));
+        io::detail::empty_like(_output_buffers[i],
+                               &col_name,
+                               _stream,
+                               column_mr(mr, _output_buffers[i], i).get_output_mr()));
     } else {
       out_columns.emplace_back(
-        io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr.get_output_mr()));
+        io::detail::empty_like(_output_buffers[i],
+                               nullptr,
+                               _stream,
+                               column_mr(mr, _output_buffers[i], i).get_output_mr()));
     }
   }
 
@@ -1213,21 +1226,21 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   // increment the output chunk count
   _file_itm_data._output_chunk_count++;
 
-  apply_decimal_width_cast(out_columns);
+  apply_decimal_width_cast(out_columns, mr);
 
   // Prepend the source and row index columns to filter columns only
   if (columns_mode == read_columns_mode::FILTER_COLUMNS) {
     if (_options.prepend_row_index_column) {
       out_columns.emplace(out_columns.begin(),
                           parquet::detail::synthesize_row_index_column(
-                            _file_itm_data.row_groups, read_info, _stream, _mr));
+                            _file_itm_data.row_groups, read_info, _stream, mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
     if (_options.prepend_source_index_column) {
       out_columns.emplace(out_columns.begin(),
                           parquet::detail::synthesize_source_index_column(
-                            out_metadata.num_rows_per_source, _stream, _mr));
+                            out_metadata.num_rows_per_source, _stream, mr));
       out_metadata.schema_info.emplace(
         out_metadata.schema_info.begin(),
         column_name_info{.name = "source_index", .is_nullable = false});
@@ -1274,12 +1287,21 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 
-    // Apply the final row mask to get the final output table
-    auto output_table = cudf::detail::apply_mask(
-      read_table->view(), *final_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
-
     // Update the input row mask to reflect the final row mask.
     update_row_mask(final_row_mask->view(), row_mask, mask_offset, _stream);
+
+    // Return the columns without copying them if all rows pass the filter
+    auto const gather_map = compute_filtered_row_indices(
+      final_row_mask->view(), null_policy::EXCLUDE, _stream, _mr.get_temporary_mr());
+    if (not gather_map.has_value()) { return {std::move(read_table), std::move(out_metadata)}; }
+
+    // Gather the surviving rows to get the final output table
+    auto output_table = cudf::detail::gather(read_table->view(),
+                                             gather_map.value()->view(),
+                                             out_of_bounds_policy::DONT_CHECK,
+                                             negative_index_policy::NOT_ALLOWED,
+                                             _stream,
+                                             _mr);
 
     // Return the final output table and metadata
     return {std::move(output_table), std::move(out_metadata)};
@@ -1290,6 +1312,7 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
 
     CUDF_EXPECTS(mask_offset + read_table->num_rows() <= row_mask.size(),
                  "Encountered invalid sized row mask to apply");
+    if (_all_payload_rows_retained) { return {std::move(read_table), std::move(out_metadata)}; }
     auto effective_row_mask =
       (read_table->num_rows() == row_mask.size())
         ? row_mask
@@ -1355,7 +1378,9 @@ thrust::host_vector<bool> hybrid_scan_reader_impl::compute_data_page_mask_with_p
   auto const& pass = *_pass_itm_data;
 
   // Return an empty vector if all rows are required
-  if (are_all_rows_retained(row_mask, _stream)) { return thrust::host_vector<bool>{}; }
+  if (count_filtered_rows(row_mask, null_policy::INCLUDE, _stream) == row_mask.size()) {
+    return thrust::host_vector<bool>{};
+  }
 
   std::vector<cudf::size_type> page_row_offsets;
   page_row_offsets.reserve(pass.pages.size() * 2);

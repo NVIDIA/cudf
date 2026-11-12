@@ -7,6 +7,8 @@
 
 #include "parquet_gpu.hpp"
 
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/io/datasource.hpp>
@@ -17,6 +19,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 
 #include <algorithm>
@@ -872,5 +875,32 @@ class aggregate_reader_metadata {
                  std::optional<std::vector<std::string>> const& filter_columns_names,
                  column_selection_options const& selection_options);
 };
+
+/**
+ * @brief Counts the rows retained by the boolean row mask
+ *
+ * @param row_mask Boolean column indicating retained rows
+ * @param nulls Whether null rows are retained
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @return Number of retained rows
+ */
+[[nodiscard]] size_type count_filtered_rows(cudf::column_view const& row_mask,
+                                            null_policy nulls,
+                                            cuda::stream_ref stream);
+
+/**
+ * @brief Computes the indices of the rows retained by the boolean row mask
+ *
+ * @param row_mask Boolean column indicating retained rows
+ * @param nulls Whether null rows are retained
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return Gather map of the retained rows, or `std::nullopt` if every row is retained
+ */
+[[nodiscard]] std::optional<std::unique_ptr<cudf::column>> compute_filtered_row_indices(
+  cudf::column_view const& row_mask,
+  null_policy nulls,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr);
 
 }  // namespace cudf::io::parquet::detail

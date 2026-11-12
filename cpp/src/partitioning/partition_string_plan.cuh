@@ -181,7 +181,7 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> partiti
   rmm::device_async_resource_ref mr)
 {
   if (partitions < 2 || partitions > 256 || (partitions != 2 && input.num_columns() < 2) ||
-      input.num_rows() < 1024 || input.num_columns() == 0 || input.num_columns() > 65'535 ||
+      input.num_rows() < 1'024 || input.num_columns() == 0 || input.num_columns() > 65'535 ||
       !std::all_of(input.begin(), input.end(), [](auto const& col) {
         return col.type().id() == type_id::STRING && col.null_count() == 0 &&
                strings_column_view(col).offsets().type().id() == type_id::INT32;

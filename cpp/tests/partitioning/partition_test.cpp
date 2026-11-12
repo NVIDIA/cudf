@@ -627,7 +627,7 @@ TEST_F(PartitionTestNotTyped, LargeBinaryStringRanks)
 
 TEST_F(PartitionTestNotTyped, BinaryStringSmallSchemas)
 {
-  constexpr int rows = 1025;
+  constexpr int rows = 1'025;
   std::vector<std::string> text(rows), expected;
   std::vector<int32_t> bins(rows);
   std::vector<cudf::size_type> offsets{0};

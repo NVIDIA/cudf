@@ -1954,11 +1954,51 @@ class UnaryFunction(Expr):
         elif self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
             columns = self._horizontal_broadcast_columns(df, context=context)
+            originals = columns
+            is_float = plc.traits.is_floating_point(self.dtype.plc_type)
+            bool8 = plc.DataType(plc.TypeId.BOOL8)
+            if is_float:
+                # Polars skips NaN like a null in max/min_horizontal, while the
+                # binary NULL_MAX/NULL_MIN follow IEEE ordering.
+                null_scalar = plc.Scalar.from_py(
+                    None, self.dtype.plc_type, stream=df.stream
+                )
+                false = plc.Scalar.from_py(False, bool8, stream=df.stream)  # noqa: FBT003
+                columns = [
+                    plc.copying.copy_if_else(
+                        null_scalar,
+                        col,
+                        plc.replace.replace_nulls(
+                            plc.unary.is_nan(col, stream=df.stream),
+                            false,
+                            stream=df.stream,
+                        ),
+                        stream=df.stream,
+                    )
+                    for col in columns
+                ]
             result = columns[0]
             for other in columns[1:]:
                 result = plc.binaryop.binary_operation(
                     result, other, op, self.dtype.plc_type, stream=df.stream
                 )
+            if is_float:
+                # A row with no non-NaN value but at least one NaN is NaN.
+                for col in originals:
+                    use_nan = plc.binaryop.binary_operation(
+                        plc.replace.replace_nulls(
+                            plc.unary.is_nan(col, stream=df.stream),
+                            false,
+                            stream=df.stream,
+                        ),
+                        plc.unary.is_null(result, stream=df.stream),
+                        plc.binaryop.BinaryOperator.LOGICAL_AND,
+                        bool8,
+                        stream=df.stream,
+                    )
+                    result = plc.copying.copy_if_else(
+                        col, result, use_nan, stream=df.stream
+                    )
             return Column(result, dtype=self.dtype)
         elif self.name == "mean_horizontal":
             (ignore_nulls,) = self.options

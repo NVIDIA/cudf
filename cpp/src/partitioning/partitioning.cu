@@ -796,7 +796,7 @@ __device__ void partition_map_warp_histogram(
     auto const row =
       tile_begin + warp * warp_size * MAP_PARTITION_ITEMS_PER_THREAD + item * warp_size + lane;
     auto const valid  = row < num_rows;
-    auto const active = __ballot_sync(0xffffffffu, valid);
+    auto const active = __ballot_sync(0xffff'ffffu, valid);
     if (valid) {
       auto const partition = static_cast<size_type>(partition_map[row]);
       auto const peers     = __match_any_sync(active, partition);

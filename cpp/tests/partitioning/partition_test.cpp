@@ -748,7 +748,7 @@ class GenericPartitionMapTypes : public cudf::test::BaseFixture {};
 TYPED_TEST_SUITE(GenericPartitionMapTypes, cudf::test::IntegralTypesNotBool);
 TYPED_TEST(GenericPartitionMapTypes, NullableStringPartialTiles)
 {
-  constexpr int rows = 2049;
+  constexpr int rows = 2'049;
   std::vector<std::string> text(rows), expected;
   std::vector<TypeParam> bins(rows);
   std::vector<bool> valid(rows), expected_valid;

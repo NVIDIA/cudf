@@ -377,7 +377,7 @@ async def ensure_ordering_metadata(
     order_keys: Sequence[OrderKey],
     collective_id: int,
 ) -> None:
-    """Forward a channel, extracting ordering boundaries when metadata lacks them."""
+    """Forward a channel, extracting single-rank boundaries when needed."""
     metadata = await recv_metadata(ch_in, context)
     if order_keys:
         partitioning = metadata.partitioning or Partitioning()
@@ -391,7 +391,13 @@ async def ensure_ordering_metadata(
         )
     buffered_chunks: ChunkStore | None = None
 
-    if order_keys and not _metadata_has_ordering(metadata, order_keys):
+    # A sorted hint does not prove the rank ownership required by a flat
+    # Ordering. Preserve row ordering without extracting new boundaries.
+    if (
+        order_keys
+        and comm.nranks == 1
+        and not _metadata_has_ordering(metadata, order_keys)
+    ):
         if (
             extracted_metadata := _trivial_ordering_metadata(
                 context, comm, schema_ir, metadata, order_keys

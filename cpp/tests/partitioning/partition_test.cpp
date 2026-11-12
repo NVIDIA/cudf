@@ -559,7 +559,7 @@ class StringPartitionMapTypes : public cudf::test::BaseFixture {};
 TYPED_TEST_SUITE(StringPartitionMapTypes, cudf::test::IntegralTypesNotBool);
 TYPED_TEST(StringPartitionMapTypes, PartialTiles)
 {
-  constexpr int rows = 2049;
+  constexpr int rows = 2'049;
   std::vector<std::string> text(rows), expected;
   std::vector<TypeParam> bins(rows);
   for (int i = 0; i < rows; ++i)

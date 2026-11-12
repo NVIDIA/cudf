@@ -914,7 +914,7 @@ struct dispatch_map_type {
           try_partition_trivial<MapType>(t, partition_map, num_partitions, stream, mr)) {
       return std::move(*output);
     }
-    if (t.num_rows() >= 1024 && num_partitions <= 256 && t.num_columns() >= 2 &&
+    if (t.num_rows() >= 1'024 && num_partitions <= 256 && t.num_columns() >= 2 &&
         t.num_columns() <= 65'535 && (t.num_columns() >= 4 || num_partitions != 2) &&
         std::all_of(t.begin(), t.end(), [](auto const& col) {
           return col.type().id() == type_id::STRING && col.null_count() == 0 &&

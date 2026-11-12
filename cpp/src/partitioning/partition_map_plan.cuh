@@ -17,7 +17,7 @@
 
 namespace cudf::detail::partition_map_plan {
 using algorithm       = partition_policy::algorithm;
-constexpr int threads = 256, tile_rows = 1024, warps = 8, bins = 256;
+constexpr int threads = 256, tile_rows = 1'024, warps = 8, bins = 256;
 
 template <bool Rank, typename MapType>
 __device__ void local_tile(MapType const* map,
@@ -36,7 +36,7 @@ __device__ void local_tile(MapType const* map,
   for (int j = 0; j < 4; ++j) {
     int row         = start + w * 128 + j * 32 + lane;
     bool valid      = row < n;
-    unsigned active = __ballot_sync(0xffffffffu, valid);
+    unsigned active = __ballot_sync(0xffff'ffffu, valid);
     if (valid) {
       int q          = map[row];
       unsigned peers = __match_any_sync(active, q);
@@ -162,21 +162,21 @@ void recompute(
 }
 
 template <typename Emit>
-struct WriteProxy {
+struct write_proxy {
   Emit sink;
   int destination;
   __device__ void operator=(int source) const { sink(source, destination); }
 };
 template <typename Emit>
-struct MakeWriteProxy {
+struct make_write_proxy {
   Emit sink;
-  __host__ __device__ WriteProxy<Emit> operator()(int destination) const
+  __host__ __device__ write_proxy<Emit> operator()(int destination) const
   {
     return {sink, destination};
   }
 };
 template <typename Map>
-struct IsZero {
+struct is_zero {
   Map const* map;
   __device__ bool operator()(int row) const { return map[row] == 0; }
 };
@@ -186,13 +186,13 @@ std::vector<int> binary(Map const* map, int n, Emit sink, cuda::stream_ref strea
 {
   rmm::device_uvector<int> selected(1, stream);
   auto source  = cuda::counting_iterator<int>{0};
-  auto output  = cuda::transform_iterator(source, MakeWriteProxy<Emit>{sink});
+  auto output  = cuda::transform_iterator(source, make_write_proxy<Emit>{sink});
   size_t bytes = 0;
   CUDF_CUDA_TRY(cub::DevicePartition::If(
-    nullptr, bytes, source, output, selected.data(), n, IsZero<Map>{map}, stream.get()));
+    nullptr, bytes, source, output, selected.data(), n, is_zero<Map>{map}, stream.get()));
   rmm::device_buffer temporary(bytes, stream);
   CUDF_CUDA_TRY(cub::DevicePartition::If(
-    temporary.data(), bytes, source, output, selected.data(), n, IsZero<Map>{map}, stream.get()));
+    temporary.data(), bytes, source, output, selected.data(), n, is_zero<Map>{map}, stream.get()));
   auto const count = cudf::detail::make_std_vector(selected, stream)[0];
   return {0, count, n};
 }

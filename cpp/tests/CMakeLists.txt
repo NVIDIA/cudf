@@ -368,6 +368,9 @@ ConfigureTest(
 ConfigureTest(COMPACT_PROTOCOL_READER_TEST io/compact_protocol_reader_test.cpp)
 ConfigureTest(PARQUET_FOOTER_FACADE_TEST io/experimental/parquet_footer_facade_test.cpp)
 ConfigureTest(
+  PARQUET_FOOTER_PARTIAL_DECODE_TEST io/experimental/parquet_footer_partial_decode_test.cpp
+)
+ConfigureTest(
   HYBRID_SCAN_TEST
   io/experimental/hybrid_scan_common.cpp
   io/experimental/hybrid_scan_composer.cpp

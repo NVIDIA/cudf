@@ -16,9 +16,12 @@
 #include <cstddef>
 #include <functional>
 #include <future>
+#include <numeric>
 #include <optional>
+#include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace cudf::io::parquet::detail {
 namespace {
@@ -443,18 +446,40 @@ class parquet_field_union_enumerator : public parquet_field {
 };
 
 /**
+ * @brief Default element reader of `parquet_field_struct_list`: decodes the whole struct
+ */
+struct read_struct_element {
+  template <typename T>
+  void operator()(CompactProtocolReader& cpr, T& elem, uint32_t) const
+  {
+    cpr.read(&elem);
+  }
+};
+
+/**
  * @brief Functor to read a vector of structures from CompactProtocolReader
  *
- * Uses parallel processing when there are more than 512 elements
+ * If a selection `mask` is given, only the selected elements are decoded (in order) and the rest
+ * are skipped on the wire. Each decoded element is read with `ElementReader`, which also receives
+ * the element's index in the encoded list. Uses parallel processing when 512 or more elements are
+ * decoded.
  *
  * @return true if the field was read, false if skipped on a type mismatch
  */
-template <typename T>
+template <typename T, typename ElementReader = read_struct_element>
 class parquet_field_struct_list : public parquet_field {
   std::vector<T>& val;
+  std::vector<bool> const* mask;
+  ElementReader read_element;
 
  public:
-  parquet_field_struct_list(int f, std::vector<T>& v) : parquet_field(f), val(v) {}
+  parquet_field_struct_list(int f,
+                            std::vector<T>& v,
+                            std::vector<bool> const* m = nullptr,
+                            ElementReader r            = {})
+    : parquet_field(f), val(v), mask(m), read_element(std::move(r))
+  {
+  }
 
   inline bool operator()(CompactProtocolReader* cpr, int field_type)
   {
@@ -470,21 +495,31 @@ class parquet_field_struct_list : public parquet_field {
     CUDF_EXPECTS(std::cmp_less_equal(n, cpr->m_end - cpr->m_cur),
                  "Parquet footer list size exceeds remaining buffer");
     if (not cpr->check_list_element_type(t, FieldType::STRUCT, n)) { return false; }
-    val.resize(n);
+    CUDF_EXPECTS(mask == nullptr or mask->size() == n,
+                 "Parquet footer list size does not match its selection");
+
+    auto const is_selected  = [&](uint32_t i) { return mask == nullptr or (*mask)[i]; };
+    auto const num_selected = mask == nullptr
+                                ? n
+                                : static_cast<uint32_t>(std::count(mask->begin(), mask->end(), true));
+    auto const skip_element = [&] { cpr->skip_struct_field(static_cast<int>(FieldType::STRUCT)); };
+    val.resize(num_selected);
 
     constexpr uint32_t parallel_threshold = 512;
-    if (n >= parallel_threshold) {
-      // Propagate the reader's strict/lenient mode to the parallel per-struct sub-readers below.
-      auto const mode = cpr->m_mismatch_policy;
+    if (num_selected >= parallel_threshold) {
+      // Propagate the reader's strict/lenient mode and column chunk policy to the parallel
+      // per-struct sub-readers below.
+      auto const mode   = cpr->m_mismatch_policy;
+      auto const policy = cpr->m_chunk_policy;
       auto const num_tasks =
-        std::min<uint32_t>(n, cudf::detail::host_worker_pool().get_thread_count() * 2);
-      auto const items_per_task = n / num_tasks;
-      auto const remainder      = n % num_tasks;
+        std::min<uint32_t>(num_selected, cudf::detail::host_worker_pool().get_thread_count() * 2);
+      auto const items_per_task = num_selected / num_tasks;
+      auto const remainder      = num_selected % num_tasks;
 
       // Size once up front, then fill by index below: workers read already-filled slots while the
       // main thread fills later ones, so a size-mutating emplace_back would be a data race.
-      std::vector<cudf::host_span<uint8_t const>> all_ranges;
-      all_ranges.resize(n);
+      std::vector<cudf::host_span<uint8_t const>> all_ranges(num_selected);
+      std::vector<uint32_t> list_indices(num_selected);
 
       // Declared after all_ranges so that every task is waited on before all_ranges dies on any
       // exit path (host-pool futures do not block on destruction)
@@ -492,36 +527,54 @@ class parquet_field_struct_list : public parquet_field {
       cudf::detail::futures_wait_guard tasks_guard{tasks};
       tasks.reserve(num_tasks);
 
-      uint32_t struct_idx = 0;
+      uint32_t struct_idx = 0;  // index into the selected elements
+      uint32_t list_idx   = 0;  // index into the encoded list
       for (uint32_t task_id = 0; task_id < num_tasks; ++task_id) {
         auto const task_size = items_per_task + (task_id < remainder ? 1 : 0);
-        auto const start_idx = std::min(n, struct_idx);
-        auto const end_idx   = std::min(n, start_idx + task_size);
+        auto const start_idx = std::min(num_selected, struct_idx);
+        auto const end_idx   = std::min(num_selected, start_idx + task_size);
 
         if (start_idx >= end_idx) { break; }
 
-        // Collect struct ranges for the next task
-        for (auto i = start_idx; i < end_idx; ++i) {
+        // Collect struct ranges for the next task, skipping unselected elements in between
+        for (auto i = start_idx; i < end_idx; ++i, ++list_idx) {
+          while (not is_selected(list_idx)) {
+            skip_element();
+            ++list_idx;
+          }
           uint8_t const* const start = cpr->m_cur;
-          cpr->skip_struct_field(static_cast<int>(FieldType::STRUCT));
+          skip_element();
           all_ranges[i] =
             cudf::host_span<uint8_t const>{start, static_cast<size_t>(cpr->m_cur - start)};
+          list_indices[i] = list_idx;
         }
 
         // Launch task immediately to parse the structs in parallel while the main thread collects
         // the remaining ranges
         tasks.emplace_back(cudf::detail::host_worker_pool().submit_task(
-          [&val = this->val, &all_ranges, start_idx, end_idx, mode]() {
+          [&val          = this->val,
+           &read_element = this->read_element,
+           &all_ranges,
+           &list_indices,
+           start_idx,
+           end_idx,
+           mode,
+           policy]() {
             CompactProtocolReader local_cpr{nullptr, 0, mode};
+            local_cpr.set_column_chunk_policy(policy);
             // end_idx alone bounds the loop: all_ranges[start_idx, end_idx) is fully populated
             // before this task launches, so no concurrent read of all_ranges.size() is needed.
             for (size_t i = start_idx; i < end_idx; ++i) {
               local_cpr.init(all_ranges[i].data(), all_ranges[i].size());
-              local_cpr.read(&val[i]);
+              read_element(local_cpr, val[i], list_indices[i]);
             }
           }));
 
         struct_idx = end_idx;
+      }
+      // Skip the unselected elements after the last selected one
+      for (; list_idx < n; ++list_idx) {
+        skip_element();
       }
       // Rethrows the first failure (e.g. a strict-mode mismatch); the guard waits for the
       // remaining tasks, whose lambdas reference all_ranges/val, while unwinding
@@ -530,9 +583,61 @@ class parquet_field_struct_list : public parquet_field {
       }
     } else {
       // For small numbers of elements, use sequential processing to avoid overhead
-      std::for_each(val.begin(), val.end(), [&cpr](auto& elem) { cpr->read(&elem); });
+      for (uint32_t i = 0, j = 0; i < n; ++i) {
+        if (is_selected(i)) {
+          read_element(*cpr, val[j++], i);
+        } else {
+          skip_element();
+        }
+      }
     }
     return true;
+  }
+};
+
+/**
+ * @brief Functor that runs `prepare` right before decoding a field with `FieldFunctor`
+ *
+ * @return The result of `FieldFunctor`
+ */
+template <typename FieldFunctor, typename Prepare>
+class parquet_field_prepared : public parquet_field {
+  FieldFunctor functor;
+  Prepare prepare;
+
+ public:
+  parquet_field_prepared(FieldFunctor f, Prepare p)
+    : parquet_field(f.field()), functor(std::move(f)), prepare(std::move(p))
+  {
+  }
+
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
+  {
+    prepare();
+    return functor(cpr, field_type);
+  }
+};
+
+/**
+ * @brief Functor that decodes a field with `FieldFunctor` if enabled, and skips it otherwise
+ *
+ * @return true if the field was read or skipped, false if skipped on a type mismatch
+ */
+template <typename FieldFunctor>
+class parquet_field_if : public parquet_field {
+  bool enabled;
+  FieldFunctor functor;
+
+ public:
+  parquet_field_if(bool e, FieldFunctor f) : parquet_field(f.field()), enabled(e), functor(f) {}
+
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
+  {
+    if (not enabled) {
+      cpr->skip_struct_field(field_type);
+      return true;
+    }
+    return functor(cpr, field_type);
   }
 };
 
@@ -734,7 +839,8 @@ bool CompactProtocolReader::check_list_element_type(int type, FieldType expected
   return false;
 }
 
-void CompactProtocolReader::read(FileMetaData* f)
+template <typename RowGroupsField>
+void CompactProtocolReader::read_file_metadata(FileMetaData* f, RowGroupsField row_groups_field)
 {
   using optional_list_column_order =
     parquet_field_optional<std::vector<ColumnOrder>, parquet_field_struct_list<ColumnOrder>>;
@@ -744,7 +850,7 @@ void CompactProtocolReader::read(FileMetaData* f)
   auto op               = std::make_tuple(parquet_field_int32(1, f->version),
                             parquet_field_struct_list(2, f->schema),
                             parquet_field_int64(3, f->num_rows),
-                            parquet_field_struct_list(4, f->row_groups),
+                            std::move(row_groups_field),
                             parquet_field_struct_list(5, f->key_value_metadata),
                             parquet_field_string(6, f->created_by),
                             optional_list_column_order(7, f->column_orders),
@@ -753,6 +859,11 @@ void CompactProtocolReader::read(FileMetaData* f)
   function_builder(this, op);
   // Callers can check overread() after schema-init so a footer with no schema reports the
   // specific "Cannot initialize schema", not this generic error.
+}
+
+void CompactProtocolReader::read(FileMetaData* f)
+{
+  read_file_metadata(f, parquet_field_struct_list(4, f->row_groups));
 }
 
 void CompactProtocolReader::read(SchemaElement* s)
@@ -871,7 +982,7 @@ void CompactProtocolReader::read(RowGroup* r)
   using optional_list_sorting_column =
     parquet_field_optional<std::vector<SortingColumn>, parquet_field_struct_list<SortingColumn>>;
 
-  auto op = std::make_tuple(parquet_field_struct_list(1, r->columns),
+  auto op = std::make_tuple(parquet_field_struct_list(1, r->columns, m_column_mask),
                             parquet_field_int64(2, r->total_byte_size),
                             parquet_field_int64(3, r->num_rows),
                             optional_list_sorting_column(4, r->sorting_columns),
@@ -944,11 +1055,14 @@ void CompactProtocolReader::read(ColumnChunkMetaData* c)
                             parquet_field_int64(9, c->data_page_offset),
                             parquet_field_int64(10, c->index_page_offset),
                             parquet_field_int64(11, c->dictionary_page_offset),
-                            parquet_field_struct(12, c->statistics),
-                            optional_list_enc_stats(13, c->encoding_stats),
+                            parquet_field_if(m_chunk_policy.statistics,
+                                             parquet_field_struct(12, c->statistics)),
+                            parquet_field_if(m_chunk_policy.encoding_stats,
+                                             optional_list_enc_stats(13, c->encoding_stats)),
                             optional_i64(14, c->bloom_filter_offset),
                             optional_i32(15, c->bloom_filter_length),
-                            optional_size_statistics(16, c->size_statistics));
+                            parquet_field_if(m_chunk_policy.size_statistics,
+                                             optional_size_statistics(16, c->size_statistics)));
   function_builder(this, op);
 }
 
@@ -1186,6 +1300,117 @@ void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMe
   auto const is_schema_initialized = reader.InitSchema(metadata);
   CUDF_EXPECTS(is_schema_initialized, cannot_init_schema_message);
   CUDF_EXPECTS(not reader.overread(), overread_message);
+}
+
+
+namespace {
+
+/**
+ * @brief Returns the number of leaf columns in a footer schema (element 0 is the root)
+ */
+[[nodiscard]] cudf::size_type count_leaf_columns(std::vector<SchemaElement> const& schema)
+{
+  if (schema.empty()) { return 0; }
+  return static_cast<cudf::size_type>(std::count_if(
+    schema.begin() + 1, schema.end(), [](auto const& e) { return e.num_children == 0; }));
+}
+
+/**
+ * @brief Sorts and deduplicates a selection of indices, checking for negative indices
+ */
+[[nodiscard]] std::optional<std::vector<cudf::size_type>> normalize_selection(
+  std::optional<std::vector<cudf::size_type>> const& selection, std::string const& name)
+{
+  if (not selection.has_value()) { return std::nullopt; }
+  auto indices = *selection;
+  std::sort(indices.begin(), indices.end());
+  indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+  CUDF_EXPECTS(indices.empty() or indices.front() >= 0,
+               "Negative " + name + " index in Parquet footer selection",
+               std::out_of_range);
+  return indices;
+}
+
+/**
+ * @brief Checks that the largest selected index is below `count`
+ */
+void check_selection_range(std::optional<std::vector<cudf::size_type>> const& selection,
+                           cudf::size_type count,
+                           std::string const& name)
+{
+  CUDF_EXPECTS(not selection.has_value() or selection->empty() or selection->back() < count,
+               "Out of range " + name + " index in Parquet footer selection",
+               std::out_of_range);
+}
+
+}  // namespace
+
+experimental::partial_file_metadata decode_footer_bytes(
+  std::span<uint8_t const> footer_bytes, experimental::footer_decode_options const& options)
+{
+  auto const row_groups   = normalize_selection(options.row_groups, "row group");
+  auto const leaf_columns = normalize_selection(options.leaf_columns, "leaf column");
+
+  experimental::partial_file_metadata result;
+  auto& metadata = result.metadata;
+
+  CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size(), options.mismatch_policy};
+  reader.set_column_chunk_policy({.statistics      = options.decode_statistics,
+                                  .encoding_stats  = options.decode_encoding_stats,
+                                  .size_statistics = options.decode_size_statistics});
+
+  if (not row_groups.has_value() and not leaf_columns.has_value()) {
+    reader.read(&metadata);
+  } else {
+    // Column masks indexed by leaf column, built from the schema once the row groups are reached
+    std::vector<bool> selected_columns_mask;
+    std::vector<bool> no_columns_mask;
+    auto const prepare_masks = [&] {
+      CUDF_EXPECTS(not metadata.schema.empty(),
+                   "Selective Parquet footer decode requires the schema to precede the row groups");
+      auto const num_leaves = count_leaf_columns(metadata.schema);
+      check_selection_range(leaf_columns, num_leaves, "leaf column");
+      no_columns_mask.assign(num_leaves, false);
+      if (leaf_columns.has_value()) {
+        selected_columns_mask.assign(num_leaves, false);
+        for (auto const col : *leaf_columns) {
+          selected_columns_mask[col] = true;
+        }
+      }
+    };
+    // Decodes the scalar fields of every row group and the selected column chunks of the selected
+    // row groups. Runs on parallel sub-readers for 512 or more row groups.
+    auto const read_row_group = [&](CompactProtocolReader& cpr, RowGroup& row_group, uint32_t idx) {
+      auto const is_selected =
+        not row_groups.has_value() or
+        std::binary_search(row_groups->begin(), row_groups->end(), static_cast<cudf::size_type>(idx));
+      cpr.set_column_mask(not is_selected               ? &no_columns_mask
+                          : leaf_columns.has_value() ? &selected_columns_mask
+                                                     : nullptr);
+      cpr.read(&row_group);
+      cpr.set_column_mask(nullptr);
+    };
+    reader.read_file_metadata(
+      &metadata,
+      parquet_field_prepared(
+        parquet_field_struct_list(4, metadata.row_groups, nullptr, read_row_group),
+        prepare_masks));
+  }
+  CUDF_EXPECTS(not reader.overread(), overread_message);
+
+  auto const num_row_groups = static_cast<cudf::size_type>(metadata.row_groups.size());
+  auto const num_leaves     = count_leaf_columns(metadata.schema);
+  check_selection_range(row_groups, num_row_groups, "row group");
+  check_selection_range(leaf_columns, num_leaves, "leaf column");
+
+  auto const all_indices = [](cudf::size_type count) {
+    std::vector<cudf::size_type> indices(count);
+    std::iota(indices.begin(), indices.end(), 0);
+    return indices;
+  };
+  result.row_groups   = row_groups.value_or(all_indices(num_row_groups));
+  result.leaf_columns = leaf_columns.value_or(all_indices(num_leaves));
+  return result;
 }
 
 }  // namespace cudf::io::parquet::detail

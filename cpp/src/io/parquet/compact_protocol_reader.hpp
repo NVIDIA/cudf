@@ -25,6 +25,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 namespace io::parquet::detail {
@@ -77,6 +78,24 @@ class CompactProtocolReader {
   {
     return m_mismatch_policy == experimental::thrift_mismatch_policy::THROW;
   }
+
+  /**
+   * @brief Decode policy for the optional `ColumnChunkMetaData` fields; a disabled field is
+   * skipped on the wire. Inherited by the parallel sub-readers of struct lists.
+   */
+  struct column_chunk_policy {
+    bool statistics      = true;  ///< Decode `statistics`
+    bool encoding_stats  = true;  ///< Decode `encoding_stats`
+    bool size_statistics = true;  ///< Decode `size_statistics`
+  };
+  void set_column_chunk_policy(column_chunk_policy policy) noexcept { m_chunk_policy = policy; }
+  [[nodiscard]] column_chunk_policy get_column_chunk_policy() const noexcept
+  {
+    return m_chunk_policy;
+  }
+  // Column chunks to decode on the next RowGroup read, indexed by leaf column; the rest are
+  // skipped and `RowGroup::columns` holds only the selected ones. nullptr decodes all chunks.
+  void set_column_mask(std::vector<bool> const* mask) noexcept { m_column_mask = mask; }
   // A read at end-of-buffer sets the sticky overread flag (queried via overread()) and
   // yields 0, keeping the hot parse path noexcept.
   unsigned int getb() noexcept
@@ -207,10 +226,15 @@ class CompactProtocolReader {
   // Reject (`THROW`) vs skip (`COMPAT`) a struct field whose wire type mismatches the schema type.
   experimental::thrift_mismatch_policy m_mismatch_policy =
     experimental::thrift_mismatch_policy::THROW;
+  column_chunk_policy m_chunk_policy{};
+  std::vector<bool> const* m_column_mask = nullptr;
 
   // Private: only the decode helpers below may read a FileMetaData directly; each pairs the parse
   // with the mandatory overread check so a truncated footer is always rejected.
   void read(FileMetaData* f);
+  // Reads a FileMetaData, decoding the `row_groups` field (4) with `row_groups_field`
+  template <typename RowGroupsField>
+  void read_file_metadata(FileMetaData* f, RowGroupsField row_groups_field);
   friend class parquet_field_string;
   friend class parquet_field_string_list;
   friend class parquet_field_binary;
@@ -218,13 +242,15 @@ class CompactProtocolReader {
   friend class parquet_field_struct_blob;
   template <typename T, FieldType EXPECTED_ELEM_TYPE>
   friend class parquet_field_list;
-  template <typename T>
+  template <typename T, typename ElementReader>
   friend class parquet_field_struct_list;
   friend void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
                                   FileMetaData* metadata,
                                   experimental::thrift_mismatch_policy mode);
   friend void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes,
                                             FileMetaData* metadata);
+  friend experimental::partial_file_metadata decode_footer_bytes(
+    std::span<uint8_t const> footer_bytes, experimental::footer_decode_options const& options);
 };
 
 /**
@@ -254,6 +280,16 @@ void decode_footer_bytes(
  * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
  */
 void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata);
+
+/**
+ * @brief Selectively decodes footer bytes, see `experimental::read_parquet_footer_bytes`
+ *
+ * @param footer_bytes Thrift-compact-encoded footer bytes
+ * @param options Selection and decode options
+ * @return The partially decoded footer
+ */
+[[nodiscard]] experimental::partial_file_metadata decode_footer_bytes(
+  std::span<uint8_t const> footer_bytes, experimental::footer_decode_options const& options);
 
 }  // namespace io::parquet::detail
 }  // namespace CUDF_EXPORT cudf

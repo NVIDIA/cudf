@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -34,26 +33,19 @@ def _read_data(path: Path) -> CoverageData:
 
 
 def build_report(
-    local: CoverageData, upstream: list[CoverageData]
+    local: CoverageData, upstream: CoverageData
 ) -> dict[str, Any]:
     """Compare source lines without inferring equivalent test assertions."""
     files = {}
     totals = {"local_only": 0, "upstream_only": 0, "both": 0}
-    filenames = local.measured_files().union(
-        *(data.measured_files() for data in upstream)
-    )
+    filenames = local.measured_files() | upstream.measured_files()
     for filename in sorted(filenames):
         if "/cudf_polars/" not in filename.replace("\\", "/"):
             continue
         local_lines = set(local.lines(filename) or ())
-        upstream_lines = set().union(
-            *(data.lines(filename) or () for data in upstream)
-        )
+        upstream_lines = set(upstream.lines(filename) or ())
         local_contexts = local.contexts_by_lineno(filename)
-        upstream_contexts: dict[int, set[str]] = defaultdict(set)
-        for data in upstream:
-            for line, contexts in data.contexts_by_lineno(filename).items():
-                upstream_contexts[line].update(contexts)
+        upstream_contexts = upstream.contexts_by_lineno(filename)
         categories: dict[str, list[Any]] = {
             "local_only": [],
             "upstream_only": [],
@@ -103,7 +95,9 @@ def main() -> None:
     args = parser.parse_args()
     try:
         local = _read_data(args.local_data)
-        upstream = [_read_data(path) for path in args.upstream_data]
+        upstream = CoverageData(no_disk=True)
+        for path in args.upstream_data:
+            upstream.update(_read_data(path))
     except ValueError as error:
         parser.error(str(error))
     report = build_report(local, upstream)

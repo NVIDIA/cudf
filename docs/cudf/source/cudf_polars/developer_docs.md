@@ -627,9 +627,9 @@ contains `.coverage.local`, `.coverage.upstream-in-memory`,
 `.coverage.upstream-spmd`, and `coverage-comparison.json`. Keep these files
 together. The JSON identifies local-only, upstream-only, and shared lines and
 records the Polars version, checkout revisions, and suite exit statuses.
-Collection metadata identifies the engine configurations, slow-test filter,
-disabled GPU run-list selection, and available runner deselection tables.
-Architecture- and glibc-specific deselections follow the existing runner.
+Collection metadata records the pytest options and SPMD blocksize passed by
+the command. The recorded cuDF revision identifies the runners and their
+collection filters.
 It samples up to 20 contexts per source line and reports when a sample is
 truncated; the coverage databases retain every test node and its
 `|setup`, `|run`, or `|teardown` phase. The engine databases remain separate so

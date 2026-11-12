@@ -38,36 +38,19 @@ if [[ "${polars_tag}" != "py-${polars_version}" ]]; then
     exit 2
 fi
 cudf_sha=$(git -C "${repo_root}" rev-parse HEAD)
-collection_metadata=$(python - "${repo_root}" <<'PY'
+spmd_blocksize=default
+pytest_args=(
+    --numprocesses=4 --dist=worksteal
+    --cov=cudf_polars --cov-context=test --cov-config="${config}"
+    --cov-report= --maxfail=0
+)
+collection_metadata=$(python - "${spmd_blocksize}" "${pytest_args[@]}" <<'PY'
 import json
-import platform
 import sys
-from pathlib import Path
 
-root = Path(sys.argv[1])
 print(json.dumps({
-    "architecture": platform.machine(),
-    "local": {
-        "data": ".coverage.local",
-        "engine": "local test fixtures",
-        "runner": "ci/run_cudf_polars_pytests.sh",
-        "ignored_paths": ["tests/streaming/test_tpch.py", "tests/streaming/test_tpcds.py"],
-    },
-    "upstream": {
-        "runner": "ci/run_cudf_polars_polars_tests.sh",
-        "configurations": [
-            {"data": ".coverage.upstream-in-memory", "engine": "in-memory", "blocksize": None},
-            {"data": ".coverage.upstream-spmd", "engine": "spmd", "blocksize": "default"},
-        ],
-        "marker": "not slow",
-        "gpu_run_list": None,
-        "deselection_tables": {
-            str(path.relative_to(root)): path.read_text().splitlines()
-            for path in sorted((root / "ci/cudf_polars").glob("polars_test_deselections*.txt"))
-        },
-        "deselection_policy": "The runner applies architecture- and glibc-specific tables conditionally.",
-    },
-    "pytest_options": ["--numprocesses=4", "--dist=worksteal", "--cov-context=test"],
+    "upstream_spmd_blocksize": sys.argv[1],
+    "pytest_options": sys.argv[2:],
 }))
 PY
 )
@@ -81,8 +64,7 @@ rm -f "${output_dir}/.coverage.local" \
 local_status=0
 COVERAGE_FILE="${output_dir}/.coverage.local" \
     "${repo_root}/ci/run_cudf_polars_pytests.sh" \
-    --numprocesses=4 --dist=worksteal \
-    --cov=cudf_polars --cov-context=test --cov-config="${config}" --cov-report= || local_status=$?
+    "${pytest_args[@]}" || local_status=$?
 
 # Keep engine data separate so later analysis can distinguish configuration
 # gaps from missing upstream assertions, even when test node IDs are identical.
@@ -90,14 +72,13 @@ upstream_in_memory_status=0
 CUDF_POLARS_GPU_RUN_LIST="" POLARS_DIR="${polars_dir}" \
 COVERAGE_FILE="${output_dir}/.coverage.upstream-in-memory" \
     "${repo_root}/ci/run_cudf_polars_polars_tests.sh" --engine in-memory \
-    --cov=cudf_polars --cov-context=test --cov-config="${config}" \
-    --cov-report= --maxfail=0 || upstream_in_memory_status=$?
+    "${pytest_args[@]}" || upstream_in_memory_status=$?
 upstream_spmd_status=0
 CUDF_POLARS_GPU_RUN_LIST="" POLARS_DIR="${polars_dir}" \
 COVERAGE_FILE="${output_dir}/.coverage.upstream-spmd" \
     "${repo_root}/ci/run_cudf_polars_polars_tests.sh" --engine spmd \
-    --cov=cudf_polars --cov-context=test --cov-config="${config}" \
-    --cov-report= --maxfail=0 || upstream_spmd_status=$?
+    --inject-gpu-engine-blocksize "${spmd_blocksize}" \
+    "${pytest_args[@]}" || upstream_spmd_status=$?
 
 python "${repo_root}/ci/analyze_cudf_polars_coverage.py" \
     --local-data "${output_dir}/.coverage.local" \

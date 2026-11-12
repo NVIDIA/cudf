@@ -183,6 +183,28 @@ public class ColumnVectorTest extends CudfTestBase {
   }
 
   @Test
+  void testTransformVectorPtxInt64Output() {
+    String ptxInt64 = ptx.replace("st.u32 \t[%rd1], %rd4;", "st.u64 \t[%rd1], %rd4;");
+    assertNotEquals(ptx, ptxInt64);
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, null, Integer.MAX_VALUE);
+         ColumnVector result = cv.transform(ptxInt64, true, DType.INT64);
+         ColumnVector expected = ColumnVector.fromBoxedLongs(
+             2L * 2 - 2, null, (long) Integer.MAX_VALUE * Integer.MAX_VALUE - Integer.MAX_VALUE)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorPtxTimestampOutput() {
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3, null, 4);
+         ColumnVector result = cv.transform(ptx, true, DType.TIMESTAMP_DAYS);
+         ColumnVector expected = ColumnVector.timestampDaysFromBoxedInts(
+             2 * 2 - 2, 3 * 3 - 3, null, 4 * 4 - 4)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
   void testTransformVectorRejectsNonFixedWidthOutput() {
     try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3)) {
       IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->

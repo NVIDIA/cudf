@@ -25,6 +25,8 @@
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
+#include <cstddef>
+
 namespace cudf::lists {
 namespace detail {
 
@@ -63,7 +65,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 
     // kept_counts[i] = number of kept elements among the first `i` elements of the sliced child
     auto kept_counts = cuda::device_buffer<size_type>(
-      stream, mr.get_temporary_mr(), num_elements + 1, cuda::no_init);
+      stream, mr.get_temporary_mr(), static_cast<std::size_t>(num_elements) + 1, cuda::no_init);
     CUDF_CUDA_TRY(cudaMemsetAsync(kept_counts.data(), 0, sizeof(size_type), stream.get()));
 
     auto const is_retention = (mask_kind == cudf::detail::mask_type::RETENTION);

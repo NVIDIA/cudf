@@ -12,6 +12,9 @@ RUN_LIST_ARGS=()
 if [[ -n "${CUDF_POLARS_GPU_RUN_LIST:-}" ]]; then
     RUN_LIST_ARGS=(--inject-gpu-engine-run-list="$(realpath "${SCRIPT_DIR}/../${CUDF_POLARS_GPU_RUN_LIST}")")
 fi
+# Torch is intentionally absent from this test environment. Ignore the upstream
+# module that exercises Polars' optional Torch interoperability.
+OPTIONAL_DEPENDENCY_TEST_ARGS=(--ignore=py-polars/tests/unit/ml/test_torch.py)
 if [[ "${CI:-false}" == "true" ]]; then
     # GitHub exposes the job name but not its numeric ID to steps; the audit
     # matches each report to that ID to detect missing matrix jobs and shards.
@@ -160,6 +163,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            --durations=50 --durations-min=1 \
            -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
+           "${OPTIONAL_DEPENDENCY_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            "${FALLBACK_REPORT_ARGS[@]}" \
            "${RUN_LIST_ARGS[@]}" \
@@ -188,6 +192,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            --durations=50 --durations-min=1 \
            -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
+           "${OPTIONAL_DEPENDENCY_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            "${FALLBACK_REPORT_ARGS[@]}" \
            "${RUN_LIST_ARGS[@]}" \

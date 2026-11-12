@@ -13,18 +13,17 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/wrappers/durations.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <nanoarrow/nanoarrow.hpp>
 #include <nanoarrow/nanoarrow_device.h>
-
-#include <concepts>
 
 struct generated_test_data {
   generated_test_data(cudf::size_type length)
@@ -149,13 +148,13 @@ static ArrowBufferAllocator noop_alloc = (struct ArrowBufferAllocator){
 
 // populate an ArrowArray with pointers to the raw device buffers of a cudf::column_view
 // and use the no-op alloc so that the ArrowArray doesn't presume ownership of the data
-template <typename T>
+template <cudf::concepts::fixed_width T>
 void populate_from_col(
   ArrowArray* arr,
   cudf::column_view view,
   [[maybe_unused]] cuda::stream_ref stream   = cudf::get_default_stream(),
   [[maybe_unused]] cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-  requires(cudf::is_fixed_width<T>() && !cudf::is_boolean<T>())
+  requires(not cudf::concepts::boolean<T>)
 {
   arr->length     = view.size();
   arr->null_count = view.null_count();
@@ -172,12 +171,11 @@ void populate_from_col(
 // populate an ArrowArray from a boolean cudf column. Since Arrow and cudf
 // still represent boolean arrays differently, we have to use bools_to_mask
 // and give the ArrowArray object ownership of the device data.
-template <typename T>
+template <cudf::concepts::boolean T>
 void populate_from_col(ArrowArray* arr,
                        cudf::column_view view,
                        cuda::stream_ref stream   = cudf::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-  requires(cudf::is_boolean<T>())
 {
   arr->length     = view.size();
   arr->null_count = view.null_count();
@@ -206,12 +204,11 @@ void populate_from_col(ArrowArray* arr,
 // populate an ArrowArray with the string data buffers of a cudf column_view
 // using no-op allocator so the ArrowArray knows it doesn't have ownership
 // of the device buffers.
-template <typename T>
+template <cudf::concepts::string_view T>
 void populate_from_col(ArrowArray* arr,
                        cudf::column_view view,
                        cuda::stream_ref stream   = cudf::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-  requires(std::same_as<T, cudf::string_view>)
 {
   arr->length     = view.size();
   arr->null_count = view.null_count();
@@ -320,10 +317,10 @@ struct nanoarrow_decimal_type<__int128_t> {
   static constexpr ArrowType type = NANOARROW_TYPE_DECIMAL128;
 };
 
-template <typename T>
+template <cudf::concepts::fixed_width T>
 nanoarrow::UniqueArray get_nanoarrow_array(std::vector<T> const& data,
                                            std::vector<uint8_t> const& mask = {})
-  requires(cudf::is_fixed_width<T>() && !cudf::is_boolean<T>())
+  requires(not cudf::concepts::boolean<T>)
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), nanoarrow_storage_type<T>::type));
@@ -351,10 +348,9 @@ nanoarrow::UniqueArray get_nanoarrow_array(std::vector<T> const& data,
   return tmp;
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 nanoarrow::UniqueArray get_nanoarrow_array(std::vector<bool> const& data,
                                            std::vector<bool> const& mask = {})
-  requires(cudf::is_boolean<T>())
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), NANOARROW_TYPE_BOOL));
@@ -398,10 +394,9 @@ nanoarrow::UniqueArray get_nanoarrow_array(std::initializer_list<T> elements,
   return get_nanoarrow_array<T>(data, mask);
 }
 
-template <typename T>
+template <cudf::concepts::string_view T>
 nanoarrow::UniqueArray get_nanoarrow_array(std::vector<std::string> const& data,
                                            std::vector<uint8_t> const& mask = {})
-  requires(std::same_as<T, cudf::string_view>)
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), NANOARROW_TYPE_STRING));
@@ -513,7 +508,8 @@ void slice_host_nanoarrow(ArrowArray* arr, int64_t start, int64_t end);
 
 template <typename T>
 std::size_t get_decimal_precision()
-  requires(std::same_as<T, int32_t> || std::same_as<T, int64_t> || std::same_as<T, __int128_t>)
+  requires(cuda::std::same_as<T, int32_t> or cuda::std::same_as<T, int64_t> or
+           cuda::std::same_as<T, __int128_t>)
 {
   return std::numeric_limits<T>::digits10;
 }

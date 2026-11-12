@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -130,6 +130,21 @@ def test_no_fallback_in_merge(dataframe):
     pd.merge(df * df, df + df, how="outer")
     pd.merge(df * df, df + df, how="left")
     pd.merge(df * df, df + df, how="right")
+
+
+@pytest.mark.parametrize("value", [-1, 0, 42])
+def test_no_fallback_in_merge_quoted_csv_integer(tmp_path, value):
+    path = tmp_path / "quoted.csv"
+    path.write_text(f'c0\n"{value}"\n', encoding="utf-8")
+
+    right = pd.read_csv(path)
+    left = pd.DataFrame({"c0": [value]})
+
+    assert right.c0.dtype == np.dtype("int64")
+    result = left.merge(right, on="c0", how="right")
+    assert result.shape == (1, 1)
+    assert result.c0.dtype == np.dtype("int64")
+    assert result.iloc[0, 0] == value
 
 
 def test_no_fallback_in_memory_usage_and_sizeof(dataframe, series):

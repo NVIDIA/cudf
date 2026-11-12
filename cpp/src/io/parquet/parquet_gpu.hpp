@@ -1088,11 +1088,11 @@ void write_final_offsets(host_span<size_type const> offsets,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
- * @param[in] has_flat_nz_map Whether any page of this subpass carries a flat nz map
+ * @param[in] has_flat_nz_map Whether any DELTA_BINARY page of this subpass carries a flat nz map
  * @param[in] needs_level_decoder Whether any DELTA_BINARY page of this subpass lacks a flat nz map
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream for the level-decoding kernel
- * @param[in] nz_map_stream Stream the producer ran on, which orders the consumer behind it
+ * @param[in] consumer_stream Stream for the nz map consumer, ordered after the producer
  */
 void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
@@ -1104,7 +1104,7 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          bool needs_level_decoder,
                          kernel_error::pointer error_code,
                          cuda::stream_ref stream,
-                         cuda::stream_ref nz_map_stream);
+                         cuda::stream_ref consumer_stream);
 
 /**
  * @brief Launches kernel for reading the DELTA_BYTE_ARRAY column data stored in the pages
@@ -1144,9 +1144,14 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
+ * @param[in] has_flat_nz_map Whether any DELTA_LENGTH_BYTE_ARRAY page of this subpass carries a
+ * flat nz map
+ * @param[in] needs_level_decoder Whether any DELTA_LENGTH_BYTE_ARRAY page of this subpass lacks a
+ * flat nz map
  * @param[out] initial_str_offsets Vector to store the initial offsets for large nested string cols
  * @param[out] error_code Error code for kernel failures
- * @param[in] stream CUDA stream to use
+ * @param[in] stream CUDA stream for the level-decoding kernel
+ * @param[in] consumer_stream Stream for the nz map consumer, ordered after the producer
  */
 void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                                     cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
@@ -1154,9 +1159,12 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
                                     size_t min_row,
                                     int level_type_size,
                                     cudf::device_span<bool const> page_mask,
+                                    bool has_flat_nz_map,
+                                    bool needs_level_decoder,
                                     cudf::device_span<size_t> initial_str_offsets,
                                     kernel_error::pointer error_code,
-                                    cuda::stream_ref stream);
+                                    cuda::stream_ref stream,
+                                    cuda::stream_ref consumer_stream);
 
 /**
  * @brief Launches pre-processing kernel to fill string offsets for non-dictionary columns

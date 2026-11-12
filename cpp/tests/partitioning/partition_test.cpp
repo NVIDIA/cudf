@@ -371,7 +371,7 @@ TEST_F(PartitionTestNotTyped, HostMetadataPolicy)
 
 TEST_F(PartitionTestNotTyped, TrivialPartitionSlices)
 {
-  for (auto const rows : {1, 1025}) {
+  for (auto const rows : {1, 1'025}) {
     for (auto const partitions : {1, 17}) {
       if (rows > 1 && partitions > 1) continue;
       std::vector<int32_t> ids(rows + 7);
@@ -395,7 +395,7 @@ TEST_F(PartitionTestNotTyped, TrivialPartitionSlices)
 
 TEST_F(PartitionTestNotTyped, UniformPartitionColumns)
 {
-  constexpr int rows = 1025;
+  constexpr int rows = 1'025;
   std::vector<int32_t> values(rows, 3), assignments(rows);
   std::vector<bool> invalid(rows, false);
   std::vector<std::string> text(rows, "payload"), empty(rows, "");

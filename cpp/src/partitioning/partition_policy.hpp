@@ -20,7 +20,7 @@ inline std::optional<partition_plan> select_partition_plan(table_view const& inp
                                                            size_type partitions)
 {
   namespace plans = cudf::detail::partition_policy;
-  if (partitions <= 1 || partitions > 256 || input.num_rows() < 1024) { return std::nullopt; }
+  if (partitions <= 1 || partitions > 256 || input.num_rows() < 1'024) { return std::nullopt; }
   auto const fixed = std::all_of(
     input.begin(), input.end(), [](auto const& col) { return is_fixed_width(col.type()); });
   auto const nullable =

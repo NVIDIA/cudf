@@ -18,7 +18,7 @@ struct mask_filter {
   MaskIterator mask;  ///< Iterator over the mask values
   bool is_retention;  ///< Whether `true` mask values retain or drop values
 
-  __device__ inline bool operator()(size_type i) const noexcept { return mask[i] == is_retention; }
+  __device__ bool operator()(size_type i) const noexcept { return mask[i] == is_retention; }
 };
 
 }  // namespace cudf::detail

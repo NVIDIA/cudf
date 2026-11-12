@@ -27,16 +27,13 @@ rapids-logger "Install libcudf, pylibcudf and cudf_polars"
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-CUDF_INSTALL_ARGS=(
-    --constraint "${PIP_CONSTRAINT}"
-    "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]"
-    "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
-    "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
-    "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+rapids-uv-pip install \
+    --constraint "${PIP_CONSTRAINT}" \
+    "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
+    "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
+    "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
+    "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${CUDF_STREAMING_WHEELHOUSE}"/cudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
-)
-
-rapids-uv-pip install "${CUDF_INSTALL_ARGS[@]}"
 
 TAG=$(python -c 'import polars; print(f"py-{polars.__version__}")')
 rapids-logger "Clone polars to ${TAG}"
@@ -44,22 +41,26 @@ git clone https://github.com/pola-rs/polars.git --branch "${TAG}" --depth 1
 
 # Install requirements for running polars tests
 rapids-logger "Install polars test requirements"
-
-# ensure a CUDA variant of 'torch' is used
-rapids-logger "Downloading PyTorch CUDA wheels"
-TORCH_WHEEL_DIR="$(mktemp -d)"
-./ci/download-torch-wheels.sh "${TORCH_WHEEL_DIR}"
-
 # We don't need to pick up dependencies from polars-cloud, so we remove it.
 sed -i '/^polars-cloud$/d' polars/py-polars/requirements-dev.txt
 # Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
 sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
+# PyTorch 2.10.0's CUDA 12 wheel pins cuda-bindings==12.9.4, which is
+# incompatible with cuda-core 1.3.0. Remove this pin once PyTorch supports
+# cuda-bindings>=12.9.8.
+if [[ "${RAPIDS_CUDA_VERSION%%.*}" == "12" ]]; then
+    sed -i 's/^torch$/torch<2.10/' polars/py-polars/requirements-ci.txt
+fi
 
+# notes:
+#
+#   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
+#     that environment variable is ignored if any other --constraint are passed via the CLI
+#
 rapids-uv-pip install \
-    "${CUDF_INSTALL_ARGS[@]}" \
+    --constraint "${PIP_CONSTRAINT}" \
     -r polars/py-polars/requirements-dev.txt \
     -r polars/py-polars/requirements-ci.txt \
-    "${TORCH_WHEEL_DIR}"/torch-*.whl \
     "polars-iceberg>=0.1.0,<1.0.0"
 
 # shellcheck disable=SC2317

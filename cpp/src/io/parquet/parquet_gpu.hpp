@@ -932,10 +932,12 @@ void build_string_dictionary_index(ColumnChunkDesc* chunks,
  *
  * @param[in] pages List of pages to aggregate
  * @param[in] stream CUDA stream to use
+ * @param[in] mr Memory resources used to allocate temporary device memory
  * @return Bitwise OR of all page `kernel_mask` values
  */
 uint32_t get_aggregated_decode_kernel_mask(cudf::detail::hostdevice_span<PageInfo const> pages,
-                                           cuda::stream_ref stream);
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr);
 
 /**
  * @brief Compute page output size information.
@@ -1010,11 +1012,13 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
  * @param[in] chunks All chunks to be decoded
  * @param[out] temp_string_buf Temporary space needed for decoding DELTA_BYTE_ARRAY strings
  * @param[in] stream CUDA stream to use
+ * @param[in] mr Memory resources used to allocate temporary device memory
  */
 void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pages,
                                      cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
                                      cuda::device_buffer<uint8_t>& temp_string_buf,
-                                     cuda::stream_ref stream);
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr);
 
 /**
  * @brief Launches kernel for reading the column data stored in the pages
@@ -1071,10 +1075,12 @@ void decode_split_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
  * @param offsets Host span of final offsets
  * @param buff_addrs Host span of corresponding output col buffer end addresses
  * @param stream CUDA stream to use
+ * @param mr Memory resources used to allocate temporary device memory
  */
 void write_final_offsets(host_span<size_type const> offsets,
                          host_span<size_type* const> buff_addrs,
-                         cuda::stream_ref stream);
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr);
 
 /**
  * @brief Launches kernel for reading the DELTA_BINARY_PACKED column data stored in the pages

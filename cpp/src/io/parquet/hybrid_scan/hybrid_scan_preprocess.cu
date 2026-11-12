@@ -213,7 +213,8 @@ void hybrid_scan_reader_impl::setup_compressed_data(
     total_pages, _stream, _mr.as_temporary());
 
   // decoding of column/page information
-  parquet::detail::decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  parquet::detail::decode_page_headers(
+    pass, unsorted_pages, _has_offset_index, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -249,7 +250,8 @@ void hybrid_scan_reader_impl::setup_sparse_compressed_data(
   // PageInfo as whole objects.
   auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, _mr.as_temporary());
-  parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream);
+  parquet::detail::decode_page_headers(
+    pass, unsorted_pages, page_data, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -395,13 +397,12 @@ bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_m
 {
   CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   return cudf::detail::all_of(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{row_mask.size()},
     is_row_pruned_fn{row_mask.nullable(), row_mask.begin<bool>(), row_mask.null_mask()},
     stream,
-    mr.as_temporary());
+    _mr.as_temporary());
 }
 
 void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_mask,

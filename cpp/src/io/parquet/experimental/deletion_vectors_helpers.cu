@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/error.hpp>
@@ -72,7 +73,7 @@ std::unique_ptr<cudf::column> compute_row_index_column(
   if (row_group_offsets.empty()) {
     auto row_indices = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
     auto row_indices_iter = static_cast<size_t*>(row_indices.data());
-    thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                      row_indices_iter,
                      row_indices_iter + num_rows,
                      start_row.value_or(size_t{0}));
@@ -96,43 +97,38 @@ std::unique_ptr<cudf::column> compute_row_index_column(
 
   auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
   auto row_indices_iter = static_cast<size_t*>(row_indices.data());
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-               row_indices_iter,
-               row_indices_iter + num_rows,
-               1);
+  thrust::fill(
+    cudf::detail::exec_policy_nosync(stream, mr), row_indices_iter, row_indices_iter + num_rows, 1);
 
-  auto row_group_keys = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-               row_group_keys.begin(),
-               row_group_keys.end(),
-               0);
+  auto row_group_keys =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
+  thrust::fill(
+    cudf::detail::exec_policy_nosync(stream, mr), row_group_keys.begin(), row_group_keys.end(), 0);
 
-  auto d_row_group_offsets = cudf::detail::make_device_buffer_async(
-    row_group_offsets, stream, cudf::get_current_device_resource_ref());
-  auto d_row_group_span_offsets = cudf::detail::make_device_buffer_async(
-    row_group_span_offsets, stream, cudf::get_current_device_resource_ref());
+  auto d_row_group_offsets =
+    cudf::detail::make_device_buffer_async(row_group_offsets, stream, mr.as_temporary());
+  auto d_row_group_span_offsets =
+    cudf::detail::make_device_buffer_async(row_group_span_offsets, stream, mr.as_temporary());
   auto in_iter =
     cuda::make_zip_iterator(d_row_group_offsets.begin(), cuda::counting_iterator<size_type>(0));
   auto out_iter = cuda::make_zip_iterator(row_indices_iter, row_group_keys.begin());
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   in_iter,
                   in_iter + num_row_groups,
                   d_row_group_span_offsets.begin(),
                   out_iter);
 
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          row_group_keys.begin(),
                          row_group_keys.end(),
                          row_group_keys.begin(),
                          cuda::maximum<cudf::size_type>());
 
-  thrust::inclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    row_group_keys.begin(),
-    row_group_keys.end(),
-    row_indices_iter,
-    row_indices_iter);
+  thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
+                                row_group_keys.begin(),
+                                row_group_keys.end(),
+                                row_indices_iter,
+                                row_indices_iter);
 
   stream.sync();
   return std::make_unique<cudf::column>(

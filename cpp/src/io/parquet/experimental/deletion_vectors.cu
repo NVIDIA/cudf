@@ -57,10 +57,9 @@ namespace detail {
                "Encountered a mismatch in the number of deletion vectors and the number of rows "
                "per deletion vector");
 
-  // Use default mr to read parquet table and build row index column if we will be applying the
+  // Use temporary mr to read parquet table and build row index column if we will be applying the
   // deletion vector to produce a new table later
-  auto const table_mr =
-    serialized_roaring_bitmaps.empty() ? mr : cudf::get_current_device_resource_ref();
+  auto const table_mr = serialized_roaring_bitmaps.empty() ? mr : mr.as_temporary();
 
   auto [table, metadata] = cudf::io::read_parquet(options, stream, table_mr);
   auto const num_rows    = table->num_rows();
@@ -103,7 +102,7 @@ namespace detail {
                                           deletion_vector_refs,
                                           deletion_vector_row_counts,
                                           stream,
-                                          cudf::get_current_device_resource_ref());
+                                          mr.as_temporary());
 
   auto const mask_type = deletion_vector_info.are_retention_vectors
                            ? cudf::detail::mask_type::RETENTION
@@ -208,11 +207,9 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
     _are_retentions{deletion_vector_info.are_retention_vectors},
     _stream{stream},
     _mr{mr},
-    // Use default mr for the internal chunked reader and row index column if we will
+    // Use temporary mr for the internal chunked reader and row index column if we will
     // be applying the deletion vector to produce the output table
-    _table_mr{deletion_vector_info.serialized_roaring_bitmaps.empty()
-                ? mr.get_output_mr()
-                : cudf::get_current_device_resource_ref()}
+    _table_mr{deletion_vector_info.serialized_roaring_bitmaps.empty() ? mr : mr.as_temporary()}
 {
   auto const& serialized_roaring_bitmaps = deletion_vector_info.serialized_roaring_bitmaps;
   auto const& deletion_vector_row_counts = deletion_vector_info.deletion_vector_row_counts;
@@ -322,7 +319,7 @@ table_with_metadata chunked_parquet_reader::read_chunk()
                                                   _deletion_vectors,
                                                   _deletion_vector_row_counts,
                                                   _stream,
-                                                  cudf::get_current_device_resource_ref());
+                                                  _mr.as_temporary());
   auto const mask_type =
     _are_retentions ? cudf::detail::mask_type::RETENTION : cudf::detail::mask_type::DELETION;
   return cudf::io::table_with_metadata{

@@ -59,8 +59,7 @@ std::unique_ptr<column> cast_decimals_to_width(std::unique_ptr<column>&& col,
   auto const col_type = col->type();
   if (cudf::is_fixed_point(col_type)) {
     if (col_type.id() == decimal_width) { return col; }
-    return cudf::cast(
-      col->view(), data_type{decimal_width, col_type.scale()}, stream, mr.get_output_mr());
+    return cudf::cast(col->view(), data_type{decimal_width, col_type.scale()}, stream, mr);
   }
   if (col_type.id() != type_id::LIST and col_type.id() != type_id::STRUCT) { return col; }
 
@@ -567,7 +566,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     cudf::host_span<cudf::size_type const>{final_offsets}, _stream);
   auto pinned_out_buffers =
     cudf::detail::make_pinned_vector(cudf::host_span<cudf::size_type* const>{out_buffers}, _stream);
-  write_final_offsets(pinned_final_offsets, pinned_out_buffers, _stream);
+  write_final_offsets(pinned_final_offsets, pinned_out_buffers, _stream, _mr);
 
   // update null counts in the final column buffers
   for (size_t idx = 0; idx < subpass.pages.size(); idx++) {
@@ -776,7 +775,7 @@ void reader_impl::preprocess_chunk_strings(read_mode mode, row_range const& read
                                     _pass_itm_data->level_type_size,
                                     _stream);
   }
-  compute_page_string_sizes_pass2(subpass.pages, pass.chunks, subpass.delta_temp_buf, _stream);
+  compute_page_string_sizes_pass2(subpass.pages, pass.chunks, subpass.delta_temp_buf, _stream, _mr);
 }
 
 table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
@@ -1125,13 +1124,11 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
     auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
     auto predicate =
-      use_jit ? cudf::compute_column_jit(read_table->view(),
-                                         final_filter_expr.value().get(),
-                                         {},
-                                         _stream,
-                                         _mr.get_temporary_mr())
-              : cudf::detail::compute_column(
-                  *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
+      use_jit
+        ? cudf::compute_column_jit(
+            read_table->view(), final_filter_expr.value().get(), {}, _stream, _mr.as_temporary())
+        : cudf::detail::compute_column(
+            *read_table, final_filter_expr.value().get(), _stream, _mr.as_temporary());
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");

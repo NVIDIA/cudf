@@ -14,6 +14,7 @@
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/hashing/detail/xxhash_64.cuh>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_schema.hpp>
@@ -24,8 +25,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuda/buffer>
@@ -178,7 +177,7 @@ struct bloom_filter_caster {
     auto constexpr bytes_per_block = sizeof(word_type) * policy_type::words_per_block;
 
     // Query literal in bloom filters from each column chunk (row group).
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<std::size_t>{0},
                       cuda::counting_iterator{total_row_groups},
                       results.begin(),
@@ -213,9 +212,7 @@ struct bloom_filter_caster {
                       });
 
     return std::make_unique<cudf::column>(
-      std::move(results),
-      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr()),
-      0);
+      std::move(results), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
   }
 
   // Booleans and compound types are not supported
@@ -302,8 +299,8 @@ struct bloom_filter_caster {
     }
 
     // Decimals stored as BYTE_ARRAY and INT96 read as a coarser timestamp cannot be queried
-    auto true_scalar = cudf::numeric_scalar<bool>(true, true, stream, mr.get_temporary_mr());
-    return cudf::make_column_from_scalar(true_scalar, total_row_groups, stream, mr.get_output_mr());
+    auto true_scalar = cudf::numeric_scalar<bool>(true, true, stream, mr.as_temporary());
+    return cudf::make_column_from_scalar(true_scalar, total_row_groups, stream, mr);
   }
 };
 
@@ -593,7 +590,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
   // Copy bloom filter bitset spans to device
   auto const device_bloom_filter_data =
-    cudf::detail::make_device_buffer_async(bloom_filter_data, stream, mr.get_temporary_mr());
+    cudf::detail::make_device_buffer_async(bloom_filter_data, stream, mr.as_temporary());
 
   // Create a bloom filter query table caster
   bloom_filter_caster const bloom_filter_col{device_bloom_filter_data,

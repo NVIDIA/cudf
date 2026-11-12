@@ -254,10 +254,12 @@ class process_pch_dir {
     if (path_.empty() || owner_ != ::getpid()) {
       auto path_template = std::format("{}/nvrtc-pch-XXXXXX", parent_dir);
       std::filesystem::create_directories(parent_dir);
-      CUDF_EXPECTS(::mkdtemp(path_template.data()) != nullptr,
+      auto const* created = ::mkdtemp(path_template.data());
+      auto const error    = errno;
+      CUDF_EXPECTS(created != nullptr,
                    std::format("Failed to create NVRTC PCH directory from template {}: {}",
                                path_template,
-                               std::strerror(errno)),
+                               std::strerror(error)),
                    std::runtime_error);
       path_  = std::move(path_template);
       owner_ = ::getpid();

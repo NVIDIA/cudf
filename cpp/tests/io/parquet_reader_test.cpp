@@ -3678,8 +3678,8 @@ TEST_F(ParquetReaderTest, FilterFloatNAN)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected1->view(), result1);
 }
 
-// Filter float columns with NaN values using nan_semantics::ETL
-TEST_F(ParquetReaderTest, FilterFloatNaNSemanticsETL)
+// Filter float columns with NaN values using nan_semantics::TOTALLY_ORDERED
+TEST_F(ParquetReaderTest, FilterFloatNaNSemanticsTotallyOrdered)
 {
   constexpr auto num_rows = 24000;
   auto elements           = cudf::detail::make_counting_transform_iterator(
@@ -3688,7 +3688,8 @@ TEST_F(ParquetReaderTest, FilterFloatNaNSemanticsETL)
   auto col1 = cudf::test::fixed_width_column_wrapper<double>(elements, elements + num_rows);
 
   auto const written_table = table_view{{col0, col1}};
-  auto const filepath      = temp_env->get_temp_filepath("FilterFloatNaNSemanticsETL.parquet");
+  auto const filepath =
+    temp_env->get_temp_filepath("FilterFloatNaNSemanticsTotallyOrdered.parquet");
   {
     cudf::io::parquet_writer_options const out_opts =
       cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, written_table)
@@ -3703,11 +3704,12 @@ TEST_F(ParquetReaderTest, FilterFloatNaNSemanticsETL)
   auto big_value   = cudf::numeric_scalar<double>(20000.0, true);
   auto big_literal = cudf::ast::literal(big_value);
 
-  // With ETL, only the NaN rows match these filters, so the setting must reach the row filter
+  // With TOTALLY_ORDERED, only the NaN rows match these filters, so the setting must reach the row
+  // filter
   auto expr_eq = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, filter_col0, nan_literal);
   auto expr_gt = cudf::ast::operation(cudf::ast::ast_operator::GREATER, filter_col1, big_literal);
   for (auto* expr : {&expr_eq, &expr_gt}) {
-    expr->set_nan_semantics(cudf::nan_semantics::ETL);
+    expr->set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
     auto const predicate = cudf::compute_column(written_table, *expr);
     auto const expected  = cudf::apply_retention_mask(written_table, *predicate);
     EXPECT_EQ(expected->num_rows(), num_rows / 2 - 1);
@@ -3718,8 +3720,8 @@ TEST_F(ParquetReaderTest, FilterFloatNaNSemanticsETL)
   }
 }
 
-// Filter a file whose statistics exclude NaN values using nan_semantics::ETL
-TEST_F(ParquetReaderTest, FilterNaNStatisticsETL)
+// Filter a file whose statistics exclude NaN values using nan_semantics::TOTALLY_ORDERED
+TEST_F(ParquetReaderTest, FilterNaNStatisticsTotallyOrdered)
 {
   // Written by pyarrow with two row groups, [1.0, 2.0] and [3.0, NaN]. The min/max statistics of
   // the second row group are 3.0/3.0 since pyarrow excludes NaN from them. (The libcudf writer
@@ -3764,13 +3766,13 @@ TEST_F(ParquetReaderTest, FilterNaNStatisticsETL)
   auto nan_value     = cudf::numeric_scalar<double>(NaN);
   auto nan_literal   = cudf::ast::literal(nan_value);
 
-  // With ETL, the NaN row matches both filters even though the statistics of its row group
-  // (max 3.0) would exclude it
+  // With TOTALLY_ORDERED, the NaN row matches both filters even though the statistics of its row
+  // group (max 3.0) would exclude it
   auto expr_gt = cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref, five_literal);
   auto expr_eq = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, nan_literal);
   auto const expected = cudf::test::fixed_width_column_wrapper<double>{NaN};
   for (auto* expr : {&expr_gt, &expr_eq}) {
-    expr->set_nan_semantics(cudf::nan_semantics::ETL);
+    expr->set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
     auto const result =
       cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source).filter(*expr));
     ASSERT_EQ(result.tbl->num_columns(), 1);

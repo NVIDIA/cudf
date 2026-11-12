@@ -85,12 +85,12 @@ def test_evaluation():
 def test_expression_nan_semantics_default():
     expr = plc.expressions.ColumnReference(0)
     assert expr.nan_semantics == plc.types.NanSemantics.DEFAULT
-    expr.nan_semantics = plc.types.NanSemantics.ETL
-    assert expr.nan_semantics == plc.types.NanSemantics.ETL
+    expr.nan_semantics = plc.types.NanSemantics.TOTALLY_ORDERED
+    assert expr.nan_semantics == plc.types.NanSemantics.TOTALLY_ORDERED
 
 
 @pytest.mark.parametrize(
-    "op, ieee, etl",
+    "op, unordered, totally_ordered",
     [
         (
             plc.expressions.ASTOperator.EQUAL,
@@ -109,7 +109,7 @@ def test_expression_nan_semantics_default():
         ),
     ],
 )
-def test_compute_column_nan_semantics(op, ieee, etl):
+def test_compute_column_nan_semantics(op, unordered, totally_ordered):
     nan = float("nan")
     table = plc.Table.from_arrow(
         pa.table({"a": [nan, 1.0, 2.0], "b": [nan, nan, 2.0]})
@@ -120,8 +120,8 @@ def test_compute_column_nan_semantics(op, ieee, etl):
         plc.expressions.ColumnReference(1),
     )
     got = plc.transform.compute_column(table, expr)
-    assert_column_eq(pa.array(ieee), got)
+    assert_column_eq(pa.array(unordered), got)
 
-    expr.nan_semantics = plc.types.NanSemantics.ETL
+    expr.nan_semantics = plc.types.NanSemantics.TOTALLY_ORDERED
     got = plc.transform.compute_column(table, expr)
-    assert_column_eq(pa.array(etl), got)
+    assert_column_eq(pa.array(totally_ordered), got)

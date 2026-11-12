@@ -965,8 +965,8 @@ TEST_F(ConditionalJoinNanSemanticsTest, InnerJoinLessEqual)
   EXPECT_EQ(sorted_index_pairs(cudf::conditional_inner_join(left, right, predicate)),
             (pairs{{1, 1}, {2, 1}}));
 
-  // With ETL, NaN equals NaN and every other value is less than NaN
-  predicate.set_nan_semantics(cudf::nan_semantics::ETL);
+  // With TOTALLY_ORDERED, NaN equals NaN and every other value is less than NaN
+  predicate.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
   EXPECT_EQ(sorted_index_pairs(cudf::conditional_inner_join(left, right, predicate)),
             (pairs{{0, 0}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}));
 }

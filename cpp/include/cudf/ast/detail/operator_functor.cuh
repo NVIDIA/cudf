@@ -86,16 +86,16 @@ CUDF_AST_OPERATOR_MAP(NULL_LOGICAL_OR, null_logical_or, 2)
 #undef CUDF_AST_OPERATOR_MAP
 
 /**
- * @brief Maps a comparison operator to its `nan_semantics::ETL` implementation
+ * @brief Maps a comparison operator to its `nan_semantics::TOTALLY_ORDERED` implementation
  *
  * Only the operators whose result depends on how NaN values compare are specialized.
  */
 template <ast_operator op>
-struct etl_invoker {};
+struct totally_ordered_invoker {};
 
-#define CUDF_AST_ETL_OPERATOR_MAP(OP, func_name)                                                  \
+#define CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(OP, func_name)                                      \
   template <>                                                                                     \
-  struct etl_invoker<ast_operator::OP> {                                                          \
+  struct totally_ordered_invoker<ast_operator::OP> {                                              \
     template <typename... Args>                                                                   \
     __device__ static inline auto eval(Args... a) -> decltype(cudf::detail::ops::func_name(a...)) \
     {                                                                                             \
@@ -103,15 +103,15 @@ struct etl_invoker {};
     }                                                                                             \
   };
 
-CUDF_AST_ETL_OPERATOR_MAP(EQUAL, etl_equal)
-CUDF_AST_ETL_OPERATOR_MAP(NOT_EQUAL, etl_not_equal)
-CUDF_AST_ETL_OPERATOR_MAP(LESS, etl_less)
-CUDF_AST_ETL_OPERATOR_MAP(GREATER, etl_greater)
-CUDF_AST_ETL_OPERATOR_MAP(LESS_EQUAL, etl_less_equal)
-CUDF_AST_ETL_OPERATOR_MAP(GREATER_EQUAL, etl_greater_equal)
-CUDF_AST_ETL_OPERATOR_MAP(NULL_EQUAL, etl_null_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(EQUAL, totally_ordered_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(NOT_EQUAL, totally_ordered_not_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(LESS, totally_ordered_less)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(GREATER, totally_ordered_greater)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(LESS_EQUAL, totally_ordered_less_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(GREATER_EQUAL, totally_ordered_greater_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(NULL_EQUAL, totally_ordered_null_equal)
 
-#undef CUDF_AST_ETL_OPERATOR_MAP
+#undef CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP
 
 /// @brief True for floating-point types and optionals of floating-point types
 template <typename T>
@@ -138,17 +138,19 @@ template <ast_operator op>
 struct operator_functor {
   static constexpr auto arity = operator_invoker<op>::arity;
 
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
 
   /**
-   * @brief Evaluates a binary operator, using the ETL comparison for floating-point operands when
-   * `semantics` is `nan_semantics::ETL`
+   * @brief Evaluates a binary operator, using the TOTALLY_ORDERED comparison for floating-point
+   * operands when `semantics` is `nan_semantics::TOTALLY_ORDERED`
    */
   template <typename A, typename B>
   [[nodiscard]] __device__ inline auto invoke(A a, B b) const
   {
-    if constexpr (is_floating_operand<A> && requires { etl_invoker<op>::eval(a, b); }) {
-      if (semantics == nan_semantics::ETL) { return etl_invoker<op>::eval(a, b); }
+    if constexpr (is_floating_operand<A> && requires { totally_ordered_invoker<op>::eval(a, b); }) {
+      if (semantics == nan_semantics::TOTALLY_ORDERED) {
+        return totally_ordered_invoker<op>::eval(a, b);
+      }
     }
     return operator_invoker<op>::eval(a, b);
   }

@@ -587,7 +587,7 @@ simplified_expression_opt parquet_expression_simplifier::simplify_negation(
 bool parquet_expression_simplifier::is_nan_safe_comparison(
   ast::column_reference const& col_ref) const
 {
-  return _nan_semantics != nan_semantics::ETL or
+  return _nan_semantics != nan_semantics::TOTALLY_ORDERED or
          not cudf::is_floating_point(_output_dtypes[col_ref.get_column_index()]);
 }
 

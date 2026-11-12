@@ -385,7 +385,7 @@ class parquet_expression_simplifier {
    * @brief Returns true if a comparison on the column can be simplified for pruning
    *
    * Statistics, bloom filters, and dictionaries cannot exclude NaN rows. With
-   * `nan_semantics::ETL`, NaN rows can satisfy a comparison (for example `NaN > x` or
+   * `nan_semantics::TOTALLY_ORDERED`, NaN rows can satisfy a comparison (for example `NaN > x` or
    * `NaN == NaN`), so comparisons on floating-point columns are not used for pruning.
    */
   [[nodiscard]] bool is_nan_safe_comparison(ast::column_reference const& col_ref) const;

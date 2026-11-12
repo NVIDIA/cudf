@@ -1871,10 +1871,10 @@ TYPED_TEST(TransformTest, NanSemanticsComparisons)
 
   struct test_case {
     op_t op;
-    bools ieee;
-    bools etl;
+    bools unordered;
+    bools ordered;
   };
-  // With ETL, NaNs are equal to each other and greater than every other value
+  // With TOTALLY_ORDERED, NaNs are equal to each other and greater than every other value
   std::vector<test_case> cases;
   cases.push_back({op_t::EQUAL, bools{0, 0, 0, 1, 0, 0}, bools{0, 1, 0, 1, 0, 0}});
   cases.push_back({op_t::NOT_EQUAL, bools{1, 1, 1, 0, 1, 1}, bools{1, 0, 1, 0, 1, 1}});
@@ -1888,13 +1888,13 @@ TYPED_TEST(TransformTest, NanSemanticsComparisons)
     SCOPED_TRACE("operator " + std::to_string(static_cast<int>(tc.op)));
     auto expression = cudf::ast::operation(tc.op, col_ref_0, col_ref_1);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      tc.ieee, Executor::compute_column(table, expression)->view(), verbosity);
-    expression.set_nan_semantics(cudf::nan_semantics::IEEE754);
+      tc.unordered, Executor::compute_column(table, expression)->view(), verbosity);
+    expression.set_nan_semantics(cudf::nan_semantics::UNORDERED);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      tc.ieee, Executor::compute_column(table, expression)->view(), verbosity);
-    expression.set_nan_semantics(cudf::nan_semantics::ETL);
+      tc.unordered, Executor::compute_column(table, expression)->view(), verbosity);
+    expression.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      tc.etl, Executor::compute_column(table, expression)->view(), verbosity);
+      tc.ordered, Executor::compute_column(table, expression)->view(), verbosity);
   }
 }
 
@@ -1911,23 +1911,23 @@ TYPED_TEST(TransformTest, NanSemanticsNullsAndLiterals)
   auto col_ref_0 = cudf::ast::column_reference(0);
   auto col_ref_1 = cudf::ast::column_reference(1);
 
-  // NULL_EQUAL: nulls are equal to each other, and with ETL so are NaNs. The interpreter returns a
-  // nullable column with no nulls, so only the values are compared.
+  // NULL_EQUAL: nulls are equal to each other, and with TOTALLY_ORDERED so are NaNs. The
+  // interpreter returns a nullable column with no nulls, so only the values are compared.
   auto null_equal = cudf::ast::operation(cudf::ast::ast_operator::NULL_EQUAL, col_ref_0, col_ref_1);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     bools{0, 1, 0, 0, 0}, Executor::compute_column(table, null_equal)->view(), verbosity);
-  null_equal.set_nan_semantics(cudf::nan_semantics::ETL);
+  null_equal.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     bools{1, 1, 0, 0, 0}, Executor::compute_column(table, null_equal)->view(), verbosity);
 
-  // EQUAL propagates nulls; comparing with a NaN literal matches NaN rows only with ETL
+  // EQUAL propagates nulls; comparing with a NaN literal matches NaN rows only with TOTALLY_ORDERED
   auto nan_scalar  = cudf::numeric_scalar<float>(NaN);
   auto nan_literal = cudf::ast::literal(nan_scalar);
   auto equal_nan   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_0, nan_literal);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools{{0, 0, 0, 0, 0}, {1, 0, 1, 1, 1}},
                                  Executor::compute_column(table, equal_nan)->view(),
                                  verbosity);
-  equal_nan.set_nan_semantics(cudf::nan_semantics::ETL);
+  equal_nan.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools{{1, 0, 0, 1, 1}, {1, 0, 1, 1, 1}},
                                  Executor::compute_column(table, equal_nan)->view(),
                                  verbosity);
@@ -1956,12 +1956,12 @@ TYPED_TEST(TransformTest, NanSemanticsFromRootExpression)
     bools{0, 0, 0}, Executor::compute_column(table, root)->view(), verbosity);
 
   // The settings of sub-expressions are ignored
-  self_equal.set_nan_semantics(cudf::nan_semantics::ETL);
-  greater_equal.set_nan_semantics(cudf::nan_semantics::ETL);
+  self_equal.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  greater_equal.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     bools{0, 0, 0}, Executor::compute_column(table, root)->view(), verbosity);
 
-  root.set_nan_semantics(cudf::nan_semantics::ETL);
+  root.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     bools{1, 0, 1}, Executor::compute_column(table, root)->view(), verbosity);
 }

@@ -67,10 +67,11 @@ expression_parser::expression_parser(
     _has_complex_type{false}
 {
   expr.accept(*this);
-  // The libcudf default is currently IEEE 754
-  device_expression_data.semantics =
-    expr.get_nan_semantics() == nan_semantics::ETL ? nan_semantics::ETL : nan_semantics::IEEE754;
-  _has_complex_type = std::ranges::any_of(_data_references, [&](auto const& ref) {
+  // The libcudf default is currently UNORDERED
+  device_expression_data.semantics = expr.get_nan_semantics() == nan_semantics::TOTALLY_ORDERED
+                                       ? nan_semantics::TOTALLY_ORDERED
+                                       : nan_semantics::UNORDERED;
+  _has_complex_type                = std::ranges::any_of(_data_references, [&](auto const& ref) {
     return ast::detail::is_complex_type(ref.data_type.id());
   });
 

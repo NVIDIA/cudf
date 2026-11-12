@@ -243,7 +243,7 @@ static void ast_double_compare(nvbench::state& state)
   auto const num_rows        = static_cast<cudf::size_type>(state.get_int64("num_rows"));
   auto const num_comparisons = static_cast<cudf::size_type>(state.get_int64("num_comparisons"));
   auto const engine          = engine_from_string(state.get_string("engine"));
-  auto const etl             = state.get_string("nan_semantics") == "ETL";
+  auto const ordered         = state.get_string("nan_semantics") == "TOTALLY_ORDERED";
 
   auto const num_columns  = num_comparisons * 2;
   auto const source_table = create_random_table(
@@ -265,7 +265,7 @@ static void ast_double_compare(nvbench::state& state)
   }
   // The root is wrapped so its setting can be changed after the tree is built
   auto root = cudf::ast::operation(cudf::ast::ast_operator::IDENTITY, *expr);
-  if (etl) { root.set_nan_semantics(cudf::nan_semantics::ETL); }
+  if (ordered) { root.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED); }
 
   state.add_global_memory_reads<double>(static_cast<std::size_t>(num_rows) * num_columns);
   state.add_global_memory_writes<bool>(num_rows);
@@ -284,4 +284,4 @@ NVBENCH_BENCH(ast_double_compare)
   .add_int64_axis("num_comparisons", {1, 4, 8})
   .add_int64_axis("num_rows", {1'000'000, 10'000'000, 100'000'000})
   .add_string_axis("engine", {"ast", "jit"})
-  .add_string_axis("nan_semantics", {"IEEE754", "ETL"});
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});

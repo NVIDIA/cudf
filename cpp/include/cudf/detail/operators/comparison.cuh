@@ -127,8 +127,8 @@ __device__ bool null_equal(cuda::std::optional<A> a, cuda::std::optional<B> b)
   return a == b;
 }
 
-// The functions below implement `nan_semantics::ETL` comparisons: NaNs are equal to each other
-// and greater than every other value. Non-floating-point operands compare as usual.
+// The functions below implement `nan_semantics::TOTALLY_ORDERED` comparisons: NaNs are equal to
+// each other and greater than every other value. Non-floating-point operands compare as usual.
 
 /**
  * @brief Returns true if `value` is a floating-point NaN
@@ -144,7 +144,7 @@ __device__ inline bool is_nan_value(T value)
 }
 
 template <typename A, typename B>
-__device__ bool etl_equal(A a, B b)
+__device__ bool totally_ordered_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a == b; })
 {
   auto const a_nan = is_nan_value(a);
@@ -153,14 +153,14 @@ __device__ bool etl_equal(A a, B b)
 }
 
 template <typename A, typename B>
-__device__ bool etl_not_equal(A a, B b)
+__device__ bool totally_ordered_not_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a != b; })
 {
-  return !etl_equal(a, b);
+  return !totally_ordered_equal(a, b);
 }
 
 template <typename A, typename B>
-__device__ bool etl_less(A a, B b)
+__device__ bool totally_ordered_less(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a < b; })
 {
   auto const a_nan = is_nan_value(a);
@@ -170,38 +170,38 @@ __device__ bool etl_less(A a, B b)
 }
 
 template <typename A, typename B>
-__device__ bool etl_greater(A a, B b)
+__device__ bool totally_ordered_greater(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a > b; })
 {
-  return etl_less(b, a);
+  return totally_ordered_less(b, a);
 }
 
 template <typename A, typename B>
-__device__ bool etl_less_equal(A a, B b)
+__device__ bool totally_ordered_less_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a <= b; })
 {
-  return !etl_less(b, a);
+  return !totally_ordered_less(b, a);
 }
 
 template <typename A, typename B>
-__device__ bool etl_greater_equal(A a, B b)
+__device__ bool totally_ordered_greater_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a >= b; })
 {
-  return !etl_less(a, b);
+  return !totally_ordered_less(a, b);
 }
 
 template <typename A, typename B>
-__device__ bool etl_null_equal(A a, B b)
+__device__ bool totally_ordered_null_equal(A a, B b)
   requires(!nullable<A> && !nullable<B> && requires { a == b; })
 {
-  return etl_equal(a, b);
+  return totally_ordered_equal(a, b);
 }
 
 template <typename A, typename B>
-__device__ bool etl_null_equal(cuda::std::optional<A> a, cuda::std::optional<B> b)
+__device__ bool totally_ordered_null_equal(cuda::std::optional<A> a, cuda::std::optional<B> b)
   requires(!nullable<A> && !nullable<B> && requires { a == b; })
 {
-  if (a.has_value() && b.has_value()) { return etl_equal(*a, *b); }
+  if (a.has_value() && b.has_value()) { return totally_ordered_equal(*a, *b); }
   return a.has_value() == b.has_value();
 }
 

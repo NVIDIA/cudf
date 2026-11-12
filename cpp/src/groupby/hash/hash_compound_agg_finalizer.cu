@@ -123,7 +123,7 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
   if (result->size() > 0) {
     auto out = result->mutable_view();
     cudf::binops::compiled::apply_binary_op<cudf::binops::compiled::ops::Div>(
-      out, sum_without_nulls, count_result, false, false, nan_semantics::IEEE754, stream);
+      out, sum_without_nulls, count_result, false, false, nan_semantics::UNORDERED, stream);
   }
   // SUM result only has nulls if it is an input aggregation, not intermediate-only aggregation.
   if (sum_result.has_nulls()) {

@@ -314,87 +314,87 @@ template <typename TypeLhs, typename TypeRhs>
 concept has_floating_point_operand =
   cuda::std::floating_point<TypeLhs> or cuda::std::floating_point<TypeRhs>;
 
-using cudf::detail::ops::etl_equal;
-using cudf::detail::ops::etl_less;
+using cudf::detail::ops::totally_ordered_equal;
+using cudf::detail::ops::totally_ordered_less;
 
 // The comparison operators below hold how NaN values compare. Default construction selects
-// `nan_semantics::IEEE754`; the `nan_semantics::ETL` branch only exists for floating-point
-// operands and is selected at runtime.
+// `nan_semantics::UNORDERED`; the `nan_semantics::TOTALLY_ORDERED` branch only exists for
+// floating-point operands and is selected at runtime.
 
 struct Equal {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x == y)
   {
     if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
-      if (semantics == nan_semantics::ETL) { return etl_equal(x, y); }
+      if (semantics == nan_semantics::TOTALLY_ORDERED) { return totally_ordered_equal(x, y); }
     }
     return (x == y);
   }
 };
 
 struct NotEqual {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x != y)
   {
     if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
-      if (semantics == nan_semantics::ETL) { return not etl_equal(x, y); }
+      if (semantics == nan_semantics::TOTALLY_ORDERED) { return not totally_ordered_equal(x, y); }
     }
     return (x != y);
   }
 };
 
 struct Less {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x < y)
   {
     if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
-      if (semantics == nan_semantics::ETL) { return etl_less(x, y); }
+      if (semantics == nan_semantics::TOTALLY_ORDERED) { return totally_ordered_less(x, y); }
     }
     return (x < y);
   }
 };
 
 struct Greater {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x > y)
   {
     if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
-      if (semantics == nan_semantics::ETL) { return etl_less(y, x); }
+      if (semantics == nan_semantics::TOTALLY_ORDERED) { return totally_ordered_less(y, x); }
     }
     return (x > y);
   }
 };
 
 struct LessEqual {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x <= y)
   {
     if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
-      if (semantics == nan_semantics::ETL) { return not etl_less(y, x); }
+      if (semantics == nan_semantics::TOTALLY_ORDERED) { return not totally_ordered_less(y, x); }
     }
     return (x <= y);
   }
 };
 
 struct GreaterEqual {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x >= y)
   {
     if constexpr (has_floating_point_operand<TypeLhs, TypeRhs>) {
-      if (semantics == nan_semantics::ETL) { return not etl_less(x, y); }
+      if (semantics == nan_semantics::TOTALLY_ORDERED) { return not totally_ordered_less(x, y); }
     }
     return (x >= y);
   }
 };
 
 struct NullEquals {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(
     TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x == y)
@@ -409,7 +409,7 @@ struct NullEquals {
 };
 
 struct NullNotEquals {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs, typename TypeRhs>
   __device__ inline auto operator()(
     TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x != y)
@@ -422,7 +422,7 @@ struct NullNotEquals {
 };
 
 struct NullMax {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs,
             typename TypeRhs,
             typename common_t = std::common_type_t<TypeLhs, TypeRhs>>
@@ -452,7 +452,7 @@ struct NullMax {
 };
 
 struct NullMin {
-  nan_semantics semantics{nan_semantics::IEEE754};  ///< How NaN values compare
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
   template <typename TypeLhs,
             typename TypeRhs,
             typename common_t = std::common_type_t<TypeLhs, TypeRhs>>

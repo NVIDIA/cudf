@@ -44,10 +44,10 @@ from cudf_polars.engine.spmd import SPMDEngine
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/dataset/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -76,10 +76,10 @@ from cudf_polars.engine.spmd import SPMDEngine
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/dataset/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -130,9 +130,9 @@ In practice:
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/*.parquet")
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -140,7 +140,7 @@ with SPMDEngine() as engine:
 # DEADLOCKS: rank 0 issues a group_by collective the other ranks never see.
 with SPMDEngine() as engine:
     df = pl.scan_parquet("/data/*.parquet")
-    if engine.rank == 0:        # don't do this
+    if engine.rank == 0:  # don't do this
         df = df.group_by("customer_id").agg(pl.col("amount").sum())
     result = df.collect(engine=engine)
 ```
@@ -213,15 +213,17 @@ with SPMDEngine(comm=comm) as engine:
 ## Cluster diagnostics
 
 {meth}`~cudf_polars.engine.spmd.SPMDEngine.gather_cluster_info` returns
-placement information for every rank:
+placement information for every rank. It is a collective operation, so every rank must
+call it:
 
 ```python
 with SPMDEngine() as engine:
+    cluster_info = engine.gather_cluster_info()
     if engine.rank == 0:
-        for i, info in enumerate(engine.gather_cluster_info()):
+        for i, info in enumerate(cluster_info):
             print(
-                f"rank {i}: hostname={info['hostname']}, pid={info['pid']}, "
-                f"CUDA_VISIBLE_DEVICES={info['cuda_visible_devices']}"
+                f"rank {i}: hostname={info.hostname}, pid={info.pid}, "
+                f"CUDA_VISIBLE_DEVICES={info.cuda_visible_devices}"
             )
 ```
 

@@ -20,8 +20,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/buffer>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -110,7 +108,7 @@ std::unique_ptr<column> filter_characters(
   filter_type keep_characters,
   string_scalar const& replacement,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   size_type strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
@@ -151,7 +149,7 @@ std::unique_ptr<column> filter_characters(
   filter_type keep_characters,
   string_scalar const& replacement,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_characters(

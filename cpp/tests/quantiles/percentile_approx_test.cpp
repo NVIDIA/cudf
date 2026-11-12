@@ -335,8 +335,10 @@ void simple_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<in
   // all in the same group
   auto keys = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT32}, values->size(), cudf::mask_state::UNALLOCATED);
-  CUDF_CUDA_TRY(
-    cudaMemset(keys->mutable_view().data<int32_t>(), 0, values->size() * sizeof(int32_t)));
+  CUDF_CUDA_TRY(cudaMemsetAsync(keys->mutable_view().data<int32_t>(),
+                                0,
+                                values->size() * sizeof(int32_t),
+                                cudf::test::get_default_stream().get()));
 
   // add a null mask
   auto mask = make_null_mask(*values);

@@ -5,10 +5,14 @@
 
 #include "hash_csr_kernels.cuh"
 
+#include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/join/join.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/prefetch.hpp>
 
 #include <cooperative_groups.h>
+#include <cuda/iterator>
 #include <cuda/std/algorithm>
 
 namespace cudf::detail {
@@ -104,48 +108,70 @@ void launch_hash_csr_retrieve_kernel(cuda::std::int64_t output_size,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
+/// Match counts followed by a zero, so that the last exclusive-scan output is the total
+struct padded_counts {
+  size_type const* counts;
+  size_type size;
+  __device__ size_type operator()(cuda::std::int64_t idx) const
+  {
+    return idx < size ? counts[idx] : 0;
+  }
+};
+
 }  // namespace
 
-void launch_hash_csr_inner_retrieve_kernel(cuda::std::int64_t output_size,
-                                           size_type num_probe_rows,
-                                           cuda::std::int64_t const* offsets,
-                                           size_type const* probe_groups,
-                                           csr_ref csr,
-                                           size_type left_index_offset,
-                                           size_type* left_indices,
-                                           size_type* right_indices,
-                                           cuda::stream_ref stream)
+std::pair<cuda::device_buffer<cuda::std::int64_t>, std::size_t> hash_csr_match_offsets(
+  device_span<size_type const> match_counts, cuda::stream_ref stream)
 {
-  launch_hash_csr_retrieve_kernel<false>(output_size,
-                                         num_probe_rows,
-                                         offsets,
-                                         probe_groups,
-                                         csr,
-                                         left_index_offset,
-                                         left_indices,
-                                         right_indices,
-                                         stream);
+  auto const temp_mr  = cudf::get_current_device_resource_ref();
+  auto const num_rows = static_cast<size_type>(match_counts.size());
+  // 64-bit indices keep the end offset's index in range when there are INT32_MAX probe rows
+  auto const sizes = cuda::transform_iterator(cuda::counting_iterator<cuda::std::int64_t>{0},
+                                              padded_counts{match_counts.data(), num_rows});
+  cuda::device_buffer<cuda::std::int64_t> offsets(
+    stream, temp_mr, match_counts.size() + 1, cuda::no_init);
+  auto const output_size = cudf::detail::sizes_to_offsets(
+    sizes, sizes + num_rows + 1, offsets.begin(), 0, stream, temp_mr);
+  return {std::move(offsets), static_cast<std::size_t>(output_size)};
 }
 
-void launch_hash_csr_outer_retrieve_kernel(cuda::std::int64_t output_size,
-                                           size_type num_probe_rows,
-                                           cuda::std::int64_t const* offsets,
-                                           size_type const* probe_groups,
-                                           csr_ref csr,
-                                           size_type left_index_offset,
-                                           size_type* left_indices,
-                                           size_type* right_indices,
-                                           cuda::stream_ref stream)
+std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+          std::unique_ptr<rmm::device_uvector<size_type>>>
+hash_csr_retrieve(bool is_outer,
+                  std::size_t output_size,
+                  device_span<cuda::std::int64_t const> offsets,
+                  device_span<size_type const> probe_groups,
+                  csr_ref csr,
+                  size_type left_index_offset,
+                  std::size_t extra_capacity,
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
-  launch_hash_csr_retrieve_kernel<true>(output_size,
-                                        num_probe_rows,
-                                        offsets,
-                                        probe_groups,
-                                        csr,
-                                        left_index_offset,
-                                        left_indices,
-                                        right_indices,
-                                        stream);
+  CUDF_EXPECTS(offsets.size() == probe_groups.size() + 1,
+               "Need one offset per probe row plus the end offset");
+  auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    output_size + extra_capacity, stream, mr.get_output_mr());
+  auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    output_size + extra_capacity, stream, mr.get_output_mr());
+  left_indices->resize(output_size, stream);
+  right_indices->resize(output_size, stream);
+  cudf::prefetch::detail::prefetch(*left_indices, stream);
+  cudf::prefetch::detail::prefetch(*right_indices, stream);
+
+  dispatch_bool(is_outer, [&](auto outer) {
+    launch_hash_csr_retrieve_kernel<decltype(outer)::value>(
+      static_cast<cuda::std::int64_t>(output_size),
+      static_cast<size_type>(probe_groups.size()),
+      offsets.data(),
+      probe_groups.data(),
+      csr,
+      left_index_offset,
+      left_indices->data(),
+      right_indices->data(),
+      stream);
+  });
+
+  return {std::move(left_indices), std::move(right_indices)};
 }
 
 template void

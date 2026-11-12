@@ -17,8 +17,6 @@
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/buffer>
 #include <cuda/stream>
 
@@ -51,12 +49,13 @@ template <typename ForEachFunction, typename ProgDevice>
 void launch_for_each_kernel(ForEachFunction fn,
                             ProgDevice& d_prog,
                             size_type size,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
-  auto d_buffer = cuda::device_buffer<std::byte>(
-    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
+  auto d_buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
@@ -91,12 +90,13 @@ void launch_transform_kernel(TransformFunction fn,
                              ProgDevice& d_prog,
                              OutputType* d_output,
                              size_type size,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   auto [buffer_size, thread_count] = d_prog.compute_strided_working_memory(size);
 
-  auto d_buffer = cuda::device_buffer<std::byte>(
-    stream, cudf::get_current_device_resource_ref(), buffer_size, cuda::no_init);
+  auto d_buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), buffer_size, cuda::no_init);
   d_prog.set_working_memory(d_buffer.data(), thread_count);
 
   auto const shmem_size = d_prog.compute_shared_memory_size();
@@ -111,7 +111,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
                            ProgDevice& d_prog,
                            size_type strings_count,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cudf::memory_resources mr)
 {
   auto output_sizes = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
@@ -138,7 +138,7 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
     cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // Now build the chars column
-  rmm::device_uvector<char> chars(char_bytes, stream, mr);
+  rmm::device_uvector<char> chars(char_bytes, stream, mr.get_output_mr());
   if (char_bytes > 0) {
     size_and_exec_fn.d_chars = chars.data();
     for_each_kernel<<<grid.num_blocks, grid.num_threads_per_block, shmem_size, stream.get()>>>(

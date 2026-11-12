@@ -7,6 +7,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/nanoarrow_utils.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column.hpp>
@@ -1296,3 +1297,5 @@ INSTANTIATE_TEST_CASE_P(ToArrowHostDeviceTest,
                                           std::make_tuple(100, 3000),
                                           std::make_tuple(0, 0),
                                           std::make_tuple(0, 3000)));
+
+CUDF_TEST_PROGRAM_MAIN()

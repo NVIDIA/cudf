@@ -33,7 +33,9 @@ with SPMDEngine.from_torch_distributed() as engine:
     result = engine.execute(
         pl.scan_parquet("s3://bucket/data/*.parquet")
         .filter(pl.col("label").is_not_null())
-        .select(pl.col("feat").cast(pl.Float32), pl.col("label").cast(pl.Float32))
+        .select(
+            pl.col("feat").cast(pl.Float32), pl.col("label").cast(pl.Float32)
+        )
     )
     # Zero-copy views of that GPU memory. Clone so the engine's memory can be released.
     tensors = persisted_to_torch(result, engine=engine, ensure_sharded=True)
@@ -96,7 +98,9 @@ and `device_ids=[0]` for `DistributedDataParallel`.
   ```python
   import rmm.allocators.torch
 
-  torch.cuda.memory.change_current_allocator(rmm.allocators.torch.rmm_torch_allocator)
+  torch.cuda.memory.change_current_allocator(
+      rmm.allocators.torch.rmm_torch_allocator
+  )
   ```
 
 ## Use cases
@@ -121,7 +125,9 @@ features = (
     )
     .select(pl.col("spend", "n_events", "label").cast(pl.Float32))
 )
-tensors = persisted_to_torch(engine.execute(features), engine=engine, ensure_sharded=True)
+tensors = persisted_to_torch(
+    engine.execute(features), engine=engine, ensure_sharded=True
+)
 ```
 
 ### Per-epoch reshuffle and feature recompute
@@ -142,7 +148,9 @@ for epoch in range(num_epochs):
         .sort(pl.col("event_id").hash(seed=epoch))
         .select(pl.col("amount", "merchant_rate", "label").cast(pl.Float32))
     )
-    batch = persisted_to_torch(engine.execute(epoch_query), engine=engine, ensure_sharded=True)
+    batch = persisted_to_torch(
+        engine.execute(epoch_query), engine=engine, ensure_sharded=True
+    )
     train_one_epoch(model, batch)
 ```
 
@@ -157,7 +165,9 @@ train_table = (
     .join(catalog, on="item_id")
     .select(pl.col("age", "price", "label").cast(pl.Float32))
 )
-tensors = persisted_to_torch(engine.execute(train_table), engine=engine, ensure_sharded=True)
+tensors = persisted_to_torch(
+    engine.execute(train_table), engine=engine, ensure_sharded=True
+)
 ```
 
 (cudf-polars-pytorch-larger-results)=
@@ -172,8 +182,9 @@ as one on a date column, avoids reading all of the input for every batch.
 nbatches = 16
 for i in range(nbatches):
     batch = engine.execute(
-        events.filter(pl.col("event_id").hash(seed=0) % nbatches == i)
-        .select(pl.col("amount", "label").cast(pl.Float32))
+        events.filter(pl.col("event_id").hash(seed=0) % nbatches == i).select(
+            pl.col("amount", "label").cast(pl.Float32)
+        )
     )
     tensors = persisted_to_torch(batch, engine=engine, ensure_sharded=True)
     amount, label = tensors["amount"].clone(), tensors["label"].clone()
@@ -191,7 +202,9 @@ for _ in range(num_rounds):
     train(model, labeled_tensors())
     # Score this rank's share of the unlabeled pool.
     pool = persisted_to_torch(
-        engine.execute(unlabeled.select(pl.col("id"), pl.col("feat").cast(pl.Float32))),
+        engine.execute(
+            unlabeled.select(pl.col("id"), pl.col("feat").cast(pl.Float32))
+        ),
         engine=engine,
         ensure_sharded=True,
     )
@@ -199,10 +212,12 @@ for _ in range(num_rounds):
         p = model(pool["feat"].unsqueeze(1)).sigmoid().squeeze(1)
     # `scores` is this rank's share. The engine sorts across all ranks, so every rank
     # gets the same, globally most uncertain rows.
-    scores = pl.LazyFrame({
-        "id": pool["id"].cpu().numpy(),
-        "margin": (p - 0.5).abs().cpu().numpy(),
-    })
+    scores = pl.LazyFrame(
+        {
+            "id": pool["id"].cpu().numpy(),
+            "margin": (p - 0.5).abs().cpu().numpy(),
+        }
+    )
     picked = scores.sort("margin").head(1000).collect(engine=engine)
     if dist.get_rank() == 0:
         send_for_labeling(picked["id"])
@@ -216,12 +231,16 @@ in the query.
 ```python
 query = events.select(
     # Normalize with the global mean and standard deviation.
-    ((pl.col("amount") - pl.col("amount").mean()) / pl.col("amount").std()).cast(pl.Float32),
+    (
+        (pl.col("amount") - pl.col("amount").mean()) / pl.col("amount").std()
+    ).cast(pl.Float32),
     # Frequency cap.
     pl.col("clicks").clip(upper_bound=100).cast(pl.Float32),
     pl.col("label").cast(pl.Float32),
 )
-tensors = persisted_to_torch(engine.execute(query), engine=engine, ensure_sharded=True)
+tensors = persisted_to_torch(
+    engine.execute(query), engine=engine, ensure_sharded=True
+)
 ```
 
 ### Tabular features next to torch models
@@ -232,11 +251,16 @@ the same ranks.
 ```python
 rows = persisted_to_torch(
     engine.execute(
-        events.select(pl.col("item_id").cast(pl.Int64), pl.col("amount", "label").cast(pl.Float32))
+        events.select(
+            pl.col("item_id").cast(pl.Int64),
+            pl.col("amount", "label").cast(pl.Float32),
+        )
     ),
     engine=engine,
     ensure_sharded=True,
 )
 item_embedding = torch.nn.Embedding(num_items, 64).cuda()
-x = torch.cat([item_embedding(rows["item_id"]), rows["amount"].unsqueeze(1)], dim=1)
+x = torch.cat(
+    [item_embedding(rows["item_id"]), rows["amount"].unsqueeze(1)], dim=1
+)
 ```

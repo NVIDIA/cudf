@@ -8,12 +8,11 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/device_operators.cuh>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
@@ -47,7 +46,7 @@ inline auto reduce_by_cub(OutputIterator result, InputIterator d_in, int num_ite
 
 // -----------------------------------------------------------------------------
 template <typename T>
-void raw_stream_bench_cub(cudf::column_view& col, rmm::device_uvector<T>& result)
+void raw_stream_bench_cub(cudf::column_view& col, cuda::device_buffer<T>& result)
 {
   // std::cout << "raw stream cub: " << "\t";
 
@@ -59,7 +58,7 @@ void raw_stream_bench_cub(cudf::column_view& col, rmm::device_uvector<T>& result
 };
 
 template <typename T, bool has_null>
-void iterator_bench_cub(cudf::column_view& col, rmm::device_uvector<T>& result)
+void iterator_bench_cub(cudf::column_view& col, cuda::device_buffer<T>& result)
 {
   // std::cout << "iterator cub " << ( (has_null) ? "<true>: " : "<false>: " ) << "\t";
 
@@ -77,7 +76,7 @@ void iterator_bench_cub(cudf::column_view& col, rmm::device_uvector<T>& result)
 
 // -----------------------------------------------------------------------------
 template <typename T>
-void raw_stream_bench_thrust(cudf::column_view& col, rmm::device_uvector<T>& result)
+void raw_stream_bench_thrust(cudf::column_view& col, cuda::device_buffer<T>& result)
 {
   // std::cout << "raw stream thust: " << "\t\t";
 
@@ -89,7 +88,7 @@ void raw_stream_bench_thrust(cudf::column_view& col, rmm::device_uvector<T>& res
 }
 
 template <typename T, bool has_null>
-void iterator_bench_thrust(cudf::column_view& col, rmm::device_uvector<T>& result)
+void iterator_bench_thrust(cudf::column_view& col, cuda::device_buffer<T>& result)
 {
   // std::cout << "iterator thust " << ( (has_null) ? "<true>: " : "<false>: " ) << "\t";
 
@@ -120,7 +119,7 @@ void bench_iterator_cub_raw(nvbench::state& state)
   cudf::column_view hasnull_F = wrap_hasnull_F;
 
   // Initialize dev_result
-  auto dev_result = cudf::detail::make_zeroed_device_uvector<T>(
+  auto dev_result = cudf::detail::make_zeroed_device_buffer<T>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
@@ -147,7 +146,7 @@ void bench_iterator_cub_iter(nvbench::state& state)
   cudf::column_view hasnull_F = wrap_hasnull_F;
 
   // Initialize dev_result
-  auto dev_result = cudf::detail::make_zeroed_device_uvector<T>(
+  auto dev_result = cudf::detail::make_zeroed_device_buffer<T>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
@@ -174,7 +173,7 @@ void bench_iterator_thrust_raw(nvbench::state& state)
   cudf::column_view hasnull_F = wrap_hasnull_F;
 
   // Initialize dev_result
-  auto dev_result = cudf::detail::make_zeroed_device_uvector<T>(
+  auto dev_result = cudf::detail::make_zeroed_device_buffer<T>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();
@@ -201,7 +200,7 @@ void bench_iterator_thrust_iter(nvbench::state& state)
   cudf::column_view hasnull_F = wrap_hasnull_F;
 
   // Initialize dev_result
-  auto dev_result = cudf::detail::make_zeroed_device_uvector<T>(
+  auto dev_result = cudf::detail::make_zeroed_device_buffer<T>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto stream = cudf::get_default_stream();

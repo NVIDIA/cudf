@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_view.hpp>
@@ -95,3 +96,5 @@ TYPED_TEST(TypedColumnTest, CopyConstructorWithMask)
   EXPECT_NE(original_view.head(), copy_view.head());
   EXPECT_NE(original_view.null_mask(), copy_view.null_mask());
 }
+
+CUDF_TEST_PROGRAM_MAIN()

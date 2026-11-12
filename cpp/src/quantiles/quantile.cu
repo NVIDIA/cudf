@@ -18,6 +18,7 @@
 #include <cudf/quantiles.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -26,7 +27,6 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -43,21 +43,21 @@ struct quantile_functor {
   interpolation interp;
   bool retain_types;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input)
-    requires(not cuda::std::is_arithmetic_v<T> and not cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::arithmetic<T> and not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("quantile does not support non-numeric types");
   }
 
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& input)
-    requires(cuda::std::is_arithmetic_v<T> or cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
-    using StorageType   = cudf::device_storage_type_t<T>;
-    using ExactResult   = std::conditional_t<exact and not cudf::is_fixed_point<T>(), double, T>;
+    using StorageType = cudf::device_storage_type_t<T>;
+    using ExactResult = std::conditional_t<exact and not cudf::concepts::fixed_point<T>, double, T>;
     using StorageResult = cudf::device_storage_type_t<ExactResult>;
 
     auto const type =
@@ -134,7 +134,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  bool retain_types,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto functor = quantile_functor<exact, SortMapIterator>{
     ordered_indices, size, q, interp, retain_types, stream, mr};
@@ -152,7 +152,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  column_view const& indices,
                                  bool exact,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   if (indices.is_empty()) {
     auto begin = cuda::counting_iterator<size_type>{0};
@@ -183,7 +183,7 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  column_view const& ordered_indices,
                                  bool exact,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::quantile(input, q, interp, ordered_indices, exact, stream, mr);

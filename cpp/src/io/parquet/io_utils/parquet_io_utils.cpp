@@ -19,6 +19,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/logger.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -106,6 +107,7 @@ auto dispatch_tasks(std::size_t num_tasks, Task task)
   } else {
     // Dispatch the tasks to the host worker pool
     std::vector<std::future<result_type>> futures;
+    cudf::detail::futures_wait_guard futures_guard{futures};
     futures.reserve(num_tasks);
     std::for_each(cuda::counting_iterator<std::size_t>(0),
                   cuda::counting_iterator<std::size_t>(num_tasks),
@@ -237,6 +239,7 @@ void read_ranges_to_host(std::span<std::reference_wrapper<cudf::io::datasource> 
                          bool serialize_submissions)
 {
   std::vector<std::future<std::size_t>> host_read_tasks;
+  cudf::detail::futures_wait_guard host_read_tasks_guard{host_read_tasks};
   std::vector<std::size_t> expected_sizes;
   host_read_tasks.reserve(count);
   expected_sizes.reserve(count);
@@ -287,7 +290,7 @@ fetch_byte_ranges_to_device_async_impl(
   std::span<std::span<cudf::io::text::byte_range_info const> const> byte_ranges_per_source,
   bool serialize_submissions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_sources = datasources.size();
 
@@ -336,9 +339,9 @@ fetch_byte_ranges_to_device_async_impl(
 
       // Buffer needs to be padded. Required by `gpuDecodePageData`.
       column_chunk_buffers.emplace_back(
-        cudf::util::round_up_safe(buffer_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
+        cudf::detail::round_up_safe(buffer_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
         stream,
-        mr);
+        mr.get_output_mr());
 
       auto buffer_data        = static_cast<uint8_t*>(column_chunk_buffers.back().data());
       auto const padding_size = column_chunk_buffers.back().size() - buffer_size;
@@ -383,7 +386,9 @@ fetch_byte_ranges_to_device_async_impl(
 
   // Vectors to hold futures from datasource
   std::vector<std::future<size_t>> device_read_tasks{};
+  cudf::detail::futures_wait_guard device_read_tasks_guard{device_read_tasks};
   std::vector<std::future<host_read_buffer>> host_read_tasks{};
+  cudf::detail::futures_wait_guard host_read_tasks_guard{host_read_tasks};
   device_read_tasks.reserve(io_offsets.size());
   host_read_tasks.reserve(io_offsets.size());
 
@@ -468,6 +473,7 @@ fetch_byte_ranges_to_device_async_impl(
   if (not host_buffers.empty()) { stream.sync(); }
 
   auto sync_function = [](decltype(device_read_tasks) device_read_tasks) {
+    cudf::detail::futures_wait_guard device_read_tasks_guard{device_read_tasks};
     for (auto& task : device_read_tasks) {
       task.get();
     }
@@ -484,7 +490,7 @@ fetch_bloom_filters_to_device_impl(
     bloom_filter_byte_ranges_per_source,
   bool serialize_submissions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_sources = datasources.size();
   CUDF_EXPECTS(num_sources == bloom_filter_byte_ranges_per_source.size(),
@@ -623,7 +629,7 @@ fetch_bloom_filters_to_device_impl(
   // Add the buffer base to every output span and copy destination.
   cuda::device_buffer<uint8_t> bitset_buffer(
     stream,
-    mr,
+    mr.get_output_mr(),
     total_device_size,
     cuda::no_init,
     cuda::std::execution::prop{cuda::allocation_alignment, bloom_filter_block_bytes});

@@ -449,7 +449,7 @@ TEST_F(PartitionTestNotTyped, NoIntegerOverflow)
 
 TEST_F(PartitionTestNotTyped, BatchedStringGatherPermutation)
 {
-  for (auto const rows : {1023, 1024, 1025}) {
+  for (auto const rows : {1'023, 1'024, 1'025}) {
     for (auto const partitions : {2, 256, 257}) {
       for (auto const nullable : {false, true}) {
         SCOPED_TRACE(::testing::Message() << rows << "/" << partitions << "/" << nullable);
@@ -525,7 +525,7 @@ TEST_F(PartitionTestNotTyped, BatchedStringGatherOffsetThreshold)
   ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_THRESHOLD", "2048", 1), 0);
   ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_ENABLED", "1", 1), 0);
 
-  constexpr cudf::size_type rows = 1024;
+  constexpr cudf::size_type rows = 1'024;
   std::vector<std::string> values(rows, "a");
   strings_column_wrapper strings(values.begin(), values.end());
   auto const input = cudf::table_view{{strings, strings}};
@@ -534,7 +534,7 @@ TEST_F(PartitionTestNotTyped, BatchedStringGatherOffsetThreshold)
   ASSERT_EQ(cudf::strings_column_view(input.column(0)).offsets().type().id(), cudf::type_id::INT32);
 
   // Change the threshold after construction to keep the input offsets INT32.
-  for (auto const threshold : {1025, 1024, 1023}) {
+  for (auto const threshold : {1'025, 1'024, 1'023}) {
     ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_THRESHOLD", std::to_string(threshold).c_str(), 1), 0);
     for (auto const enabled : {true, false}) {
       SCOPED_TRACE(::testing::Message() << threshold << "/" << enabled);

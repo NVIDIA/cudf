@@ -2,6 +2,11 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2'026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
 #pragma once
 
 #include "partition_string_copy.cuh"

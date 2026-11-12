@@ -953,7 +953,7 @@ struct dispatch_map_type {
     // Copy offsets to host before the transform below modifies the histogram
     auto const partition_offsets = cudf::detail::make_std_vector(histogram, stream);
 
-    if (t.num_rows() >= 1024 && num_partitions <= 256 && t.num_columns() >= 2 &&
+    if (t.num_rows() >= 1'024 && num_partitions <= 256 && t.num_columns() >= 2 &&
         t.num_columns() <= 65'535 && (t.num_columns() >= 4 || num_partitions != 2) &&
         std::all_of(t.begin(), t.end(), [](auto const& col) {
           return col.type().id() == type_id::STRING && col.null_count() == 0 &&

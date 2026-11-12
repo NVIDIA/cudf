@@ -51,9 +51,9 @@ __device__ inline void copy_group(partition_string_column col,
   }
   // This device-side split balances individual strings. It does not change the
   // CPU-selected partition method or require a size/skew sampling pass.
-  auto long_rows = __ballot_sync(0xffffffffu, lane == 0 && length > 128);
+  auto long_rows = __ballot_sync(0xffff'ffffu, lane == 0 && length > 128);
   if constexpr (RebalanceMedium) {
-    auto medium_rows = __ballot_sync(0xffffffffu, lane == 0 && length > 8 && length <= 128);
+    auto medium_rows = __ballot_sync(0xffff'ffffu, lane == 0 && length > 8 && length <= 128);
     if (length <= 8) {
       for (size_type byte = lane; byte < length; byte += lanes) {
         col.output_chars[int64_t{target} + byte] = col.input_chars[int64_t{begin} + byte];
@@ -69,9 +69,9 @@ __device__ inline void copy_group(partition_string_column col,
       auto const second     = has_second ? __ffs(medium_rows) - 1 : first;
       if (has_second) { medium_rows &= medium_rows - 1; }
       auto const owner  = warp_lane < 16 ? first : second;
-      auto const source = __shfl_sync(0xffffffffu, begin, owner);
-      auto const output = __shfl_sync(0xffffffffu, target, owner);
-      auto count        = __shfl_sync(0xffffffffu, length, owner);
+      auto const source = __shfl_sync(0xffff'ffffu, begin, owner);
+      auto const output = __shfl_sync(0xffff'ffffu, target, owner);
+      auto count        = __shfl_sync(0xffff'ffffu, length, owner);
       if (warp_lane >= 16 && !has_second) { count = 0; }
       for (size_type byte = warp_lane % 16; byte < count; byte += 16) {
         col.output_chars[int64_t{output} + byte] = col.input_chars[int64_t{source} + byte];
@@ -86,9 +86,9 @@ __device__ inline void copy_group(partition_string_column col,
   }
   while (long_rows) {
     auto const leader = __ffs(long_rows) - 1;
-    auto const source = __shfl_sync(0xffffffffu, begin, leader);
-    auto const output = __shfl_sync(0xffffffffu, target, leader);
-    auto const count  = __shfl_sync(0xffffffffu, length, leader);
+    auto const source = __shfl_sync(0xffff'ffffu, begin, leader);
+    auto const output = __shfl_sync(0xffff'ffffu, target, leader);
+    auto const count  = __shfl_sync(0xffff'ffffu, length, leader);
     copy_vector<32>(col, source, output, count, threadIdx.x % 32);
     long_rows &= long_rows - 1;
   }

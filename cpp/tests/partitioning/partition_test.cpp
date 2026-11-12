@@ -702,7 +702,7 @@ TEST_F(PartitionTestNotTyped, LargeFixedWidthRoutes)
     std::vector<int32_t> bins(rows + skip);
     std::vector<bool> valid(rows + skip);
     for (cudf::size_type i = 0; i < rows + skip; ++i) {
-      bins[i]  = (i * 13 + i / 7) % partitions;
+      bins[i]  = i % 5 == 0 ? (i * 13 + i / 7) % partitions : 0;
       valid[i] = !nullable || (dense ? i % 11 == 0 : i % 11 != 0);
     }
     std::vector<int64_t> expected;

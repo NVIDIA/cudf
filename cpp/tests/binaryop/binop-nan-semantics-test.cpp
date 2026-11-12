@@ -52,8 +52,8 @@ TYPED_TEST(BinaryOperationNanSemanticsTest, Comparisons)
 
   struct test_case {
     cudf::binary_operator op;
-    bools ieee754;
-    bools etl;
+    bools unordered;
+    bools ordered;
   };
   std::vector<test_case> cases;
   cases.push_back({cudf::binary_operator::EQUAL, {0, 0, 0, 1, 0, 0, 0}, {0, 1, 0, 1, 0, 0, 1}});
@@ -67,15 +67,16 @@ TYPED_TEST(BinaryOperationNanSemanticsTest, Comparisons)
 
   for (auto const& c : cases) {
     SCOPED_TRACE(static_cast<int>(c.op));
-    // The default is IEEE 754
+    // The default is UNORDERED
     auto result = cudf::binary_operation(lhs, rhs, c.op, bool_type);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.ieee754, *result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.unordered, *result);
     result = cudf::binary_operation(lhs, rhs, c.op, bool_type, cudf::nan_semantics::DEFAULT);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.ieee754, *result);
-    result = cudf::binary_operation(lhs, rhs, c.op, bool_type, cudf::nan_semantics::IEEE754);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.ieee754, *result);
-    result = cudf::binary_operation(lhs, rhs, c.op, bool_type, cudf::nan_semantics::ETL);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.etl, *result);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.unordered, *result);
+    result = cudf::binary_operation(lhs, rhs, c.op, bool_type, cudf::nan_semantics::UNORDERED);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.unordered, *result);
+    result =
+      cudf::binary_operation(lhs, rhs, c.op, bool_type, cudf::nan_semantics::TOTALLY_ORDERED);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(c.ordered, *result);
   }
 }
 
@@ -84,26 +85,26 @@ TYPED_TEST(BinaryOperationNanSemanticsTest, ScalarOperands)
   using T            = TypeParam;
   auto constexpr NaN = TestFixture::NaN;
 
-  auto const col    = make_column<T>({1, NaN, 0}, {1, 1, 0});
-  auto const nan    = cudf::numeric_scalar<T>(NaN);
-  auto const etl    = cudf::nan_semantics::ETL;
-  auto const ieee   = cudf::nan_semantics::IEEE754;
-  auto const less   = cudf::binary_operator::LESS;
-  auto const equal  = cudf::binary_operator::EQUAL;
-  auto const valids = std::vector<bool>{1, 1, 0};
+  auto const col       = make_column<T>({1, NaN, 0}, {1, 1, 0});
+  auto const nan       = cudf::numeric_scalar<T>(NaN);
+  auto const ordered   = cudf::nan_semantics::TOTALLY_ORDERED;
+  auto const unordered = cudf::nan_semantics::UNORDERED;
+  auto const less      = cudf::binary_operator::LESS;
+  auto const equal     = cudf::binary_operator::EQUAL;
+  auto const valids    = std::vector<bool>{1, 1, 0};
 
   // col < NaN
-  auto result = cudf::binary_operation(col, nan, less, bool_type, etl);
+  auto result = cudf::binary_operation(col, nan, less, bool_type, ordered);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools({1, 0, 0}, valids.begin()), *result);
-  result = cudf::binary_operation(col, nan, less, bool_type, ieee);
+  result = cudf::binary_operation(col, nan, less, bool_type, unordered);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools({0, 0, 0}, valids.begin()), *result);
   // NaN == col
-  result = cudf::binary_operation(nan, col, equal, bool_type, etl);
+  result = cudf::binary_operation(nan, col, equal, bool_type, ordered);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools({0, 1, 0}, valids.begin()), *result);
-  result = cudf::binary_operation(nan, col, equal, bool_type, ieee);
+  result = cudf::binary_operation(nan, col, equal, bool_type, unordered);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools({0, 0, 0}, valids.begin()), *result);
   // NaN > col
-  result = cudf::binary_operation(nan, col, cudf::binary_operator::GREATER, bool_type, etl);
+  result = cudf::binary_operation(nan, col, cudf::binary_operator::GREATER, bool_type, ordered);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools({1, 0, 0}, valids.begin()), *result);
 }
 
@@ -116,13 +117,16 @@ TYPED_TEST(BinaryOperationNanSemanticsTest, NullAwareEquality)
   auto const rhs = make_column<T>({NaN, 0, NaN, NaN, 0}, {1, 0, 1, 1, 0});
 
   auto result = cudf::binary_operation(
-    lhs, rhs, cudf::binary_operator::NULL_EQUALS, bool_type, cudf::nan_semantics::ETL);
+    lhs, rhs, cudf::binary_operator::NULL_EQUALS, bool_type, cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(bools{1, 0, 0, 0, 1}, *result);
   result = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_EQUALS, bool_type);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(bools{0, 0, 0, 0, 1}, *result);
 
-  result = cudf::binary_operation(
-    lhs, rhs, cudf::binary_operator::NULL_NOT_EQUALS, bool_type, cudf::nan_semantics::ETL);
+  result = cudf::binary_operation(lhs,
+                                  rhs,
+                                  cudf::binary_operator::NULL_NOT_EQUALS,
+                                  bool_type,
+                                  cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(bools{0, 1, 1, 1, 0}, *result);
   result = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_NOT_EQUALS, bool_type);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(bools{1, 1, 1, 1, 0}, *result);
@@ -137,15 +141,15 @@ TYPED_TEST(BinaryOperationNanSemanticsTest, NullMaxMin)
   auto const rhs  = make_column<T>({1, NaN, NaN, NaN, 0}, {1, 1, 1, 1, 0});
   auto const type = cudf::data_type{cudf::type_to_id<T>()};
 
-  // A NaN is the largest value with ETL semantics, regardless of the operand order
+  // A NaN is the largest value with TOTALLY_ORDERED semantics, regardless of the operand order
   auto result = cudf::binary_operation(
-    lhs, rhs, cudf::binary_operator::NULL_MAX, type, cudf::nan_semantics::ETL);
+    lhs, rhs, cudf::binary_operator::NULL_MAX, type, cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(make_column<T>({NaN, NaN, NaN, NaN, 2}), *result);
   result = cudf::binary_operation(
-    lhs, rhs, cudf::binary_operator::NULL_MIN, type, cudf::nan_semantics::ETL);
+    lhs, rhs, cudf::binary_operator::NULL_MIN, type, cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(make_column<T>({1, 1, NaN, NaN, 2}), *result);
 
-  // With IEEE 754 semantics, the result depends on the operand order
+  // With UNORDERED semantics, the result depends on the operand order
   result = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MAX, type);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(make_column<T>({1, NaN, NaN, NaN, 2}), *result);
   result = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MIN, type);
@@ -161,7 +165,7 @@ TEST_F(BinaryOperationNanSemanticsMixedTest, IntegerAndFloatingPoint)
   auto const nan = cudf::numeric_scalar<double>(std::numeric_limits<double>::quiet_NaN());
 
   auto result = cudf::binary_operation(
-    col, nan, cudf::binary_operator::LESS, bool_type, cudf::nan_semantics::ETL);
+    col, nan, cudf::binary_operator::LESS, bool_type, cudf::nan_semantics::TOTALLY_ORDERED);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools{1, 1}, *result);
   result = cudf::binary_operation(col, nan, cudf::binary_operator::LESS, bool_type);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools{0, 0}, *result);
@@ -175,8 +179,9 @@ TEST_F(BinaryOperationNanSemanticsMixedTest, NonFloatingPointUnaffected)
   for (auto op : {cudf::binary_operator::LESS,
                   cudf::binary_operator::EQUAL,
                   cudf::binary_operator::NULL_EQUALS}) {
-    auto const ieee = cudf::binary_operation(lhs, rhs, op, bool_type);
-    auto const etl  = cudf::binary_operation(lhs, rhs, op, bool_type, cudf::nan_semantics::ETL);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*ieee, *etl);
+    auto const unordered = cudf::binary_operation(lhs, rhs, op, bool_type);
+    auto const ordered =
+      cudf::binary_operation(lhs, rhs, op, bool_type, cudf::nan_semantics::TOTALLY_ORDERED);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*unordered, *ordered);
   }
 }

@@ -222,8 +222,8 @@ std::unique_ptr<column> binary_operation(LhsType const& lhs,
   if constexpr (std::is_same_v<RhsType, column_view>)
     if (rhs.is_empty()) return out;
 
-  // The libcudf default is currently IEEE 754
-  if (semantics == nan_semantics::DEFAULT) { semantics = nan_semantics::IEEE754; }
+  // The libcudf default is currently UNORDERED
+  if (semantics == nan_semantics::DEFAULT) { semantics = nan_semantics::UNORDERED; }
 
   auto out_view = out->mutable_view();
   cudf::binops::compiled::binary_operation(

@@ -68,8 +68,8 @@ cdef extern from "cudf/types.hpp" namespace "cudf" nogil:
 
     cpdef enum class nan_semantics(uint8_t):
         DEFAULT
-        IEEE754
-        ETL
+        UNORDERED
+        TOTALLY_ORDERED
 
     cpdef enum class type_id(int32_t):
         EMPTY

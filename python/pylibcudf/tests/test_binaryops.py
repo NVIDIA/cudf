@@ -760,7 +760,7 @@ _NAN = float("nan")
 
 
 @pytest.mark.parametrize(
-    "op, ieee754, etl",
+    "op, unordered, totally_ordered",
     [
         (
             plc.binaryop.BinaryOperator.EQUAL,
@@ -784,21 +784,25 @@ _NAN = float("nan")
         ),
     ],
 )
-def test_binaryop_nan_semantics(op, ieee754, etl):
+def test_binaryop_nan_semantics(op, unordered, totally_ordered):
     lhs = plc.Column.from_arrow(pa.array([1.0, _NAN, _NAN, 3.0]))
     rhs = plc.Column.from_arrow(pa.array([_NAN, _NAN, 1.0, 3.0]))
     bool_type = plc.DataType(plc.TypeId.BOOL8)
 
-    # The default is IEEE 754
+    # The default is UNORDERED
     got = plc.binaryop.binary_operation(lhs, rhs, op, bool_type)
-    assert got.to_arrow().to_pylist() == ieee754
+    assert got.to_arrow().to_pylist() == unordered
     for semantics in (
         plc.types.NanSemantics.DEFAULT,
-        plc.types.NanSemantics.IEEE754,
+        plc.types.NanSemantics.UNORDERED,
     ):
         got = plc.binaryop.binary_operation(lhs, rhs, op, bool_type, semantics)
-        assert got.to_arrow().to_pylist() == ieee754
+        assert got.to_arrow().to_pylist() == unordered
     got = plc.binaryop.binary_operation(
-        lhs, rhs, op, bool_type, semantics=plc.types.NanSemantics.ETL
+        lhs,
+        rhs,
+        op,
+        bool_type,
+        semantics=plc.types.NanSemantics.TOTALLY_ORDERED,
     )
-    assert got.to_arrow().to_pylist() == etl
+    assert got.to_arrow().to_pylist() == totally_ordered

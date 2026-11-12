@@ -129,18 +129,26 @@ enum class nan_equality /*unspecified*/ {
 /**
  * @brief Enum to select how floating-point NaN values compare with other values
  *
- * - `DEFAULT`: the libcudf default, currently `IEEE754`. The default may change in a future
- *   release, so request `IEEE754` or `ETL` explicitly to rely on either behavior.
- * - `IEEE754`: comparison predicates follow IEEE 754. A NaN is unordered: it is not equal to any
- *   value, including another NaN, and every ordered comparison with a NaN is false.
- * - `ETL`: the convention of ETL engines such as Spark, Polars, and PostgreSQL. All NaNs are equal
- *   to each other, regardless of sign or payload, and a NaN is greater than every other value,
- *   including positive infinity. This matches how libcudf already orders NaNs when sorting.
+ * - `DEFAULT`: the libcudf default, currently `UNORDERED`. The default may change in a future
+ *   release, so request `UNORDERED` or `TOTALLY_ORDERED` explicitly to rely on either behavior.
+ * - `UNORDERED`: a NaN is unordered, as in the IEEE 754 comparison predicates. A NaN is not equal
+ *   to any value, including another NaN, so `!=` is true and `==`, `<`, `<=`, `>`, and `>=` are
+ *   false whenever an operand is NaN.
+ * - `TOTALLY_ORDERED`: all floating-point values are ordered. Every NaN is equal to every other
+ *   NaN and greater than every non-NaN value, including positive infinity. This is the convention
+ *   of engines such as Spark, Polars, Presto, and DuckDB, and matches how libcudf orders NaNs when
+ *   sorting.
+ *
+ * In both conventions -0.0 and +0.0 compare equal.
+ *
+ * `TOTALLY_ORDERED` is not the IEEE 754-2019 `totalOrder` predicate. `totalOrder` orders a NaN by
+ * its sign and payload, placing negative NaNs below negative infinity, and orders -0.0 below
+ * +0.0. `TOTALLY_ORDERED` ignores the sign and payload of a NaN.
  */
 enum class nan_semantics : uint8_t {
-  DEFAULT,  ///< The libcudf default, currently IEEE754
-  IEEE754,  ///< NaN is unordered and unequal to every value (IEEE 754 comparison predicates)
-  ETL       ///< NaNs are equal to each other and greater than every other value
+  DEFAULT,         ///< The libcudf default, currently UNORDERED
+  UNORDERED,       ///< A NaN is unordered and unequal to every value (IEEE 754 predicates)
+  TOTALLY_ORDERED  ///< NaNs are equal to each other and greater than every other value
 };
 
 /**

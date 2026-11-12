@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <numeric>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 template <typename T>

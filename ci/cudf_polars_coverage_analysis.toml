@@ -9,10 +9,3 @@ parallel = true
 # Python 3.14 defaults to sysmon, which cannot record pytest-cov's dynamic
 # per-test contexts. The C tracer is required for --cov-context=test.
 core = "ctrace"
-
-[tool.coverage.report]
-exclude_also = [
-  "if TYPE_CHECKING:",
-  "class .*\\bProtocol(?:\\[[^]]+\\])?:",
-  "assert_never\\("
-]

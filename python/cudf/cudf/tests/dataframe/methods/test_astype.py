@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -151,7 +151,7 @@ def test_df_astype_numeric_to_all(
 def test_df_astype_string_to_other(as_dtype):
     if "datetime64" in as_dtype:
         # change None to "NaT" after this issue is fixed:
-        # https://github.com/rapidsai/cudf/issues/5117
+        # https://github.com/NVIDIA/cudf/issues/5117
         data = ["2001-01-01", "2002-02-02", "2000-01-05", None]
     elif as_dtype == "int32":
         data = [1, 2, 3]

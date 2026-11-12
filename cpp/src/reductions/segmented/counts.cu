@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,18 +8,19 @@
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <thrust/adjacent_difference.h>
 
 namespace cudf {
 namespace reduction {
 namespace detail {
 
-rmm::device_uvector<size_type> segmented_counts(bitmask_type const* null_mask,
+cuda::device_buffer<size_type> segmented_counts(bitmask_type const* null_mask,
                                                 bool has_nulls,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
 {
   auto const num_segments = offsets.size() - 1;
 
@@ -33,7 +34,8 @@ rmm::device_uvector<size_type> segmented_counts(bitmask_type const* null_mask,
                                               mr);
   }
 
-  rmm::device_uvector<size_type> valid_counts(num_segments, stream, mr);
+  cuda::device_buffer<size_type> valid_counts(
+    stream, mr.get_output_mr(), num_segments, cuda::no_init);
   thrust::adjacent_difference(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     offsets.begin() + 1,

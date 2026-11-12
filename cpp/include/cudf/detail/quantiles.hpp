@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -22,8 +22,8 @@ std::unique_ptr<column> quantile(column_view const& input,
                                  interpolation interp,
                                  column_view const& ordered_indices,
                                  bool exact,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::quantiles()
@@ -34,17 +34,17 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  cudf::sorted is_input_sorted,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::percentile_approx(tdigest_column_view const&, column_view const&,
- * rmm::device_async_resource_ref)
+ * cudf::memory_resources)
  */
 std::unique_ptr<column> percentile_approx(tdigest::tdigest_column_view const& input,
                                           column_view const& percentiles,
-                                          rmm::cuda_stream_view stream,
-                                          rmm::device_async_resource_ref mr);
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

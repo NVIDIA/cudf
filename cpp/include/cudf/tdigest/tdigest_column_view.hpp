@@ -66,7 +66,7 @@ class tdigest_column_view : private column_view {
   tdigest_column_view& operator=(tdigest_column_view&&) = default;
 
   using column_view::size;
-  using offset_iterator = size_type const*;  ///< Iterator over offsets
+  using offset_iterator = int32_t const*;  ///< Iterator over offsets
 
   // mean and weight column indices within tdigest inner struct columns
   static constexpr size_type mean_column_index{0};    ///< Mean column index

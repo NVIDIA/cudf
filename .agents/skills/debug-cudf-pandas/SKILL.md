@@ -71,7 +71,7 @@ The file `python/cudf/cudf/pandas/scripts/pandas-testing-plugin.py` contains thr
 - **`NODEIDS_TO_SKIP`** — tests marked `skip` (not run at all). Keys are alphabetically sorted.
 - **`NODEIDS_PATHS_TO_SKIP`** — prefix-based path skips covering entire modules.
 
-The pandas-tests harness runs with `xfail_strict = false` (set in the vendored `pandas-tests/pyproject.toml` to tolerate flaky XPASSes — [rapidsai/cudf#22681](https://github.com/rapidsai/cudf/issues/22681)). A test listed in `NODEIDS_THAT_FAIL` that now *passes* is therefore reported as `XPASS` **without failing the run**, so a stale entry will not flag itself. You must change the false to true yourself before testing your fix; otherwise the test reports `XPASS` instead of a genuine `PASSED` and the dead marker lingers silently. Do not commit this change in any commit.
+The pandas-tests harness runs with `xfail_strict = false` (set in the vendored `pandas-tests/pyproject.toml` to tolerate flaky XPASSes — [NVIDIA/cudf#22681](https://github.com/NVIDIA/cudf/issues/22681)). A test listed in `NODEIDS_THAT_FAIL` that now *passes* is therefore reported as `XPASS` **without failing the run**, so a stale entry will not flag itself. You must change the false to true yourself before testing your fix; otherwise the test reports `XPASS` instead of a genuine `PASSED` and the dead marker lingers silently. Do not commit this change in any commit.
 
 Search for the node ID:
 

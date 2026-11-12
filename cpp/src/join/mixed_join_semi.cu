@@ -20,15 +20,15 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <thrust/fill.h>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -43,9 +43,10 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   join_kind join_type,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   CUDF_EXPECTS((join_type != join_kind::INNER_JOIN) and (join_type != join_kind::LEFT_JOIN) and
                  (join_type != join_kind::FULL_JOIN),
                "Inner, left, and full joins should use mixed_join.");
@@ -67,10 +68,10 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
       // Anti and semi return all the row indices from left
       // with a corresponding NULL from the right.
       case join_kind::LEFT_ANTI_JOIN:
-        return get_trivial_left_join_indices(left_conditional, stream, mr).first;
+        return get_trivial_left_join_indices(left_conditional, 0, stream, mr).first;
       // Inner and left semi joins return empty output because no matches can exist.
       case join_kind::LEFT_SEMI_JOIN:
-        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);
+        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr());
       default: CUDF_FAIL("Invalid join kind."); break;
     }
   } else if (left_num_rows == 0) {
@@ -78,7 +79,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
       // Anti and semi joins both return empty sets.
       case join_kind::LEFT_ANTI_JOIN:
       case join_kind::LEFT_SEMI_JOIN:
-        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);
+        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr());
       default: CUDF_FAIL("Invalid join kind."); break;
     }
   }
@@ -100,15 +101,16 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   // need to do the same).
   auto& left                  = left_equality;
   auto& right                 = right_equality;
-  auto left_view              = table_device_view::create(left, stream);
-  auto right_view             = table_device_view::create(right, stream);
-  auto left_conditional_view  = table_device_view::create(left_conditional, stream);
-  auto right_conditional_view = table_device_view::create(right_conditional, stream);
+  auto const temp_mr          = cudf::get_current_device_resource_ref();
+  auto left_view              = table_device_view::create(left, stream, temp_mr);
+  auto right_view             = table_device_view::create(right, stream, temp_mr);
+  auto left_conditional_view  = table_device_view::create(left_conditional, stream, temp_mr);
+  auto right_conditional_view = table_device_view::create(right_conditional, stream, temp_mr);
 
   auto const preprocessed_right =
-    cudf::detail::row::equality::preprocessed_table::create(right, stream);
+    cudf::detail::row::equality::preprocessed_table::create(right, stream, temp_mr);
   auto const preprocessed_left =
-    cudf::detail::row::equality::preprocessed_table::create(left, stream);
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
   auto const row_comparator =
     cudf::detail::row::equality::two_table_comparator{preprocessed_left, preprocessed_right};
   auto const equality_left = row_comparator.equal_to<false>(has_nulls, compare_nulls);
@@ -134,11 +136,15 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   auto const equality_right_equality =
     row_comparator_right.equal_to<false>(right_nulls, compare_nulls);
   auto const preprocessed_right_condtional =
-    cudf::detail::row::equality::preprocessed_table::create(right_conditional, stream);
+    cudf::detail::row::equality::preprocessed_table::create(right_conditional, stream, temp_mr);
   auto const row_comparator_conditional_right = cudf::detail::row::equality::two_table_comparator{
     preprocessed_right_condtional, preprocessed_right_condtional};
+  auto const right_conditional_nulls = cudf::nullate::DYNAMIC{cudf::has_nulls(right_conditional)};
+  // `compare_nulls` governs the equality tables. This comparator only deduplicates identical
+  // right conditional rows, so it must remain reflexive when those rows contain nulls. Treating
+  // nulls as unequal would insert every otherwise identical null row into the linear-probing set.
   auto const equality_right_conditional =
-    row_comparator_conditional_right.equal_to<false>(right_nulls, compare_nulls);
+    row_comparator_conditional_right.equal_to<false>(right_conditional_nulls, null_equality::EQUAL);
 
   hash_set_type row_set{{static_cast<std::size_t>(right.num_rows())},
                         cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
@@ -147,22 +153,21 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
                         {row_hash_right.device_hasher(right_nulls)},
                         {},
                         {},
-                        rmm::mr::polymorphic_allocator<char>{},
-                        {stream.value()}};
+                        rmm::mr::polymorphic_allocator<char>{temp_mr},
+                        {stream.get()}};
 
   auto iter = cuda::counting_iterator<cudf::size_type>{0};
 
   // skip rows that are null here.
   if ((compare_nulls == null_equality::EQUAL) or (not nullable(right))) {
-    row_set.insert_async(iter, iter + right_num_rows, stream.value());
+    row_set.insert_async(iter, iter + right_num_rows, stream.get());
   } else {
     cuda::counting_iterator<cudf::size_type> stencil(0);
-    auto const [row_bitmask, _] =
-      cudf::detail::bitmask_and(right, stream, cudf::get_current_device_resource_ref());
-    row_is_valid pred{static_cast<bitmask_type const*>(row_bitmask.data())};
+    auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, temp_mr);
+    row_is_valid pred{row_bitmask.data()};
 
     // insert valid rows
-    row_set.insert_if_async(iter, iter + right_num_rows, stencil, pred, stream.value());
+    row_set.insert_if_async(iter, iter + right_num_rows, stencil, pred, stream.get());
   }
 
   detail::grid_1d const config(outer_num_rows * hash_set_type::cg_size, DEFAULT_JOIN_BLOCK_SIZE);
@@ -176,7 +181,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   hash_set_ref_type const row_set_ref = row_set.ref(cuco::contains).rebind_hash_function(hash_left);
 
   // Vector used to indicate indices from the left table which are present in output
-  auto left_table_keep_mask = rmm::device_uvector<bool>(left.num_rows(), stream);
+  auto left_table_keep_mask =
+    cuda::device_buffer<bool>(stream, temp_mr, left.num_rows(), cuda::no_init);
 
   launch_mixed_join_semi(has_nulls,
                          *left_conditional_view,
@@ -191,7 +197,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
                          shmem_size_per_block,
                          stream);
 
-  auto gather_map = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
+  auto gather_map =
+    std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr.get_output_mr());
 
   // gather_map_end will be the end of valid data in gather_map
   auto gather_map_end = cudf::detail::copy_if(
@@ -202,7 +209,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     [join_type] __device__(bool keep_row) -> bool {
       return keep_row == (join_type == join_kind::LEFT_SEMI_JOIN);
     },
-    stream);
+    stream,
+    mrs.as_temporary());
 
   gather_map->resize(cuda::std::distance(gather_map->begin(), gather_map_end), stream);
   return gather_map;
@@ -217,8 +225,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_semi_join(
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join_semi(left_equality,
@@ -239,8 +247,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_anti_join(
   table_view const& right_conditional,
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join_semi(left_equality,

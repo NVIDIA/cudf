@@ -12,8 +12,9 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -83,7 +84,7 @@ class mark_join {
   mark_join(cudf::table_view const& left,
             cudf::null_equality compare_nulls,
             cudf::join_prefilter prefilter,
-            rmm::cuda_stream_view stream = cudf::get_default_stream(),
+            cuda::stream_ref stream = cudf::get_default_stream(),
             cuda::mr::any_resource<cuda::mr::device_accessible> mr =
               cudf::get_current_device_resource_ref());
 
@@ -104,7 +105,7 @@ class mark_join {
             double load_factor,
             cudf::null_equality compare_nulls = cudf::null_equality::EQUAL,
             cudf::join_prefilter prefilter    = cudf::join_prefilter::NO,
-            rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+            cuda::stream_ref stream           = cudf::get_default_stream(),
             cuda::mr::any_resource<cuda::mr::device_accessible> mr =
               cudf::get_current_device_resource_ref());
 
@@ -118,8 +119,8 @@ class mark_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> semi_join(
     cudf::table_view const& right,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns left row indices that have no match in the right table.
@@ -131,8 +132,8 @@ class mark_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> anti_join(
     cudf::table_view const& right,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   std::unique_ptr<cudf::detail::mark_join> _impl;

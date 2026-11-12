@@ -1,12 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf_test/cudf_gtest.hpp>
+#include <cudf_test/default_stream.hpp>
 #include <cudf_test/file_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -15,6 +17,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
@@ -37,6 +40,38 @@ class BaseFixture : public ::testing::Test {
    * @return reference to memory resource
    */
   rmm::device_async_resource_ref mr() { return _mr; }
+};
+
+/**
+ * @brief Base fixture that instruments tests with a memory-resource harness.
+ *
+ * Each test instantiates a fresh harness. Tests should construct results with `resources()`.
+ * `TearDown` asserts that no output or temporary allocations remain live.
+ */
+struct BaseFixtureWithHarness : public BaseFixture {
+  /**
+   * @brief Assert that the harness has no live output or temporary allocations.
+   */
+  void TearDown() override { _harness.expect_no_live_allocations(stream()); }
+
+  /**
+   * @brief Return the default stream used by tests inheriting from this fixture.
+   * @return CUDA stream reference
+   */
+  [[nodiscard]] cuda::stream_ref stream() const { return cudf::test::get_default_stream(); }
+
+  /**
+   * @brief Return the harness output and temporary memory resources.
+   * @return Explicit output and temporary resources that do not consult the current resource
+   */
+  cudf::memory_resources resources() { return _harness.resources(); }
+
+  /**
+   * @brief Return the memory-resource harness used by this fixture.
+   */
+  [[nodiscard]] memory_resource_test_harness& harness() noexcept { return _harness; }
+
+  memory_resource_test_harness _harness{mr()};
 };
 
 /**

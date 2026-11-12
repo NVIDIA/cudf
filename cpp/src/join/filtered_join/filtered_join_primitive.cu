@@ -9,17 +9,17 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/hashing/detail/default_hash.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuco/operator.hpp>
 #include <cuco/static_set_ref.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -33,7 +33,7 @@ using primitive_row_hasher =
 
 }  // namespace
 
-void filtered_join::insert_right_table_primitive(rmm::cuda_stream_view stream)
+void filtered_join::insert_right_table_primitive(cuda::stream_ref stream)
 {
   auto const comparator = primitive_row_comparator{
     nullate::DYNAMIC{true}, _preprocessed_right, _preprocessed_right, _nulls_equal};
@@ -53,7 +53,7 @@ void filtered_join::query_right_table_primitive(
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
   cudf::device_span<bool> contains_map,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   auto const comparator = primitive_row_comparator{
     nullate::DYNAMIC{true}, _preprocessed_right, preprocessed_left, _nulls_equal};

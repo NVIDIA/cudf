@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,9 +15,9 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -32,15 +32,15 @@ namespace {
  * This creates a normalized set of offsets from the offsets child column of the input.
  */
 std::unique_ptr<column> build_output_offsets(lists_column_view const& input,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   auto output_offset = make_numeric_column(
     input.offsets().type(), input.size() + 1, mask_state::UNALLOCATED, stream, mr);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     input.offsets_begin(),
                     input.offsets_end(),
-                    output_offset->mutable_view().begin<size_type>(),
+                    output_offset->mutable_view().begin<int32_t>(),
                     [first = input.offsets_begin()] __device__(auto offset_index) {
                       return offset_index - *first;
                     });
@@ -52,8 +52,8 @@ std::unique_ptr<column> build_output_offsets(lists_column_view const& input,
 std::unique_ptr<column> sort_lists(lists_column_view const& input,
                                    order column_order,
                                    null_order null_precedence,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   if (input.is_empty()) return empty_like(input.parent());
 
@@ -78,8 +78,8 @@ std::unique_ptr<column> sort_lists(lists_column_view const& input,
 std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
                                           order column_order,
                                           null_order null_precedence,
-                                          rmm::cuda_stream_view stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr)
 {
   if (input.is_empty()) { return empty_like(input.parent()); }
 
@@ -105,8 +105,8 @@ std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
 std::unique_ptr<column> sort_lists(lists_column_view const& input,
                                    order column_order,
                                    null_order null_precedence,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sort_lists(input, column_order, null_precedence, stream, mr);
@@ -115,8 +115,8 @@ std::unique_ptr<column> sort_lists(lists_column_view const& input,
 std::unique_ptr<column> stable_sort_lists(lists_column_view const& input,
                                           order column_order,
                                           null_order null_precedence,
-                                          rmm::cuda_stream_view stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_sort_lists(input, column_order, null_precedence, stream, mr);

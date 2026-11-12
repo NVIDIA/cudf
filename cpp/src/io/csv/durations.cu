@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/column/column_device_view.cuh>
@@ -11,14 +11,13 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/cuda_stream_view.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/cmath>
+#include <cuda/stream>
 #include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace io {
@@ -162,18 +161,18 @@ struct duration_to_string_fn : public duration_to_string_size_fn<T> {
  * The template function declaration ensures only duration types are used.
  */
 struct dispatch_from_durations_fn {
-  template <typename T>
+  template <cudf::concepts::duration T>
   std::unique_ptr<column> operator()(column_view const& durations,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(cudf::is_duration<T>())
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr) const
   {
     size_type strings_count = durations.size();
     auto column             = column_device_view::create(durations, stream);
     auto d_column           = *column;
 
     // copy null mask
-    rmm::device_buffer null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
+    cuda::device_buffer<cudf::bitmask_type> null_mask =
+      cudf::detail::copy_bitmask(durations, stream, mr);
 
     // build offsets column
     auto offsets_transformer_itr =
@@ -184,7 +183,7 @@ struct dispatch_from_durations_fn {
       cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
     // build chars column
-    auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr);
+    auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
     auto d_chars    = chars_data.data();
 
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -202,9 +201,8 @@ struct dispatch_from_durations_fn {
   // non-duration types throw an exception
   template <typename T>
   std::unique_ptr<column> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
-                                     rmm::device_async_resource_ref) const
-    requires(not cudf::is_duration<T>())
+                                     cuda::stream_ref,
+                                     cudf::memory_resources) const
   {
     CUDF_FAIL("Values for from_durations function must be a duration type.");
   }
@@ -213,8 +211,8 @@ struct dispatch_from_durations_fn {
 }  // namespace
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
 {
   size_type strings_count = durations.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);

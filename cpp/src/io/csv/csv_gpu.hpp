@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 using cudf::device_span;
 
@@ -149,7 +149,7 @@ uint32_t gather_row_offsets(cudf::io::parse_options_view const& options,
                             size_t byte_range_start,
                             size_t byte_range_end,
                             size_t skip_rows,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * Count the number of blank rows in the given row offset array
@@ -162,7 +162,7 @@ uint32_t gather_row_offsets(cudf::io::parse_options_view const& options,
 size_t count_blank_rows(cudf::io::parse_options_view const& options,
                         device_span<char const> data,
                         device_span<uint64_t const> row_offsets,
-                        rmm::cuda_stream_view stream);
+                        cuda::stream_ref stream);
 
 /**
  * Remove blank rows in the given row offset array
@@ -175,7 +175,7 @@ size_t count_blank_rows(cudf::io::parse_options_view const& options,
 device_span<uint64_t> remove_blank_rows(cudf::io::parse_options_view const& options,
                                         device_span<char const> data,
                                         device_span<uint64_t> row_offsets,
-                                        rmm::cuda_stream_view stream);
+                                        cuda::stream_ref stream);
 
 /**
  * @brief Launches kernel for detecting possible dtype of each column of data
@@ -195,33 +195,37 @@ cudf::detail::host_vector<column_type_histogram> detect_column_types(
   device_span<column_parse::flags const> column_flags,
   device_span<uint64_t const> row_offsets,
   size_t const num_active_columns,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 /**
  * @brief Launches kernel for decoding row-column data
  *
+ * Quoted string fields are unescaped in place in `data` when doublequote is enabled, so the
+ * staged string entries can reference the final string bytes directly.
+ *
+ * @tparam OffsetT Offset type of the `string_offset_pair` entries staged for string columns
+ *
  * @param[in] options Options that control individual field data conversion
- * @param[in] data The row-column data
+ * @param[in,out] data The row-column data
  * @param[in] column_flags Flags that control individual column parsing
  * @param[in] row_offsets List of row data start positions (offsets)
  * @param[in] dtypes List of dtype corresponding to each column
- * @param[out] columns Device memory output of column data
+ * @param[out] columns Device memory output of column data; string columns receive
+ *                     `string_offset_pair<OffsetT>` arrays
  * @param[out] valids Device memory output of column valids bitmap data
  * @param[out] valid_counts Device memory output of the number of valid fields in each column
- * @param[out] is_quoted Per-column boolean arrays indicating which rows were quoted fields
- *                          (nullptr entries mean the column doesn't need quote tracking)
  * @param[in] stream CUDA stream to use
  */
+template <typename OffsetT>
 void decode_row_column_data(cudf::io::parse_options_view const& options,
-                            device_span<char const> data,
+                            device_span<char> data,
                             device_span<column_parse::flags const> column_flags,
                             device_span<uint64_t const> row_offsets,
                             device_span<cudf::data_type const> dtypes,
                             device_span<void* const> columns,
                             device_span<cudf::bitmask_type* const> valids,
                             device_span<size_type> valid_counts,
-                            device_span<bool* const> is_quoted,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 }  // namespace gpu
 }  // namespace csv

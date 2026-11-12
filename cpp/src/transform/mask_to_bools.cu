@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,10 +12,11 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -23,8 +24,8 @@ namespace detail {
 std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                                       size_type begin_bit,
                                       size_type end_bit,
-                                      rmm::cuda_stream_view stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   auto const length = end_bit - begin_bit;
   CUDF_EXPECTS(length >= 0, "begin_bit should be less than or equal to end_bit");
@@ -40,7 +41,8 @@ std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                       cuda::counting_iterator<cudf::size_type>{begin_bit},
                       cuda::counting_iterator<cudf::size_type>{end_bit},
                       mutable_view.begin<bool>(),
-                      [bitmask] __device__(auto index) { return bit_is_set(bitmask, index); });
+                      cuda::proclaim_copyable_arguments(
+                        [bitmask] __device__(auto index) { return bit_is_set(bitmask, index); }));
   }
 
   return out_col;
@@ -50,8 +52,8 @@ std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
 std::unique_ptr<column> mask_to_bools(bitmask_type const* bitmask,
                                       size_type begin_bit,
                                       size_type end_bit,
-                                      rmm::cuda_stream_view stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mask_to_bools(bitmask, begin_bit, end_bit, stream, mr);

@@ -3,11 +3,11 @@
 Contributions to cuDF fall into the following categories:
 
 1. To report a bug, request a new feature, or report a problem with documentation, please file an
-   [issue](https://github.com/rapidsai/cudf/issues/new/choose) describing the problem or new feature
-   in detail. The RAPIDS team evaluates and triages issues, and schedules them for a release. If you
+   [issue](https://github.com/NVIDIA/cudf/issues/new/choose) describing the problem or new feature
+   in detail. The maintainers evaluate and triage issues, and schedule them for a release. If you
    believe the issue needs priority attention, please comment on the issue to notify the team.
 2. To propose and implement a new feature, please file a new feature request
-   [issue](https://github.com/rapidsai/cudf/issues/new/choose). Describe the intended feature and
+   [issue](https://github.com/NVIDIA/cudf/issues/new/choose). Describe the intended feature and
    discuss the design and implementation with the team and community. Once the team agrees that the
    plan looks good, go ahead and implement it, using the [code contributions](#code-contributions)
    guide below.
@@ -17,7 +17,7 @@ Contributions to cuDF fall into the following categories:
 
 As contributors and maintainers to this project, you are expected to abide by cuDF's code of
 conduct. More information can be found at:
-[Contributor Code of Conduct](https://docs.rapids.ai/resources/conduct/).
+[Contributor Code of Conduct](https://docs.nvidia.com/datascience/resources/conduct/).
 
 ## Documentation contributions
 
@@ -32,7 +32,7 @@ conda install cudf -c rapidsai-nightly -c conda-forge
 ```
 
 3. Build and view the docs locally following the instructions in the [Building
-documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/documentation/#building-documentation)
+documentation docs](https://docs.nvidia.com/cudf/latest/cudf/developer_guide/documentation/#building-documentation)
 4. Follow steps 7-10 in the section [Your first issue](#your-first-issue)
 
 ## Code contributions
@@ -42,15 +42,15 @@ documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/docum
 1. Follow the guide at the bottom of this page for
    [Setting up your build environment](#setting-up-your-build-environment).
 2. Find an issue to work on. The best way is to look for the
-   [good first issue](https://github.com/rapidsai/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-   or [help wanted](https://github.com/rapidsai/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+   [good first issue](https://github.com/NVIDIA/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+   or [help wanted](https://github.com/NVIDIA/cudf/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
    labels.
 3. Comment on the issue stating that you are going to work on it.
 4. Create a fork of the cudf repository and check out a branch with a name that
    describes your planned work. For example, `fix-documentation`.
 5. Write code to address the issue or implement the feature.
 6. Add unit tests and unit benchmarks.
-7. [Create your pull request](https://github.com/rapidsai/cudf/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
+7. [Create your pull request](https://github.com/NVIDIA/cudf/compare). To run continuous integration (CI) tests without requesting review, open a draft pull request.
 8. Verify that CI passes all [status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks).
    Fix if needed.
 9. Wait for other developers to review your code and update code as needed.
@@ -58,7 +58,7 @@ documentation docs](https://docs.rapids.ai/api/cudf/stable/developer_guide/docum
    merging.
    Changes limited to libcudf_streaming C++ files require at least 1 approval from the
    rapidsmpf-cpp-codeowners before merging.
-10. Once reviewed and approved, a RAPIDS developer will merge your pull request.
+10. Once reviewed and approved, a maintainer will merge your pull request.
 
 If you are unsure about anything, don't hesitate to comment on issues and ask for clarification!
 
@@ -66,11 +66,11 @@ If you are unsure about anything, don't hesitate to comment on issues and ask fo
 
 Once you have gotten your feet wet and are more comfortable with the code, you can look at the
 prioritized issues for our next release in our
-[project boards](https://github.com/rapidsai/cudf/projects).
+[project boards](https://github.com/NVIDIA/cudf/projects).
 
 **Note:** Always look at the release board that is
-[currently under development](https://docs.rapids.ai/maintainers/) for issues to work on. This is
-where RAPIDS developers also focus their efforts.
+[currently under development](https://docs.nvidia.com/datascience/maintainers/) for issues to work on. This is
+where maintainers also focus their efforts.
 
 Look at the unassigned issues, and find an issue to which you are comfortable contributing. Start
 with _Step 3_ above, commenting on the issue to let others know you are working on it. If you have
@@ -93,12 +93,17 @@ Compilers:
 
 * `gcc` version 13.3+
 * `nvcc` version 12.9+
-* `cmake` version 3.29.6+
+* `cmake` version 4.0+
 
 CUDA/GPU Runtime:
 
 * CUDA 12.2+
-* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0)
+* Volta architecture or better ([Compute Capability](https://docs.nvidia.com/deploy/cuda-compatibility/latest/) >=7.0) with CUDA 12.x
+* Turing architecture or better (Compute Capability >=7.5) with CUDA 13.x
+
+Other requirements:
+
+* `zlib` 1.2.13+
 
 You can obtain CUDA from
 [https://developer.nvidia.com/cuda-downloads](https://developer.nvidia.com/cuda-downloads).
@@ -109,7 +114,7 @@ You can obtain CUDA from
 
 ```bash
 CUDF_HOME=$(pwd)/cudf
-git clone https://github.com/rapidsai/cudf.git $CUDF_HOME
+git clone https://github.com/NVIDIA/cudf.git $CUDF_HOME
 cd $CUDF_HOME
 ```
 
@@ -122,7 +127,7 @@ Instructions for a minimal build environment without conda are included below.
 
 ```bash
 # create the conda environment (assuming in base `cudf` directory)
-conda env create --name cudf_dev --file conda/environments/all_cuda-133_arch-$(uname -m).yaml
+conda env create --name cudf_dev --file conda/environments/all_cuda-134_arch-$(uname -m).yaml
 # activate the environment
 conda activate cudf_dev
 ```
@@ -149,6 +154,10 @@ conda activate cudf_dev
   them into a different location, set `$INSTALL_PREFIX`. Python packages are installed into the
   active Python environment. Finally, note that the script depends on the `nvcc` executable being on
   your path, or defined in `$CUDACXX`.
+
+  The `PARALLEL_LEVEL` environment variable sets the number of C++ build jobs passed to
+  `cmake --build -j` and defaults to `nproc`. Lowering it reduces peak memory use at the cost of
+  longer C++ build times.
 
 ```bash
 cd $CUDF_HOME
@@ -325,10 +334,23 @@ This will bring up an interactive prompt to select which spelling fixes to apply
 
 ## Developer Guidelines
 
-The [C++ Developer Guide](cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md) includes details on contributing to libcudf C++ code.
+The [C++ Developer Guide](https://docs.nvidia.com/cudf/latest/libcudf/developer_guide/) includes details on contributing to libcudf C++ code.
 
-The [Python Developer Guide](https://docs.rapids.ai/api/cudf/stable/cudf/developer_guide/) includes details on contributing to cuDF Python code.
+The [Python Developer Guide](https://docs.nvidia.com/cudf/latest/developer_guide/) includes details on contributing to cuDF Python code.
 
+## Automated and AI-assisted contributions
+
+AI-assisted contributions are welcome and must meet the same requirements as other contributions.
+
+- **You are responsible:** Review and understand the change before submission. Be able to explain it. For submissions from a bot or agent account, identify the responsible human.
+- **Verify correctness:** AI-generated code may contain bugs or security issues. Run the applicable tests and review the diff carefully.
+- **Self-review before opening a pull request:** Run the repository's review skill (`/review-cudf`, defined in `.agents/skills/review-cudf`) with your AI assistant and address its findings before requesting review from cuDF maintainers. Also have your AI assistant read the review comments and contents of the latest ~10 PRs that touched the same files or folders, and check your change against the feedback reviewers gave there. Maintainers use the same skill, so anything it flags will likely be raised in review.
+- **No AI-generated sensitive content:** Do not use AI to generate security policies, legal, or license text.
+- **Disclose AI assistance:** Note AI assistance in the pull request description.
+- **Own review responses:** Review AI-assisted replies before posting them. You remain responsible for their content and your review decisions.
+  - Do not submit issues, pull requests, or review responses through a fully autonomous process. A human contributor must remain available and engaged.
+
+Maintainers may close submissions without technical review when they appear unvetted, misleading, or otherwise impose disproportionate review cost. Repeated submissions of this kind may result in account blocking.
 
 ## Attribution
 

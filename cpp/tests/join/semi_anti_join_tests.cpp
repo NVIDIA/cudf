@@ -4,9 +4,11 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/byte_literals.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/large_memory.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
@@ -21,11 +23,11 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 #include <rmm/resource_ref.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 
 #include <limits>
 #include <memory>
@@ -423,6 +425,8 @@ TEST_P(SemiAntiJoinTest, SemiJoinEmptyTables)
 
 TEST_P(SemiAntiJoinTest, AntiSemiJoinLargeExtentOverflowPrevention)
 {
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(24_GiB);
   auto const implementation = GetParam();
   if (use_mark_join(implementation)) { GTEST_SKIP(); }
   // Test validates size_t extent can handle bucket storage sizes that would

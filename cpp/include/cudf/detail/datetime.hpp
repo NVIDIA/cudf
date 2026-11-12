@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,64 +17,64 @@ namespace datetime {
 namespace detail {
 /**
  * @copydoc cudf::extract_datetime_component(cudf::column_view const&, datetime_component,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  *
  */
 std::unique_ptr<cudf::column> extract_datetime_component(cudf::column_view const& column,
                                                          datetime_component component,
-                                                         rmm::cuda_stream_view stream,
-                                                         rmm::device_async_resource_ref mr);
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr);
 
 /**
- * @copydoc cudf::last_day_of_month(cudf::column_view const&, rmm::cuda_stream_view,
- * rmm::device_async_resource_ref)
+ * @copydoc cudf::last_day_of_month(cudf::column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
  *
  */
 std::unique_ptr<cudf::column> last_day_of_month(cudf::column_view const& column,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr);
 
 /**
- * @copydoc cudf::day_of_year(cudf::column_view const&, rmm::cuda_stream_view,
- * rmm::device_async_resource_ref)
+ * @copydoc cudf::day_of_year(cudf::column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
  *
  */
 std::unique_ptr<cudf::column> day_of_year(cudf::column_view const& column,
-                                          rmm::cuda_stream_view stream,
-                                          rmm::device_async_resource_ref mr);
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::add_calendrical_months(cudf::column_view const&, cudf::column_view const&,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  *
  */
 std::unique_ptr<cudf::column> add_calendrical_months(cudf::column_view const& timestamps,
                                                      cudf::column_view const& months,
-                                                     rmm::cuda_stream_view stream,
-                                                     rmm::device_async_resource_ref mr);
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::add_calendrical_months(cudf::column_view const&, cudf::scalar const&,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  *
  */
 std::unique_ptr<cudf::column> add_calendrical_months(cudf::column_view const& timestamps,
                                                      cudf::scalar const& months,
-                                                     rmm::cuda_stream_view stream,
-                                                     rmm::device_async_resource_ref mr);
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
 
 /**
- * @copydoc cudf::is_leap_year(cudf::column_view const&, rmm::cuda_stream_view,
- * rmm::device_async_resource_ref)
+ * @copydoc cudf::is_leap_year(cudf::column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
  *
  */
 std::unique_ptr<cudf::column> is_leap_year(cudf::column_view const& column,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr);
 
 std::unique_ptr<cudf::column> extract_quarter(cudf::column_view const& column,
-                                              rmm::cuda_stream_view stream,
-                                              rmm::device_async_resource_ref mr);
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace datetime

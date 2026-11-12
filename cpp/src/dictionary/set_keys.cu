@@ -15,18 +15,19 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
@@ -65,13 +66,19 @@ struct apply_indices_map_fn {
   }
 };
 
-struct set_keys_dispatch_fn {
-  template <typename T>
-  std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
-                                           cudf::column_view const& new_keys,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<T>())
+struct remap_result {
+  std::unique_ptr<cudf::column> indices;
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
+  cudf::size_type null_count;
+};
+
+struct remap_indices_dispatch_fn {
+  template <cudf::concepts::dictionary_key T>
+  remap_result operator()(cudf::dictionary_column_view const& input,
+                          cudf::column_view const& new_keys,
+                          cuda::stream_ref stream,
+                          cudf::memory_resources mr)
   {
     // compute sorted-order so the new_keys can be searched more quickly
     auto sorted_indices = cudf::detail::sorted_order(
@@ -85,7 +92,8 @@ struct set_keys_dispatch_fn {
     auto const iota     = cuda::counting_iterator<cudf::size_type>{0};
 
     // create a map from the old key indices to the new ones
-    auto indices_map = rmm::device_uvector<size_type>(old_keys.size(), stream);
+    auto indices_map = cuda::device_buffer<size_type>(
+      stream, cudf::get_current_device_resource_ref(), old_keys.size(), cuda::no_init);
     create_indices_map_fn<T, decltype(keys_itr)> map_fn{
       *d_old_keys, keys_itr, keys_itr + new_keys.size(), d_sorted_indices};
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -116,27 +124,65 @@ struct set_keys_dispatch_fn {
       stream,
       mr);
 
+    return {std::move(indices_column), std::move(null_mask), null_count};
+  }
+
+  template <typename T>
+  remap_result operator()(cudf::dictionary_column_view const&,
+                          cudf::column_view const&,
+                          cuda::stream_ref,
+                          cudf::memory_resources)
+    requires(not cudf::concepts::dictionary_key<T>)
+  {
+    CUDF_UNREACHABLE("not a valid dictionary key type");
+  }
+};
+
+struct set_keys_dispatch_fn {
+  template <cudf::concepts::dictionary_key T>
+  std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const& input,
+                                           cudf::column_view const& new_keys,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
+  {
+    auto [indices, null_mask, null_count] = type_dispatcher<dispatch_storage_type>(
+      new_keys.type(), remap_indices_dispatch_fn{}, input, new_keys, stream, mr);
     auto keys_column = std::make_unique<cudf::column>(new_keys, stream, mr);
     return make_dictionary_column(
-      std::move(keys_column), std::move(indices_column), std::move(null_mask), null_count);
+      std::move(keys_column), std::move(indices), std::move(null_mask), null_count);
   }
 
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::dictionary_column_view const&,
                                            cudf::column_view const&,
-                                           rmm::cuda_stream_view,
-                                           rmm::device_async_resource_ref)
-    requires(not cudf::is_dictionary_key<T>())
+                                           cuda::stream_ref,
+                                           cudf::memory_resources)
   {
     CUDF_UNREACHABLE("not a valid dictionary key type");
   }
 };
 }  // namespace
 
+std::unique_ptr<column> remap_indices(dictionary_column_view const& input,
+                                      column_view const& new_keys,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(!new_keys.has_nulls(), "keys parameter must not have nulls", std::invalid_argument);
+  CUDF_EXPECTS(!new_keys.is_empty(), "keys cannot be empty", std::invalid_argument);
+  CUDF_EXPECTS(
+    cudf::have_same_types(input.keys(), new_keys), "keys types must match", cudf::data_type_error);
+
+  auto [indices, null_mask, null_count] = type_dispatcher<dispatch_storage_type>(
+    new_keys.type(), remap_indices_dispatch_fn{}, input, new_keys, stream, mr);
+  indices->set_null_mask(std::move(null_mask), null_count);
+  return std::move(indices);
+}
+
 std::unique_ptr<column> set_keys(dictionary_column_view const& input,
                                  column_view const& new_keys,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!new_keys.has_nulls(), "keys parameter must not have nulls", std::invalid_argument);
   CUDF_EXPECTS(!new_keys.is_empty(), "keys cannot be empty", std::invalid_argument);
@@ -153,8 +199,8 @@ std::unique_ptr<column> set_keys(dictionary_column_view const& input,
 
 std::unique_ptr<column> set_keys(dictionary_column_view const& dictionary_column,
                                  column_view const& keys,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::set_keys(dictionary_column, keys, stream, mr);

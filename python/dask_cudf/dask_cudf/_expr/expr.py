@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import functools
 
@@ -32,7 +32,7 @@ from dask_cudf._expr import (
 
 class RenameAxisCudf(RenameAxis):
     # TODO: Remove this after rename_axis is supported in cudf
-    # (See: https://github.com/rapidsai/cudf/issues/16895)
+    # (See: https://github.com/NVIDIA/cudf/issues/16895)
     @staticmethod
     def operation(df, index=no_default, **kwargs):
         if index != no_default:
@@ -71,7 +71,7 @@ class ToCudfBackend(Elemwise):
 
 
 # This can be removed after cudf#15176 is addressed.
-# See: https://github.com/rapidsai/cudf/issues/15176
+# See: https://github.com/NVIDIA/cudf/issues/15176
 class PatchCumulativeBlockwise(CumulativeBlockwise):
     @property
     def _args(self) -> list:
@@ -142,7 +142,7 @@ class VarCudf(Reduction):
             avg = x.sum(**kwargs) / n
         if numeric_only:
             # Workaround for cudf bug
-            # (see: https://github.com/rapidsai/cudf/issues/13731)
+            # (see: https://github.com/NVIDIA/cudf/issues/13731)
             x = x[n.index]
         m2 = ((x - avg) ** 2).sum(**kwargs)
         return n, avg, m2
@@ -186,7 +186,7 @@ def _patched_var(
 
 
 # Temporary work-around for missing cudf + categorical support
-# See: https://github.com/rapidsai/cudf/issues/11795
+# See: https://github.com/NVIDIA/cudf/issues/11795
 # TODO: Fix RepartitionQuantiles and remove this in cudf>24.06
 
 _original_get_divisions = _shuffle_module._get_divisions

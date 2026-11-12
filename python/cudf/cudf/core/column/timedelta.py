@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 @functools.cache
 def get_np_td_unit_conversion(
-    reso: str, dtype: None | np.dtype
+    reso: str, dtype: np.dtype | None
 ) -> np.timedelta64:
     td = np.timedelta64(unit_to_nanoseconds_conversion[reso], "ns")
     if dtype is not None:
@@ -220,7 +220,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
     def total_seconds(self) -> ColumnBase:
         conversion = unit_to_nanoseconds_conversion[self.time_unit] / 1e9
         # Typecast to decimal128 to avoid floating point precision issues
-        # https://github.com/rapidsai/cudf/issues/17664
+        # https://github.com/NVIDIA/cudf/issues/17664
         result = (
             (self.astype(self._UNDERLYING_DTYPE) * conversion)
             .astype(

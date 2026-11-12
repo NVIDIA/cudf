@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -57,7 +57,7 @@ void launch_mixed_join_semi(bool has_nulls,
                             cudf::ast::detail::expression_device_view device_expression_data,
                             detail::grid_1d const config,
                             int64_t shmem_size_per_block,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 }  // namespace detail
 

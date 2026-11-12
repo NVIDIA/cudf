@@ -15,6 +15,7 @@
 #include "reader_impl_chunking.hpp"
 #include "reader_impl_helpers.hpp"
 
+#include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/detail/parquet.hpp>
@@ -22,7 +23,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -50,13 +51,13 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
-                       rmm::cuda_stream_view stream,
-                       rmm::device_async_resource_ref mr);
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr);
 
   /**
    * @brief Read an entire set or a subset of data and returns a set of columns
@@ -97,15 +98,15 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
                        std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
-                       rmm::cuda_stream_view stream,
-                       rmm::device_async_resource_ref mr);
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr);
 
   reader_impl(reader_impl const&)            = delete;
   reader_impl& operator=(reader_impl const&) = delete;
@@ -179,7 +180,7 @@ class reader_impl {
   /**
    * @brief Preprocess string length and bounds information for the subpass.
    *
-   * At the end of this process, the `str_bytes` field of the the PageInfo struct
+   * At the end of this process, the `str_bytes` field of the PageInfo struct
    * will be populated, and if applicable, the delta_temp_buf in the subpass struct will
    * be allocated and the pages in the subpass will point into it properly.
    *
@@ -414,19 +415,6 @@ class reader_impl {
   }
 
   /**
-   * @brief Check if the user has specified columns from mismatched sources
-   *
-   * @param options Reader options
-   * @return True if the user has specified columns from mismatched sources
-   */
-  [[nodiscard]] bool has_cols_from_mismatched_sources(parquet_reader_options const& options) const
-  {
-    return (options.get_column_names().has_value() or
-            options.get_column_field_ids().has_value()) and
-           options.is_enabled_allow_mismatched_pq_schemas();
-  }
-
-  /**
    * @brief Effective `ignore_missing_columns` policy for column selection
    *
    * This flag would be disabled when multiple sources use mismatched-schema column selection.
@@ -438,6 +426,20 @@ class reader_impl {
   {
     return options.is_enabled_ignore_missing_columns() and
            not(has_cols_from_mismatched_sources(options) and _metadata->get_num_sources() > 1);
+  }
+
+ private:
+  /**
+   * @brief Check if the user has specified columns from mismatched sources
+   *
+   * @param options Reader options
+   * @return True if the user has specified columns from mismatched sources
+   */
+  [[nodiscard]] bool has_cols_from_mismatched_sources(parquet_reader_options const& options) const
+  {
+    return (options.get_column_names().has_value() or
+            options.get_column_field_ids().has_value()) and
+           options.is_enabled_allow_mismatched_pq_schemas();
   }
 
  protected:
@@ -488,39 +490,11 @@ class reader_impl {
    * @brief Calculate the number of rows read from each source in the output chunk
    *
    * @param chunk_start_row The offset of the first row in the output chunk
-   * @param chunk_num_rows The number of rows in the the output chunk
+   * @param chunk_num_rows The number of rows in the output chunk
    * @return Vector of number of rows from each respective data source in the output chunk
    */
   [[nodiscard]] std::vector<size_t> calculate_output_num_rows_per_source(size_t chunk_start_row,
                                                                          size_t chunk_num_rows);
-
-  /**
-   * @brief Synthesize source index column
-   *
-   * @param num_rows_per_source Number of rows per parquet source
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
-   * @return Synthesized source index column
-   */
-  [[nodiscard]] std::unique_ptr<column> synthesize_source_index_column(
-    std::span<std::size_t const> num_rows_per_source,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr);
-
-  /**
-   * @brief Synthesize file-local row index column
-   *
-   * For each output row, the column contains the row's index within its parquet source file,
-   * accounting for row group selection and row bounds.
-   *
-   * @param read_info Row range of the output chunk relative to the first row of the first
-   *                  selected row group
-   * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
-   * @return Synthesized row index column
-   */
-  [[nodiscard]] std::unique_ptr<column> synthesize_row_index_column(
-    row_range const& read_info, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
 
   /**
    * @brief Computes the names of columns to be read from the file, if specified.
@@ -538,8 +512,8 @@ class reader_impl {
    */
   void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
 
-  rmm::cuda_stream_view _stream;
-  rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
+  cuda::stream_ref _stream;
+  cudf::memory_resources _mr;
 
   // Reader configs.
   struct {
@@ -567,11 +541,11 @@ class reader_impl {
     bool output_dict_columns = false;
   } _options;
 
-  // name to reference converter to extract AST output filter
-  named_to_reference_converter _expr_conv{std::nullopt, table_metadata{}, true};
+  // Converts the input filter to AST output filter.
+  parquet_filter_normalizer _expr_conv{std::nullopt, table_metadata{}, true};
 
   std::vector<std::unique_ptr<datasource>> _sources;
-  std::unique_ptr<aggregate_reader_metadata> _metadata;
+  std::shared_ptr<aggregate_reader_metadata> _metadata;
 
   // Number of sources
   size_t _num_sources{0};
@@ -605,6 +579,9 @@ class reader_impl {
   // are offset indexes available for selected row groups
   bool _has_offset_index = false;
 
+  // whether sparse page I/O is enabled
+  bool _sparse_page_io = false;
+
   std::optional<std::vector<reader_column_schema>> _reader_column_schema;
 
   // chunked reading happens in 2 parts:
@@ -627,6 +604,12 @@ class reader_impl {
   // Per-input-column flag indicating whether that column was selected for direct
   // Parquet-dict → DICTIONARY32 transcode.
   std::vector<bool> _dict_transcode_eligible;
+
+  // LIBCUDF_PARQUET_NZ_MAP selector is fixed for the reader lifetime so
+  // every pass and output chunk agrees on which nz map consumer kinds may
+  // be selected. Read here rather than in a constructor body because
+  // `hybrid_scan_reader_impl` reaches this class through the default constructor.
+  bool _nz_map_enabled{cudf::detail::get_bool_env_or("LIBCUDF_PARQUET_NZ_MAP", false)};
 };
 
 }  // namespace cudf::io::parquet::detail

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +13,10 @@ from polars.testing import assert_frame_equal, assert_series_equal
 
 from cudf_polars.streaming.rank_aware_source import SizedChunks
 from cudf_polars.testing.asserts import assert_ir_translation_raises
+from cudf_polars.testing.engine_utils import is_streaming_engine
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def test_python_scan_function(engine: pl.GPUEngine):
@@ -87,44 +92,60 @@ def test_python_scan_pyarrow_source_unsupported(engine: pl.GPUEngine):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-def test_python_scan_schema_mismatch(engine_raise_on_fail: pl.GPUEngine):
+def test_python_scan_schema_mismatch(engine: pl.GPUEngine):
     def source(with_columns, predicate, n_rows, batch_size):
         # Float64 data, but the schema declares Int64.
         yield pl.DataFrame({"a": [1.0, 2.0, 3.0]})
 
     q = register_io_source(source, schema={"a": pl.Int64})
-    with pytest.raises(pl.exceptions.SchemaError):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.SchemaError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.SchemaError):
+            q.collect(engine=engine)
 
 
-def test_python_scan_schema_mismatch_nested(engine_raise_on_fail: pl.GPUEngine):
+def test_python_scan_schema_mismatch_nested(engine: pl.GPUEngine):
     def source(with_columns, predicate, n_rows, batch_size):
         yield pl.DataFrame({"a": [[1, 2], [3]]}, schema={"a": pl.List(pl.Int32)})
 
     q = register_io_source(source, schema={"a": pl.List(pl.Int64)})
-    with pytest.raises(pl.exceptions.SchemaError):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.SchemaError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.SchemaError):
+            q.collect(engine=engine)
 
 
-def test_python_scan_schema_mismatch_late_chunk(engine_raise_on_fail: pl.GPUEngine):
+def test_python_scan_schema_mismatch_late_chunk(engine: pl.GPUEngine):
     def source(with_columns, predicate, n_rows, batch_size):
         yield pl.DataFrame({"a": [1, 2]})
         # Float64 data, but the schema declares Int64.
         yield pl.DataFrame({"a": [3.0, 4.0]})
 
     q = register_io_source(source, schema={"a": pl.Int64})
-    with pytest.raises(pl.exceptions.SchemaError):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(pl.exceptions.SchemaError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.SchemaError):
+            q.collect(engine=engine)
 
 
-def test_python_scan_invalid_chunk_type(engine_raise_on_fail: pl.GPUEngine):
+def test_python_scan_invalid_chunk_type(engine: pl.GPUEngine):
     def source(with_columns, predicate, n_rows, batch_size):
         # A chunk must be a polars or cudf-polars DataFrame, not an arbitrary object.
         yield object()
 
     q = register_io_source(source, schema={"a": pl.Int64})
-    with pytest.raises(TypeError):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(TypeError):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(TypeError):
+            q.collect(engine=engine)
 
 
 def test_python_scan_multi_chunk_groupby(engine: pl.GPUEngine):
@@ -272,7 +293,12 @@ def test_python_scan_lines(engine: pl.GPUEngine):
     def scan_lines(f: io.BytesIO) -> pl.LazyFrame:
         schema = pl.Schema({"line": pl.String()})
 
-        def generator(with_columns, predicate, n_rows, batch_size):
+        def generator(
+            with_columns: list[str] | None,
+            predicate: pl.Expr | None,
+            n_rows: int | None,
+            batch_size: int | None,
+        ) -> Iterator[pl.DataFrame]:
             if batch_size is None:
                 batch_size = 100_000
             batch_lines: list[str] = []

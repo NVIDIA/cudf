@@ -22,6 +22,10 @@ from .scalar cimport Scalar
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
 from cuda.bindings.cyruntime cimport cudaStream_t
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 __all__ = ["BinaryOperator", "binary_operation", "is_supported_operation"]
 
@@ -30,7 +34,7 @@ cpdef Column binary_operation(
     RightBinaryOperand rhs,
     binary_operator op,
     DataType output_type,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a binary operation between a column and another column or scalar.
@@ -64,7 +68,7 @@ cpdef Column binary_operation(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_lhs_column
     cdef column_view c_rhs_column
 

@@ -25,16 +25,17 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/equal.h>
 #include <thrust/execution_policy.h>
 #include <thrust/generate.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/logical.h>
 #include <thrust/reduce.h>
 #include <thrust/remove.h>
@@ -53,7 +54,7 @@ namespace test {
 namespace {
 
 std::unique_ptr<column> generate_all_row_indices(size_type num_rows,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  cudf::memory_resources mr)
 {
   auto indices = cudf::make_fixed_width_column(
@@ -91,7 +92,7 @@ std::unique_ptr<column> generate_all_row_indices(size_type num_rows,
 std::unique_ptr<column> generate_child_row_indices(lists_column_view const& c,
                                                    column_view const& row_indices,
                                                    bool check_exact_equality,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    cudf::memory_resources mr)
 {
   // if we are checking for exact equality, we should be checking for "unsanitized" data that may
@@ -117,7 +118,7 @@ std::unique_ptr<column> generate_child_row_indices(lists_column_view const& c,
     0,
     cuda::proclaim_return_type<size_type>([row_indices = row_indices.begin<size_type>(),
                                            validity    = c.null_mask(),
-                                           offsets     = c.offsets().begin<size_type>(),
+                                           offsets     = c.offsets().begin<int32_t>(),
                                            offset      = c.offset()] __device__(int index) {
       // both null mask and offsets data are not pre-sliced. so we need to add the column offset to
       // every incoming index.
@@ -165,11 +166,11 @@ std::unique_ptr<column> generate_child_row_indices(lists_column_view const& c,
   auto output_row_iter = cudf::detail::make_counting_transform_iterator(
     0,
     cuda::proclaim_return_type<size_type>(
-      [row_indices  = row_indices.begin<size_type>(),
-       offsets      = c.offsets().begin<size_type>(),
-       offset       = c.offset(),
-       first_offset = cudf::detail::get_value<size_type>(
-         c.offsets(), c.offset(), stream)] __device__(int index) {
+      [row_indices = row_indices.begin<size_type>(),
+       offsets     = c.offsets().begin<int32_t>(),
+       offset      = c.offset(),
+       first_offset =
+         cudf::detail::get_value<int32_t>(c.offsets(), c.offset(), stream)] __device__(int index) {
         auto const true_index = row_indices[index] + offset;
         return offsets[true_index] - first_offset;
       }));
@@ -242,7 +243,7 @@ struct column_property_comparator {
                       cudf::column_view const& lhs_row_indices,
                       cudf::column_view const& rhs_row_indices,
                       debug_output_level verbosity,
-                      rmm::cuda_stream_view stream,
+                      cuda::stream_ref stream,
                       cudf::memory_resources mr)
   {
     bool result = true;
@@ -276,7 +277,7 @@ struct column_property_comparator {
                   cudf::column_view const& lhs_row_indices,
                   cudf::column_view const& rhs_row_indices,
                   debug_output_level verbosity,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   cudf::memory_resources mr)
     requires(!std::is_same_v<T, cudf::list_view> && !std::is_same_v<T, cudf::struct_view>)
   {
@@ -289,7 +290,7 @@ struct column_property_comparator {
                   cudf::column_view const& lhs_row_indices,
                   cudf::column_view const& rhs_row_indices,
                   debug_output_level verbosity,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   cudf::memory_resources mr)
     requires(std::is_same_v<T, cudf::list_view>)
   {
@@ -330,7 +331,7 @@ struct column_property_comparator {
                   cudf::column_view const& lhs_row_indices,
                   cudf::column_view const& rhs_row_indices,
                   debug_output_level verbosity,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   cudf::memory_resources mr)
     requires(std::is_same_v<T, cudf::struct_view>)
   {
@@ -477,7 +478,7 @@ std::string stringify_column_differences(cudf::device_span<int const> difference
                                          column_view const& rhs_row_indices,
                                          debug_output_level verbosity,
                                          int depth,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not differences.empty(), "Shouldn't enter this function if `differences` is empty");
@@ -489,8 +490,8 @@ std::string stringify_column_differences(cudf::device_span<int const> difference
     buffer << depth_str << "differences:" << std::endl;
 
     auto source_table = cudf::table_view({lhs, rhs});
-    auto diff_column =
-      fixed_width_column_wrapper<int32_t>(h_differences.begin(), h_differences.end());
+    auto diff_column  = fixed_width_column_wrapper<int32_t>(
+      h_differences.begin(), h_differences.end(), stream, mr.get_temporary_mr());
     auto diff_table = cudf::gather(source_table,
                                    diff_column,
                                    cudf::out_of_bounds_policy::DONT_CHECK,
@@ -527,7 +528,7 @@ struct column_comparator_impl {
                   debug_output_level verbosity,
                   size_type fp_ulps,
                   int depth,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   cudf::memory_resources mr)
   {
     auto d_lhs_row_indices =
@@ -541,8 +542,8 @@ struct column_comparator_impl {
     auto lhs_tview = table_view{{lhs}};
     auto rhs_tview = table_view{{rhs}};
 
-    auto const comparator =
-      cudf::detail::row::equality::two_table_comparator{lhs_tview, rhs_tview, stream};
+    auto const comparator = cudf::detail::row::equality::two_table_comparator{
+      lhs_tview, rhs_tview, stream, mr.get_temporary_mr()};
     auto const has_nulls = cudf::has_nulls(lhs_tview) or cudf::has_nulls(rhs_tview);
 
     auto const device_comparator = comparator.equal_to<false>(cudf::nullate::DYNAMIC{has_nulls});
@@ -552,14 +553,16 @@ struct column_comparator_impl {
                          corresponding_rows_unequal<decltype(device_comparator)>,
                          corresponding_rows_not_equivalent<decltype(device_comparator)>>;
 
-    auto differences =
-      rmm::device_uvector<int>(lhs_row_indices.size(),
-                               stream,
-                               mr.get_temporary_mr());  // worst case: everything different
-    auto input_iter = cuda::counting_iterator<cudf::size_type>{0};
+    auto differences_storage =
+      cuda::device_buffer<int>(stream,
+                               mr.get_temporary_mr(),
+                               lhs_row_indices.size(),
+                               cuda::no_init);  // worst case: everything different
+    cudf::device_span<int> differences = differences_storage;
+    auto input_iter                    = cuda::counting_iterator<cudf::size_type>{0};
 
-    auto diff_map =
-      rmm::device_uvector<bool>(lhs_row_indices.size(), stream, mr.get_temporary_mr());
+    auto diff_map = cuda::device_buffer<bool>(
+      stream, mr.get_temporary_mr(), lhs_row_indices.size(), cuda::no_init);
 
     thrust::transform(
       rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -576,10 +579,10 @@ struct column_comparator_impl {
                                      differences.begin(),
                                      cuda::std::identity{});
 
-    differences.resize(cuda::std::distance(differences.begin(), diff_iter),
-                       stream);  // shrink back down
+    // TODO: Use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+    differences = differences.first(cuda::std::distance(differences.begin(), diff_iter));
 
-    if (not differences.is_empty()) {
+    if (not differences.empty()) {
       if (verbosity != debug_output_level::QUIET) {
         // GTEST_FAIL() does a return that conflicts with our return type. so hide it in a lambda.
         [&]() {
@@ -607,7 +610,7 @@ struct column_comparator_impl<list_view, check_exact_equality> {
                   debug_output_level verbosity,
                   size_type fp_ulps,
                   int depth,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   cudf::memory_resources mr)
   {
     lists_column_view lhs_l(lhs);
@@ -617,18 +620,19 @@ struct column_comparator_impl<list_view, check_exact_equality> {
     if (lhs_row_indices.is_empty()) { return true; }
 
     // worst case - everything is different
-    rmm::device_uvector<int> differences(lhs_row_indices.size(), stream, mr.get_temporary_mr());
+    cuda::device_buffer<int> differences_storage(
+      stream, mr.get_temporary_mr(), lhs_row_indices.size(), cuda::no_init);
+    cudf::device_span<int> differences = differences_storage;
 
     // compare offsets, taking slicing into account
 
     // left side
-    size_type lhs_shift =
-      cudf::detail::get_value<size_type>(lhs_l.offsets(), lhs_l.offset(), stream);
-    auto lhs_offsets = thrust::make_transform_iterator(
-      lhs_l.offsets().begin<size_type>() + lhs_l.offset(),
+    size_type lhs_shift = cudf::detail::get_value<int32_t>(lhs_l.offsets(), lhs_l.offset(), stream);
+    auto lhs_offsets    = cuda::transform_iterator(
+      lhs_l.offsets().begin<int32_t>() + lhs_l.offset(),
       cuda::proclaim_return_type<size_type>(
         [lhs_shift] __device__(size_type offset) { return offset - lhs_shift; }));
-    auto lhs_valids = thrust::make_transform_iterator(
+    auto lhs_valids = cuda::transform_iterator(
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::proclaim_return_type<bool>(
         [mask = lhs_l.null_mask(), offset = lhs_l.offset()] __device__(size_type index) {
@@ -636,13 +640,12 @@ struct column_comparator_impl<list_view, check_exact_equality> {
         }));
 
     // right side
-    size_type rhs_shift =
-      cudf::detail::get_value<size_type>(rhs_l.offsets(), rhs_l.offset(), stream);
-    auto rhs_offsets = thrust::make_transform_iterator(
-      rhs_l.offsets().begin<size_type>() + rhs_l.offset(),
+    size_type rhs_shift = cudf::detail::get_value<int32_t>(rhs_l.offsets(), rhs_l.offset(), stream);
+    auto rhs_offsets    = cuda::transform_iterator(
+      rhs_l.offsets().begin<int32_t>() + rhs_l.offset(),
       cuda::proclaim_return_type<size_type>(
         [rhs_shift] __device__(size_type offset) { return offset - rhs_shift; }));
-    auto rhs_valids = thrust::make_transform_iterator(
+    auto rhs_valids = cuda::transform_iterator(
       cuda::counting_iterator<cudf::size_type>{0},
       cuda::proclaim_return_type<bool>(
         [mask = rhs_l.null_mask(), offset = rhs_l.offset()] __device__(size_type index) {
@@ -702,10 +705,10 @@ struct column_comparator_impl<list_view, check_exact_equality> {
         return false;
       });
 
-    differences.resize(cuda::std::distance(differences.begin(), diff_iter),
-                       stream);  // shrink back down
+    // TODO: Use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+    differences = differences.first(cuda::std::distance(differences.begin(), diff_iter));
 
-    if (not differences.is_empty()) {
+    if (not differences.empty()) {
       if (verbosity != debug_output_level::QUIET) {
         // GTEST_FAIL() does a return that conflicts with our return type. so hide it in a lambda.
         [&]() {
@@ -752,7 +755,7 @@ struct column_comparator_impl<struct_view, check_exact_equality> {
                   debug_output_level verbosity,
                   size_type fp_ulps,
                   int depth,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   cudf::memory_resources mr)
   {
     structs_column_view l_scv(lhs);
@@ -789,7 +792,7 @@ struct column_comparator {
                   debug_output_level verbosity,
                   size_type fp_ulps,
                   int depth,
-                  rmm::cuda_stream_view stream,
+                  cuda::stream_ref stream,
                   cudf::memory_resources mr)
   {
     // compare properties
@@ -812,9 +815,7 @@ struct column_comparator {
   }
 };
 
-void check_non_empty_nulls(column_view const& lhs,
-                           column_view const& rhs,
-                           rmm::cuda_stream_view stream)
+void check_non_empty_nulls(column_view const& lhs, column_view const& rhs, cuda::stream_ref stream)
 {
   auto check_column_nulls = [stream](column_view const& col, char const* col_name) {
     if (cudf::detail::has_nonempty_nulls(col, stream)) {
@@ -835,7 +836,7 @@ namespace detail {
 bool expect_column_properties_equal(column_view const& lhs,
                                     column_view const& rhs,
                                     debug_output_level verbosity,
-                                    rmm::cuda_stream_view stream,
+                                    cuda::stream_ref stream,
                                     cudf::memory_resources mr)
 {
   check_non_empty_nulls(lhs, rhs, stream);
@@ -858,7 +859,7 @@ bool expect_column_properties_equal(column_view const& lhs,
 bool expect_column_properties_equivalent(column_view const& lhs,
                                          column_view const& rhs,
                                          debug_output_level verbosity,
-                                         rmm::cuda_stream_view stream,
+                                         cuda::stream_ref stream,
                                          cudf::memory_resources mr)
 {
   check_non_empty_nulls(lhs, rhs, stream);
@@ -881,9 +882,12 @@ bool expect_column_properties_equivalent(column_view const& lhs,
 bool expect_columns_equal(cudf::column_view const& lhs,
                           cudf::column_view const& rhs,
                           debug_output_level verbosity,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           cudf::memory_resources mr)
 {
+  // TODO: check_non_empty_nulls (via has_nonempty_nulls) still allocates temporaries from the
+  // current device resource. Once it accepts a memory resource, callers can guard comparisons
+  // with fail_on_current_device_resource_use().
   check_non_empty_nulls(lhs, rhs, stream);
   auto lhs_indices = generate_all_row_indices(lhs.size(), stream, mr);
   auto rhs_indices = generate_all_row_indices(rhs.size(), stream, mr);
@@ -907,7 +911,7 @@ bool expect_columns_equivalent(cudf::column_view const& lhs,
                                cudf::column_view const& rhs,
                                debug_output_level verbosity,
                                size_type fp_ulps,
-                               rmm::cuda_stream_view stream,
+                               cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
   check_non_empty_nulls(lhs, rhs, stream);
@@ -932,7 +936,7 @@ bool expect_columns_equivalent(cudf::column_view const& lhs,
 void expect_equal_buffers(void const* lhs,
                           void const* rhs,
                           std::size_t size_bytes,
-                          rmm::cuda_stream_view stream,
+                          cuda::stream_ref stream,
                           cudf::memory_resources mr)
 {
   if (size_bytes > 0) {
@@ -961,21 +965,23 @@ void expect_column_empty(cudf::column_view const& col)
  * @copydoc cudf::test::bitmask_to_host
  */
 std::vector<bitmask_type> bitmask_to_host(cudf::column_view const& c,
-                                          rmm::cuda_stream_view stream,
+                                          cuda::stream_ref stream,
                                           cudf::memory_resources mr)
 {
   if (c.nullable()) {
     auto num_bitmasks      = num_bitmask_words(c.size());
     auto [bitmask_span, _] = [&] {
       if (c.offset() == 0) {
-        return std::pair{cudf::device_span<bitmask_type const>(c.null_mask(), num_bitmasks),
-                         rmm::device_buffer{}};
+        return std::pair<cudf::device_span<bitmask_type const>,
+                         cuda::device_buffer<cudf::bitmask_type>>{
+          cudf::device_span<bitmask_type const>(c.null_mask(), num_bitmasks),
+          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)};
       }
       auto mask = copy_bitmask(
         c.null_mask(), c.offset(), c.offset() + c.size(), stream, mr.get_temporary_mr());
-      return std::pair{cudf::device_span<bitmask_type const>(
-                         static_cast<bitmask_type*>(mask.data()), num_bitmasks),
-                       std::move(mask)};
+      return std::pair<cudf::device_span<bitmask_type const>,
+                       cuda::device_buffer<cudf::bitmask_type>>{
+        cudf::device_span<bitmask_type const>(mask.data(), num_bitmasks), std::move(mask)};
     }();
     return cudf::detail::make_std_vector(bitmask_span, stream);
   } else {
@@ -1000,7 +1006,7 @@ bool validate_host_masks(std::vector<bitmask_type> const& expected_mask,
 
 template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>*>
 std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(column_view c,
-                                                                     rmm::cuda_stream_view stream,
+                                                                     cuda::stream_ref stream,
                                                                      cudf::memory_resources mr)
 {
   using namespace numeric;
@@ -1009,19 +1015,21 @@ std::pair<thrust::host_vector<T>, std::vector<bitmask_type>> to_host(column_view
   auto col_span       = cudf::device_span<Rep const>(c.begin<Rep>(), c.size());
   auto host_rep_types = cudf::detail::make_host_vector(col_span, stream);
 
-  auto to_fp = [&](Rep val) { return T{scaled_integer<Rep>{val, scale_type{c.type().scale()}}}; };
-  auto begin = thrust::make_transform_iterator(std::cbegin(host_rep_types), to_fp);
-  auto const host_fixed_points = thrust::host_vector<T>(begin, begin + c.size());
+  auto host_fixed_points = thrust::host_vector<T>(c.size());
+  std::transform(
+    host_rep_types.cbegin(), host_rep_types.cend(), host_fixed_points.begin(), [&](Rep val) {
+      return T{scaled_integer<Rep>{val, scale_type{c.type().scale()}}};
+    });
 
   return {std::move(host_fixed_points), bitmask_to_host(c, stream, mr)};
 }
 
 template std::pair<thrust::host_vector<numeric::decimal32>, std::vector<bitmask_type>> to_host(
-  column_view c, rmm::cuda_stream_view stream, cudf::memory_resources mr);
+  column_view c, cuda::stream_ref stream, cudf::memory_resources mr);
 template std::pair<thrust::host_vector<numeric::decimal64>, std::vector<bitmask_type>> to_host(
-  column_view c, rmm::cuda_stream_view stream, cudf::memory_resources mr);
+  column_view c, cuda::stream_ref stream, cudf::memory_resources mr);
 template std::pair<thrust::host_vector<numeric::decimal128>, std::vector<bitmask_type>> to_host(
-  column_view c, rmm::cuda_stream_view stream, cudf::memory_resources mr);
+  column_view c, cuda::stream_ref stream, cudf::memory_resources mr);
 
 namespace {
 struct strings_to_host_fn {
@@ -1029,7 +1037,7 @@ struct strings_to_host_fn {
   void operator()(thrust::host_vector<std::string>& host_data,
                   char const* chars,
                   cudf::column_view const& offsets,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream)
     requires(std::is_same_v<OffsetType, int32_t> || std::is_same_v<OffsetType, int64_t>)
   {
     auto const h_offsets = cudf::detail::make_std_vector(
@@ -1046,7 +1054,7 @@ struct strings_to_host_fn {
   void operator()(thrust::host_vector<std::string>&,
                   char const*,
                   cudf::column_view const&,
-                  rmm::cuda_stream_view)
+                  cuda::stream_ref)
     requires(!std::is_same_v<OffsetType, int32_t> && !std::is_same_v<OffsetType, int64_t>)
   {
     CUDF_FAIL("invalid offsets type");
@@ -1056,7 +1064,7 @@ struct strings_to_host_fn {
 
 template <>
 std::pair<thrust::host_vector<std::string>, std::vector<bitmask_type>> to_host(
-  column_view c, rmm::cuda_stream_view stream, cudf::memory_resources mr)
+  column_view c, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   thrust::host_vector<std::string> host_data(c.size());
   if (c.size() > c.null_count()) {

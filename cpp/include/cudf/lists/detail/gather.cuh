@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -13,11 +13,11 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -38,7 +38,7 @@ struct gather_data {
   // If the offsets[3] == 6  (representing row 3 of the new column)
   // And the original value it was itself gathered from was 15, then
   // base_offsets[3] == 15
-  rmm::device_uvector<int32_t> base_offsets;
+  cuda::device_buffer<int32_t> base_offsets;
   // size of the gather map that will be generated from this data
   size_type gather_map_size;
 };
@@ -47,8 +47,8 @@ struct gather_data {
  * @copydoc cudf::make_gather_data(cudf::lists_column_view const& source_column,
  *                                 MapItType gather_map,
  *                                 size_type gather_map_size,
- *                                 rmm::cuda_stream_view stream,
- *                                 rmm::device_async_resource_ref mr)
+ *                                 cuda::stream_ref stream,
+ *                                 cudf::memory_resources mr)
  *
  * @param prev_base_offsets The buffer backing the base offsets used in the gather map. We can
  *                          free this buffer before allocating the new one to keep peak memory
@@ -58,9 +58,9 @@ template <bool NullifyOutOfBounds, typename MapItType>
 gather_data make_gather_data(cudf::lists_column_view const& source_column,
                              MapItType gather_map,
                              size_type gather_map_size,
-                             rmm::device_uvector<int32_t>&& prev_base_offsets,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::device_buffer<int32_t>&& prev_base_offsets,
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   // size of the gather map is the # of output rows
   size_type output_count = gather_map_size;
@@ -100,11 +100,12 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
   // handle sliced columns
   size_type const shift =
     source_column.offset() > 0
-      ? cudf::detail::get_value<size_type>(source_column.offsets(), source_column.offset(), stream)
+      ? cudf::detail::get_value<int32_t>(source_column.offsets(), source_column.offset(), stream)
       : 0;
 
   // generate the base offsets
-  rmm::device_uvector<int32_t> base_offsets = rmm::device_uvector<int32_t>(output_count, stream);
+  cuda::device_buffer<int32_t> base_offsets(
+    stream, cudf::get_current_device_resource_ref(), output_count, cuda::no_init);
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     gather_map,
@@ -240,14 +241,14 @@ template <bool NullifyOutOfBounds, typename MapItType>
 gather_data make_gather_data(cudf::lists_column_view const& source_column,
                              MapItType gather_map,
                              size_type gather_map_size,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   return make_gather_data<NullifyOutOfBounds, MapItType>(
     source_column,
     gather_map,
     gather_map_size,
-    rmm::device_uvector<int32_t>{0, stream, mr},
+    cuda::device_buffer<int32_t>{stream, mr.get_output_mr(), 0, cuda::no_init},
     stream,
     mr);
 }
@@ -266,8 +267,8 @@ gather_data make_gather_data(cudf::lists_column_view const& source_column,
  */
 std::unique_ptr<column> gather_list_nested(lists_column_view const& list,
                                            gather_data& gd,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr);
 
 /**
  * @brief Gather a leaf column from a hierarchy of list columns.
@@ -283,22 +284,22 @@ std::unique_ptr<column> gather_list_nested(lists_column_view const& list,
  */
 std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                          gather_data const& gd,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::segmented_gather(lists_column_view const& source_column,
  *                                        lists_column_view const& gather_map_list,
  *                                        out_of_bounds_policy bounds_policy,
- *                                        rmm::device_async_resource_ref mr)
+ *                                        cudf::memory_resources mr)
  *
  * @param stream CUDA stream on which to execute kernels
  */
 std::unique_ptr<column> segmented_gather(lists_column_view const& source_column,
                                          lists_column_view const& gather_map_list,
                                          out_of_bounds_policy bounds_policy,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace lists

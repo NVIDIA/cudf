@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace io::detail::avro {
@@ -26,8 +26,8 @@ namespace io::detail::avro {
  */
 table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
                               avro_reader_options const& options,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
 
 }  // namespace io::detail::avro
 }  // namespace cudf

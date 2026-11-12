@@ -11,16 +11,16 @@
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
+#include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuco/operator.hpp>
 #include <cuco/static_set_ref.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -30,7 +30,8 @@ void filtered_join::query_right_table_nested(
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
   cudf::device_span<bool> contains_map,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto const comparator =
     cudf::detail::row::equality::two_table_comparator{_preprocessed_right, preprocessed_left}
@@ -45,9 +46,9 @@ void filtered_join::query_right_table_nested(
   auto const hashes =
     cudf::hashing::detail::murmurhash3_x86_32(preprocessed_left,
                                               left.num_rows(),
-                                              cudf::DEFAULT_HASH_SEED,
+                                              hashing::detail::DEFAULT_ALGORITHM_HASH_SEED,
                                               stream,
-                                              cudf::get_current_device_resource_ref());
+                                              mr.get_temporary_mr());
   auto const hasher = precomputed_hash{hashes->view().data<hash_value_type>()};
   auto const iter   = cudf::detail::make_counting_transform_iterator(
     size_type{0}, key_pair_fn<rhs_index_type, decltype(hasher)>{hasher});

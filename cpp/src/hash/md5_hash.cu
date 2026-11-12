@@ -17,11 +17,12 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 #include <iterator>
@@ -200,7 +201,7 @@ struct MD5Hasher {
         A = D;
         D = C;
         C = B;
-        B = B + rotate_bits_left(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
+        B = B + cuda::std::rotl(F, md5_shift_constants[((j / 16) * 4) + (j % 4)]);
       }
 
       hash_values[0] += A;
@@ -274,8 +275,8 @@ inline bool md5_leaf_type_check(data_type dt)
 }  // namespace
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
-                            rmm::device_async_resource_ref mr)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
   if (input.num_columns() == 0 || input.num_rows() == 0) {
     // Return the MD5 hash of a zero-length input.
@@ -303,7 +304,7 @@ std::unique_ptr<column> md5(table_view const& input,
   auto [offsets_column, bytes] =
     cudf::strings::detail::make_offsets_child_column(begin, begin + input.num_rows(), stream, mr);
 
-  rmm::device_uvector<char> chars(bytes, stream, mr);
+  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
   auto d_chars = chars.data();
 
   auto const device_input = table_device_view::create(input, stream);
@@ -323,8 +324,8 @@ std::unique_ptr<column> md5(table_view const& input,
             if (data_col.type().id() == type_id::LIST) {
               CUDF_UNREACHABLE("Nested list unsupported");
             }
-            auto const offset_begin = offsets.element<size_type>(row_index);
-            auto const offset_end   = offsets.element<size_type>(row_index + 1);
+            auto const offset_begin = offsets.element<int32_t>(row_index + col.offset());
+            auto const offset_end   = offsets.element<int32_t>(row_index + 1 + col.offset());
             cudf::type_dispatcher<dispatch_storage_type>(
               data_col.type(), ListHasherDispatcher(&hasher, data_col), offset_begin, offset_end);
           } else {
@@ -335,14 +336,18 @@ std::unique_ptr<column> md5(table_view const& input,
       }
     });
 
-  return make_strings_column(input.num_rows(), std::move(offsets_column), chars.release(), 0, {});
+  return make_strings_column(input.num_rows(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace detail
 
 std::unique_ptr<column> md5(table_view const& input,
-                            rmm::cuda_stream_view stream,
-                            rmm::device_async_resource_ref mr)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::md5(input, stream, mr);

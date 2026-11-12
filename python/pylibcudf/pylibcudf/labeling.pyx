@@ -15,6 +15,10 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["Inclusive", "label_bins"]
@@ -25,7 +29,7 @@ cpdef Column label_bins(
     inclusive left_inclusive,
     Column right_edges,
     inclusive right_inclusive,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None
 ):
     """Labels elements based on membership in the specified bins.
@@ -57,7 +61,7 @@ cpdef Column label_bins(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()

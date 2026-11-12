@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -44,11 +44,13 @@ cdef class GroupBy:
     cdef unique_ptr[vector[order]] _column_order
     cdef unique_ptr[vector[null_order]] _null_precedence
 
-    cpdef tuple aggregate(
+    cpdef tuple[Table, list[Table]] aggregate(
         self, list requests, object stream = *, DeviceMemoryResource mr=*
     )
-    cpdef tuple scan(self, list requests, object stream = *, DeviceMemoryResource mr=*)
-    cpdef tuple shift(
+    cpdef tuple[Table, list[Table]] scan(
+        self, list requests, object stream = *, DeviceMemoryResource mr=*
+    )
+    cpdef tuple[Table, Table] shift(
         self,
         Table values,
         list offset,
@@ -56,19 +58,19 @@ cdef class GroupBy:
         object stream = *,
         DeviceMemoryResource mr=*,
     )
-    cpdef tuple replace_nulls(
+    cpdef tuple[Table, Table] replace_nulls(
         self,
         Table values,
         list replace_policies,
         object stream = *,
         DeviceMemoryResource mr=*,
     )
-    cpdef tuple get_groups(
+    cpdef tuple[list[int], Table, object] get_groups(
         self, Table values=*, object stream = *, DeviceMemoryResource mr=*
     )
 
     @staticmethod
-    cdef tuple _parse_outputs(
+    cdef tuple[Table, list[Table]] _parse_outputs(
         pair[unique_ptr[table], vector[aggregation_result]] c_res,
         object stream,
         DeviceMemoryResource mr,

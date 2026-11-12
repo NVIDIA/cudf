@@ -1,0 +1,179 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#pragma once
+
+#include "reader_impl_helpers.hpp"
+#include "stats_filter_helpers.hpp"
+#include "timestamp_utils.cuh"
+
+#include <cudf/column/column.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
+#include <cudf/utilities/traits.hpp>
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <span>
+#include <type_traits>
+#include <vector>
+
+namespace cudf::io::parquet::detail {
+
+/**
+ * @brief Converts row-group column chunk statistics to device columns.
+ *
+ * Each output column has one row for every selected row group. The min and max columns are always
+ * returned, followed by the all-null and has-NaN columns if `with_null_and_nan_stats` is set.
+ */
+struct row_group_stats_caster : public stats_caster_base {
+  using result_type = std::vector<std::unique_ptr<column>>;
+
+  template <typename T>
+  [[nodiscard]] static constexpr bool can_use_deprecated_minmax()
+  {
+    if constexpr (std::is_same_v<T, string_view>) {
+      return false;
+    } else if constexpr (cudf::is_integral_not_bool<T>()) {
+      return cudf::is_signed<T>();
+    } else {
+      return true;
+    }
+  }
+
+  size_type total_row_groups;
+  std::vector<metadata> const& per_file_metadata;
+  std::span<std::vector<size_type> const> row_group_indices;
+  bool with_null_and_nan_stats;
+
+  template <typename T>
+  result_type operator()(std::span<int const> schema_indices_per_source,
+                         cudf::data_type dtype,
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr) const
+  {
+    CUDF_EXPECTS(row_group_indices.size() == per_file_metadata.size(),
+                 "Row-group indices must match parquet metadata sources",
+                 std::invalid_argument);
+    CUDF_EXPECTS(schema_indices_per_source.size() == per_file_metadata.size(),
+                 "Per-source schema indices must match parquet metadata sources",
+                 std::invalid_argument);
+    auto const computed_total_row_groups =
+      std::accumulate(row_group_indices.begin(),
+                      row_group_indices.end(),
+                      size_type{0},
+                      [](auto count, auto const& source_row_group_indices) {
+                        return count + static_cast<size_type>(source_row_group_indices.size());
+                      });
+    CUDF_EXPECTS(total_row_groups == computed_total_row_groups,
+                 "Total row groups must match selected row-group indices",
+                 std::invalid_argument);
+
+    if constexpr (cudf::is_compound<T>() and not std::is_same_v<T, string_view>) {
+      CUDF_FAIL("Compound types do not have statistics");
+    } else {
+      host_column<T> min(total_row_groups, stream);
+      host_column<T> max(total_row_groups, stream);
+      std::optional<host_column<bool>> is_null;
+      std::optional<host_column<bool>> has_nan;
+      if (with_null_and_nan_stats) {
+        is_null = host_column<bool>(total_row_groups, stream);
+        has_nan = host_column<bool>(total_row_groups, stream);
+      }
+
+      size_type stats_idx = 0;
+      for (size_t src_idx = 0; src_idx < row_group_indices.size(); ++src_idx) {
+        auto const mapped_schema_idx = schema_indices_per_source[src_idx];
+        auto const& source_metadata  = per_file_metadata[src_idx];
+        CUDF_EXPECTS(mapped_schema_idx >= 0 and
+                       static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),
+                     "Mapped schema index is out of bounds",
+                     std::invalid_argument);
+        // Compute timestamp scale factor for precision conversion from the mapped source schema.
+        auto const ts_scale = [&] {
+          if constexpr (cudf::is_timestamp<T>()) {
+            auto const& schema = source_metadata.schema[mapped_schema_idx];
+            return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
+          }
+          return 0;
+        }();
+
+        for (auto const rg_idx : row_group_indices[src_idx]) {
+          CUDF_EXPECTS(
+            rg_idx >= 0 and static_cast<size_t>(rg_idx) < source_metadata.row_groups.size(),
+            "Row-group index is out of bounds",
+            std::invalid_argument);
+          auto const& row_group = source_metadata.row_groups[rg_idx];
+          auto col              = std::find_if(row_group.columns.begin(),
+                                  row_group.columns.end(),
+                                  [mapped_schema_idx](ColumnChunk const& col) {
+                                    return col.schema_idx == mapped_schema_idx;
+                                  });
+          if (col != std::end(row_group.columns)) {
+            auto const& colchunk = *col;
+            auto const& stats    = colchunk.meta_data.statistics;
+            // Deprecated min/max use signed physical ordering, so only fall back
+            // when that ordering is compatible with the output type.
+            auto const* min_value = &stats.min_value;
+            auto const* max_value = &stats.max_value;
+            if constexpr (can_use_deprecated_minmax<T>()) {
+              if (not min_value->has_value()) { min_value = &stats.min; }
+              if (not max_value->has_value()) { max_value = &stats.max; }
+            }
+            // translate binary data to Type then to <T>
+            min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
+            max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
+            // Check the nullability and NaN presence of this column chunk
+            if (with_null_and_nan_stats) {
+              has_nan->set_value(stats_idx, has_nans(stats.nan_count));
+              if (colchunk.meta_data.statistics.null_count.has_value()) {
+                auto const& null_count = colchunk.meta_data.statistics.null_count.value();
+                if (null_count == 0) {
+                  is_null->val[stats_idx] = false;
+                } else if (null_count < colchunk.meta_data.num_values) {
+                  is_null->set_index(stats_idx, std::nullopt, {});
+                } else if (null_count == colchunk.meta_data.num_values) {
+                  is_null->val[stats_idx] = true;
+                } else {
+                  CUDF_FAIL("Invalid null count");
+                }
+              } else {
+                // Statistics without a null count say nothing about this chunk's nullability. The
+                // value array is allocated uninitialized and the null mask starts out all valid, so
+                // this entry has to be marked null; leaving it alone would let an uninitialized
+                // byte be read as an answer.
+                is_null->set_index(stats_idx, std::nullopt, {});
+              }
+            }
+          } else {
+            // Mark it null if the column chunk is absent from this row group.
+            min.set_index(stats_idx, std::nullopt, {});
+            max.set_index(stats_idx, std::nullopt, {});
+            if (with_null_and_nan_stats) {
+              is_null->set_index(stats_idx, std::nullopt, {});
+              has_nan->set_value(stats_idx, std::nullopt);
+            }
+          }
+          stats_idx++;
+        }
+      };
+      result_type columns;
+      columns.reserve(stats_cols_per_column);
+      columns.emplace_back(min.to_device(dtype, stream, mr));
+      columns.emplace_back(max.to_device(dtype, stream, mr));
+      if (with_null_and_nan_stats) {
+        columns.emplace_back(is_null->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
+        columns.emplace_back(has_nan->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
+      }
+      return columns;
+    }
+  }
+};
+
+}  // namespace cudf::io::parquet::detail

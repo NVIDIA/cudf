@@ -12,9 +12,11 @@
 #include <cudf/io/experimental/cudftable.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/stream>
 
 namespace cudf::io::experimental {
 namespace detail {
@@ -65,7 +67,7 @@ static_assert(sizeof(cudftable_header) == 32);
 
 }  // anonymous namespace
 
-void write_cudftable(data_sink* sink, table_view const& input, rmm::cuda_stream_view stream)
+void write_cudftable(data_sink* sink, table_view const& input, cuda::stream_ref stream)
 {
   auto const packed = cudf::pack(input, stream, cudf::get_current_device_resource_ref());
 
@@ -88,9 +90,7 @@ void write_cudftable(data_sink* sink, table_view const& input, rmm::cuda_stream_
   sink->flush();
 }
 
-packed_table read_cudftable(datasource* source,
-                            rmm::cuda_stream_view stream,
-                            rmm::device_async_resource_ref mr)
+packed_table read_cudftable(datasource* source, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const header_size = sizeof(cudftable_header);
   CUDF_EXPECTS(source->size() >= header_size, "File too small to contain a valid cudftable header");
@@ -113,7 +113,8 @@ packed_table read_cudftable(datasource* source,
   packed.metadata->resize(header.metadata_length);
   source->host_read(metadata_offset, header.metadata_length, packed.metadata->data());
 
-  packed.gpu_data = std::make_unique<rmm::device_buffer>(header.data_length, stream, mr);
+  packed.gpu_data =
+    std::make_unique<rmm::device_buffer>(header.data_length, stream, mr.get_output_mr());
   if (source->is_device_read_preferred(header.data_length)) {
     source->device_read(
       data_offset, header.data_length, static_cast<uint8_t*>(packed.gpu_data->data()), stream);
@@ -121,7 +122,7 @@ packed_table read_cudftable(datasource* source,
     auto host_buffer = source->host_read(data_offset, header.data_length);
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
       packed.gpu_data->data(), host_buffer->data(), header.data_length, stream));
-    stream.synchronize();
+    stream.sync();
   }
 
   auto unpacked_view = cudf::unpack(packed);

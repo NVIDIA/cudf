@@ -223,7 +223,7 @@ def test_series_set_item_range_index(ps, arg):
     assert_eq(psr, gsr, check_index_type=True)
 
 
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/7448")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/7448")
 def test_iloc_setitem_7448():
     index = pd.MultiIndex.from_product([(1, 2), (3, 4)])
     expect = cudf.Series([1, 2, 3, 4], index=index)

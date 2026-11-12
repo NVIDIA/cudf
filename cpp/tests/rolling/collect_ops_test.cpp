@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,7 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/lists/sorting.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/rolling.hpp>
 #include <cudf/rolling/range_window_bounds.hpp>
 #include <cudf/table/table_view.hpp>
@@ -251,7 +252,7 @@ TYPED_TEST(TypedCollectListTest, RollingWindowWithNullInputsHonoursMinPeriods)
                                                          expected_result_child_values.end(),
                                                          expected_result_child_validity.begin());
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 6, 9, 12, 12}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 3, 6, 9, 12, 12}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0},
@@ -286,7 +287,7 @@ TYPED_TEST(TypedCollectListTest, RollingWindowWithNullInputsHonoursMinPeriods)
     auto expected_result_child        = cudf::test::fixed_width_column_wrapper<T, int32_t>(
       expected_result_child_values.begin(), expected_result_child_values.end());
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 2, 4, 6, 8, 8}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 2, 4, 6, 8, 8}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0},
@@ -325,7 +326,7 @@ TYPED_TEST(TypedCollectListTest, RollingWindowWithNullInputsHonoursMinPeriods)
                                                          expected_result_child_validity.begin());
 
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 4, 8, 12, 12, 12}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 4, 8, 12, 12, 12}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0}, [](auto i) { return i > 0 && i < 4; });
@@ -360,7 +361,7 @@ TYPED_TEST(TypedCollectListTest, RollingWindowWithNullInputsHonoursMinPeriods)
       expected_result_child_values.begin(), expected_result_child_values.end());
 
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 5, 8, 8, 8}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 3, 5, 8, 8, 8}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0}, [](auto i) { return i > 0 && i < 4; });
@@ -467,7 +468,7 @@ TEST_F(CollectListTest, RollingWindowHonoursMinPeriodsWithDecimal)
                                                       expected_result_child_values.end(),
                                                       numeric::scale_type{0}};
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 6, 9, 12, 12}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 3, 6, 9, 12, 12}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0},
@@ -513,7 +514,7 @@ TEST_F(CollectListTest, RollingWindowHonoursMinPeriodsWithDecimal)
                                                       expected_result_child_values.end(),
                                                       numeric::scale_type{0}};
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 4, 8, 12, 12, 12}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 4, 8, 12, 12, 12}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0}, [](auto i) { return i > 0 && i < 4; });
@@ -620,7 +621,7 @@ TYPED_TEST(TypedCollectListTest, BasicGroupedRollingWindowWithNulls)
                               expected_offsets.release(),
                               expected_child.release(),
                               0,
-                              {});
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_result->view(), result->view());
   }
@@ -646,7 +647,7 @@ TYPED_TEST(TypedCollectListTest, BasicGroupedRollingWindowWithNulls)
                               expected_offsets.release(),
                               expected_child.release(),
                               0,
-                              {});
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_result->view(), result->view());
   }
@@ -903,11 +904,12 @@ TYPED_TEST(TypedCollectListTest, BasicGroupedTimeRangeRollingWindowOnStructs)
   auto struct_members = std::vector<std::unique_ptr<cudf::column>>{};
   struct_members.emplace_back(numeric_member_column.release());
   struct_members.emplace_back(string_member_column.release());
-  auto const struct_column = cudf::make_structs_column(9, std::move(struct_members), 0, {});
-  auto const preceding     = cudf::duration_scalar<cudf::duration_D>(2, true);
-  auto const following     = cudf::duration_scalar<cudf::duration_D>(1, true);
-  auto const min_periods   = 1;
-  auto const result        = cudf::grouped_range_rolling_window(
+  auto const struct_column = cudf::make_structs_column(
+    9, std::move(struct_members), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const preceding   = cudf::duration_scalar<cudf::duration_D>(2, true);
+  auto const following   = cudf::duration_scalar<cudf::duration_D>(1, true);
+  auto const min_periods = 1;
+  auto const result      = cudf::grouped_range_rolling_window(
     cudf::table_view{std::vector<cudf::column_view>{group_column}},
     time_column,
     cudf::order::ASCENDING,
@@ -930,12 +932,18 @@ TYPED_TEST(TypedCollectListTest, BasicGroupedTimeRangeRollingWindowOnStructs)
   expected_struct_members.emplace_back(expected_string_column.release());
 
   auto expected_structs_column =
-    cudf::make_structs_column(32, std::move(expected_struct_members), 0, {});
+    cudf::make_structs_column(32,
+                              std::move(expected_struct_members),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto expected_offsets_column =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 8, 13, 18, 23, 24, 26, 29, 32}
-      .release();
-  auto expected_result = cudf::make_lists_column(
-    9, std::move(expected_offsets_column), std::move(expected_structs_column), 0, {});
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 8, 13, 18, 23, 24, 26, 29, 32}.release();
+  auto expected_result =
+    cudf::make_lists_column(9,
+                            std::move(expected_offsets_column),
+                            std::move(expected_structs_column),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_result->view(), result->view());
 
@@ -1222,11 +1230,12 @@ TYPED_TEST(TypedCollectListTest, GroupedTimeRangeRollingWindowOnStructsWithMinPe
   auto struct_members = std::vector<std::unique_ptr<cudf::column>>{};
   struct_members.emplace_back(numeric_member_column.release());
   struct_members.emplace_back(string_member_column.release());
-  auto const struct_column = cudf::make_structs_column(9, std::move(struct_members), 0, {});
-  auto const preceding     = cudf::duration_scalar<cudf::duration_D>(2, true);
-  auto const following     = cudf::duration_scalar<cudf::duration_D>(1, true);
-  auto const min_periods   = 4;
-  auto const result        = cudf::grouped_range_rolling_window(
+  auto const struct_column = cudf::make_structs_column(
+    9, std::move(struct_members), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const preceding   = cudf::duration_scalar<cudf::duration_D>(2, true);
+  auto const following   = cudf::duration_scalar<cudf::duration_D>(1, true);
+  auto const min_periods = 4;
+  auto const result      = cudf::grouped_range_rolling_window(
     cudf::table_view{std::vector<cudf::column_view>{group_column}},
     time_column,
     cudf::order::ASCENDING,
@@ -1248,10 +1257,12 @@ TYPED_TEST(TypedCollectListTest, GroupedTimeRangeRollingWindowOnStructsWithMinPe
   expected_struct_members.emplace_back(expected_string_column.release());
 
   auto expected_structs_column =
-    cudf::make_structs_column(23, std::move(expected_struct_members), 0, {});
+    cudf::make_structs_column(23,
+                              std::move(expected_struct_members),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto expected_offsets_column =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 8, 13, 18, 23, 23, 23, 23, 23}
-      .release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 8, 13, 18, 23, 23, 23, 23, 23}.release();
   auto expected_validity_iter = cudf::test::iterators::nulls_at({5, 6, 7, 8});
   auto [null_mask, null_count] =
     cudf::test::detail::make_null_mask(expected_validity_iter, expected_validity_iter + 9);
@@ -1592,7 +1603,7 @@ TEST_F(CollectSetTest, RollingWindowHonoursMinPeriodsWithDecimal)
                                                       expected_result_child_values.end(),
                                                       numeric::scale_type{0}};
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 2, 5, 8, 10, 10}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 2, 5, 8, 10, 10}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0},
@@ -1638,7 +1649,7 @@ TEST_F(CollectSetTest, RollingWindowHonoursMinPeriodsWithDecimal)
                                                       expected_result_child_values.end(),
                                                       numeric::scale_type{0}};
     auto expected_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 3, 7, 10, 10, 10}.release();
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 3, 7, 10, 10, 10}.release();
     auto expected_num_rows = expected_offsets->size() - 1;
     auto null_mask_iter    = cudf::detail::make_counting_transform_iterator(
       cudf::size_type{0}, [](auto i) { return i > 0 && i < 4; });
@@ -1759,7 +1770,7 @@ TYPED_TEST(TypedCollectSetTest, BasicGroupedRollingWindowWithNulls)
                               expected_offsets.release(),
                               expected_child.release(),
                               0,
-                              {});
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_result->view(), result->view());
   }
@@ -1807,7 +1818,7 @@ TYPED_TEST(TypedCollectSetTest, BasicGroupedRollingWindowWithNulls)
                               expected_offsets.release(),
                               expected_child.release(),
                               0,
-                              {});
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_result->view(), result->view());
   }
@@ -1845,7 +1856,7 @@ TYPED_TEST(TypedCollectSetTest, BasicGroupedRollingWindowWithNulls)
                               expected_offsets.release(),
                               expected_child.release(),
                               0,
-                              {});
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_result->view(), result->view());
   }
@@ -2234,10 +2245,10 @@ TEST_F(CollectSetTest, StructTypeRollingWindow)
       "a", "b", "a", "b", "c", "b", "c", "d", "c", "d", "e", "d", "e"};
     return cudf::make_lists_column(
       5,
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 5, 8, 11, 13}.release(),
+      cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 8, 11, 13}.release(),
       cudf::test::structs_column_wrapper{{child1, child2}}.release(),
       0,
-      {});
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const result =
     rolling_collect_set(input_column,
@@ -2261,12 +2272,20 @@ TEST_F(CollectSetTest, ListTypeRollingWindow)
       1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 6, 4, 5, 6, 7, 8, 9, 6, 7, 8, 9, 10, 7, 8, 9, 10};
     auto inner_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{
       0, 3, 5, 8, 10, 11, 13, 14, 17, 18, 21, 22, 25, 26};
-    auto outer_offsets =
-      cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 5, 8, 11, 13};
+    auto outer_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 8, 11, 13};
 
-    auto inner_list = cudf::make_lists_column(13, inner_offsets.release(), data.release(), 0, {});
+    auto inner_list =
+      cudf::make_lists_column(13,
+                              inner_offsets.release(),
+                              data.release(),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
-    return cudf::make_lists_column(5, outer_offsets.release(), std::move(inner_list), 0, {});
+    return cudf::make_lists_column(5,
+                                   outer_offsets.release(),
+                                   std::move(inner_list),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const result =

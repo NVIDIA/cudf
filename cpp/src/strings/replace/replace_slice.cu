@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,9 +16,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/functional>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -70,8 +69,8 @@ std::unique_ptr<column> replace_slice(strings_column_view const& input,
                                       string_scalar const& repl,
                                       size_type start,
                                       size_type stop,
-                                      rmm::cuda_stream_view stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   CUDF_EXPECTS(repl.is_valid(stream), "Parameter repl must be valid.");
@@ -100,8 +99,8 @@ std::unique_ptr<column> replace_slice(strings_column_view const& input,
                                       string_scalar const& repl,
                                       size_type start,
                                       size_type stop,
-                                      rmm::cuda_stream_view stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_slice(input, repl, start, stop, stream, mr);

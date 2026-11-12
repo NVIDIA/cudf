@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
@@ -38,7 +38,7 @@ ctypedef rolling_aggregation * roa_ptr
 
 cdef class Aggregation:
     cdef unique_ptr[aggregation] c_obj
-    cpdef kind(self)
+    cpdef kind_t kind(self)
     cdef void _unsupported_agg_error(self, str alg)
     cdef unique_ptr[groupby_aggregation] clone_underlying_as_groupby(self) except *
     cdef unique_ptr[groupby_scan_aggregation] clone_underlying_as_groupby_scan(
@@ -93,7 +93,6 @@ cpdef Aggregation collect_list(null_policy null_handling = *)
 
 cpdef Aggregation collect_set(null_handling = *, nulls_equal = *, nans_equal = *)
 
-cpdef Aggregation udf(str operation, DataType output_type)
 
 cpdef Aggregation correlation(correlation_type type, size_type min_periods)
 

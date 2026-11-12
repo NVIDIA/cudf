@@ -14,7 +14,7 @@ import pandas as pd
 # cuGraph third party integration test, test_cugraph_from_pandas_adjacency,
 # fails without this pyarrow.dataset import
 # I suspect it relates to pyarrow's pandas-shim that gets imported
-# with this module https://github.com/rapidsai/cudf/issues/14521#issue-2015198786
+# with this module https://github.com/NVIDIA/cudf/issues/14521#issue-2015198786
 import pyarrow.dataset as ds  # noqa: F401
 from pandas._libs.tslibs import offsets as liboffsets
 from pandas._testing import at, getitem, iat, iloc, loc, setitem
@@ -2642,7 +2642,7 @@ def wrap_init(original_init):
                 # proxy object of the same type.
                 # It is a common case in `cuml` and `xgboost`.
                 # For perf impact see:
-                # https://github.com/rapidsai/cudf/pull/17878/files#r1936469215
+                # https://github.com/NVIDIA/cudf/pull/17878/files#r1936469215
                 self.__dict__.update(data.__dict__)
                 return
         original_init(self, data, *args, **kwargs)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -17,8 +17,8 @@ namespace detail {
  * @copydoc cudf::transpose
  */
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
-                                                         rmm::cuda_stream_view stream,
-                                                         rmm::device_async_resource_ref mr);
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

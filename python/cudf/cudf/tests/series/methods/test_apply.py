@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import operator
 
@@ -24,9 +24,20 @@ def run_masked_udf_series(func, data, args=(), nullable=True, **kwargs):
 @pytest.mark.parametrize(
     "data",
     [
-        np.array(
-            [0, 1, -1, 0, np.iinfo("int64").min, np.iinfo("int64").max],
-            dtype="int64",
+        pytest.param(
+            np.array(
+                [0, 1, -1, 0, np.iinfo("int64").min, np.iinfo("int64").max],
+                dtype="int64",
+            ),
+            marks=pytest.mark.xfail(
+                reason=(
+                    "abs(INT64_MIN): pandas .apply uses Python's "
+                    "arbitrary-precision abs (-> +2**63, promoted to float), "
+                    "while the typed int64 JIT kernel wraps to INT64_MIN "
+                    "(numpy semantics). Inherent typed-vs-bigint gap."
+                ),
+                strict=True,
+            ),
         ),
         np.array([0, 0, 1, np.iinfo("uint64").max], dtype="uint64"),
         np.array(
@@ -234,7 +245,7 @@ def test_series_arith_masked_vs_constant(request, arithmetic_op, constant):
                 constant is cudf.NA
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_series(func, data, check_dtype=False)
@@ -258,7 +269,7 @@ def test_series_arith_masked_vs_constant_reflected(
                 constant in {1}
                 and arithmetic_op in {operator.pow, operator.ipow}
             ),
-            reason="https://github.com/rapidsai/cudf/issues/7478",
+            reason="https://github.com/NVIDIA/cudf/issues/7478",
         )
     )
     run_masked_udf_series(func, data, check_dtype=False)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -63,7 +63,8 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestColumnFactoryConstruction)
   cols.push_back(std::move(ages_col));
   cols.push_back(std::move(is_human_col));
 
-  auto struct_col = cudf::make_structs_column(num_rows, std::move(cols), 0, {});
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_EQ(num_rows, struct_col->size());
 
@@ -395,11 +396,14 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestListsOfStructs)
   auto expected_unchanged_struct_col = cudf::column(*struct_col);
 
   auto list_offsets_column =
-    cudf::test::fixed_width_column_wrapper<size_type>{0, 2, 3, 5, 6}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 5, 6}.release();
   auto num_list_rows = list_offsets_column->size() - 1;
 
-  auto list_col = cudf::make_lists_column(
-    num_list_rows, std::move(list_offsets_column), std::move(struct_col), 0, {});
+  auto list_col = cudf::make_lists_column(num_list_rows,
+                                          std::move(list_offsets_column),
+                                          std::move(struct_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // List of structs was constructed successfully. No exceptions.
   // Verify that child columns is as it was set.
@@ -426,7 +430,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, ListOfStructOfList)
     detail::make_null_mask(list_of_struct_of_list_validity, list_of_struct_of_list_validity + 5);
   auto list_of_struct_of_list =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 2, 4, 6, 8, 10}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             std::move(struct_of_lists_col),
                             null_count,
                             std::move(null_mask));
@@ -446,7 +450,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, ListOfStructOfList)
     detail::make_null_mask(list_of_struct_of_list_validity, list_of_struct_of_list_validity + 5);
   auto expected_level3_list =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 0, 2, 4, 4, 6}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 0, 2, 4, 4, 6}.release(),
                             std::move(expected_level2_struct),
                             null_count,
                             std::move(null_mask));
@@ -473,7 +477,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, StructOfListOfStruct)
 
   auto lists_col =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 2, 4, 6, 8, 10}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             std::move(structs_col),
                             null_count,
                             std::move(null_mask));
@@ -495,7 +499,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, StructOfListOfStruct)
 
   auto expected_lists_col =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 2, 4, 6, 8, 10}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             std::move(expected_structs_col),
                             null_count,
                             std::move(null_mask));
@@ -531,8 +535,12 @@ TYPED_TEST(TypedStructColumnWrapperTest, EmptyColumnsOfStructs)
     EXPECT_TRUE(struct_column->size() == 0);
     EXPECT_TRUE(struct_column->null_count() == 0);
 
-    auto empty_list_of_structs = cudf::make_lists_column(
-      0, fixed_width_column_wrapper<size_type>{0}.release(), std::move(struct_column), 0, {});
+    auto empty_list_of_structs =
+      cudf::make_lists_column(0,
+                              fixed_width_column_wrapper<int32_t>{0}.release(),
+                              std::move(struct_column),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     EXPECT_TRUE(empty_list_of_structs->size() == 0);
     EXPECT_TRUE(empty_list_of_structs->null_count() == 0);
@@ -550,7 +558,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, EmptyColumnsOfStructs)
   //     fixed_width_column_wrapper<TypeParam>{1,2,3,4,5}.release();
   //
   //   auto list_offsets =
-  //     fixed_width_column_wrapper<size_type>{0}.release();
+  //     fixed_width_column_wrapper<int32_t>{0}.release();
   //
   //   auto empty_list_column =
   //     cudf::make_lists_column(
@@ -586,8 +594,11 @@ TYPED_TEST(TypedStructColumnWrapperTest, CopyColumnFromView)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(clone_structs_column, structs_column);
 
   auto list_of_structs_column =
-    cudf::make_lists_column(
-      3, fixed_width_column_wrapper<int32_t>{0, 2, 4, 6}.release(), structs_column.release(), 0, {})
+    cudf::make_lists_column(3,
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6}.release(),
+                            structs_column.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED))
       .release();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(list_of_structs_column->view(),
@@ -600,8 +611,12 @@ TEST_F(StructColumnWrapperTest, TestStructsColumnWithEmptyChild)
   // because EMPTY columns cannot have a null mask. This test ensures that
   // we can construct a structs column with a parent null mask and an EMPTY
   // child and then view it.
-  auto empty_col = std::make_unique<cudf::column>(
-    cudf::data_type(cudf::type_id::EMPTY), 3, rmm::device_buffer{}, rmm::device_buffer{}, 0);
+  auto empty_col =
+    std::make_unique<cudf::column>(cudf::data_type(cudf::type_id::EMPTY),
+                                   3,
+                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0);
   int num_rows{empty_col->size()};
   vector_of_columns cols;
   cols.push_back(std::move(empty_col));

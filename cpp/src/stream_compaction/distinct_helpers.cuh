@@ -11,15 +11,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuco/operator.hpp>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/atomic>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf::detail {
@@ -27,14 +28,14 @@ namespace cudf::detail {
 template <typename Set>
 rmm::device_uvector<size_type> reduce_by_row_keep_any(Set& set,
                                                       size_type num_rows,
-                                                      rmm::cuda_stream_view stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cuda::stream_ref stream,
+                                                      cudf::memory_resources mr)
 {
-  auto output_indices = rmm::device_uvector<size_type>(num_rows, stream, mr);
+  auto output_indices = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
 
   auto const iter = cuda::counting_iterator<cudf::size_type>{0};
-  set.insert_async(iter, iter + num_rows, stream.value());
-  auto const output_end = set.retrieve_all(output_indices.begin(), stream.value());
+  set.insert_async(iter, iter + num_rows, stream.get());
+  auto const output_end = set.retrieve_all(output_indices.begin(), stream.get());
   output_indices.resize(cuda::std::distance(output_indices.begin(), output_end), stream);
   return output_indices;
 }
@@ -43,13 +44,14 @@ template <typename Set>
 rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
                                                                   size_type num_rows,
                                                                   duplicate_keep_option keep,
-                                                                  rmm::cuda_stream_view stream,
-                                                                  rmm::device_async_resource_ref mr)
+                                                                  cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr)
 {
-  auto output_indices = rmm::device_uvector<size_type>(num_rows, stream, mr);
-  auto reduction_results =
-    rmm::device_uvector<size_type>(num_rows, stream, cudf::get_current_device_resource_ref());
-  initialize_reduction_results(reduction_results.data(), num_rows, keep, stream);
+  auto output_indices    = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
+  auto reduction_results = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  initialize_reduction_results(
+    reduction_results.data(), num_rows, keep, stream, cudf::get_current_device_resource_ref());
 
   auto set_ref = set.ref(cuco::op::insert_and_find);
 

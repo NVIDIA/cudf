@@ -19,9 +19,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <thrust/logical.h>
@@ -33,13 +33,13 @@
 namespace cudf::jni {
 
 std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& list_length,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   CUDF_EXPECTS(list_length.type().id() == cudf::type_id::INT32,
                "Input column does not have type INT32.");
 
-  auto const begin_iter = list_length.template begin<cudf::size_type>();
-  auto const end_iter   = list_length.template end<cudf::size_type>();
+  auto const begin_iter = list_length.template begin<int32_t>();
+  auto const end_iter   = list_length.template end<int32_t>();
 
   auto offsets_column = make_numeric_column(
     data_type{type_id::INT32}, list_length.size() + 1, mask_state::UNALLOCATED, stream);
@@ -47,7 +47,7 @@ std::unique_ptr<cudf::column> generate_list_offsets(cudf::column_view const& lis
   auto d_offsets    = offsets_view.template begin<int32_t>();
 
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream), begin_iter, end_iter, d_offsets + 1);
-  CUDF_CUDA_TRY(cudaMemsetAsync(d_offsets, 0, sizeof(int32_t), stream));
+  CUDF_CUDA_TRY(cudaMemsetAsync(d_offsets, 0, sizeof(int32_t), stream.get()));
 
   return offsets_column;
 }
@@ -73,7 +73,7 @@ __device__ bool list_has_nulls(list_device_view list)
 void post_process_list_overlap(cudf::column_view const& lhs,
                                cudf::column_view const& rhs,
                                std::unique_ptr<cudf::column> const& overlap_result,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   // If both of the input columns do not have nulls, we don't need to do anything here.
   if (!lists_column_view{lhs}.child().has_nulls() && !lists_column_view{rhs}.child().has_nulls()) {
@@ -86,7 +86,8 @@ void post_process_list_overlap(cudf::column_view const& lhs,
   auto const overlap_cdv_ptr = column_device_view::create(overlap_cv, stream);
 
   // Create a new bitmask to satisfy Spark's arrays_overlap's special behavior.
-  auto validity = rmm::device_uvector<bool>(overlap_cv.size(), stream);
+  auto validity = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), overlap_cv.size(), cuda::no_init);
   thrust::tabulate(
     rmm::exec_policy_nosync(stream),
     validity.begin(),
@@ -128,8 +129,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
     // new nullmask.
     if (overlap_cv.nullable()) {
       auto [null_mask, null_count] = cudf::bitmask_and(
-        std::vector<bitmask_type const*>{overlap_cv.null_mask(),
-                                         static_cast<bitmask_type const*>(new_null_mask->data())},
+        std::vector<bitmask_type const*>{overlap_cv.null_mask(), new_null_mask->data()},
         std::vector<cudf::size_type>{0, 0},
         overlap_cv.size(),
         stream,
@@ -137,22 +137,28 @@ void post_process_list_overlap(cudf::column_view const& lhs,
       overlap_result->set_null_mask(std::move(null_mask), null_count);
     } else {
       // Just set the output nullmask as the new nullmask.
-      overlap_result->set_null_mask(std::move(*new_null_mask.release()), new_null_count);
+      overlap_result->set_null_mask(std::move(*new_null_mask), new_null_count);
     }
   }
 }
 
 std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view const& input,
-                                                    rmm::cuda_stream_view stream)
+                                                    cuda::stream_ref stream)
 {
   if (input.is_empty()) { return empty_like(input.parent()); }
 
   auto const child = input.get_sliced_child(stream);
 
   // Generate labels for the input list elements.
-  auto labels = rmm::device_uvector<cudf::size_type>(child.size(), stream);
-  cudf::detail::label_segments(
-    input.offsets_begin(), input.offsets_end(), labels.begin(), labels.end(), stream);
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto labels               = cuda::device_buffer<cudf::size_type>(
+    stream, mr.get_temporary_mr(), child.size(), cuda::no_init);
+  cudf::detail::label_segments(input.offsets_begin(),
+                               input.offsets_end(),
+                               labels.begin(),
+                               labels.end(),
+                               stream,
+                               mr.as_temporary());
 
   // Use `cudf::duplicate_keep_option::KEEP_LAST` so this will produce the desired behavior when
   // being called in `create_map` in spark-rapids.
@@ -166,7 +172,7 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
                           cudf::null_equality::EQUAL,
                           cudf::nan_equality::ALL_EQUAL,
                           stream,
-                          cudf::get_current_device_resource_ref())
+                          mr.get_output_mr())
       ->release();
   auto const out_labels = out_columns.front()->view();
 
@@ -175,18 +181,22 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
   out_structs_members.emplace_back(std::move(out_columns[1]));
   out_structs_members.emplace_back(std::move(out_columns[2]));
   auto out_structs =
-    cudf::make_structs_column(out_labels.size(), std::move(out_structs_members), 0, {});
+    cudf::make_structs_column(out_labels.size(),
+                              std::move(out_structs_members),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // Assemble a lists column of structs<out_keys, out_vals>.
   auto out_offsets = make_numeric_column(
-    data_type{type_to_id<size_type>()}, input.size() + 1, mask_state::UNALLOCATED, stream);
-  auto const offsets_begin = out_offsets->mutable_view().template begin<size_type>();
+    data_type{type_id::INT32}, input.size() + 1, mask_state::UNALLOCATED, stream);
+  auto const offsets_begin = out_offsets->mutable_view().template begin<int32_t>();
   auto const labels_begin  = out_labels.template begin<size_type>();
   cudf::detail::labels_to_offsets(labels_begin,
                                   labels_begin + out_labels.size(),
                                   offsets_begin,
                                   offsets_begin + out_offsets->size(),
-                                  stream);
+                                  stream,
+                                  mr.as_temporary());
 
   return cudf::make_lists_column(
     input.size(),

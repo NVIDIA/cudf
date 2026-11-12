@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,10 +14,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -51,8 +52,8 @@ struct strip_transform_fn {
 std::unique_ptr<column> strip(strings_column_view const& input,
                               side_type side,
                               string_scalar const& to_strip,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
 
@@ -61,14 +62,16 @@ std::unique_ptr<column> strip(strings_column_view const& input,
 
   auto const d_column = column_device_view::create(input.parent(), stream);
 
-  auto result = rmm::device_uvector<string_index_pair>(input.size(), stream);
+  auto result = cuda::device_buffer<string_index_pair>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     result.begin(),
                     strip_transform_fn{*d_column, side, d_to_strip});
 
-  return make_strings_column(result.begin(), result.end(), stream, mr);
+  return cudf::make_strings_column(
+    cudf::device_span<string_index_pair const>{result.data(), result.size()}, stream, mr);
 }
 
 }  // namespace detail
@@ -78,8 +81,8 @@ std::unique_ptr<column> strip(strings_column_view const& input,
 std::unique_ptr<column> strip(strings_column_view const& input,
                               side_type side,
                               string_scalar const& to_strip,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::strip(input, side, to_strip, stream, mr);

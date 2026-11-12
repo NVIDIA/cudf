@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 1."""
@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -74,14 +75,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         )
         .filter(pl.col("d_year") == year)
         .group_by(["sr_customer_sk", "sr_store_sk"])
-        .agg(
-            # Polars sum() returns 0 for all-null groups; SQL returns NULL.
-            # See https://github.com/rapidsai/cudf/issues/19560.
-            pl.when(pl.col("sr_return_amt").count() > 0)
-            .then(pl.col("sr_return_amt").sum())
-            .otherwise(None)
-            .alias("ctr_total_return")
-        )
+        .agg(sql_sum("sr_return_amt").alias("ctr_total_return"))
         .rename(
             {
                 "sr_customer_sk": "ctr_customer_sk",

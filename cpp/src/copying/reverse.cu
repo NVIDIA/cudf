@@ -12,18 +12,16 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
-#include <thrust/scan.h>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 std::unique_ptr<table> reverse(table_view const& source_table,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   size_type num_rows = source_table.num_rows();
   auto elements      = make_counting_transform_iterator(
@@ -36,8 +34,8 @@ std::unique_ptr<table> reverse(table_view const& source_table,
 }
 
 std::unique_ptr<column> reverse(column_view const& source_column,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   return std::move(
     cudf::detail::reverse(table_view({source_column}), stream, mr)->release().front());
@@ -45,16 +43,16 @@ std::unique_ptr<column> reverse(column_view const& source_column,
 }  // namespace detail
 
 std::unique_ptr<table> reverse(table_view const& source_table,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::reverse(source_table, stream, mr);
 }
 
 std::unique_ptr<column> reverse(column_view const& source_column,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::reverse(source_column, stream, mr);

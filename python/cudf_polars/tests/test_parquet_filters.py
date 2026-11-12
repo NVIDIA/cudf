@@ -28,32 +28,31 @@ def pq_file(tmp_path_factory, df):
     return pl.scan_parquet(tmp_path / "tmp.pq")
 
 
-@pytest.mark.parametrize(
-    "expr",
-    [
-        pl.col("a").is_in([0, 1]),
-        pl.col("c").is_in(["a", "b"]),
-        pl.col("a").is_between(0, 2),
-        (pl.col("a") < 2).not_(),
-        pl.lit(2) > pl.col("a"),
-        pl.lit(2) >= pl.col("a"),
-        pl.lit(2) < pl.col("a"),
-        pl.lit(2) <= pl.col("a"),
-        pl.lit(0) == pl.col("a"),
-        pl.lit(1) != pl.col("a"),
-        pl.col("a") == pl.col("d"),
-        (pl.col("b") < pl.lit(2, dtype=pl.Float64).sqrt()),
-        (pl.col("a") >= pl.lit(2)) & (pl.col("b") > 0),
-        pl.col("b").is_finite(),
-        pl.col("a").is_null(),
-        pl.col("a").is_not_null(),
-        pl.col("a").abs().is_between(0, 2),
-        pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
-    ],
-)
-@pytest.mark.parametrize("selection", [["c", "b"], ["a"], ["a", "c"], ["b"], "c"])
-@pytest.mark.parametrize("chunked", [False, True], ids=["unchunked", "chunked"])
-def test_scan_by_hand(expr, selection, pq_file, chunked):
+FILTER_EXPRESSIONS = [
+    pl.col("a").is_in([0, 1]),
+    pl.col("c").is_in(["a", "b"]),
+    pl.col("a").is_between(0, 2),
+    (pl.col("a") < 2).not_(),
+    pl.lit(2) > pl.col("a"),
+    pl.lit(2) >= pl.col("a"),
+    pl.lit(2) < pl.col("a"),
+    pl.lit(2) <= pl.col("a"),
+    pl.lit(0) == pl.col("a"),
+    pl.lit(1) != pl.col("a"),
+    pl.col("a") == pl.col("d"),
+    (pl.col("b") < pl.lit(2, dtype=pl.Float64).sqrt()),
+    (pl.col("a") >= pl.lit(2)) & (pl.col("b") > 0),
+    pl.col("b").is_finite(),
+    pl.col("a").is_null(),
+    pl.col("a").is_not_null(),
+    pl.col("a").abs().is_between(0, 2),
+    pl.col("a").ne_missing(pl.lit(None, dtype=pl.Int64)),
+    (pl.col("a") >= 2) & pl.col("c").str.contains("b"),
+    pl.col("a").is_null() & pl.col("c").str.starts_with("d"),
+]
+
+
+def assert_scan_result(expr, selection, pq_file, *, chunked):
     q = pq_file.filter(expr).select(*selection)
     assert_gpu_result_equal(
         q,
@@ -65,6 +64,30 @@ def test_scan_by_hand(expr, selection, pq_file, chunked):
     )
 
 
+@pytest.mark.parametrize("expr", FILTER_EXPRESSIONS)
+def test_scan_by_hand(expr, pq_file):
+    assert_scan_result(expr, ["c", "b"], pq_file, chunked=False)
+
+
+@pytest.mark.parametrize("selection", [["c", "b"], ["a"], ["a", "c"], ["b"], "c"])
+@pytest.mark.parametrize("expr", [FILTER_EXPRESSIONS[2], FILTER_EXPRESSIONS[18]])
+def test_scan_filter_projection(expr, selection, pq_file):
+    assert_scan_result(expr, selection, pq_file, chunked=False)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        FILTER_EXPRESSIONS[0],
+        FILTER_EXPRESSIONS[1],
+        FILTER_EXPRESSIONS[12],
+        FILTER_EXPRESSIONS[18],
+    ],
+)
+def test_scan_filter_chunked(expr, pq_file):
+    assert_scan_result(expr, ["c", "b"], pq_file, chunked=True)
+
+
 def test_parquet_filter_ne_missing(tmp_path):
     df = pl.DataFrame({"a": [1, 2, None, 3, None]})
     df.write_parquet(tmp_path / "df.parquet", row_group_size=3)
@@ -74,6 +97,81 @@ def test_parquet_filter_ne_missing(tmp_path):
     assert_gpu_result_equal(
         q, engine=pl.GPUEngine(executor="in-memory", raise_on_fail=True)
     )
+
+
+@pytest.mark.parametrize("use_sql", [False, True])
+def test_parquet_filter_is_in_list_literal(engine: pl.GPUEngine, tmp_path, use_sql):
+    df = pl.DataFrame({"l_shipmode": ["MAIL", "SHIP", "AIR"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    q = pl.scan_parquet(tmp_path / "df.parquet")
+    if use_sql:
+        q = q.sql("SELECT * FROM self WHERE l_shipmode IN ('MAIL', 'SHIP')")
+    else:
+        q = q.filter(pl.col("l_shipmode").is_in(pl.Series(["MAIL", "SHIP"]).implode()))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("negate", [False, True])
+def test_parquet_filter_is_in_empty_list_literal(
+    engine: pl.GPUEngine, tmp_path, negate
+):
+    df = pl.DataFrame({"l_shipmode": ["MAIL", "SHIP", "AIR"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    predicate = pl.col("l_shipmode").is_in(pl.Series([], dtype=pl.String).implode())
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        ~predicate if negate else predicate
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("negate", [False, True])
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["a"],
+        ["a", None],
+        pl.Series([None, None], dtype=pl.String).implode(),
+        ["a", *(f"x{i}" for i in range(20))],
+        ["a", None, *(f"x{i}" for i in range(20))],
+    ],
+    ids=[
+        "value",
+        "value-and-null",
+        "only-nulls",
+        "many-values",
+        "many-values-and-null",
+    ],
+)
+def test_parquet_filter_is_in_nulls_equal(
+    engine: pl.GPUEngine, tmp_path, negate, nulls_equal, values
+):
+    df = pl.DataFrame({"id": [1, 2, 3], "p": ["a", None, "b"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    predicate = pl.col("p").is_in(values, nulls_equal=nulls_equal)
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        ~predicate if negate else predicate
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("negate", [False, True])
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize(
+    "values",
+    [[float("nan"), 1.0], [float("nan"), *map(float, range(20))]],
+    ids=["few-values", "many-values"],
+)
+def test_parquet_filter_is_in_nan(
+    engine: pl.GPUEngine, tmp_path, negate, nulls_equal, values
+):
+    df = pl.DataFrame({"x": [1.0, float("nan"), None, 2.0]})
+    df.write_parquet(tmp_path / "df.parquet")
+    predicate = pl.col("x").is_in(values, nulls_equal=nulls_equal)
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        ~predicate if negate else predicate
+    )
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_parquet_filter_boolean_column(engine: pl.GPUEngine, tmp_path):

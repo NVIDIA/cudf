@@ -175,7 +175,7 @@ def test_replace_multiple_rows(datadir):
 
     # pandas 3 reads nullable parquet columns as Float64; cast to float64 to
     # match cudf's representation before comparing.
-    # TODO: Remove this cast after https://github.com/rapidsai/cudf/issues/22018 is resolved.
+    # TODO: Remove this cast after https://github.com/NVIDIA/cudf/issues/22018 is resolved.
     pdf = pdf.astype(
         {c: "float64" for c, d in pdf.dtypes.items() if d == pd.Float64Dtype()}
     )

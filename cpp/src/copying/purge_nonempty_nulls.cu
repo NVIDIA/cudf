@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/copying.hpp>
@@ -26,7 +26,7 @@ bool type_may_have_nonempty_nulls(cudf::type_id const& type)
 }
 
 /// Check if the (STRING/LIST) column has any null rows with non-zero length.
-bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_null_rows(cudf::column_view const& input, cuda::stream_ref stream)
 {
   if (not input.has_nulls()) { return false; }  // No nulls => no dirty rows.
 
@@ -43,9 +43,10 @@ bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_vie
     return d_input.is_null_nocheck(row_idx) && (offsets[row_idx] != offsets[row_idx + 1]);
   };
 
-  auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
-  auto const row_end   = row_begin + input.size();
-  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream) > 0;
+  auto const row_begin      = cuda::counting_iterator<cudf::size_type>{0};
+  auto const row_end        = row_begin + input.size();
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream, mr.as_temporary()) > 0;
 }
 
 }  // namespace
@@ -53,7 +54,7 @@ bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_vie
 /**
  * @copydoc cudf::detail::has_nonempty_nulls
  */
-bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(cudf::column_view const& input, cuda::stream_ref stream)
 {
   auto const type = input.type().id();
 
@@ -77,8 +78,8 @@ bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view st
 }
 
 std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   // If not compound types (LIST/STRING/STRUCT/DICTIONARY) then just copy the input into output.
   if (!cudf::is_compound(input.type())) { return std::make_unique<column>(input, stream, mr); }
@@ -117,17 +118,17 @@ bool may_have_nonempty_nulls(column_view const& input)
 /**
  * @copydoc cudf::has_nonempty_nulls
  */
-bool has_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 {
   return detail::has_nonempty_nulls(input, stream);
 }
 
 /**
- * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
+ * @copydoc cudf::purge_nonempty_nulls(column_view const&, cudf::memory_resources)
  */
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
-                                                   rmm::cuda_stream_view stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::stream_ref stream,
+                                                   cudf::memory_resources mr)
 {
   return detail::purge_nonempty_nulls(input, stream, mr);
 }

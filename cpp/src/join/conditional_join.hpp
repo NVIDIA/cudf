@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,7 +11,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -40,8 +40,8 @@ conditional_join(table_view const& left,
                  ast::expression const& binary_predicate,
                  join_kind JoinKind,
                  std::optional<std::size_t> output_size,
-                 rmm::cuda_stream_view stream,
-                 rmm::device_async_resource_ref mr);
+                 cuda::stream_ref stream,
+                 cudf::memory_resources mr);
 
 /**
  * @brief Computes the size of a join operation between two tables without
@@ -61,8 +61,8 @@ std::size_t compute_conditional_join_output_size(table_view const& left,
                                                  table_view const& right,
                                                  ast::expression const& binary_predicate,
                                                  join_kind JoinKind,
-                                                 rmm::cuda_stream_view stream,
-                                                 rmm::device_async_resource_ref mr);
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

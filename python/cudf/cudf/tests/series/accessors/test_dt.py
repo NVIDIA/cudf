@@ -753,10 +753,12 @@ def test_tz_localize(datetime_types_as_str, all_timezones):
     assert str(s.dtype.tz) == all_timezones
 
 
-def test_localize_ambiguous(request, datetime_types_as_str, all_timezones):
+def test_localize_ambiguous(
+    request, datetime_types_as_str, ambiguous_timezones
+):
     request.applymarker(
         pytest.mark.xfail(
-            condition=(all_timezones == "America/Metlakatla"),
+            condition=(ambiguous_timezones == "America/Metlakatla"),
             reason="https://www.timeanddate.com/news/time/metlakatla-quits-dst.html",
         )
     )
@@ -772,16 +774,20 @@ def test_localize_ambiguous(request, datetime_types_as_str, all_timezones):
         dtype=datetime_types_as_str,
     )
     expect = s.to_pandas().dt.tz_localize(
-        zoneinfo.ZoneInfo(all_timezones), ambiguous="NaT", nonexistent="NaT"
+        zoneinfo.ZoneInfo(ambiguous_timezones),
+        ambiguous="NaT",
+        nonexistent="NaT",
     )
-    got = s.dt.tz_localize(all_timezones)
+    got = s.dt.tz_localize(ambiguous_timezones)
     assert_eq(expect, got)
 
 
-def test_localize_nonexistent(request, datetime_types_as_str, all_timezones):
+def test_localize_nonexistent(
+    request, datetime_types_as_str, nonexistent_timezones
+):
     request.applymarker(
         pytest.mark.xfail(
-            condition=all_timezones == "America/Grand_Turk",
+            condition=nonexistent_timezones == "America/Grand_Turk",
             reason="https://www.worldtimezone.com/dst_news/dst_news_turkscaicos03.html",
         )
     )
@@ -797,9 +803,11 @@ def test_localize_nonexistent(request, datetime_types_as_str, all_timezones):
         dtype=datetime_types_as_str,
     )
     expect = s.to_pandas().dt.tz_localize(
-        zoneinfo.ZoneInfo(all_timezones), ambiguous="NaT", nonexistent="NaT"
+        zoneinfo.ZoneInfo(nonexistent_timezones),
+        ambiguous="NaT",
+        nonexistent="NaT",
     )
-    got = s.dt.tz_localize(all_timezones)
+    got = s.dt.tz_localize(nonexistent_timezones)
     assert_eq(expect, got)
 
 

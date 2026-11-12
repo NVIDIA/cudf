@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -73,11 +73,11 @@ void launch_mixed_join_semi(bool has_nulls,
                             cudf::ast::detail::expression_device_view device_expression_data,
                             detail::grid_1d const config,
                             int64_t shmem_size_per_block,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   if (has_nulls) {
     mixed_join_semi<DEFAULT_JOIN_BLOCK_SIZE, true>
-      <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.value()>>>(
+      <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.get()>>>(
         left_table,
         right_table,
         probe,
@@ -89,7 +89,7 @@ void launch_mixed_join_semi(bool has_nulls,
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     mixed_join_semi<DEFAULT_JOIN_BLOCK_SIZE, false>
-      <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.value()>>>(
+      <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.get()>>>(
         left_table,
         right_table,
         probe,

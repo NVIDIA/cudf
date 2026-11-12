@@ -50,11 +50,39 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/conda-cpp-tests.yaml@main
     with:
       build_type: ${{ inputs.build_type }}
+      # Always include pull-request here to warm the JIT cache for PRs
+      matrix_type: nightly,pull-request
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       script: ci/test_cpp.sh
       sha: ${{ inputs.sha }}
-      # https://github.com/rapidsai/cudf/issues/23498
+      cache-paths: .cache/libcudf
+      cache-key-prefix: libcudf-rtcx-v2
+      # Caches are immutable. Re-key when the embedded JIT runtime or its tests change so a
+      # completed run can save newly compiled entries; restore a compatible earlier archive first.
+      cache-key-files: |
+        cpp/CMakeLists.txt
+        cpp/cmake/**
+        cpp/include/cudf/**
+        cpp/src/jit/**
+        cpp/src/binaryop/jit/**
+        cpp/src/join/jit/**
+        cpp/src/transform/jit/**
+        cpp/tests/**
+        dependencies.yaml
+      # The JIT cache is independent of the Python interpreter used to run C++ tests.
+      cache-key-matrix-fields: |
+        CUDA_VER
+        ARCH
+        LINUX_VER
+        GPU
+        DRIVER
+        DEPENDENCIES
+      # Only main builds populate the cache shared by PRs.
+      cache-read-only: ${{ inputs.branch != 'main' }}
+      cache-environment: |
+        LIBCUDF_KERNEL_CACHE_PATH=.cache/libcudf
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-cpp-benchmark-tests:
     permissions:
@@ -70,9 +98,9 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: ci/test_cpp_benchmarks.sh
   conda-cpp-memcheck-tests:
     permissions:
@@ -88,10 +116,28 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: "ci/test_cpp_memcheck.sh"
+  conda-cpp-debug-tests:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: "gpu-rtxpro6000-latest-1"
+      arch: "amd64"
+      container_image: "rapidsai/ci-conda:27.02-latest"
+      script: "ci/test_cpp_debug.sh"
   cpp-linters:
     permissions:
       actions: read
@@ -123,8 +169,9 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: "ci/test_python_cudf.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: nightly
   conda-python-other-tests:
     # Tests for dask_cudf, custreamz, cudf_kafka are separated for CI parallelism
     permissions:
@@ -141,9 +188,20 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: "ci/test_python_other.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
-  conda-java-tests:
+      matrix_type: nightly
+  # Test the packaged cuDF Java JAR built by build.yaml java-build for every Maven classifier.
+  java-build-matrix:
+    permissions:
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      matrix_name: conda-cpp-build
+      matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
+  java-tests:
+    needs: [java-build-matrix]
     permissions:
       actions: read
       contents: read
@@ -152,15 +210,18 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.java-build-matrix.outputs.matrix) }}
     with:
       build_type: ${{ inputs.build_type }}
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
-      arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
-      script: "ci/test_java.sh"
+      arch: ${{ matrix.ARCH }}
+      node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
+      container_image: "rapidsai/ci-wheel:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      script: "ci/test_packaged_java.sh"
   conda-notebook-tests:
     permissions:
       actions: read
@@ -175,9 +236,9 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: "ci/test_notebooks.sh"
   wheel-tests-cudf:
     permissions:
@@ -194,6 +255,28 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: ci/test_wheel_cudf.sh
+  # Same as wheel-tests-cudf, but installs the nightly cupy wheel from
+      matrix_type: nightly
+  # scientific-python-nightly-wheels.
+  wheel-tests-cudf-cupy-nightly:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      continue-on-error: true
+      script: "env CUPY_NIGHTLY=true ci/test_wheel_cudf.sh"
+      # Only the 'latest' dependency set is compatible with nightly cupy.
+      matrix_filter: map(select(.DEPENDENCIES == "latest"))
+      matrix_type: nightly
   wheel-tests-dask-cudf:
     permissions:
       actions: read
@@ -209,6 +292,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: ci/test_wheel_dask_cudf.sh
+      matrix_type: nightly
   unit-tests-cudf-pandas:
     permissions:
       actions: read
@@ -224,8 +308,9 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: ci/cudf_pandas_scripts/run_tests.sh
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: nightly
   third-party-integration-tests-cudf-pandas:
     permissions:
       actions: read
@@ -240,8 +325,8 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      node_type: "gpu-rtxpro6000-latest-1"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: |
         ci/cudf_pandas_scripts/third-party-integration/test.sh python/cudf/cudf_pandas_tests/third_party_integration_tests/dependencies.yaml
       continue-on-error: true
@@ -259,9 +344,9 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
+      node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: "ci/test_cuml_compat.sh"
   wheel-tests-cudf-polars:
     permissions:
@@ -279,9 +364,58 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       script: "ci/test_wheel_cudf_polars.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
+      # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: nightly
   cudf-polars-polars-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: in-memory
+            blocksize: default
+            shard_id: 0
+            num_shards: 1
+          - engine: spmd
+            blocksize: small
+            shard_id: 0
+            num_shards: 2
+          - engine: spmd
+            blocksize: small
+            shard_id: 1
+            num_shards: 2
+          - engine: spmd
+            blocksize: default
+            shard_id: 0
+            num_shards: 2
+          - engine: spmd
+            blocksize: default
+            shard_id: 1
+            num_shards: 2
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-test.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      container-options: "--cap-add CAP_SYS_PTRACE"
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      script: >-
+        ci/test_cudf_polars_polars_tests.sh --engine ${{ matrix.engine }}
+        --inject-gpu-engine-blocksize ${{ matrix.blocksize }}
+        --run-slow
+        --cudf-polars-shard-id ${{ matrix.shard_id }}
+        --cudf-polars-num-shards ${{ matrix.num_shards }}
+      # https://github.com/NVIDIA/cudf/issues/23498
+      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      matrix_type: nightly
+  tpc-tests-cudf-polars:
     permissions:
       actions: read
       contents: read
@@ -295,9 +429,49 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      script: "ci/test_cudf_polars_polars_tests.sh"
-      # https://github.com/rapidsai/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
+      # This selects "ARCH=amd64 + the latest supported Python + CUDA".
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
+      container-options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
+      script: "ci/run_cudf_polars_tpc.sh"
+      matrix_type: nightly
+  cudf-polars-test-summary:
+    needs: cudf-polars-polars-tests
+    if: ${{ !cancelled() && needs.cudf-polars-polars-tests.result != 'skipped' }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    with:
+      build_type: ${{ inputs.build_type }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: cpu8
+      container_image: rapidsai/citestwheel:27.02-latest
+      script: >-
+        ci/run_cudf_polars_fallback_diagnostics.sh
+        ${{ inputs.build_type == 'nightly' && '--publish-audit' || '' }}
+      file_to_upload: cudf-polars-fallback-diagnostics
+      artifact-name: cudf-polars-fallback-diagnostics-${{ github.run_attempt }}
+  cudf-polars-test-audit:
+    needs: cudf-polars-test-summary
+    if: ${{ inputs.build_type == 'nightly' && !cancelled() && needs.cudf-polars-test-summary.result != 'skipped' }}
+    permissions:
+      actions: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require current GPU test selections
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_ARTIFACT: cudf-polars-fallback-diagnostics-${{ github.run_attempt }}
+        run: |
+          gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+            --name "${AUDIT_ARTIFACT}" --dir audit
+          jq -e '.status == "current"' audit/run-list-drift.json
   narwhals-tests:
     permissions:
       actions: read
@@ -312,6 +486,20 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
-      node_type: "gpu-l4-latest-1"
-      container_image: "rapidsai/ci-conda:26.10-latest"
+      node_type: "gpu-rtxpro6000-latest-1"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: ci/test_narwhals.sh
+  cudf-spark-jni:
+    permissions:
+      contents: read
+      id-token: write
+    uses: $/.github/workflows/cudf-spark-jni.yaml
+    with:
+      cudf_commit: ${{ inputs.sha }}
+  velox-cudf:
+    permissions:
+      contents: read
+      id-token: write
+    uses: $/.github/workflows/velox-cudf.yaml
+    with:
+      cudf_commit: ${{ inputs.sha }}

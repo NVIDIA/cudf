@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include "decimal_decode_utils.cuh"
 #include "page_decode.cuh"
 #include "timestamp_utils.cuh"
 
@@ -21,7 +22,7 @@ namespace cudf::io::parquet::detail {
  * @param[in] dstv Pointer to row output data (string descriptor or 32-bit hash)
  */
 template <typename state_buf>
-inline __device__ void gpuOutputString(page_state_s* s, state_buf* sb, int src_pos, void* dstv)
+inline __device__ void gpuOutputString(auto* s, state_buf* sb, int src_pos, void* dstv)
 {
   auto [ptr, len] = gpuGetStringData(s, sb, src_pos);
   if (s->setup.col.is_strings_to_cat and s->setup.col.physical_type == Type::BYTE_ARRAY) {
@@ -112,10 +113,7 @@ inline __device__ void gpuStoreOutput(uint2* dst,
  * @param[out] dst Pointer to row output data
  */
 template <typename state_buf>
-inline __device__ void read_int96_timestamp(page_state_s* s,
-                                            state_buf* sb,
-                                            int src_pos,
-                                            int64_t* dst)
+inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
   using cuda::std::chrono::duration_cast;
 
@@ -159,8 +157,8 @@ inline __device__ void read_int96_timestamp(page_state_s* s,
   nanos |= v.x;
   // Convert from Julian day at noon to UTC seconds
   days = static_cast<int32_t>(v.z);
-  cudf::duration_D d_d{
-    days - 2440588};  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  cudf::duration_D d_d{days - julian_day_unix_epoch};
 
   *dst = [&]() {
     switch (s->setup.col.ts_clock_rate) {
@@ -188,10 +186,7 @@ inline __device__ void read_int96_timestamp(page_state_s* s,
  * @param[in] dst Pointer to row output data
  */
 template <typename state_buf>
-inline __device__ void read_int64_timestamp(page_state_s* s,
-                                            state_buf* sb,
-                                            int src_pos,
-                                            int64_t* dst)
+inline __device__ void read_int64_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
   uint8_t const* src8;
   uint32_t dict_pos, dict_size = s->stream.dict_size, ofs;
@@ -234,28 +229,6 @@ inline __device__ void read_int64_timestamp(page_state_s* s,
 }
 
 /**
- * @brief Output a byte array as int.
- *
- * @param[in] ptr Pointer to the byte array
- * @param[in] len Byte array length
- * @param[out] dst Pointer to row output data
- */
-template <typename T>
-__device__ void gpuOutputByteArrayAsInt(char const* ptr, int32_t len, T* dst)
-{
-  T unscaled = 0;
-  for (auto i = 0; i < len; i++) {
-    uint8_t v = ptr[i];
-    unscaled  = (unscaled << 8) | v;
-  }
-  // Shift the unscaled value up and back down when it isn't all 8 bytes,
-  // which sign extend the value for correctly representing negative numbers.
-  unscaled <<= (sizeof(T) - len) * 8;
-  unscaled >>= (sizeof(T) - len) * 8;
-  *dst = unscaled;
-}
-
-/**
  * @brief Output a fixed-length byte array as int.
  *
  * @param[in,out] s Page state input/output
@@ -264,10 +237,7 @@ __device__ void gpuOutputByteArrayAsInt(char const* ptr, int32_t len, T* dst)
  * @param[in] dst Pointer to row output data
  */
 template <typename T, typename state_buf>
-__device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
-                                                   state_buf* sb,
-                                                   int src_pos,
-                                                   T* dst)
+__device__ void read_fixed_width_byte_array_as_int(auto* s, state_buf* sb, int src_pos, T* dst)
 {
   uint32_t const dtype_len_in = s->output_cvt.dtype_len_in;
   uint8_t const* data         = s->stream.dict_base ? s->stream.dict_base : s->stream.data_start;
@@ -279,18 +249,9 @@ __device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
     dtype_len_in;
   uint32_t const dict_size = s->stream.dict_size;
 
-  T unscaled = 0;
-  for (unsigned int i = 0; i < dtype_len_in; i++) {
-    uint32_t v = (pos + i < dict_size) ? data[pos + i] : 0;
-    unscaled   = (unscaled << 8) | v;
-  }
-  // Shift the unscaled value up and back down when it isn't all 8 bytes,
-  // which sign extend the value for correctly representing negative numbers.
-  if (dtype_len_in < sizeof(T)) {
-    unscaled <<= (sizeof(T) - dtype_len_in) * 8;
-    unscaled >>= (sizeof(T) - dtype_len_in) * 8;
-  }
-  *dst = unscaled;
+  *dst = (pos + dtype_len_in <= dict_size)
+           ? decode_big_endian_decimal<T>(data + pos, static_cast<int32_t>(dtype_len_in))
+           : T{0};
 }
 
 /**
@@ -302,10 +263,7 @@ __device__ void read_fixed_width_byte_array_as_int(page_state_s* s,
  * @param[in] dst Pointer to row output data
  */
 template <typename T, typename state_buf>
-inline __device__ void read_fixed_width_value_fast(page_state_s* s,
-                                                   state_buf* sb,
-                                                   int src_pos,
-                                                   T* dst)
+inline __device__ void read_fixed_width_value_fast(auto* s, state_buf* sb, int src_pos, T* dst)
 {
   uint8_t const* dict;
   uint32_t dict_pos, dict_size = s->stream.dict_size;
@@ -336,7 +294,7 @@ inline __device__ void read_fixed_width_value_fast(page_state_s* s,
  */
 template <typename state_buf>
 inline __device__ void read_nbyte_fixed_width_value(
-  page_state_s* s, state_buf* sb, int src_pos, uint8_t* dst8, int len)
+  auto* s, state_buf* sb, int src_pos, uint8_t* dst8, int len)
 {
   uint8_t const* dict;
   uint32_t dict_pos, dict_size = s->stream.dict_size;
@@ -417,37 +375,6 @@ inline __device__ void gpuOutputSplitInt64Timestamp(int64_t* dst,
 {
   gpuOutputByteStreamSplit<int64_t>(reinterpret_cast<uint8_t*>(dst), src, stride);
   *dst = apply_ts_scale(*dst, ts_scale);
-}
-
-/**
- * Output a BYTE_STREAM_SPLIT encoded decimal as an integer type.
- *
- * Data is encoded as N streams of length M, forming an NxM sized matrix. Rows are streams,
- * columns are individual values.
- *
- * @param dst pointer to output data
- * @param src pointer to first byte of input data in stream 0
- * @param stride number of bytes per input stream (M)
- * @param dtype_len_in length of the `FIXED_LEN_BYTE_ARRAY` used to represent the decimal
- */
-template <typename T>
-__device__ void gpuOutputSplitFixedLenByteArrayAsInt(T* dst,
-                                                     uint8_t const* src,
-                                                     size_type stride,
-                                                     uint32_t dtype_len_in)
-{
-  T unscaled = 0;
-  // fixed_len_byte_array decimals are big endian
-  for (unsigned int i = 0; i < dtype_len_in; i++) {
-    unscaled = (unscaled << 8) | src[i * stride];
-  }
-  // Shift the unscaled value up and back down when it isn't all 8 bytes,
-  // which sign extend the value for correctly representing negative numbers.
-  if (dtype_len_in < sizeof(T)) {
-    unscaled <<= (sizeof(T) - dtype_len_in) * 8;
-    unscaled >>= (sizeof(T) - dtype_len_in) * 8;
-  }
-  *dst = unscaled;
 }
 
 }  // namespace cudf::io::parquet::detail

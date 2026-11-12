@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,9 +19,11 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <algorithm>
 
@@ -29,10 +31,10 @@ namespace cudf {
 namespace detail {
 std::unique_ptr<column> compute_column(table_view const& table,
                                        ast::expression const& expr,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
-  if (get_context().use_jit()) { return compute_column_jit(table, expr, stream, mr); }
+  if (get_context().use_jit()) { return compute_column_jit(table, expr, {}, stream, mr); }
 
   // If evaluating the expression may produce null outputs we create a nullable
   // output column and follow the null-supporting expression evaluation code
@@ -103,7 +105,7 @@ std::unique_ptr<column> compute_column(table_view const& table,
     }
   }
 
-  CUDF_CHECK_CUDA(stream.value());
+  CUDF_CHECK_CUDA(stream.get());
   output_column->set_null_count(
     cudf::detail::null_count(mutable_output_device->null_mask(), 0, output_column->size(), stream));
   return output_column;
@@ -113,8 +115,8 @@ std::unique_ptr<column> compute_column(table_view const& table,
 
 std::unique_ptr<column> compute_column(table_view const& table,
                                        ast::expression const& expr,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::compute_column(table, expr, stream, mr);

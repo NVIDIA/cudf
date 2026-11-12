@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,13 +12,11 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/extrema.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -39,8 +37,8 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
                                                PrecedingIter preceding_begin,
                                                FollowingIter following_begin,
                                                size_type min_periods,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   // Materialize offsets column.
   auto static constexpr size_data_type = data_type{type_to_id<size_type>()};
@@ -92,7 +90,8 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
  *  Mapping back to `input`    == [0,1,0,1,2,1,2,3,2,3,4,3,4]
  */
 std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view const& offsets,
-                                                           rmm::cuda_stream_view stream);
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr);
 
 /**
  * @brief Create gather map to generate the child column of the result of
@@ -102,21 +101,22 @@ template <typename PrecedingIter>
 std::unique_ptr<column> create_collect_gather_map(column_view const& child_offsets,
                                                   column_view const& per_row_mapping,
                                                   PrecedingIter preceding_iter,
-                                                  rmm::cuda_stream_view stream)
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   auto gather_map = make_fixed_width_column(data_type{type_to_id<size_type>()},
                                             per_row_mapping.size(),
                                             mask_state::UNALLOCATED,
                                             stream,
-                                            cudf::get_current_device_resource_ref());
+                                            mr.get_output_mr());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{per_row_mapping.size()},
     gather_map->mutable_view().template begin<size_type>(),
     cuda::proclaim_return_type<size_type>(
       [d_offsets =
-         child_offsets.template begin<size_type>(),  // E.g. [0,   2,     5,     8,     11, 13]
+         child_offsets.template begin<int32_t>(),  // E.g.     [0,   2,     5,     8,     11, 13]
        d_groups =
          per_row_mapping.template begin<size_type>(),  // E.g. [0,0, 1,1,1, 2,2,2, 3,3,3, 4,4]
        d_prev = preceding_iter] __device__(auto i) {
@@ -134,7 +134,7 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * @brief Purge entries for null inputs from gather_map, and adjust offsets.
@@ -144,8 +144,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& gather_map,
   column_view const& offsets,
   size_type num_child_nulls,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 template <typename PrecedingIter, typename FollowingIter>
 std::unique_ptr<column> rolling_collect_list(column_view const& input,
@@ -154,8 +154,8 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
                                              FollowingIter following_begin,
                                              size_type min_periods,
                                              null_policy null_handling,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   CUDF_EXPECTS(default_outputs.is_empty(),
                "COLLECT_LIST window function does not support default values.");
@@ -168,11 +168,15 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
 
   // Map each element of the collect() result's child column
   // to the index where it appears in the input.
-  auto per_row_mapping = get_list_child_to_list_row_mapping(offsets->view(), stream);
+  auto per_row_mapping = get_list_child_to_list_row_mapping(
+    offsets->view(), stream, cudf::get_current_device_resource_ref());
 
   // Generate gather map to produce the collect() result's child column.
-  auto gather_map =
-    create_collect_gather_map(offsets->view(), per_row_mapping->view(), preceding_begin, stream);
+  auto gather_map = create_collect_gather_map(offsets->view(),
+                                              per_row_mapping->view(),
+                                              preceding_begin,
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
 
   // If gather_map collects null elements, and null_policy == EXCLUDE,
   // those elements must be filtered out, and offsets recomputed.

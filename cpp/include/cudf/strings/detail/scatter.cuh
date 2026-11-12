@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,15 +9,14 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/stream>
 #include <thrust/scatter.h>
 
 namespace cudf {
@@ -53,18 +52,18 @@ std::unique_ptr<column> scatter(SourceIterator begin,
                                 SourceIterator end,
                                 MapIterator scatter_map,
                                 strings_column_view const& target,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   if (target.is_empty()) return make_empty_column(type_id::STRING);
 
   // create vector of string_view's to scatter into
-  rmm::device_uvector<string_view> target_vector =
+  auto target_vector =
     create_string_vector_from_column(target, stream, cudf::get_current_device_resource_ref());
 
   // this ensures empty strings are not mapped to nulls in the make_strings_column function
   auto const size = cuda::std::distance(begin, end);
-  auto itr        = thrust::make_transform_iterator(
+  auto itr        = cuda::transform_iterator(
     begin, cuda::proclaim_return_type<string_view>([] __device__(string_view const sv) {
       return sv.empty() ? string_view{} : sv;
     }));
@@ -77,8 +76,7 @@ std::unique_ptr<column> scatter(SourceIterator begin,
                   target_vector.begin());
 
   // build the output column
-  auto sv_span = cudf::device_span<string_view const>(target_vector);
-  return make_strings_column(sv_span, string_view{nullptr, 0}, stream, mr);
+  return make_strings_column(target_vector, string_view{nullptr, 0}, stream, mr);
 }
 
 }  // namespace detail

@@ -34,6 +34,10 @@ from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
 
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 __all__ = [
     "read_csv",
@@ -49,7 +53,7 @@ cdef class CsvReaderOptions:
     For details, see :cpp:class:`cudf::io::csv_reader_options`
     """
     @staticmethod
-    def builder(SourceInfo source):
+    def builder(SourceInfo source) -> CsvReaderOptionsBuilder:
         """
         Create a CsvWriterOptionsBuilder object
 
@@ -87,7 +91,7 @@ cdef class CsvReaderOptions:
         """
         self.c_obj.set_header(header)
 
-    cpdef void set_names(self, list col_names):
+    cpdef void set_names(self, list col_names: list[str]):
         """
         Sets names of the column.
 
@@ -120,7 +124,7 @@ cdef class CsvReaderOptions:
         """
         self.c_obj.set_prefix(prefix.encode())
 
-    cpdef void set_use_cols_indexes(self, list col_indices):
+    cpdef void set_use_cols_indexes(self, list col_indices: list[int]):
         """
         Sets indexes of columns to read.
 
@@ -138,7 +142,7 @@ cdef class CsvReaderOptions:
             vec.push_back(i)
         self.c_obj.set_use_cols_indexes(vec)
 
-    cpdef void set_use_cols_names(self, list col_names):
+    cpdef void set_use_cols_names(self, list col_names: list[str]):
         """
         Sets names of the columns to be read.
 
@@ -201,7 +205,7 @@ cdef class CsvReaderOptions:
         """
         self.c_obj.set_comment(ord(comment))
 
-    cpdef void set_parse_dates(self, list val):
+    cpdef void set_parse_dates(self, list val: list[int | str]):
         """
         Sets indexes or names of columns to read as datetime.
 
@@ -227,7 +231,7 @@ cdef class CsvReaderOptions:
             self.c_obj.set_parse_dates(vec_str)
             self.c_obj.set_parse_dates(vec_int)
 
-    cpdef void set_parse_hex(self, list val):
+    cpdef void set_parse_hex(self, list val: list[int | str]):
         """
         Sets indexes or names of columns to parse as hexadecimal.
 
@@ -254,7 +258,7 @@ cdef class CsvReaderOptions:
             self.c_obj.set_parse_hex(vec_str)
             self.c_obj.set_parse_hex(vec_int)
 
-    cpdef void set_dtypes(self, object types):
+    cpdef void set_dtypes(self, object types: dict[str, DataType] | list[DataType]):
         """
         Sets per-column types.
 
@@ -281,7 +285,7 @@ cdef class CsvReaderOptions:
         else:
             raise TypeError("Must pass an dict or list")
 
-    cpdef void set_true_values(self, list true_values):
+    cpdef void set_true_values(self, list true_values: list[str]):
         """
         Sets additional values to recognize as boolean true values.
 
@@ -299,7 +303,7 @@ cdef class CsvReaderOptions:
             vec.push_back(val.encode())
         self.c_obj.set_true_values(vec)
 
-    cpdef void set_false_values(self, list false_values):
+    cpdef void set_false_values(self, list false_values: list[str]):
         """
         Sets additional values to recognize as boolean false values.
 
@@ -317,7 +321,7 @@ cdef class CsvReaderOptions:
             vec.push_back(val.encode())
         self.c_obj.set_false_values(vec)
 
-    cpdef void set_na_values(self, list na_values):
+    cpdef void set_na_values(self, list na_values: list[str]):
         """
         Sets additional values to recognize as null values.
 
@@ -673,7 +677,7 @@ cdef class CsvReaderOptionsBuilder:
 
 cpdef TableWithMetadata read_csv(
     CsvReaderOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -695,7 +699,7 @@ cpdef TableWithMetadata read_csv(
     """
     cdef table_with_metadata c_result
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
         c_result = move(cpp_read_csv(options.c_obj, _cs, mr.get_mr()))
@@ -711,7 +715,7 @@ cdef class CsvWriterOptions:
     For details, see :cpp:class:`cudf::io::csv_writer_options`
     """
     @staticmethod
-    def builder(SinkInfo sink, Table table):
+    def builder(SinkInfo sink, Table table) -> CsvWriterOptionsBuilder:
         """Create a CsvWriterOptionsBuilder object
 
         For details, see :cpp:func:`cudf::io::csv_writer_options::builder`
@@ -889,6 +893,46 @@ cdef class CsvWriterOptionsBuilder:
         self.c_obj.quoting(style)
         return self
 
+    cpdef CsvWriterOptionsBuilder compression(self, compression_type comp):
+        """Sets the compression type for the output
+
+        Parameters
+        ----------
+        comp : CompressionType
+            Compression type. Only NONE and ZSTD are supported for CSV writer.
+            ZSTD is used because it supports concatenated frames, enabling
+            progressive chunk-based compression compatible with standard
+            decompression tools.
+
+        Returns
+        -------
+        CsvWriterOptionsBuilder
+            Builder to build CsvWriterOptions
+        """
+        self.c_obj.compression(comp)
+        return self
+
+    cpdef CsvWriterOptionsBuilder compression_block_size(self, size_t size):
+        """Sets the size of the blocks that the output is compressed in
+
+        The output is split into blocks of this size, each compressed into its
+        own frame, so that the codec can compress them in parallel. The block
+        size is independent of ``rows_per_chunk``, and is capped at the maximum
+        input size the codec supports.
+
+        Parameters
+        ----------
+        size : int
+            Compression block size, in bytes. Must be greater than zero.
+
+        Returns
+        -------
+        CsvWriterOptionsBuilder
+            Builder to build CsvWriterOptions
+        """
+        self.c_obj.compression_block_size(size)
+        return self
+
     cpdef CsvWriterOptions build(self):
         """Create a CsvWriterOptions object"""
         cdef CsvWriterOptions csv_options = CsvWriterOptions.__new__(
@@ -902,7 +946,7 @@ cdef class CsvWriterOptionsBuilder:
 
 cpdef void write_csv(
     CsvWriterOptions options,
-    object stream = None,
+    object stream: CudaStreamLike | None = None,
 ):
     """
     Write to CSV format.
@@ -920,7 +964,7 @@ cpdef void write_csv(
         CUDA stream used for device memory operations and kernel launches
     """
     cdef Stream s = _get_stream(stream)
-    cdef cudaStream_t _cs = s.view().value()
+    cdef cudaStream_t _cs = s.view().get()
     with nogil:
         cpp_write_csv(move(options.c_obj), _cs)
 

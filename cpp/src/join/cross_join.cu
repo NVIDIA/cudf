@@ -17,7 +17,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <limits>
@@ -33,8 +33,8 @@ namespace detail {
  */
 std::unique_ptr<cudf::table> cross_join(cudf::table_view const& left,
                                         cudf::table_view const& right,
-                                        rmm::cuda_stream_view stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr)
 {
   // If left or right table has no rows, return an empty table with all columns
   if ((0 == left.num_rows()) || (0 == right.num_rows())) {
@@ -72,8 +72,8 @@ std::unique_ptr<cudf::table> cross_join(cudf::table_view const& left,
 
 std::unique_ptr<cudf::table> cross_join(cudf::table_view const& left,
                                         cudf::table_view const& right,
-                                        rmm::cuda_stream_view stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::cross_join(left, right, stream, mr);

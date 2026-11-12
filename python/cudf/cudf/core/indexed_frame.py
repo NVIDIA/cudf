@@ -29,7 +29,6 @@ import pyarrow as pa
 import pylibcudf as plc
 
 import cudf
-from cudf._lib import strings_udf
 from cudf.api.extensions import no_default
 from cudf.api.types import (
     is_dict_like,
@@ -60,9 +59,12 @@ from cudf.core.index import Index, RangeIndex, _index_from_data, ensure_index
 from cudf.core.missing import NA
 from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import _Resampler
+from cudf.core.udf.mlir_backend.strings_typing import ManagedStrArrayWrapper
 from cudf.core.udf.utils import (
     _get_input_args_from_frame,
     _make_free_string_kernel,
+    _mlir_string_array_to_column,
+    _output_args_for_udf_kernel,
     _return_arr_from_dtype,
 )
 from cudf.core.window import ExponentialMovingWindow, Rolling
@@ -434,7 +436,7 @@ class IndexedFrame(Frame):
 
         The available flags are
 
-        * :attr:`pandas.Flags.allows_duplicate_labels`
+        * ``allows_duplicate_labels``
 
         See Also
         --------
@@ -3542,7 +3544,7 @@ class IndexedFrame(Frame):
         *,
         axis: Axis | None = None,
         inplace: bool = False,
-        limit: None | int = None,
+        limit: int | None = None,
         limit_area: Literal["inside", "outside", None] = None,
     ) -> Self | None:
         """
@@ -3566,7 +3568,7 @@ class IndexedFrame(Frame):
         *,
         axis: Axis | None = None,
         inplace: bool = False,
-        limit: None | int = None,
+        limit: int | None = None,
         limit_area: Literal["inside", "outside", None] = None,
     ) -> Self | None:
         """
@@ -3719,7 +3721,7 @@ class IndexedFrame(Frame):
         # Mask and data column preallocated
         ans_col = _return_arr_from_dtype(retty, len(self))
         ans_mask = as_column(True, length=len(self), dtype=np.dtype("bool"))
-        output_args = [(ans_col, ans_mask), len(self)]
+        output_args = _output_args_for_udf_kernel(ans_col, ans_mask, len(self))
         input_args = _get_input_args_from_frame(self)
         launch_args = output_args + input_args + list(args)
         try:
@@ -3729,13 +3731,14 @@ class IndexedFrame(Frame):
             raise RuntimeError("UDF kernel execution failed.") from e
 
         if is_dtype_obj_string(retty):
-            plc_col = strings_udf.column_from_managed_udf_string_array(ans_col)
+            plc_col = _mlir_string_array_to_column(ans_col, len(self))
             col = ColumnBase.create(
                 plc_col, dtype=dtype_from_pylibcudf_column(plc_col)
             )
             free_kernel = _make_free_string_kernel()
+            wrapped_col = ManagedStrArrayWrapper(ans_col)
             with _CUDFNumbaConfig():
-                free_kernel.forall(len(col))(ans_col, len(col))
+                free_kernel.forall(len(col))(wrapped_col, len(col))
         else:
             col = as_column(ans_col, retty)
 
@@ -3911,8 +3914,10 @@ class IndexedFrame(Frame):
                 keep_index=True,
             )
         elif keep == "last":
+            # The sort order is reversed and read from the end, so nulls
+            # must go first to end up after the valid values.
             indices = self._get_columns_by_label(columns)._get_sorted_inds(
-                ascending=largest
+                ascending=largest, na_position="first"
             )
 
             if n <= 0:
@@ -4745,7 +4750,7 @@ class IndexedFrame(Frame):
             *cols,
             mask_col,
         ):
-            plc_table = plc.stream_compaction.apply_boolean_mask(
+            plc_table = plc.stream_compaction.apply_retention_mask(
                 plc.Table([col.plc_column for col in cols]),
                 mask_col.plc_column,
             )
@@ -4766,7 +4771,7 @@ class IndexedFrame(Frame):
         ):
             result.index._levels = self.index._levels
             result.index._codes = [
-                code.apply_boolean_mask(boolean_mask.column)
+                code.apply_retention_mask(boolean_mask.column)
                 for code in self.index._codes
             ]
         return result
@@ -4836,17 +4841,13 @@ class IndexedFrame(Frame):
         elif names is not None:
             raise NotImplementedError("names is not currently supported.")
         if level is not None:
-            if (
-                isinstance(level, int)
-                and level > 0
-                and not isinstance(self.index, MultiIndex)
-            ):
-                raise IndexError(
-                    f"Too many levels: Index has only 1 level, not {level + 1}"
-                )
             if not isinstance(level, (tuple, list)):
                 level = (level,)
-        _check_duplicate_level_names(level, self.index.names)
+            # Normalize to level numbers, which also validates the labels
+            # (out of bounds, unknown name, ambiguous duplicate name).
+            level = tuple(
+                self.index._level_index_from_level(lv) for lv in level
+            )
 
         index = self.index._new_index_for_reset_index(level, self.index.name)
         if index is None:
@@ -4854,19 +4855,41 @@ class IndexedFrame(Frame):
         if drop:
             return self._data, index
 
-        new_column_data = {}
+        new_column_items = []
         for name, col in self.index._columns_for_reset_index(level):
             if name == "index" and "index" in self._data:
                 name = "level_0"
-            name = (
-                tuple(
-                    name if i == col_level else col_fill
-                    for i in range(self._data.nlevels)
-                )
-                if self._data.multiindex
-                else name
-            )
-            new_column_data[name] = col
+            if self._data.multiindex:
+                nlevels = self._data.nlevels
+                if isinstance(name, tuple):
+                    if len(name) > nlevels:
+                        raise ValueError(
+                            "Item must have length equal to number of levels."
+                        )
+                    elif len(name) < nlevels:
+                        if col_fill is None:
+                            raise ValueError(
+                                f"col_fill=None is incompatible with "
+                                f"incomplete column name {name}"
+                            )
+                        name = (
+                            (col_fill,) * col_level
+                            + tuple(name)
+                            + (col_fill,) * (nlevels - col_level - len(name))
+                        )
+                    # else len == nlevels: use as-is
+                else:
+                    name = tuple(
+                        name if i == col_level else col_fill
+                        for i in range(nlevels)
+                    )
+            new_column_items.append((name, col))
+        seen = set(self._data.keys())
+        for name, _ in new_column_items:
+            if name in seen:
+                raise ValueError(f"cannot insert {name}, already exists")
+            seen.add(name)
+        new_column_data = dict(new_column_items)
         # This is to match pandas where the new data columns are always
         # inserted to the left of existing data columns.
         label_dtype = None
@@ -4885,7 +4908,7 @@ class IndexedFrame(Frame):
             ColumnAccessor(
                 {**new_column_data, **self._data},
                 self._data.multiindex,
-                self._data._level_names,
+                self._data.level_names,
                 label_dtype=label_dtype,
             ),
             index,

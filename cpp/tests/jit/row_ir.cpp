@@ -10,13 +10,17 @@
 #include <cudf_test/debug_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
 
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdint>
+#include <functional>
 
 namespace row_ir = cudf::detail::row_ir;
 
@@ -186,8 +190,7 @@ TEST_F(RowIRCudaCodeGenTest, BinaryOperation)
 
     auto expected_code =
       R"***(int32_t tmp_0 = in_0;
-int32_t tmp_1 = in_0;
-int32_t tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_0, tmp_1);
+int32_t tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0);
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_code);
@@ -209,8 +212,7 @@ int32_t tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD
 
     auto expected_null_code =
       R"***(numeric::decimal32 tmp_0 = in_1;
-numeric::decimal32 tmp_1 = in_1;
-numeric::decimal32 tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_0, tmp_1);
+numeric::decimal32 tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0);
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_null_code);
@@ -237,12 +239,7 @@ TEST_F(RowIRCudaCodeGenTest, BinaryOperationOverflow)
 
     auto expected_code =
       R"***(int32_t tmp_0 = in_0;
-int32_t tmp_1 = in_0;
-auto expected__tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_1);
-if(!expected__tmp_2.has_value()) {
- return expected__tmp_2.error();
-}
-int32_t tmp_2 = expected__tmp_2.value();
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0));
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_code);
@@ -265,8 +262,7 @@ int32_t tmp_2 = expected__tmp_2.value();
 
     auto expected_code =
       R"***(cuda::std::optional<int32_t> tmp_0 = in_0;
-cuda::std::optional<int32_t> tmp_1 = in_0;
-cuda::std::optional<int32_t> tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::NULLIFY>(tmp_0, tmp_1);
+cuda::std::optional<int32_t> tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::NULLIFY>(tmp_0, tmp_0);
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_code);
@@ -319,15 +315,13 @@ TEST_F(RowIRCudaCodeGenTest, VectorLengthOperation)
 
     auto expected_code =
       R"***(double tmp_0 = in_0;
-double tmp_1 = in_0;
-double tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::MUL, cudf::error_policy::PROPAGATE>(tmp_0, tmp_1);
-double tmp_3 = in_1;
-double tmp_4 = in_1;
-double tmp_5 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::MUL, cudf::error_policy::PROPAGATE>(tmp_3, tmp_4);
-double tmp_6 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_2, tmp_5);
-double tmp_7 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::SQRT, cudf::error_policy::PROPAGATE>(tmp_6);
-double tmp_8 = tmp_7;
-*out_0 = tmp_8;
+double tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::MUL, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0);
+double tmp_2 = in_1;
+double tmp_3 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::MUL, cudf::error_policy::PROPAGATE>(tmp_2, tmp_2);
+double tmp_4 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_3);
+double tmp_5 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::SQRT, cudf::error_policy::PROPAGATE>(tmp_4);
+double tmp_6 = tmp_5;
+*out_0 = tmp_6;
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_code);
@@ -350,14 +344,16 @@ TEST_F(RowIRCudaCodeGenTest, AstConversionBasic)
   auto expected =
     cudf::test::fixed_width_column_wrapper<int32_t>(expected_iter, expected_iter + column->size());
 
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 1> output_expressions{add_op};
   auto transform_args =
-    row_ir::ast_converter::compute_column(row_ir::target::CUDA,
-                                          add_op,
-                                          cudf::table_view{{*column}},
-                                          cudf::table_view{},
-                                          "expression",
-                                          cudf::get_default_stream(),
-                                          cudf::get_current_device_resource_ref());
+    row_ir::ast_converter::compute_table(row_ir::target::CUDA,
+                                         output_expressions,
+                                         {},
+                                         cudf::table_view{{*column}},
+                                         cudf::table_view{},
+                                         "expression",
+                                         cudf::get_default_stream(),
+                                         cudf::get_current_device_resource_ref());
 
   ASSERT_EQ(transform_args.scalar_columns.size(), 1);
   ASSERT_EQ(transform_args.scalar_columns[0]->view().size(), 1);
@@ -448,6 +444,87 @@ cuda::std::optional<bool> tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::r
 
     EXPECT_EQ(sink.get_code(), expected_code);
   }
+}
+
+TEST_F(RowIRCudaCodeGenTest, CrossOutputCSE)
+{
+  auto ref = cudf::ast::column_reference{3};
+  auto sum = cudf::ast::operation{cudf::ast::ast_operator::ADD, ref, ref};
+  auto mul = cudf::ast::operation{cudf::ast::ast_operator::MUL, sum, ref};
+  auto sub = cudf::ast::operation{cudf::ast::ast_operator::SUB, sum, ref};
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 2> expressions{mul, sub};
+
+  row_ir::ast_converter converter{
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), table, {}};
+  auto const& [code, null_aware, nullability] =
+    converter.generate_code(row_ir::target::CUDA, expressions, "compute_operation");
+
+  auto expected_code =
+    R"***(__device__ cudf::errc compute_operation(int32_t* out_0, int32_t* out_1, int32_t in_0)
+{
+int32_t tmp_0 = in_0;
+int32_t tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0);
+int32_t tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::MUL, cudf::error_policy::PROPAGATE>(tmp_1, tmp_0);
+int32_t tmp_3 = tmp_2;
+*out_0 = tmp_3;
+int32_t tmp_4 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::SUB, cudf::error_policy::PROPAGATE>(tmp_1, tmp_0);
+int32_t tmp_5 = tmp_4;
+*out_1 = tmp_5;
+return cudf::errc::SUCCESS;
+})***";
+
+  EXPECT_EQ(code, expected_code);
+  EXPECT_EQ(null_aware, cudf::null_aware::NO);
+  EXPECT_EQ(nullability.size(), 2);
+}
+
+TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
+{
+  // An LTO callee is declared before the generated function, which keeps its own name. Equal calls
+  // of a pure callee share one evaluation; separate calls of an impure one are never merged, but
+  // one call referred to twice is evaluated once.
+  auto ref      = cudf::ast::column_reference{3};
+  auto code_for = [&](bool is_pure, bool one_call) {
+    auto const function = cudf::ast::jit::udf{
+      "f", is_pure, cudf::data_type{cudf::type_id::INT32}, {cudf::data_type{cudf::type_id::INT32}}};
+    auto tree = cudf::ast::tree{};
+    auto& one = cudf::ast::jit::call(tree, function, {ref});
+    auto& two = one_call ? one : cudf::ast::jit::call(tree, function, {ref});
+    auto& sum = tree.push(cudf::ast::operation{cudf::ast::ast_operator::ADD, one, two});
+    std::array<std::reference_wrapper<cudf::ast::expression const>, 1> expressions{sum};
+    row_ir::ast_converter converter{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), table, {}};
+    auto [code, null_aware, nullability] =
+      converter.generate_code(row_ir::target::CUDA, expressions, "compute_operation");
+    return code;
+  };
+
+  auto expected_pure = R"***(extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
+__device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
+{
+int32_t tmp_0 = in_0;
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+int32_t tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_1);
+int32_t tmp_3 = tmp_2;
+*out_0 = tmp_3;
+return cudf::errc::SUCCESS;
+})***";
+
+  auto expected_impure = R"***(extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
+__device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
+{
+int32_t tmp_0 = in_0;
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_2, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+int32_t tmp_3 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_2);
+int32_t tmp_4 = tmp_3;
+*out_0 = tmp_4;
+return cudf::errc::SUCCESS;
+})***";
+
+  EXPECT_EQ(code_for(true, false), expected_pure);
+  EXPECT_EQ(code_for(false, false), expected_impure);
+  EXPECT_EQ(code_for(false, true), expected_pure);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

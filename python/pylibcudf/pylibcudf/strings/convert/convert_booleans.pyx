@@ -11,6 +11,10 @@ from pylibcudf.libcudf.strings.convert cimport (
 )
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from cython.operator import dereference
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -20,7 +24,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 __all__ = ["from_booleans", "to_booleans"]
 
 cpdef Column to_booleans(
-    Column input, Scalar true_string, object stream=None, DeviceMemoryResource mr=None
+    Column input, Scalar true_string, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new bool column by parsing boolean values from the strings
@@ -49,7 +53,7 @@ cpdef Column to_booleans(
         true_string.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -67,7 +71,7 @@ cpdef Column from_booleans(
     Column booleans,
     Scalar true_string,
     Scalar false_string,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -103,7 +107,7 @@ cpdef Column from_booleans(
         false_string.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_booleans = booleans.view()

@@ -8,15 +8,15 @@ Use this skill when the user invokes `/review-cudf` with:
 - currently checked out cudf PR
 - specified cudf code changes or a diff
 
-cudf GitHub repository is located at: https://github.com/rapidsai/cudf
+cudf GitHub repository is located at: https://github.com/NVIDIA/cudf
 
 # Review cuDF Pull Request
 
 1. **Fetch PR metadata and diff**
 
 ```bash
-gh pr view <PR_NUMBER> --repo rapidsai/cudf --json title,body,files,additions,deletions,baseRefName,headRefName
-gh pr diff <PR_NUMBER> --repo rapidsai/cudf
+gh pr view <PR_NUMBER> --repo NVIDIA/cudf --json title,body,files,additions,deletions,baseRefName,headRefName
+gh pr diff <PR_NUMBER> --repo NVIDIA/cudf
 ```
 
 Hint: Check if `GH_TOKEN` (or GitHub CLI auth) is already configured in the environment (for example via your secret manager) so `gh` can authenticate and bypass rate limits; do not run `gh auth token` from within the agent. If `gh` auth is unavailable, fall back to GitHub's raw diff/patch URLs, `git fetch` of the PR ref, unauthenticated GitHub REST API with `curl`, or any other available methods.
@@ -38,6 +38,8 @@ Hint: Check if `GH_TOKEN` (or GitHub CLI auth) is already configured in the envi
 For the detailed review checklist, read these files:
 - **C++/CUDA**: `cpp/REVIEW_GUIDELINES.md`
 - **Python**: `python/REVIEW_GUIDELINES.md`
+- **pylibcudf**: `python/pylibcudf/REVIEW_GUIDELINES.md`
+- **cudf_polars**: `python/cudf_polars/REVIEW_GUIDELINES.md`
 - **Developer Guide**: `cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md`
 - **Testing Guide**: `cpp/doxygen/developer_guide/TESTING.md`
 - **Benchmarking Guide**: `cpp/doxygen/developer_guide/BENCHMARKING.md`
@@ -57,7 +59,7 @@ Use all applicable checklist items from those files when reviewing the PR. The D
 | Documentation guide | `cpp/doxygen/developer_guide/DOCUMENTATION.md` |
 | Profiling guide | `cpp/doxygen/developer_guide/PROFILING.md` |
 
-Online libcudf API docs if needed: https://docs.rapids.ai/api/cudf/nightly/libcudf/
+Online libcudf API docs if needed: https://docs.nvidia.com/cudf/latest/libcudf/
 
 ---
 

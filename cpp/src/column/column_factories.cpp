@@ -1,13 +1,15 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -17,22 +19,19 @@ struct size_of_helper {
   cudf::data_type type;
   template <typename T>
   constexpr int operator()() const
-    requires(not is_fixed_width<T>())
   {
     CUDF_FAIL("Invalid, non fixed-width element type.");
     return 0;
   }
 
-  template <typename T>
+  template <concepts::fixed_width T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_width<T>() && not is_fixed_point<T>())
   {
     return sizeof(T);
   }
 
-  template <typename T>
+  template <concepts::fixed_point T>
   constexpr int operator()() const noexcept
-    requires(is_fixed_point<T>())
   {
     // Only want the sizeof fixed_point::Rep as fixed_point::scale is stored in data_type
     return sizeof(typename T::rep);
@@ -52,7 +51,8 @@ std::unique_ptr<column> make_empty_column(data_type type)
   CUDF_EXPECTS(type.id() == type_id::EMPTY || !cudf::is_nested(type),
                "make_empty_column is invalid to call on nested types",
                cudf::data_type_error);
-  return std::make_unique<column>(type, 0, rmm::device_buffer{}, rmm::device_buffer{}, 0);
+  return std::make_unique<column>(
+    type, 0, rmm::device_buffer{}, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 }
 
 // Empty column of specified type id
@@ -62,8 +62,8 @@ std::unique_ptr<column> make_empty_column(type_id id) { return make_empty_column
 std::unique_ptr<column> make_numeric_column(data_type type,
                                             size_type size,
                                             mask_state state,
-                                            rmm::cuda_stream_view stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(type.id() != type_id::EMPTY && is_numeric(type),
@@ -74,7 +74,7 @@ std::unique_ptr<column> make_numeric_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr},
+    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});
@@ -84,8 +84,8 @@ std::unique_ptr<column> make_numeric_column(data_type type,
 std::unique_ptr<column> make_fixed_point_column(data_type type,
                                                 size_type size,
                                                 mask_state state,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(is_fixed_point(type), "Invalid, non-fixed_point type.", cudf::data_type_error);
@@ -94,7 +94,7 @@ std::unique_ptr<column> make_fixed_point_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr},
+    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});
@@ -104,8 +104,8 @@ std::unique_ptr<column> make_fixed_point_column(data_type type,
 std::unique_ptr<column> make_timestamp_column(data_type type,
                                               size_type size,
                                               mask_state state,
-                                              rmm::cuda_stream_view stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(is_timestamp(type), "Invalid, non-timestamp type.", cudf::data_type_error);
@@ -114,7 +114,7 @@ std::unique_ptr<column> make_timestamp_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr},
+    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});
@@ -124,8 +124,8 @@ std::unique_ptr<column> make_timestamp_column(data_type type,
 std::unique_ptr<column> make_duration_column(data_type type,
                                              size_type size,
                                              mask_state state,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(is_duration(type), "Invalid, non-duration type.", cudf::data_type_error);
@@ -134,7 +134,7 @@ std::unique_ptr<column> make_duration_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr},
+    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});
@@ -144,8 +144,8 @@ std::unique_ptr<column> make_duration_column(data_type type,
 std::unique_ptr<column> make_fixed_width_column(data_type type,
                                                 size_type size,
                                                 mask_state state,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(type.id() != type_id::EMPTY && is_fixed_width(type),
@@ -162,20 +162,23 @@ std::unique_ptr<column> make_fixed_width_column(data_type type,
 
 std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
                                                     size_type size,
-                                                    rmm::cuda_stream_view stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr)
 {
-  if (size == 0) return make_empty_column(type_id::DICTIONARY32);
+  if (size == 0) {
+    return make_dictionary_column(
+      empty_like(s),
+      make_empty_column(type_id::INT32),
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      0);
+  }
   CUDF_EXPECTS(size >= 0, "Column size cannot be negative.");
   CUDF_EXPECTS(s.is_valid(stream), "cannot create a dictionary with a null key");
+  auto const temp_mr = mr.get_temporary_mr();
   return make_dictionary_column(
     make_column_from_scalar(s, 1, stream, mr),
-    make_column_from_scalar(
-      numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
-      size,
-      stream,
-      mr),
-    rmm::device_buffer{0, stream, mr},
+    make_column_from_scalar(numeric_scalar<int32_t>(0, true, stream, temp_mr), size, stream, mr),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0);
 }
 

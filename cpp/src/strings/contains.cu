@@ -4,7 +4,7 @@
  */
 
 #include "strings/count_matches.hpp"
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column.hpp>
@@ -20,7 +20,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -51,8 +51,8 @@ struct contains_fn {
 std::unique_ptr<column> contains_impl(strings_column_view const& input,
                                       regex_program const& prog,
                                       bool const beginning_only,
-                                      rmm::cuda_stream_view stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   auto results = make_numeric_column(data_type{type_id::BOOL8},
                                      input.size(),
@@ -67,12 +67,20 @@ std::unique_ptr<column> contains_impl(strings_column_view const& input,
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    launch_transform_kernel(
-      contains_fn{*d_strings, beginning_only}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(contains_fn{*d_strings, beginning_only},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   } else {
     auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    launch_transform_kernel(
-      contains_fn{*d_strings, beginning_only}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(contains_fn{*d_strings, beginning_only},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   }
 
   return results;
@@ -82,8 +90,8 @@ std::unique_ptr<column> contains_impl(strings_column_view const& input,
 
 std::unique_ptr<column> contains_re(strings_column_view const& input,
                                     regex_program const& prog,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   // check for potential fast-paths
   auto [fp, literal] = prog.get_literal_fast_path();
@@ -111,8 +119,8 @@ std::unique_ptr<column> contains_re(strings_column_view const& input,
 
 std::unique_ptr<column> matches_re(strings_column_view const& input,
                                    regex_program const& prog,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   auto [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY or fp == literal_fast_path::STARTS_WITH) {
@@ -126,8 +134,8 @@ std::unique_ptr<column> matches_re(strings_column_view const& input,
 
 std::unique_ptr<column> count_re(strings_column_view const& input,
                                  regex_program const& prog,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   auto [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY) {
@@ -152,8 +160,8 @@ std::unique_ptr<column> count_re(strings_column_view const& input,
 
 std::unique_ptr<column> contains_re(strings_column_view const& input,
                                     regex_program const& prog,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contains_re(input, prog, stream, mr);
@@ -161,8 +169,8 @@ std::unique_ptr<column> contains_re(strings_column_view const& input,
 
 std::unique_ptr<column> matches_re(strings_column_view const& input,
                                    regex_program const& prog,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::matches_re(input, prog, stream, mr);
@@ -170,8 +178,8 @@ std::unique_ptr<column> matches_re(strings_column_view const& input,
 
 std::unique_ptr<column> count_re(strings_column_view const& input,
                                  regex_program const& prog,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::count_re(input, prog, stream, mr);

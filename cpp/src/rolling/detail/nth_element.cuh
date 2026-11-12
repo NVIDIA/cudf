@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,6 +14,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -47,7 +48,7 @@ struct gather_index_calculator {
   PrecedingIter preceding;
   FollowingIter following;
   size_type min_periods;
-  rmm::cuda_stream_view stream;
+  cuda::stream_ref stream;
 
   static size_type constexpr NULL_INDEX =
     cuda::std::numeric_limits<size_type>::min();  // For nullifying with gather.
@@ -57,7 +58,7 @@ struct gather_index_calculator {
                           PrecedingIter preceding,
                           FollowingIter following,
                           size_type min_periods,
-                          rmm::cuda_stream_view stream)
+                          cuda::stream_ref stream)
     : n{n},
       input_nullmask{input.null_mask()},
       exclude_nulls{null_handling == null_policy::EXCLUDE and input.has_nulls()},
@@ -138,15 +139,16 @@ std::unique_ptr<column> nth_element(size_type n,
                                     PrecedingIter preceding,
                                     FollowingIter following,
                                     size_type min_periods,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto const gather_iter = cudf::detail::make_counting_transform_iterator(
     0,
     gather_index_calculator<null_handling, PrecedingIter, FollowingIter>{
       n, input, preceding, following, min_periods, stream});
 
-  auto gather_map = rmm::device_uvector<size_type>(input.size(), stream);
+  auto gather_map = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                gather_iter,
                gather_iter + input.size(),

@@ -9,8 +9,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
+
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <span>
 
@@ -33,7 +35,7 @@ size_type concatenate_masks(device_span<column_device_view const> d_views,
                             device_span<size_t const> d_offsets,
                             bitmask_type* dest_mask,
                             size_type output_size,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
  * @brief Concatenates `views[i]`'s bitmask from the bits
@@ -47,16 +49,16 @@ size_type concatenate_masks(device_span<column_device_view const> d_views,
  */
 size_type concatenate_masks(host_span<column_view const> views,
                             bitmask_type* dest_mask,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 /**
- * @copydoc cudf::concatenate_masks(std::span<column_view const>, rmm::device_async_resource_ref)
+ * @copydoc cudf::concatenate_masks(std::span<column_view const>, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-rmm::device_buffer concatenate_masks(std::span<column_view const> views,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr);
+cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
+                                                          cuda::stream_ref stream,
+                                                          cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

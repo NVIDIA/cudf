@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,11 +9,13 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -22,11 +24,11 @@ namespace detail {
 std::unique_ptr<column> merge(strings_column_view const& lhs,
                               strings_column_view const& rhs,
                               cudf::detail::index_vector const& row_order,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   using cudf::detail::side;
-  if (row_order.is_empty()) { return make_empty_column(type_id::STRING); }
+  if (row_order.empty()) { return make_empty_column(type_id::STRING); }
   auto const strings_count = static_cast<cudf::size_type>(row_order.size());
 
   auto const lhs_column = column_device_view::create(lhs.parent(), stream);
@@ -37,7 +39,8 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
   auto const begin = row_order.begin();
 
   // build vector of strings
-  rmm::device_uvector<string_index_pair> indices(strings_count, stream);
+  cuda::device_buffer<string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
@@ -55,7 +58,7 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
                     });
 
   // convert vector into strings column
-  return make_strings_column(indices.begin(), indices.end(), stream, mr);
+  return cudf::make_strings_column(indices, stream, mr);
 }
 
 }  // namespace detail

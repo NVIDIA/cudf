@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/scan.hpp>
 #include <cudf/reduction.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 namespace cudf {
 namespace detail {
@@ -15,8 +16,8 @@ std::unique_ptr<column> scan(column_view const& input,
                              scan_aggregation const& agg,
                              scan_type inclusive,
                              null_policy null_handling,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   if (agg.kind == aggregation::RANK) {
     CUDF_EXPECTS(inclusive == scan_type::INCLUSIVE,
@@ -46,8 +47,8 @@ std::unique_ptr<column> scan(column_view const& input,
                              scan_aggregation const& agg,
                              scan_type inclusive,
                              null_policy null_handling,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::scan(input, agg, inclusive, null_handling, stream, mr);

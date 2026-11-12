@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "utilities/time_utils.cuh"
@@ -7,20 +7,23 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/convert/convert_durations.hpp>
 #include <cudf/strings/detail/convert/int_to_string.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm>
 #include <cuda/std/cmath>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
@@ -78,9 +81,9 @@ struct alignas(4) format_item {
  */
 struct format_compiler {
   std::string_view const format;
-  rmm::device_uvector<format_item> d_items;
-  format_compiler(std::string_view format, rmm::cuda_stream_view stream)
-    : format(format), d_items(0, stream)
+  cuda::device_buffer<format_item> d_items;
+  format_compiler(std::string_view format, cuda::stream_ref stream)
+    : format(format), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
   {
     static std::map<char, int8_t> const specifier_lengths = {
       {'-', -1},  // '-' if negative
@@ -146,7 +149,7 @@ struct format_compiler {
 
     // create program in device memory
     d_items =
-      cudf::detail::make_device_uvector(items, stream, cudf::get_current_device_resource_ref());
+      cudf::detail::make_device_buffer(items, stream, cudf::get_current_device_resource_ref());
   }
 
   format_item const* compiled_format_items() { return d_items.data(); }
@@ -386,12 +389,11 @@ struct from_durations_fn {
  * The template function declaration ensures only duration types are used.
  */
 struct dispatch_from_durations_fn {
-  template <typename T>
+  template <cudf::concepts::duration T>
   std::unique_ptr<column> operator()(column_view const& durations,
                                      std::string_view format,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(cudf::is_duration<T>())
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr) const
   {
     CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.");
 
@@ -403,7 +405,8 @@ struct dispatch_from_durations_fn {
     auto d_column           = *column;
 
     // copy null mask
-    rmm::device_buffer null_mask = cudf::detail::copy_bitmask(durations, stream, mr);
+    cuda::device_buffer<cudf::bitmask_type> null_mask =
+      cudf::detail::copy_bitmask(durations, stream, mr);
 
     auto [offsets, chars] =
       make_strings_children(from_durations_fn<T>{d_column, d_format_items, compiler.items_count()},
@@ -421,7 +424,7 @@ struct dispatch_from_durations_fn {
   // non-duration types throw an exception
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...) const
-    requires(not cudf::is_duration<T>())
+    requires(not cudf::concepts::duration<T>)
   {
     CUDF_FAIL("Values for from_durations function must be a duration type.");
   }
@@ -640,12 +643,11 @@ struct parse_duration {
  * The template function declaration ensures only duration types are used.
  */
 struct dispatch_to_durations_fn {
-  template <typename T>
+  template <cudf::concepts::duration T>
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
-                  rmm::cuda_stream_view stream) const
-    requires(cudf::is_duration<T>())
+                  cuda::stream_ref stream) const
   {
     format_compiler compiler(format, stream);
     auto d_items   = compiler.compiled_format_items();
@@ -661,8 +663,7 @@ struct dispatch_to_durations_fn {
   void operator()(column_device_view const&,
                   std::string_view,
                   mutable_column_view&,
-                  rmm::cuda_stream_view) const
-    requires(not cudf::is_duration<T>())
+                  cuda::stream_ref) const
   {
     CUDF_FAIL("Only durations type are expected for to_durations function");
   }
@@ -672,8 +673,8 @@ struct dispatch_to_durations_fn {
 
 std::unique_ptr<column> from_durations(column_view const& durations,
                                        std::string_view format,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   size_type strings_count = durations.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
@@ -685,8 +686,8 @@ std::unique_ptr<column> from_durations(column_view const& durations,
 std::unique_ptr<column> to_durations(strings_column_view const& input,
                                      data_type duration_type,
                                      std::string_view format,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   size_type strings_count = input.size();
   if (strings_count == 0) {
@@ -715,8 +716,8 @@ std::unique_ptr<column> to_durations(strings_column_view const& input,
 
 std::unique_ptr<column> from_durations(column_view const& durations,
                                        std::string_view format,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::from_durations(durations, format, stream, mr);
@@ -725,8 +726,8 @@ std::unique_ptr<column> from_durations(column_view const& durations,
 std::unique_ptr<column> to_durations(strings_column_view const& input,
                                      data_type duration_type,
                                      std::string_view format,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_durations(input, duration_type, format, stream, mr);

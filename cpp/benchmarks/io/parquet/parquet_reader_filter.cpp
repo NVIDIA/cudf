@@ -15,7 +15,10 @@
 #include <cudf/filling.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/strings/utilities.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
+
+#include <cuda/std/concepts>
 
 #include <nvbench/nvbench.cuh>
 
@@ -23,8 +26,8 @@ template <typename DataType>
 struct filter_generator;
 
 template <typename DataType>
-  requires(std::is_same_v<DataType, int32_t> || std::is_same_v<DataType, int64_t> ||
-           std::is_same_v<DataType, float> || std::is_same_v<DataType, double>)
+  requires(cuda::std::same_as<DataType, int32_t> or cuda::std::same_as<DataType, int64_t> or
+           cuda::std::same_as<DataType, float> or cuda::std::same_as<DataType, double>)
 struct filter_generator<DataType> {
   decltype(auto) operator()(float selectivity,
                             cudf::size_type num_rows,
@@ -87,8 +90,7 @@ struct filter_generator<DataType> {
   }
 };
 
-template <typename DataType>
-  requires(std::is_same_v<DataType, cudf::string_view>)
+template <cudf::concepts::string_view DataType>
 struct filter_generator<DataType> {
   decltype(auto) operator()(float selectivity,
                             cudf::size_type num_rows,
@@ -252,7 +254,7 @@ void BM_parquet_read_filter(nvbench::state& state)
     state.add_global_memory_writes<DataType>(static_cast<size_t>(num_rows * selectivity));
   }
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(

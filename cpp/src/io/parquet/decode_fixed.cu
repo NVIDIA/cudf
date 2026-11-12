@@ -4,6 +4,7 @@
  */
 #include "page_data.cuh"
 #include "page_decode.cuh"
+#include "page_state_composed.cuh"
 #include "page_string_utils.cuh"
 #include "parquet_gpu.hpp"
 #include "rle_stream.cuh"
@@ -11,6 +12,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 
 #include <cooperative_groups.h>
+#include <cuda/cmath>
 #include <cuda/std/bit>
 #include <cuda/std/iterator>
 
@@ -100,13 +102,13 @@ __device__ static void scan_block_exclusive_sum(
  */
 template <int block_size, bool has_lists_t, copy_mode copy_mode_t, typename state_buf>
 __device__ void decode_dict_indices_as_int32(
-  page_state_s* s, state_buf* const sb, int start, int end, int t)
+  auto* s, state_buf* const sb, int start, int end, int t)
 {
   constexpr int num_warps      = block_size / cudf::detail::warp_size;
   constexpr int max_batch_size = num_warps * cudf::detail::warp_size;
 
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-  auto const data_out        = s->nesting_info[leaf_level_index].data_out;
+  auto const data_out        = s->nesting.nesting_info[leaf_level_index].data_out;
 
   int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
 
@@ -148,15 +150,14 @@ __device__ void decode_dict_indices_as_int32(
 }
 
 template <int block_size, bool has_lists_t, copy_mode copy_mode_t, typename state_buf>
-__device__ void decode_fixed_width_values(
-  page_state_s* s, state_buf* const sb, int start, int end, int t)
+__device__ void decode_fixed_width_values(auto* s, state_buf* const sb, int start, int end, int t)
 {
   constexpr int num_warps      = block_size / cudf::detail::warp_size;
   constexpr int max_batch_size = num_warps * cudf::detail::warp_size;
 
   // nesting level that is storing actual leaf values
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-  auto const data_out        = s->nesting_info[leaf_level_index].data_out;
+  auto const data_out        = s->nesting.nesting_info[leaf_level_index].data_out;
 
   Type const dtype         = s->setup.col.physical_type;
   uint32_t const dtype_len = s->output_cvt.dtype_len;
@@ -239,7 +240,7 @@ __device__ void decode_fixed_width_values(
 
 template <int block_size, bool has_lists_t, copy_mode copy_mode_t, typename state_buf>
 __device__ inline void decode_fixed_width_split_values(
-  page_state_s* s, state_buf* const sb, int start, int end, int t)
+  auto* s, state_buf* const sb, int start, int end, int t)
 {
   using cudf::detail::warp_size;
   constexpr int num_warps      = block_size / warp_size;
@@ -247,7 +248,7 @@ __device__ inline void decode_fixed_width_split_values(
 
   // nesting level that is storing actual leaf values
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
-  auto const data_out        = s->nesting_info[leaf_level_index].data_out;
+  auto const data_out        = s->nesting.nesting_info[leaf_level_index].data_out;
 
   Type const dtype    = s->setup.col.physical_type;
   auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
@@ -301,16 +302,16 @@ __device__ inline void decode_fixed_width_split_values(
         case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
         case Type::FIXED_LEN_BYTE_ARRAY:
           if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<int32_t*>(dst) =
+              decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<int64_t*>(dst) =
+              decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
+            *reinterpret_cast<__int128_t*>(dst) =
+              decode_big_endian_decimal<__int128_t>(src, s->output_cvt.dtype_len_in, num_values);
             break;
           }
           // unsupported decimal precision
@@ -334,6 +335,16 @@ __device__ inline void decode_fixed_width_split_values(
       }
     } else if (dtype_len == 4) {
       gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
+    } else if (s->output_cvt.dtype_len_in == sizeof(int32_t)) {
+      // 8- and 16-bit integers are stored as INT32, so keep the low-order bytes of each value,
+      // which are in the first byte streams
+      if (dtype_len == sizeof(int16_t)) {
+        gpuOutputByteStreamSplit<int16_t>(dst, src, num_values);
+      } else if (dtype_len == sizeof(int8_t)) {
+        gpuOutputByteStreamSplit<int8_t>(dst, src, num_values);
+      } else {
+        s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
+      }
     } else {
       s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
     }
@@ -358,10 +369,10 @@ __device__ inline void decode_fixed_width_split_values(
  */
 template <int decode_block_size, typename level_t>
 __device__ int skip_validity_and_row_indices_nonlist(
-  int32_t target_value_count, page_state_s* s, level_t const* const def, bool is_nested, int t)
+  int32_t target_value_count, auto* s, level_t const* const def, bool is_nested, int t)
 {
   int const max_def_level =
-    is_nested ? s->nesting_info[s->setup.col.max_nesting_depth - 1].max_def_level : 1;
+    is_nested ? s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].max_def_level : 1;
 
   int max_depth_valid_count = 0;
   int value_count           = 0;
@@ -379,6 +390,10 @@ __device__ int skip_validity_and_row_indices_nonlist(
 
     value_count += batch_size;
     max_depth_valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }  // end loop
 
   return max_depth_valid_count;
@@ -401,7 +416,7 @@ __device__ int skip_validity_and_row_indices_nonlist(
  */
 template <int decode_block_size, typename level_t, typename state_buf>
 __device__ int update_validity_and_row_indices_nested(
-  int32_t target_value_count, page_state_s* s, state_buf* sb, level_t const* const def, int t)
+  int32_t target_value_count, auto* s, state_buf* sb, level_t const* const def, int t)
 {
   constexpr int num_warps      = decode_block_size / cudf::detail::warp_size;
   constexpr int max_batch_size = num_warps * cudf::detail::warp_size;
@@ -415,7 +430,7 @@ __device__ int update_validity_and_row_indices_nested(
   int const capped_target_value_count = min(target_value_count, last_row);
 
   int const max_depth       = s->setup.col.max_nesting_depth - 1;
-  auto& max_depth_ni        = s->nesting_info[max_depth];
+  auto& max_depth_ni        = s->nesting.nesting_info[max_depth];
   int max_depth_valid_count = max_depth_ni.valid_count;
 
   __syncthreads();
@@ -441,7 +456,7 @@ __device__ int update_validity_and_row_indices_nested(
 
     // iterate by depth
     for (int d_idx = 0; d_idx <= max_depth; d_idx++) {
-      auto& ni = s->nesting_info[d_idx];
+      auto& ni = s->nesting.nesting_info[d_idx];
 
       int const is_valid = ((def_level >= ni.max_def_level) && in_row_bounds) ? 1 : 0;
 
@@ -488,6 +503,10 @@ __device__ int update_validity_and_row_indices_nested(
         max_depth_valid_count += block_valid_count;
       }
 
+      // Required before `scan_storage` is reused: CUB needs a barrier between the last read of a
+      // collective's TempStorage and its reuse. At the end of the depth loop it also covers the
+      // enclosing value loop's back edge, since the depth loop always runs at least once.
+      __syncthreads();
     }  // end depth loop
 
     value_count += block_value_count;
@@ -522,12 +541,12 @@ __device__ int update_validity_and_row_indices_nested(
  */
 template <int decode_block_size, typename level_t, typename state_buf>
 __device__ int update_validity_and_row_indices_flat(
-  int32_t target_value_count, page_state_s* s, state_buf* sb, level_t const* const def, int t)
+  int32_t target_value_count, auto* s, state_buf* sb, level_t const* const def, int t)
 {
   constexpr int num_warps      = decode_block_size / cudf::detail::warp_size;
   constexpr int max_batch_size = num_warps * cudf::detail::warp_size;
 
-  auto& ni = s->nesting_info[0];
+  auto& ni = s->nesting.nesting_info[0];
 
   // how many (input) values we've processed in the page so far
   int value_count = s->progress.input_value_count;
@@ -601,6 +620,10 @@ __device__ int update_validity_and_row_indices_flat(
     // update stuff
     value_count += block_value_count;
     valid_count += block_valid_count;
+
+    // Required before the next iteration reuses `scan_storage`: CUB needs a barrier between the
+    // last read of a collective's TempStorage and its reuse.
+    __syncthreads();
   }
 
   if (t == 0) {
@@ -633,7 +656,7 @@ __device__ int update_validity_and_row_indices_flat(
  */
 template <int decode_block_size, bool nullable, typename level_t, typename state_buf>
 __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
-                                                     page_state_s* s,
+                                                     auto* s,
                                                      state_buf* sb,
                                                      level_t const* const def,
                                                      level_t const* const rep,
@@ -654,7 +677,7 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
 
   int const row_index_lower_bound = s->progress.row_index_lower_bound;
   int const max_depth             = s->setup.col.max_nesting_depth - 1;
-  int max_depth_valid_count       = s->nesting_info[max_depth].valid_count;
+  int max_depth_valid_count       = s->nesting.nesting_info[max_depth].valid_count;
 
   int const warp_index     = t / cudf::detail::warp_size;
   int const warp_lane      = t % cudf::detail::warp_size;
@@ -672,13 +695,14 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
       if (!within_batch) { return cuda::std::make_tuple(-1, -1, -1); }
 
       auto const rep_level  = rep[value_count + t];
-      int const start_depth = s->nesting_info[rep_level].start_depth;
+      int const start_depth = s->nesting.nesting_info[rep_level].start_depth;
 
       if constexpr (!nullable) {
         return cuda::std::make_tuple(-1, start_depth, max_depth);
       } else {
         int const def_level = def[value_count + t];
-        return cuda::std::make_tuple(def_level, start_depth, s->nesting_info[def_level].end_depth);
+        return cuda::std::make_tuple(
+          def_level, start_depth, s->nesting.nesting_info[def_level].end_depth);
       }
     }();
 
@@ -718,7 +742,7 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
 
     // iterate by depth
     for (int d_idx = 0; d_idx <= max_depth; d_idx++) {
-      auto& ni = s->nesting_info[d_idx];
+      auto& ni = s->nesting.nesting_info[d_idx];
 
       // everything up to the max_def_level is a non-null value
       int const is_valid = [&](int input_def_level) {
@@ -779,7 +803,7 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
         // and we have a valid data_out pointer, it implies this is a list column, so
         // emit an offset.
         if (in_nesting_bounds && ni.data_out != nullptr) {
-          auto const& next_ni = s->nesting_info[d_idx + 1];
+          auto const& next_ni = s->nesting.nesting_info[d_idx + 1];
           int const idx       = ni.value_count + thread_value_count;
           cudf::size_type const ofs =
             next_ni.value_count + next_thread_value_count + next_ni.page_start_value;
@@ -847,9 +871,9 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
 
   if (t == 0) {
     // update valid value count for decoding and total # of values we've processed
-    s->nesting_info[max_depth].valid_count = max_depth_valid_count;
-    s->progress.nz_count                   = max_depth_valid_count;
-    s->progress.input_value_count          = value_count;
+    s->nesting.nesting_info[max_depth].valid_count = max_depth_valid_count;
+    s->progress.nz_count                           = max_depth_valid_count;
+    s->progress.input_value_count                  = value_count;
 
     // If we have lists # rows != # values
     s->progress.input_row_count = input_row_count;
@@ -859,7 +883,7 @@ __device__ int update_validity_and_row_indices_lists(int32_t target_value_count,
 }
 
 template <typename state_buf, typename thread_group>
-inline __device__ void bool_plain_decode(page_state_s* s,
+inline __device__ void bool_plain_decode(auto* s,
                                          state_buf* sb,
                                          int target_pos,
                                          thread_group const& group)
@@ -907,7 +931,7 @@ template <int decode_block_size_t,
           typename level_t,
           typename dict_stream_t,
           typename bool_stream_t>
-__device__ void skip_ahead_in_decoding(page_state_s* s,
+__device__ void skip_ahead_in_decoding(auto* s,
                                        dict_stream_t& dict_stream,
                                        bool_stream_t& bool_stream,
                                        bool bools_are_rle_stream,
@@ -961,7 +985,7 @@ __device__ void skip_ahead_in_decoding(page_state_s* s,
 
   if (t == 0) {
     int const max_depth = s->setup.col.max_nesting_depth - 1;
-    auto& ni            = s->nesting_info[max_depth];
+    auto& ni            = s->nesting.nesting_info[max_depth];
 
     // update valid value count for decoding and total # of values we've processed
     ni.valid_count                = valid_count;
@@ -1100,19 +1124,19 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
   constexpr int rolling_buf_size    = decode_block_size_t * 2;
   constexpr int rle_run_buffer_size = rle_stream_required_run_buffer_size<decode_block_size_t>();
 
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
   constexpr bool use_dict_buffers = has_dict_t || has_bools_t;
   using state_buf_t               = page_state_buffers_s<rolling_buf_size,  // size of nz_idx buffer
                                            use_dict_buffers ? rolling_buf_size : 1,
                                                          1>;
   __shared__ __align__(16) state_buf_t state_buffers;
 
-  auto const block      = cg::this_thread_block();
-  page_state_s* const s = &state_g;
-  auto* const sb        = &state_buffers;
-  int const page_idx    = cg::this_grid().block_rank();
-  int const t           = block.thread_rank();
-  PageInfo* pp          = &pages[page_idx];
+  auto const block   = cg::this_thread_block();
+  auto* const s      = &state_g;
+  auto* const sb     = &state_buffers;
+  int const page_idx = cg::this_grid().block_rank();
+  int const t        = block.thread_rank();
+  PageInfo* pp       = &pages[page_idx];
 
   if (!(BitAnd(pages[page_idx].kernel_mask, kernel_mask_t))) { return; }
 
@@ -1137,7 +1161,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
 
   // shared buffer. all shared memory is suballocated out of here
   constexpr int rle_run_buffer_bytes =
-    cudf::util::round_up_unsafe(rle_run_buffer_size * sizeof(rle_run), size_t{16});
+    cuda::round_up(rle_run_buffer_size * sizeof(rle_run), size_t{16});
   constexpr int shared_buf_size = cuda::std::max(
     1, rle_run_buffer_bytes * (static_cast<int>(has_dict_t) + static_cast<int>(has_bools_t)));
   __shared__ __align__(16) uint8_t shared_buf[shared_buf_size];
@@ -1190,7 +1214,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
   int valid_count             = 0;
   size_t string_output_offset = 0;
   int const init_valid_map_offset =
-    s->nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
 
   // Skip ahead in the decoding so that we don't repeat work
   skip_ahead_in_decoding<decode_block_size_t,
@@ -1311,7 +1335,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
       }();
       int const num_values = [&]() {
         if constexpr (has_lists_t) {
-          auto const& ni = s->nesting_info[s->setup.col.max_nesting_depth - 1];
+          auto const& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
           return ni.valid_map_offset - init_valid_map_offset;
         } else {
           return s->setup.num_rows;
@@ -1329,7 +1353,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
     if constexpr (!has_lists_t) {
       if (!process_nulls) {
         if (t == 0) {
-          s->nesting_info[s->setup.col.max_nesting_depth - 1].value_count =
+          s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].value_count =
             s->progress.input_row_count;
         }
         block.sync();
@@ -1370,7 +1394,7 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
                       cudf::device_span<size_t> initial_str_offsets,
                       cudf::device_span<size_t const> page_string_offset_indices,
                       kernel_error::pointer error_code,
-                      rmm::cuda_stream_view stream)
+                      cuda::stream_ref stream)
 {
   // No template parameters on lambdas until C++20, so use type tags instead
   auto launch_kernel = [&](auto block_size_tag, auto kernel_mask_tag) {
@@ -1382,25 +1406,25 @@ void decode_page_data(cudf::detail::hostdevice_span<PageInfo> pages,
 
     if (level_type_size == 1) {
       decode_page_data_generic<uint8_t, decode_block_size, mask>
-        <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                     chunks,
-                                                     min_row,
-                                                     num_rows,
-                                                     page_mask,
-                                                     initial_str_offsets,
-                                                     page_string_offset_indices,
-                                                     error_code);
+        <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                   chunks,
+                                                   min_row,
+                                                   num_rows,
+                                                   page_mask,
+                                                   initial_str_offsets,
+                                                   page_string_offset_indices,
+                                                   error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {
       decode_page_data_generic<uint16_t, decode_block_size, mask>
-        <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                     chunks,
-                                                     min_row,
-                                                     num_rows,
-                                                     page_mask,
-                                                     initial_str_offsets,
-                                                     page_string_offset_indices,
-                                                     error_code);
+        <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                   chunks,
+                                                   min_row,
+                                                   num_rows,
+                                                   page_mask,
+                                                   initial_str_offsets,
+                                                   page_string_offset_indices,
+                                                   error_code);
       CUDF_CUDA_TRY(cudaGetLastError());
     }
   };

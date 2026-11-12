@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -32,7 +32,7 @@ static std::string cuio_host_mem_param{
 /**
  * Base fixture for cudf benchmarks using nvbench.
  *
- * Initializes the default memory resource to use the RMM pool device resource.
+ * Initializes the default memory resource to use the RMM async device resource.
  */
 struct nvbench_base_fixture {
   inline auto make_cuda() { return rmm::mr::cuda_memory_resource{}; }
@@ -83,7 +83,7 @@ struct nvbench_base_fixture {
 
   nvbench_base_fixture(int argc, char const* const* argv)
   {
-    cudf::initialize(cudf::init_flags::ALL);
+    cudf::detail::initialize(cudf::detail::init_flags::ALL);
 
     for (int i = 1; i < argc - 1; ++i) {
       std::string arg = argv[i];
@@ -112,7 +112,7 @@ struct nvbench_base_fixture {
   }
 
   cuda::mr::any_resource<cuda::mr::device_accessible> mr;
-  std::string rmm_mode{"pool"};
+  std::string rmm_mode{"async"};
 
   std::string cuio_host_mode{"pinned_pool"};
 };

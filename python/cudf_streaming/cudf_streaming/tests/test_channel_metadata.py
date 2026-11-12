@@ -16,8 +16,11 @@ from cudf_streaming import (
     OrderKey,
     OrderScheme,
     Partitioning,
+    RowOrdering,
+    RowOrderingScope,
     TableChunk,
 )
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.core.message import Message
 
 if TYPE_CHECKING:
@@ -34,39 +37,69 @@ def _make_boundaries(context: Context, table: plc.Table) -> TableChunk:
     )
 
 
+def _column_from_values(
+    values: list[int | str | None],
+    dtype: plc.DataType,
+    non_null_value: int | str,
+) -> plc.Column:
+    if values and all(value is None for value in values):
+        return plc.Column.all_null_like(
+            plc.Column.from_iterable_of_py([non_null_value], dtype),
+            len(values),
+        )
+    return plc.Column.from_iterable_of_py(values, dtype)
+
+
+def _two_key_ordering_from_boundary_values(
+    context: Context,
+    int_values: list[int | None],
+    string_values: list[str | None],
+    *,
+    strict_boundaries: bool = False,
+) -> Ordering:
+    """Two-key Ordering with mixed INT64/STRING boundary columns."""
+    return Ordering(
+        [
+            OrderKey(
+                0,
+                plc.types.Order.ASCENDING,
+                plc.types.NullOrder.BEFORE,
+            ),
+            OrderKey(
+                1,
+                plc.types.Order.DESCENDING,
+                plc.types.NullOrder.AFTER,
+            ),
+        ],
+        _make_boundaries(
+            context,
+            plc.Table(
+                [
+                    _column_from_values(
+                        int_values, plc.DataType(plc.TypeId.INT64), 0
+                    ),
+                    _column_from_values(
+                        string_values, plc.DataType(plc.TypeId.STRING), "x"
+                    ),
+                ]
+            ),
+        ),
+        strict_boundaries=strict_boundaries,
+    )
+
+
 def _two_key_order_scheme(
-    context: Context, *, strict_boundaries: bool = False
+    context: Context,
+    *,
+    strict_boundaries: bool = False,
 ) -> OrderScheme:
     """Two-key OrderScheme with a 1-row boundary table (2 partitions)."""
-    boundaries = _make_boundaries(
-        context,
-        plc.Table(
-            [
-                plc.Column.from_iterable_of_py(
-                    [100], plc.DataType(plc.TypeId.INT64)
-                ),
-                plc.Column.from_iterable_of_py(
-                    ["abc"], plc.DataType(plc.TypeId.STRING)
-                ),
-            ]
-        ),
-    )
     return OrderScheme(
         [
-            Ordering(
-                [
-                    OrderKey(
-                        0,
-                        plc.types.Order.ASCENDING,
-                        plc.types.NullOrder.BEFORE,
-                    ),
-                    OrderKey(
-                        1,
-                        plc.types.Order.DESCENDING,
-                        plc.types.NullOrder.AFTER,
-                    ),
-                ],
-                boundaries,
+            _two_key_ordering_from_boundary_values(
+                context,
+                [100],
+                ["abc"],
                 strict_boundaries=strict_boundaries,
             )
         ]
@@ -98,6 +131,27 @@ def test_order_key() -> None:
         1, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE
     )
     assert "OrderKey" in repr(k)
+
+
+def test_row_ordering() -> None:
+    key = OrderKey(1, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)
+    ordering = RowOrdering(
+        (key,), RowOrderingScope.RANK_LOCAL, group_keys=(0,)
+    )
+
+    assert ordering.order_keys == (key,)
+    assert ordering.scope == RowOrderingScope.RANK_LOCAL
+    assert ordering.group_keys == (0,)
+    assert ordering == RowOrdering(
+        (key,), RowOrderingScope.RANK_LOCAL, group_keys=(0,)
+    )
+    assert "RowOrdering" in repr(ordering)
+
+    with pytest.raises(ValueError, match="order_keys must not be empty"):
+        RowOrdering((), RowOrderingScope.GLOBAL)
+
+    with pytest.raises(ValueError, match="must not overlap"):
+        RowOrdering((key,), RowOrderingScope.GLOBAL, group_keys=(1,))
 
 
 def test_order_scheme(context: Context) -> None:
@@ -231,6 +285,43 @@ def test_ordering_with_keys(context: Context) -> None:
     assert ordering.boundaries_aligned_with(ordering2, context.br())
 
 
+@pytest.mark.parametrize(
+    "int_values,string_values,expected_int_values,expected_string_values",
+    [
+        ([100], ["abc"], [100], ["abc"]),
+        ([], [], [], []),
+        ([None], [None], [None], [None]),
+        ([100, 100, 200], ["abc", "abc", "xyz"], [100, 200], ["abc", "xyz"]),
+    ],
+)
+def test_ordering_as_strict(
+    context: Context,
+    int_values: list[int | None],
+    string_values: list[str | None],
+    expected_int_values: list[int | None],
+    expected_string_values: list[str | None],
+) -> None:
+    """as_strict canonicalizes boundaries and marks them strict."""
+    ordering = _two_key_ordering_from_boundary_values(
+        context, int_values, string_values
+    )
+    strict_ordering = ordering.as_strict(context.br())
+    strict_ordering2 = _two_key_ordering_from_boundary_values(
+        context,
+        expected_int_values,
+        expected_string_values,
+        strict_boundaries=True,
+    )
+    assert strict_ordering.keys == ordering.keys
+    assert strict_ordering.num_boundaries == len(expected_int_values)
+    assert strict_ordering.strict_boundaries
+    assert not ordering.boundaries_aligned_with(strict_ordering, context.br())
+    assert strict_ordering.as_strict(context.br()) is strict_ordering
+    assert strict_ordering.boundaries_aligned_with(
+        strict_ordering2, context.br()
+    )
+
+
 def test_ordering_boundaries_aligned_with(context: Context) -> None:
     """Boundary comparison ignores key indices but checks values and ordering."""
     df = plc.Table(
@@ -325,6 +416,15 @@ def test_partitioning_scenarios(context: Context) -> None:
     assert Partitioning(None, None).inter_rank is None
     assert Partitioning(None, None).local is None
 
+    row_ordering = RowOrdering(
+        (OrderKey(0, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE),),
+        RowOrderingScope.GLOBAL,
+    )
+    p_ordered_rows = Partitioning(row_orderings=(row_ordering,))
+    assert p_ordered_rows.inter_rank is None
+    assert p_ordered_rows.local is None
+    assert p_ordered_rows.row_orderings == (row_ordering,)
+
     # Direct global shuffle: inter_rank=Hash, local=Aligned
     p_global = Partitioning(HashScheme((0,), 16), "inherit")
     assert p_global.inter_rank == HashScheme((0,), 16)
@@ -366,6 +466,7 @@ def test_channel_metadata() -> None:
     # Basic construction
     m = ChannelMetadata(local_count=4)
     assert m.local_count == 4
+    assert m.partitioning.row_orderings == ()
     assert not m.duplicated
 
     # With partitioning and duplicated
@@ -387,19 +488,33 @@ def test_channel_metadata() -> None:
         ChannelMetadata(local_count=-1)
 
 
-def test_message_roundtrip() -> None:
+def test_message_roundtrip(context: Context) -> None:
     """Test ChannelMetadata can round-trip through Message."""
+    key = OrderKey(1, plc.types.Order.ASCENDING, plc.types.NullOrder.BEFORE)
+    row_ordering = RowOrdering(
+        (key,), RowOrderingScope.RANK_LOCAL, group_keys=(0,)
+    )
     m = ChannelMetadata(
         local_count=4,
-        partitioning=Partitioning(HashScheme((0,), 16), "inherit"),
+        partitioning=Partitioning(
+            HashScheme((0,), 16), "inherit", row_orderings=(row_ordering,)
+        ),
         duplicated=True,
     )
     msg_m = Message(99, m)
     assert msg_m.sequence_number == 99
+
+    reservation, _ = context.br().reserve(
+        MemoryType.DEVICE, 0, allow_overbooking=True
+    )
+    copied_m = ChannelMetadata.from_message(msg_m.copy(reservation))
+    assert copied_m.partitioning.row_orderings == (row_ordering,)
+
     got_m = ChannelMetadata.from_message(msg_m)
     assert got_m.local_count == 4
     assert got_m.duplicated
     assert got_m.partitioning.inter_rank == HashScheme((0,), 16)
+    assert got_m.partitioning.row_orderings == (row_ordering,)
     assert msg_m.empty()
 
 
@@ -436,9 +551,17 @@ def test_message_roundtrip_with_order_scheme(context: Context) -> None:
             )
         ]
     )
+    row_ordering = RowOrdering(
+        order_scheme.orderings[0].keys,
+        RowOrderingScope.GLOBAL,
+    )
     m = ChannelMetadata(
         local_count=8,
-        partitioning=Partitioning(order_scheme, "inherit"),
+        partitioning=Partitioning(
+            order_scheme,
+            "inherit",
+            row_orderings=(row_ordering,),
+        ),
         duplicated=True,
     )
     msg_m = Message(42, m)
@@ -453,6 +576,7 @@ def test_message_roundtrip_with_order_scheme(context: Context) -> None:
         OrderKey(1, plc.types.Order.DESCENDING, plc.types.NullOrder.AFTER),
     )
     assert got_m.partitioning.local == "inherit"
+    assert got_m.partitioning.row_orderings == (row_ordering,)
     assert ordering.strict_boundaries
     assert ordering.num_boundaries == 2
     assert got_m.partitioning.inter_rank.orderings[0].boundaries_aligned_with(

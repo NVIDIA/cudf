@@ -1,6 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from . import (
+"""
+UDF compilation support.  Typing/lowering registration is loaded from the
+MLIR/numba_cuda_mlir backend.
+"""
+
+from cudf.core.udf.mlir_backend import (
+    cooperative_lowering,
+    cooperative_typing,
     groupby_lowering,
     groupby_typing,
     masked_lowering,

@@ -1,75 +1,154 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
 
-package_name=$1
-package_dir=$2
-shift 2
+# shellcheck source=ci/build_wheel_common.sh
+source ./ci/build_wheel_common.sh
 
-# Parse optional flags
-stable_abi=false
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --stable)
-      stable_abi=true
-      shift
-      ;;
-    *)
-      echo "Unknown option: $1" >&2
-      exit 1
-      ;;
-  esac
-done
+# Complete the shared prerequisites before building independent Python wheels.
 
-source rapids-configure-sccache
-source rapids-datetime-string
-source rapids-init-pip
-
-export SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX="${package_name}-${RAPIDS_CONDA_ARCH}-cuda${RAPIDS_CUDA_VERSION%%.*}-wheel-preprocessor-cache"
-export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
-
-RAPIDS_VERSION_SUFFIX=".post${RAPIDS_DATETIME_STRING}" \
-  rapids-generate-version > ./VERSION
-
-RAPIDS_VERSION_SUFFIX=".post${RAPIDS_DATETIME_STRING}" \
-  rapids-generate-version > ./python/cudf/cudf/VERSION
-
-cd "${package_dir}"
-
-sccache --stop-server 2>/dev/null || true
-
-rapids-logger "Building '${package_name}' wheel"
-
-RAPIDS_PIP_WHEEL_ARGS=(
-  -w dist
-  -v
-  --no-deps
-  --disable-pip-version-check
+RAPIDS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
+RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
+AUDITWHEEL_EXCLUDES=(
+  --exclude libcudf.so
+  --exclude libcudf_streaming.so
+  --exclude libkvikio.so
+  --exclude "libnvcomp.so.*"
+  --exclude librapids_logger.so
+  --exclude librapidsmpf.so
+  --exclude librmm.so
+  --exclude "libucp.so.*"
+  --exclude libucxx.so
+  --exclude "libnvrtc.so.*"
+  --exclude "libnvJitLink.so.*"
 )
 
-# Add py-api setting for stable ABI builds
-if [[ "${stable_abi}" == "true" ]] && [[ -n "${RAPIDS_PY_API:-}" ]]; then
-  RAPIDS_PIP_WHEEL_ARGS+=(--config-settings="skbuild.wheel.py-api=${RAPIDS_PY_API}")
-fi
+repair_wheel() {
+  python -m auditwheel repair \
+    "${AUDITWHEEL_EXCLUDES[@]}" \
+    -w "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}" \
+    "$@"
+}
 
-# Only use --build-constraint when build isolation is enabled.
-#
-# Passing '--build-constraint' and '--no-build-isolation` together results in an error from 'pip',
-# but we want to keep environment variable PIP_CONSTRAINT set unconditionally.
-# PIP_NO_BUILD_ISOLATION=0 means "add --no-build-isolation" (ref: https://github.com/pypa/pip/issues/5735)
-if [[ "${PIP_NO_BUILD_ISOLATION:-}" != "0" ]]; then
-    RAPIDS_PIP_WHEEL_ARGS+=(--build-constraint="${PIP_CONSTRAINT}")
-fi
+add_wheel_constraint() {
+  local package_name=$1
+  local wheel_glob=$2
+  local -a wheel_paths=()
 
-# unset PIP_CONSTRAINT (set by rapids-init-pip)... it doesn't affect builds as of pip 25.3, and
-# results in an error from 'pip wheel' when set and --build-constraint is also passed
-unset PIP_CONSTRAINT
+  # auditwheel determines the final platform/ABI tag, so resolve its output
+  # filename before recording the local direct-reference constraint.
+  mapfile -t wheel_paths < <(compgen -G "${wheel_glob}")
+  if (( ${#wheel_paths[@]} != 1 )); then
+    echo "Expected exactly one wheel matching ${wheel_glob}, found ${#wheel_paths[@]}" >&2
+    exit 1
+  fi
 
-rapids-telemetry-record build-${package_name}.log rapids-pip-retry wheel \
-    "${RAPIDS_PIP_WHEEL_ARGS[@]}" \
-    .
+  echo "${package_name}-${RAPIDS_PY_CUDA_SUFFIX} @ file://${wheel_paths[0]}" >> "${PIP_CONSTRAINT}"
+}
 
-rapids-telemetry-record sccache-stats-${package_name}.txt sccache --show-adv-stats
-sccache --stop-server >/dev/null 2>&1 || true
+(
+  setup_build_log libcudf-serial-build.log
+  SKBUILD_CMAKE_ARGS="-DUSE_NVCOMP_RUNTIME_WHEEL=ON" \
+    build_package_wheel libcudf libcudf python/libcudf
+
+  repair_wheel python/libcudf/dist/*
+
+  WHEEL_EXPORT_DIR="$(mktemp -d)"
+  unzip -d "${WHEEL_EXPORT_DIR}" "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}"/*
+  LIBCUDF_LIBRARY="$(find "${WHEEL_EXPORT_DIR}" -type f -name libcudf.so)"
+  ./ci/check_symbols.sh "${LIBCUDF_LIBRARY}"
+
+  if [[ "${RAPIDS_CUDA_MAJOR}" == "12" ]]; then
+    libcudf_max_wheel_size=650M
+  else
+    libcudf_max_wheel_size=300M
+  fi
+  finalize_package_wheel \
+    libcudf \
+    python/libcudf \
+    "${libcudf_max_wheel_size}" \
+    "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "${RAPIDS_CUDA_VERSION}")"
+
+  # Dependent builds consume the constraint file, not this subshell's wheel-directory variable.
+  add_wheel_constraint libcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_*.whl"
+) &
+wait_for_builds "$!" libcudf-serial-build.log
+
+(
+  setup_build_log libcudf-streaming-serial-build.log
+  build_package_wheel libcudf_streaming libcudf_streaming python/libcudf_streaming
+
+  repair_wheel python/libcudf_streaming/dist/*
+
+  finalize_package_wheel \
+    libcudf_streaming \
+    python/libcudf_streaming \
+    2M \
+    "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "${RAPIDS_CUDA_VERSION}")"
+
+  add_wheel_constraint libcudf-streaming "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_streaming_*.whl"
+) &
+wait_for_builds "$!" libcudf-streaming-serial-build.log
+
+# All wheels in this stage use the stable Python ABI.
+export RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
+
+(
+  setup_build_log pylibcudf-serial-build.log
+  build_package_wheel \
+    pylibcudf \
+    pylibcudf \
+    python/pylibcudf \
+    --log pylibcudf-wheel-build-output.log \
+    --stable
+  check_cython_performance_hints pylibcudf pylibcudf-wheel-build-output.log
+
+  repair_wheel python/pylibcudf/dist/*
+
+  finalize_package_wheel \
+    pylibcudf \
+    python/pylibcudf \
+    10M \
+    "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+
+  add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
+) &
+wait_for_builds "$!" pylibcudf-serial-build.log
+(
+  setup_build_log cudf-parallel-build.log
+  export SCCACHE_SERVER_PORT=4227
+  build_package_wheel cudf cudf python/cudf --stable
+
+  repair_wheel python/cudf/dist/*
+
+  finalize_package_wheel \
+    cudf \
+    python/cudf \
+    5M \
+    "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+) &
+cudf_pid=$!
+
+(
+  setup_build_log cudf-streaming-parallel-build.log
+  export SCCACHE_SERVER_PORT=4228
+  build_package_wheel \
+    cudf_streaming \
+    cudf-streaming \
+    python/cudf_streaming \
+    --log cudf-streaming-wheel-build-output.log \
+    --stable
+  check_cython_performance_hints cudf-streaming cudf-streaming-wheel-build-output.log
+
+  repair_wheel python/cudf_streaming/dist/*
+
+  finalize_package_wheel \
+    cudf_streaming \
+    python/cudf_streaming \
+    2M \
+    "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
+) &
+streaming_pid=$!
+wait_for_builds "${cudf_pid}" cudf-parallel-build.log "${streaming_pid}" cudf-streaming-parallel-build.log

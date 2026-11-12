@@ -4,7 +4,7 @@
  */
 
 #include "strings/count_matches.hpp"
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column.hpp>
@@ -20,8 +20,8 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/exec_policy.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -105,8 +105,8 @@ struct one_capture_fn {
 //
 std::unique_ptr<column> findall(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   auto const groups = prog.groups_count();
   CUDF_EXPECTS(groups <= 1, "findall does not support more than 1 capture group");
@@ -128,8 +128,13 @@ std::unique_ptr<column> findall(strings_column_view const& input,
                                               mr);
     auto const d_offsets = offsets->view().template data<size_type>();
 
-    rmm::device_uvector<string_index_pair> indices(total_matches, stream);
-    launch_for_each_kernel(make_functor(d_offsets, indices.data()), d_prog, input.size(), stream);
+    cuda::device_buffer<string_index_pair> indices(
+      stream, cudf::get_current_device_resource_ref(), total_matches, cuda::no_init);
+    launch_for_each_kernel(make_functor(d_offsets, indices.data()),
+                           d_prog,
+                           input.size(),
+                           stream,
+                           cudf::get_current_device_resource_ref());
     return std::pair(std::move(offsets), std::move(indices));
   };
 
@@ -152,7 +157,8 @@ std::unique_ptr<column> findall(strings_column_view const& input,
     });
   }();
 
-  auto strings_output = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto strings_output = cudf::make_strings_column(
+    cudf::device_span<string_index_pair const>{indices.data(), indices.size()}, stream, mr);
 
   // Build the lists column from the offsets and the strings
   return make_lists_column(input.size(),
@@ -182,8 +188,8 @@ struct find_re_fn {
 
 std::unique_ptr<column> find_re(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   auto results = make_numeric_column(data_type{type_to_id<size_type>()},
                                      input.size(),
@@ -198,10 +204,20 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(find_re_fn{*d_strings},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   } else {
     auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings}, *d_prog, d_results, input.size(), stream);
+    launch_transform_kernel(find_re_fn{*d_strings},
+                            *d_prog,
+                            d_results,
+                            input.size(),
+                            stream,
+                            cudf::get_current_device_resource_ref());
   }
 
   return results;
@@ -212,8 +228,8 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
 
 std::unique_ptr<column> findall(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::findall(input, prog, stream, mr);
@@ -221,8 +237,8 @@ std::unique_ptr<column> findall(strings_column_view const& input,
 
 std::unique_ptr<column> find_re(strings_column_view const& input,
                                 regex_program const& prog,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find_re(input, prog, stream, mr);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -15,48 +15,48 @@ namespace lists::detail {
  * @copydoc cudf::lists::index_of(cudf::lists_column_view const&,
  *                                cudf::scalar const&,
  *                                duplicate_find_option,
- *                                rmm::cuda_stream_view stream,
- *                                rmm::device_async_resource_ref)
+ *                                cuda::stream_ref stream,
+ *                                cudf::memory_resources)
  */
 std::unique_ptr<column> index_of(cudf::lists_column_view const& lists,
                                  cudf::scalar const& search_key,
                                  cudf::lists::duplicate_find_option find_option,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::index_of(cudf::lists_column_view const&,
  *                                cudf::column_view const&,
  *                                duplicate_find_option,
- *                                rmm::cuda_stream_view stream,
- *                                rmm::device_async_resource_ref)
+ *                                cuda::stream_ref stream,
+ *                                cudf::memory_resources)
  */
 std::unique_ptr<column> index_of(cudf::lists_column_view const& lists,
                                  cudf::column_view const& search_keys,
                                  cudf::lists::duplicate_find_option find_option,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::contains(cudf::lists_column_view const&,
  *                                cudf::scalar const&,
- *                                rmm::cuda_stream_view stream,
- *                                rmm::device_async_resource_ref)
+ *                                cuda::stream_ref stream,
+ *                                cudf::memory_resources)
  */
 std::unique_ptr<column> contains(cudf::lists_column_view const& lists,
                                  cudf::scalar const& search_key,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::contains(cudf::lists_column_view const&,
  *                                cudf::column_view const&,
- *                                rmm::cuda_stream_view stream,
- *                                rmm::device_async_resource_ref)
+ *                                cuda::stream_ref stream,
+ *                                cudf::memory_resources)
  */
 std::unique_ptr<column> contains(cudf::lists_column_view const& lists,
                                  cudf::column_view const& search_keys,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
 }  // namespace lists::detail
 }  // namespace cudf

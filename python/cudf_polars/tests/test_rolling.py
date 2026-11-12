@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
 @pytest.fixture(params=[False, True], ids=["nosort", "sort"])
@@ -75,7 +75,7 @@ def test_rolling_integral_orderby(engine: pl.GPUEngine, dtype):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_rolling_collect_list_raises(engine: pl.GPUEngine):
+def test_rolling_collect_list_raises(in_memory_engine):
     df = pl.LazyFrame(
         {
             "orderby": [1, 4, 8, 10, 12, 13, 14, 22],
@@ -84,7 +84,7 @@ def test_rolling_collect_list_raises(engine: pl.GPUEngine):
     )
     assert_ir_translation_raises(
         df.rolling("orderby", period="4i").agg(pl.col("values")),
-        engine,
+        in_memory_engine,
         NotImplementedError,
     )
 
@@ -104,21 +104,29 @@ def test_rolling_empty_aggs(engine: pl.GPUEngine, with_slice):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_calendrical_period_unsupported(engine: pl.GPUEngine, df):
+def test_calendrical_period_unsupported(in_memory_engine, df):
     q = df.rolling("dt", period="1mo", closed="right").agg(sum=pl.sum("values"))
 
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-def test_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
+def test_unsorted_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, 2], "values": [1, 2, 3, 4]})
     q = df.rolling("orderby", period="2i").agg(sum=pl.sum("values"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError, match=r".*rolling is not sorted, please sort first"
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(
+                RuntimeError, match=r".*rolling is not sorted, please sort first"
+            )
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            RuntimeError, match=r".*rolling is not sorted, please sort first"
+        ):
+            q.collect(engine=engine)
 
 
 def test_grouped_rolling(engine: pl.GPUEngine):
@@ -134,7 +142,7 @@ def test_grouped_rolling(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_grouped_rolling_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
+def test_grouped_rolling_unsorted_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {
             "keys": [1, None, 2, 1, 2, None],
@@ -146,42 +154,41 @@ def test_grouped_rolling_unsorted_raises(engine_raise_on_fail: pl.GPUEngine):
 
     with pytest.raises(pl.exceptions.ComputeError):
         q.collect(engine="in-memory")
-    with pytest.raises(RuntimeError, match="Input for grouped rolling is not sorted"):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(
+                RuntimeError, match="Input for grouped rolling is not sorted"
+            )
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            RuntimeError, match="Input for grouped rolling is not sorted"
+        ):
+            q.collect(engine=engine)
 
 
-def test_orderby_nulls_raises_computeerror(engine_raise_on_fail: pl.GPUEngine):
+def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, None], "values": [1, 2, 3, 4]})
     q = df.rolling("orderby", period="2i").agg(sum=pl.sum("values"))
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
-    with pytest.raises(
-        RuntimeError, match=r"Index column.*in rolling may not contain nulls"
-    ):
-        q.collect(engine=engine_raise_on_fail)
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(
+                RuntimeError,
+                match=r"Index column.*in rolling may not contain nulls",
+            )
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(
+            RuntimeError, match=r"Index column.*in rolling may not contain nulls"
+        ):
+            q.collect(engine=engine)
 
 
-@pytest.mark.xfail(
-    condition=not POLARS_VERSION_LT_136,
-    reason="polars raises now",
-)
-def test_rolling_nested_raises(engine: pl.GPUEngine):
-    q = (
-        pl.LazyFrame(
-            {
-                "orderby": [1, 2, 3, 4, 10],
-                "values": [6, 7, 8, 9, 10],
-            }
-        )
-        .rolling("orderby", period="3i", closed="left")
-        .agg(pl.col("values").rolling("orderby", period="2i").sum())
-    )
-    with pytest.raises(pl.exceptions.InvalidOperationError):
-        q.collect(engine="in-memory")
-    assert_ir_translation_raises(q, engine, NotImplementedError)
-
-
-def test_unsupported_agg(engine: pl.GPUEngine):
+def test_unsupported_agg(in_memory_engine):
     q = (
         pl.LazyFrame(
             {
@@ -192,7 +199,7 @@ def test_unsupported_agg(engine: pl.GPUEngine):
         .rolling("orderby", period="3i", closed="left")
         .agg(pl.col("values").n_unique())
     )
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
@@ -216,6 +223,12 @@ def test_rolling_null_count(engine: pl.GPUEngine, df):
     q = lf.rolling("dt", period="48h", closed="both").agg(
         nc=pl.col("null").null_count()
     )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_rolling_has_nulls_empty_window(engine: pl.GPUEngine):
+    lf = pl.LazyFrame({"t": [1, 2, 3, 4], "x": [None, 2, None, 4]})
+    q = lf.rolling("t", period="1i", closed="left").agg(hn=pl.col("x").has_nulls())
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -260,13 +273,13 @@ def test_rolling_ternary_supported(engine: pl.GPUEngine, df, expr):
         .sum(),
     ],
 )
-def test_rolling_ternary_unsupported(engine: pl.GPUEngine, df, expr):
+def test_rolling_ternary_unsupported(in_memory_engine, df, expr):
     q = df.rolling("dt", period="48h", closed="both").agg(expr.alias("out"))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-def test_rolling_rank_unsupported(engine: pl.GPUEngine, df):
+def test_rolling_rank_unsupported(in_memory_engine, df):
     q = df.rolling("dt", period="48h", closed="both").agg(
         pl.col("values").rank(method="dense", descending=False)
     )
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)

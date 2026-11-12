@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,14 +20,17 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
-#include <cub/cub.cuh>
+#include <cub/warp/warp_reduce.cuh>
+#include <cub/warp/warp_scan.cuh>
+#include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/std/algorithm>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -120,8 +123,8 @@ struct url_encoder_fn {
 
 //
 std::unique_ptr<column> url_encode(strings_column_view const& input,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
 
@@ -141,8 +144,8 @@ std::unique_ptr<column> url_encode(strings_column_view const& input,
 
 // external API
 std::unique_ptr<column> url_encode(strings_column_view const& input,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::url_encode(input, stream, mr);
@@ -216,10 +219,10 @@ CUDF_KERNEL void url_decode_char_counter(column_device_view const in_strings,
       continue;
     }
 
-    auto const in_string     = in_strings.element<string_view>(row_idx);
-    auto const in_chars      = in_string.data();
-    auto const string_length = in_string.size_bytes();
-    auto const nblocks       = cudf::util::div_rounding_up_unsafe(string_length, char_block_size);
+    auto const in_string        = in_strings.element<string_view>(row_idx);
+    auto const in_chars         = in_string.data();
+    auto const string_length    = in_string.size_bytes();
+    auto const nblocks          = cuda::ceil_div(string_length, char_block_size);
     size_type escape_char_count = 0;
 
     for (size_type block_idx = 0; block_idx < nblocks; block_idx++) {
@@ -307,7 +310,7 @@ CUDF_KERNEL void url_decode_char_replacer(column_device_view const in_strings,
     auto const in_chars      = in_string.data();
     auto const string_length = in_string.size_bytes();
     auto out_chars_string    = out_chars + out_offsets[row_idx];
-    auto const nblocks       = cudf::util::div_rounding_up_unsafe(string_length, char_block_size);
+    auto const nblocks       = cuda::ceil_div(string_length, char_block_size);
 
     // Use the last thread of the warp to initialize `out_idx` to 0.
     if (warp_lane == cudf::detail::warp_size - 1) { out_idx[local_warp_id] = 0; }
@@ -374,8 +377,8 @@ CUDF_KERNEL void url_decode_char_replacer(column_device_view const in_strings,
 
 //
 std::unique_ptr<column> url_decode(strings_column_view const& strings,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   size_type strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
@@ -384,32 +387,34 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   constexpr size_type threadblock_size = num_warps_per_threadblock * cudf::detail::warp_size;
   constexpr size_type char_block_size  = 256;
   auto const num_threadblocks =
-    std::min(65536, cudf::util::div_rounding_up_unsafe(strings_count, num_warps_per_threadblock));
+    std::min(65536, cuda::ceil_div(strings_count, num_warps_per_threadblock));
 
   auto const d_strings = column_device_view::create(strings.parent(), stream);
 
   // build offsets column by computing the output row sizes and scanning the results
-  auto row_sizes = rmm::device_uvector<size_type>(strings_count, stream);
+  auto row_sizes = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   url_decode_char_counter<num_warps_per_threadblock, char_block_size>
-    <<<num_threadblocks, threadblock_size, 0, stream.value()>>>(*d_strings, row_sizes.data());
+    <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, row_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
   // performs scan on the sizes and builds the appropriate offsets column
   auto [offsets_column, out_chars_bytes] = cudf::strings::detail::make_offsets_child_column(
     row_sizes.begin(), row_sizes.end(), stream, mr);
 
   // create the chars column
-  rmm::device_uvector<char> chars(out_chars_bytes, stream, mr);
+  rmm::device_uvector<char> chars(out_chars_bytes, stream, mr.get_output_mr());
   auto d_out_chars = chars.data();
   auto const offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
   // decode and copy the characters from the input column to the output column
   url_decode_char_replacer<num_warps_per_threadblock, char_block_size>
-    <<<num_threadblocks, threadblock_size, 0, stream.value()>>>(*d_strings, d_out_chars, offsets);
+    <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, d_out_chars, offsets);
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // copy null mask
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
+    cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),
@@ -423,8 +428,8 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
 // external API
 
 std::unique_ptr<column> url_decode(strings_column_view const& input,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::url_decode(input, stream, mr);

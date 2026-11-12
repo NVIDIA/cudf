@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,12 +9,13 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/detail/json.hpp>
 #include <cudf/io/json.hpp>
 #include <cudf/io/types.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <string>
 
@@ -26,10 +27,15 @@ void run_test(std::string const& host_input,
               char delimiter = '\n')
 {
   auto stream_view  = cudf::test::get_default_stream();
-  auto device_input = rmm::device_buffer(host_input.c_str(), host_input.size(), stream_view);
+  auto device_input = cudf::detail::make_device_buffer_async(
+    cudf::host_span<char const>{host_input.data(), host_input.size()},
+    stream_view,
+    cudf::get_current_device_resource_ref());
+  stream_view.sync();
 
   // Preprocessing FST
-  cudf::io::datasource::owning_buffer<rmm::device_buffer> device_data(std::move(device_input));
+  cudf::io::datasource::owning_buffer<cuda::device_buffer<char>> device_data(
+    std::move(device_input));
   cudf::io::json::detail::normalize_single_quotes(
     device_data, delimiter, stream_view, cudf::get_current_device_resource_ref());
 
@@ -37,9 +43,9 @@ void run_test(std::string const& host_input,
   CUDF_CUDA_TRY(cudaMemcpyAsync(preprocessed_host_output.data(),
                                 device_data.data(),
                                 preprocessed_host_output.size(),
-                                cudaMemcpyDeviceToHost,
-                                stream_view.value()))
-  stream_view.synchronize();
+                                cudaMemcpyDefault,
+                                stream_view.get()))
+  stream_view.sync();
   CUDF_TEST_EXPECT_VECTOR_EQUAL(
     preprocessed_host_output, expected_host_output, preprocessed_host_output.size());
 }

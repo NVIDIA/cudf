@@ -58,8 +58,8 @@ enum class concatenate_null_policy { IGNORE, NULLIFY_OUTPUT_ROW };
 std::unique_ptr<column> concatenate_rows(
   table_view const& input,
   concatenate_null_policy null_policy = concatenate_null_policy::IGNORE,
-  rmm::cuda_stream_view stream        = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr   = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream             = cudf::get_default_stream(),
+  cudf::memory_resources mr           = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Concatenating multiple lists on the same row of a lists column into a single list.
@@ -89,8 +89,8 @@ std::unique_ptr<column> concatenate_rows(
 std::unique_ptr<column> concatenate_list_elements(
   column_view const& input,
   concatenate_null_policy null_policy = concatenate_null_policy::IGNORE,
-  rmm::cuda_stream_view stream        = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr   = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream             = cudf::get_default_stream(),
+  cudf::memory_resources mr           = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace lists

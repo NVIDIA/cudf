@@ -1682,7 +1682,7 @@ class Index(SingleColumnFrame):
 
     def _new_index_for_reset_index(
         self, levels: tuple | None, name
-    ) -> None | Index:
+    ) -> Index | None:
         """Return the new index after .reset_index"""
         # None is caught later to return RangeIndex
         return None
@@ -2357,6 +2357,16 @@ class Index(SingleColumnFrame):
             raise KeyError(
                 f"Requested level ({level}) does not match index name ({self.name})"
             )
+
+    def _level_index_from_level(self, level) -> int:
+        """
+        Return level index from given level name or index.
+
+        A flat index only ever has one level, so this validates ``level``
+        and returns 0.
+        """
+        self._validate_index_level(level)
+        return 0
 
     def unique(self, level: int | None = None) -> Self:
         if level is not None:

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,11 +16,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -84,8 +84,8 @@ struct execute_wrap {
 template <typename device_execute_functor>
 std::unique_ptr<column> wrap(strings_column_view const& strings,
                              size_type width,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_EXPECTS(width > 0, "Positive wrap width required");
 
@@ -97,7 +97,8 @@ std::unique_ptr<column> wrap(strings_column_view const& strings,
   size_type null_count = strings.null_count();
 
   // copy null mask
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
+    cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   // build offsets column
   auto offsets_column = std::make_unique<column>(strings.offsets(), stream, mr);  // makes a copy
@@ -107,7 +108,7 @@ std::unique_ptr<column> wrap(strings_column_view const& strings,
   auto chars_buffer = rmm::device_buffer{strings.chars_begin(stream),
                                          static_cast<std::size_t>(strings.chars_size(stream)),
                                          stream,
-                                         mr};  // makes a copy
+                                         mr.get_output_mr()};  // makes a copy
   auto d_chars      = static_cast<char*>(chars_buffer.data());
 
   device_execute_functor d_execute_fctr{d_column, d_new_offsets, d_chars, width};
@@ -128,8 +129,8 @@ std::unique_ptr<column> wrap(strings_column_view const& strings,
 
 std::unique_ptr<column> wrap(strings_column_view const& strings,
                              size_type width,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::wrap<detail::execute_wrap>(strings, width, stream, mr);

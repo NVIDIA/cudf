@@ -1,20 +1,31 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from libcpp.memory cimport unique_ptr
 
 from pylibcudf.io.types cimport SourceInfo
 from pylibcudf.libcudf.io.parquet_schema cimport (
     ColumnChunk as cpp_ColumnChunk,
     ColumnChunkMetaData as cpp_ColumnChunkMetaData,
+    DecimalType as cpp_DecimalType,
     FileMetaData as cpp_FileMetaData,
+    IntType as cpp_IntType,
+    LogicalType as cpp_LogicalType,
     RowGroup as cpp_RowGroup,
+    SchemaElement as cpp_SchemaElement,
     SortingColumn as cpp_SortingColumn,
+    Statistics as cpp_Statistics,
+    TimestampType as cpp_TimestampType,
+    TimeType as cpp_TimeType,
 )
 from pylibcudf.libcudf.io.parquet_metadata cimport(
     parquet_metadata,
     parquet_schema,
     parquet_column_schema,
 )
+from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
+from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 cdef class ParquetColumnSchema:
     cdef parquet_column_schema column_schema
@@ -28,7 +39,7 @@ cdef class ParquetColumnSchema:
 
     cpdef ParquetColumnSchema child(self, int idx)
 
-    cpdef list children(self)
+    cpdef list[ParquetColumnSchema] children(self)
 
     cpdef DataType cudf_type(self)
 
@@ -41,7 +52,7 @@ cdef class ParquetSchema:
 
     cpdef ParquetColumnSchema root(self)
 
-    cpdef dict column_types(self)
+    cpdef dict[str, DataType] column_types(self)
 
 
 cdef class ParquetMetadata:
@@ -56,25 +67,67 @@ cdef class ParquetMetadata:
 
     cpdef int num_rowgroups(self)
 
-    cpdef list num_rowgroups_per_file(self)
+    cpdef list[int] num_rowgroups_per_file(self)
 
-    cpdef dict metadata(self)
+    cpdef dict[str, str] metadata(self)
 
-    cpdef list rowgroup_metadata(self)
+    cpdef list[dict[str, int]] rowgroup_metadata(self)
 
-    cpdef dict columnchunk_metadata(self)
+    cpdef dict[str, list[int]] columnchunk_metadata(self)
 
 cdef class FileMetaData:
-    cdef cpp_FileMetaData c_obj
+    cdef unique_ptr[cpp_FileMetaData] c_obj
 
     @staticmethod
-    cdef FileMetaData from_cpp(cpp_FileMetaData metadata)
+    cdef FileMetaData from_libcudf(unique_ptr[cpp_FileMetaData] metadata)
+
+cdef class DecimalType:
+    cdef cpp_DecimalType c_obj
+
+    @staticmethod
+    cdef DecimalType from_cpp(cpp_DecimalType decimal_type)
+
+cdef class TimeType:
+    cdef cpp_TimeType c_obj
+
+    @staticmethod
+    cdef TimeType from_cpp(cpp_TimeType time_type)
+
+cdef class TimestampType:
+    cdef cpp_TimestampType c_obj
+
+    @staticmethod
+    cdef TimestampType from_cpp(cpp_TimestampType timestamp_type)
+
+cdef class IntType:
+    cdef cpp_IntType c_obj
+
+    @staticmethod
+    cdef IntType from_cpp(cpp_IntType int_type)
+
+cdef class LogicalType:
+    cdef cpp_LogicalType c_obj
+
+    @staticmethod
+    cdef LogicalType from_cpp(cpp_LogicalType logical_type)
+
+cdef class SchemaElement:
+    cdef cpp_SchemaElement c_obj
+
+    @staticmethod
+    cdef SchemaElement from_cpp(cpp_SchemaElement schema_element)
 
 cdef class SortingColumn:
     cdef cpp_SortingColumn c_obj
 
     @staticmethod
     cdef SortingColumn from_cpp(cpp_SortingColumn sorting_column)
+
+cdef class ColumnChunkStatistics:
+    cdef cpp_Statistics c_obj
+
+    @staticmethod
+    cdef ColumnChunkStatistics from_cpp(cpp_Statistics statistics)
 
 cdef class ColumnChunk:
     cdef cpp_ColumnChunk c_obj
@@ -95,4 +148,10 @@ cdef class RowGroup:
     cdef RowGroup from_cpp(cpp_RowGroup row_group)
 
 cpdef ParquetMetadata read_parquet_metadata(SourceInfo src_info)
-cpdef list read_parquet_footers(SourceInfo src_info)
+cpdef list[FileMetaData] read_parquet_footers(SourceInfo src_info)
+cpdef Table read_parquet_column_chunk_bounds(
+    object file_metadatas,
+    object columns,
+    object stream=*,
+    DeviceMemoryResource mr=*,
+)

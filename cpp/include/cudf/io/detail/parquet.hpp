@@ -16,7 +16,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <span>
 #include <string>
@@ -55,13 +55,13 @@ class reader {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader(std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                   std::vector<FileMetaData>&& parquet_metadatas,
                   parquet_reader_options const& options,
-                  rmm::cuda_stream_view stream,
-                  rmm::device_async_resource_ref mr);
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header
@@ -140,15 +140,15 @@ class chunked_reader : private reader {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit chunked_reader(std::size_t chunk_read_limit,
                           std::size_t pass_read_limit,
                           std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
                           std::vector<parquet::FileMetaData>&& parquet_metadatas,
                           parquet_reader_options const& options,
-                          rmm::cuda_stream_view stream,
-                          rmm::device_async_resource_ref mr);
+                          cuda::stream_ref stream,
+                          cudf::memory_resources mr);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header.
@@ -190,7 +190,7 @@ class writer {
   explicit writer(std::vector<std::unique_ptr<data_sink>> sinks,
                   parquet_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
   /**
    * @brief Constructor for writer to handle chunked parquet options.
@@ -205,7 +205,7 @@ class writer {
   explicit writer(std::vector<std::unique_ptr<data_sink>> sinks,
                   chunked_parquet_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  rmm::cuda_stream_view stream);
+                  cuda::stream_ref stream);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header
@@ -254,7 +254,7 @@ class writer {
  * @return parquet_metadata with parquet schema, number of rows, number of row groups and key-value
  * metadata.
  */
-parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> const> sources);
+parquet_metadata read_parquet_metadata(std::span<std::unique_ptr<datasource> const> sources);
 
 /**
  * @brief Constructs FileMetaData objects from parquet dataset

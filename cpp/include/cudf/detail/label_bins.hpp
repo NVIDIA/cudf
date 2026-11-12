@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 
@@ -27,8 +27,8 @@ namespace detail {
 
 /**
  * @copydoc cudf::label_bins(column_view const& input, column_view const& left_edges, inclusive
- * left_inclusive, column_view const& right_edges, inclusive right_inclusive, rmm::cuda_stream_view,
- * rmm::device_async_resource_ref mr)
+ * left_inclusive, column_view const& right_edges, inclusive right_inclusive, cuda::stream_ref,
+ * cudf::memory_resources mr)
  *
  * @param stream Stream view on which to allocate resources and queue execution.
  */
@@ -37,8 +37,8 @@ std::unique_ptr<column> label_bins(column_view const& input,
                                    inclusive left_inclusive,
                                    column_view const& right_edges,
                                    inclusive right_inclusive,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr);
 
 /** @} */  // end of group
 }  // namespace detail

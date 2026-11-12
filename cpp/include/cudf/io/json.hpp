@@ -923,10 +923,9 @@ class json_reader_options_builder {
  *
  * @return The set of columns along with metadata
  */
-table_with_metadata read_json(
-  json_reader_options options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+table_with_metadata read_json(json_reader_options options,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Optional diagnostics produced by `read_json_with_diagnostics`.
@@ -1020,8 +1019,8 @@ struct json_reader_result_with_row_diagnostics {
  */
 json_reader_result read_json_with_diagnostics(
   json_reader_options options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reads a JSON dataset into a set of columns, additionally reporting reader
@@ -1040,8 +1039,8 @@ json_reader_result read_json_with_diagnostics(
  */
 json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
   json_reader_options options,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 
@@ -1449,7 +1448,7 @@ class json_writer_options_builder {
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void write_json(json_writer_options const& options,
-                rmm::cuda_stream_view stream = cudf::get_default_stream());
+                cuda::stream_ref stream = cudf::get_default_stream());
 
 /// @cond
 struct is_supported_json_write_type_fn {

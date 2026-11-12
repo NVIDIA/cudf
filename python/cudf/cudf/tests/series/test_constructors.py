@@ -450,7 +450,7 @@ def test_default_float_bitwidth_construction(default_float_bitwidth, data):
 
 
 def test_series_ordered_dedup():
-    # part of https://github.com/rapidsai/cudf/issues/11486
+    # part of https://github.com/NVIDIA/cudf/issues/11486
     rng = np.random.default_rng(seed=0)
     sr = cudf.Series(rng.integers(0, 100, 1000))
     # pandas unique() preserves order

@@ -10,7 +10,7 @@ import cudf
 from cudf.testing import assert_eq
 
 
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/13031")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/13031")
 @pytest.mark.parametrize("other_index", [["1", "3", "2"], [1, 2, 3]])
 def test_loc_setitem_series_index_alignment_13031(other_index):
     s = pd.Series([1, 2, 3], index=["1", "2", "3"])
@@ -352,7 +352,7 @@ def test_boolean_mask_wrong_length(indexer, mask):
 
 
 def test_loc_repeated_index_label_issue_8693():
-    # https://github.com/rapidsai/cudf/issues/8693
+    # https://github.com/NVIDIA/cudf/issues/8693
     s = pd.Series([1, 2, 3, 4], index=[0, 1, 1, 2])
     cs = cudf.from_pandas(s)
     expect = s.loc[1]
@@ -382,7 +382,7 @@ def test_series_iloc_float_int(arg):
 
 @pytest.mark.parametrize("indexer", [[1], [0, 2]])
 def test_loc_integer_categorical_issue_13014(indexer):
-    # https://github.com/rapidsai/cudf/issues/13014
+    # https://github.com/NVIDIA/cudf/issues/13014
     s = pd.Series([0, 1, 2])
     index = pd.Categorical(indexer)
     expect = s.loc[index]
@@ -396,7 +396,7 @@ def test_loc_integer_categorical_issue_13014(indexer):
 def test_loc_categorical_ordering_mismatch_issue_13652(
     index_is_ordered, label_is_ordered
 ):
-    # https://github.com/rapidsai/cudf/issues/13652
+    # https://github.com/NVIDIA/cudf/issues/13652
     s = cudf.Series(
         [0, 2, 8, 4, 2],
         index=cudf.CategoricalIndex(
@@ -414,7 +414,7 @@ def test_loc_categorical_ordering_mismatch_issue_13652(
 
 
 def test_loc_categorical_no_integer_fallback_issue_13653():
-    # https://github.com/rapidsai/cudf/issues/13653
+    # https://github.com/NVIDIA/cudf/issues/13653
     s = cudf.Series(
         [1, 2], index=cudf.CategoricalIndex([3, 4], categories=[3, 4])
     )

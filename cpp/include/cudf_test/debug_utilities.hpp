@@ -12,7 +12,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
@@ -27,8 +27,8 @@ namespace test {
  */
 std::string to_string(cudf::column_view const& col,
                       std::string const& delimiter,
-                      rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-                      cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
+                      cuda::stream_ref stream   = cudf::test::get_default_stream(),
+                      cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Convert column values to a host vector of strings
@@ -39,8 +39,8 @@ std::string to_string(cudf::column_view const& col,
  */
 std::vector<std::string> to_strings(
   cudf::column_view const& col,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::test::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Print a column view to an ostream
@@ -51,9 +51,9 @@ std::vector<std::string> to_strings(
  * @param mr Memory resources used for temporary device allocations
  */
 void print(cudf::column_view const& col,
-           std::ostream& os             = std::cout,
-           rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-           cudf::memory_resources mr    = cudf::get_current_device_resource_ref());
+           std::ostream& os          = std::cout,
+           cuda::stream_ref stream   = cudf::test::get_default_stream(),
+           cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace test
 }  // namespace CUDF_EXPORT cudf

@@ -8,8 +8,10 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <functional>
 #include <numeric>
@@ -54,8 +56,8 @@ namespace {
 template <typename ColumnView, typename ColumnDeviceView>
 std::unique_ptr<ColumnDeviceView, std::function<void(ColumnDeviceView*)>>
 create_device_view_from_view(ColumnView const& source,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   size_type num_children = source.num_children();
   // First calculate the size of memory needed to hold the child columns. This is done by calling
@@ -75,19 +77,26 @@ create_device_view_from_view(ColumnView const& source,
   // Each ColumnDeviceView instance may have child objects that
   // require setting some internal device pointers before being copied
   // from CPU to device.
-  auto const descendant_storage =
-    new rmm::device_uvector<char>(descendant_storage_bytes, stream, mr);
+  auto descendant_storage = std::make_unique<cuda::device_buffer<char>>(
+    stream,
+    mr.get_output_mr(),
+    descendant_storage_bytes,
+    cuda::no_init,
+    cuda::std::execution::prop{cuda::allocation_alignment, alignof(ColumnDeviceView)});
+  cudf::device_span<char> descendant_storage_data = *descendant_storage;
 
-  auto deleter = [descendant_storage](ColumnDeviceView* v) {
+  auto tmp_result = std::make_unique<ColumnDeviceView>(
+    source, staging_buffer.data(), descendant_storage_data.data());
+
+  auto deleter = [descendant_storage = descendant_storage.release()](ColumnDeviceView* v) {
     v->destroy();
     delete descendant_storage;
   };
 
-  std::unique_ptr<ColumnDeviceView, decltype(deleter)> result{
-    new ColumnDeviceView(source, staging_buffer.data(), descendant_storage->data()), deleter};
+  std::unique_ptr<ColumnDeviceView, decltype(deleter)> result{tmp_result.release(), deleter};
 
   // copy the CPU memory with all the children into device memory
-  detail::cuda_memcpy<char>(*descendant_storage, staging_buffer, stream);
+  detail::cuda_memcpy<char>(descendant_storage_data, staging_buffer, stream);
   return result;
 }
 
@@ -111,9 +120,7 @@ column_device_view::column_device_view(column_view source, void* h_ptr, void* d_
 
 // Construct a unique_ptr that invokes `destroy()` as it's deleter
 std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>
-column_device_view::create(column_view source,
-                           rmm::cuda_stream_view stream,
-                           rmm::device_async_resource_ref mr)
+column_device_view::create(column_view source, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   size_type num_children = source.num_children();
   if (num_children == 0) {
@@ -166,8 +173,8 @@ void mutable_column_device_view::destroy() { delete this; }
 // Construct a unique_ptr that invokes `destroy()` as it's deleter
 std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>
 mutable_column_device_view::create(mutable_column_view source,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   return source.num_children() == 0
            ? std::unique_ptr<mutable_column_device_view>(new mutable_column_device_view(source))

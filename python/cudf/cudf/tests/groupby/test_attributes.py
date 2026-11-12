@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pandas as pd
@@ -10,7 +10,7 @@ from cudf.testing._utils import expect_warning_if
 
 
 def test_groups():
-    # https://github.com/rapidsai/cudf/issues/14955
+    # https://github.com/NVIDIA/cudf/issues/14955
     df = cudf.DataFrame({"a": [1, 2] * 2}, index=[0] * 4)
     agg = df.groupby("a")
     pagg = df.to_pandas().groupby("a")

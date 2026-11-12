@@ -1,25 +1,39 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
+import cudf_polars.streaming.parallel  # noqa: F401
 from cudf_polars.containers import DataType
-from cudf_polars.dsl.ir import DataFrameScan, MapFunction
+from cudf_polars.dsl.ir import DataFrameScan, IRExecutionContext, MapFunction
 from cudf_polars.dsl.translate import Translator
+from cudf_polars.streaming.base import PartitionInfo
+from cudf_polars.streaming.dispatch import lower_ir_node
+from cudf_polars.streaming.hint_sorted import HintSorted
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import MutableMapping
 
-def test_explode_multiple_raises(engine: pl.GPUEngine):
+    from cudf_polars.dsl.ir import IR
+    from cudf_polars.streaming.dispatch import State
+
+
+def test_explode_multiple_raises(in_memory_engine):
     df = pl.LazyFrame({"a": [[1, 2], [3, 4]], "b": [[5, 6], [7, 8]]})
     q = df.explode("a", "b")
 
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("column", ["a", "b"])
@@ -37,13 +51,13 @@ def test_explode_single(engine: pl.GPUEngine, column):
 
 
 @pytest.mark.parametrize("mapping", [{"b": "a"}, {"a": "c", "b": "c"}])
-def test_rename_duplicate_raises(engine: pl.GPUEngine, mapping):
+def test_rename_duplicate_raises(in_memory_engine, mapping):
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [3, 4, 5]})
 
     q = df.rename(mapping)
 
     with pytest.raises(pl.exceptions.DuplicateError, match="is duplicate"):
-        assert_ir_translation_raises(q, engine, NotImplementedError)
+        assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(
@@ -101,7 +115,7 @@ def test_with_row_index_defaults(engine: pl.GPUEngine):
 
 
 def test_unique_hash():
-    # https://github.com/rapidsai/cudf/pull/19121#issuecomment-2959305678
+    # https://github.com/NVIDIA/cudf/pull/19121#issuecomment-2959305678
     a = pl.LazyFrame({"a": [1, 2, 3]}).rename({"a": "A"})
     b = pl.LazyFrame({"a": [4, 5, 6]}).rename({"a": "A"})
     ir_a = Translator(a._ldf.visit(), pl.GPUEngine()).translate_ir()
@@ -110,7 +124,6 @@ def test_unique_hash():
     assert hash(ir_a) != hash(ir_b)
 
 
-@pytest.mark.xfail(reason="HintIR not supported")
 def test_set_sorted_then_inner_join(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3, 4, 5]})
 
@@ -120,12 +133,115 @@ def test_set_sorted_then_inner_join(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_explode_single_legacy_options():
-    # Cover the branch: POLARS_VERSION_LT_136 or len(self.options) == 1
-    # On polars >= 1.36 this branch is only reachable by direct construction
-    # with 1-element options (the old pre-1.36 format).
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_hint_sorted_marks_column_metadata(descending, nulls_last) -> None:
+    schema = {
+        "a": DataType(pl.Int64()),
+        "b": DataType(pl.Int64()),
+    }
+    child = DataFrameScan(
+        schema,
+        pl.DataFrame(
+            {
+                "a": [2, None, 1],
+                "b": [3, 1, 2],
+            }
+        )._df,
+        None,
+    )
+    node = MapFunction(
+        schema,
+        "hint_sorted",
+        [[("a", descending, nulls_last)]],
+        child,
+    )
+
+    result = node.evaluate(cache={}, context=IRExecutionContext())
+
+    order = plc.types.Order.DESCENDING if descending else plc.types.Order.ASCENDING
+    null_order = (
+        plc.types.NullOrder.AFTER
+        if descending != nulls_last
+        else plc.types.NullOrder.BEFORE
+    )
+    assert result.column_map["a"].check_sorted(
+        order=order, null_order=null_order, stream=result.stream
+    )
+    assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
+
+
+def test_hint_sorted_marks_only_first_column_metadata() -> None:
+    schema = {
+        "a": DataType(pl.Int64()),
+        "b": DataType(pl.Int64()),
+        "c": DataType(pl.Int64()),
+    }
+    child = DataFrameScan(
+        schema,
+        pl.DataFrame(
+            {
+                "a": [1, 1, 2],
+                "b": [2, 3, 1],
+                "c": [3, 1, 2],
+            }
+        )._df,
+        None,
+    )
+    node = MapFunction(
+        schema,
+        "hint_sorted",
+        [[("a", False, False), ("b", False, False)]],
+        child,
+    )
+
+    result = node.evaluate(cache={}, context=IRExecutionContext())
+
+    assert result.column_map["a"].check_sorted(
+        order=plc.types.Order.ASCENDING,
+        null_order=plc.types.NullOrder.BEFORE,
+        stream=result.stream,
+    )
+    assert result.column_map["b"].is_sorted == plc.types.Sorted.NO
+    assert result.column_map["c"].is_sorted == plc.types.Sorted.NO
+
+
+def test_hint_sorted_normalized_options_roundtrip() -> None:
+    schema = {"a": DataType(pl.Int64())}
+    child = DataFrameScan(schema, pl.DataFrame({"a": [1]})._df, None)
+    node = MapFunction(schema, "hint_sorted", [[("a", False, False)]], child)
+    reconstructed = MapFunction(schema, "hint_sorted", node.options, child)
+
+    assert reconstructed.options == node.options
+
+
+def test_hint_sorted_streaming_lowering_preserves_partitioning() -> None:
+    schema = {"a": DataType(pl.Int64())}
+    child = DataFrameScan(schema, pl.DataFrame({"a": [1, 2, 3]})._df, None)
+    node = MapFunction(schema, "hint_sorted", [[("a", False, False)]], child)
+    child_partition = PartitionInfo(count=3)
+
+    class Rec:
+        @property
+        def state(self) -> State:
+            raise AssertionError("state is not used by hint_sorted lowering")
+
+        def __call__(self, ir: IR) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+            assert ir is child
+            return ir, {ir: child_partition}
+
+    lowered, partition_info = lower_ir_node(node, Rec())
+
+    assert isinstance(lowered, HintSorted)
+    assert lowered.options == node.options
+    assert partition_info[lowered] is child_partition
+
+
+def test_explode_reconstruct():
     df = pl.DataFrame({"a": [[1, 2], [3, 4]]})
     child = DataFrameScan({"a": DataType(pl.List(pl.Int64()))}, df._df, None)
-    # 1-element options list: [[columns_to_explode]]
-    node = MapFunction({"a": DataType(pl.Int64())}, "explode", [["a"]], child)
-    assert node.options == (("a",),)
+    node = MapFunction(
+        {"a": DataType(pl.Int64())}, "explode", [["a"], False, True], child
+    )
+    rebuilt = node.reconstruct([child])
+    assert rebuilt.options == node.options == (("a",),)

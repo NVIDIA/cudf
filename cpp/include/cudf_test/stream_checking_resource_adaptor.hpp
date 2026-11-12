@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,11 +9,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/aligned.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <iostream>
@@ -62,21 +61,21 @@ class stream_checking_resource_adaptor final {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return upstream_.allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return upstream_.allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
 
   void deallocate_sync(void* ptr,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    upstream_.deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, ptr, bytes, alignment);
+    upstream_.deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, ptr, bytes, alignment);
   }
 
   void* allocate(cuda::stream_ref stream,
                  std::size_t bytes,
                  std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    verify_stream(rmm::cuda_stream_view{stream.get()});
+    verify_stream(cuda::stream_ref{stream.get()});
     return upstream_.allocate(stream, bytes, alignment);
   }
 
@@ -85,7 +84,7 @@ class stream_checking_resource_adaptor final {
                   std::size_t bytes,
                   std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    verify_stream(rmm::cuda_stream_view{stream.get()});
+    verify_stream(cuda::stream_ref{stream.get()});
     upstream_.deallocate(stream, ptr, bytes, alignment);
   }
 
@@ -116,13 +115,13 @@ class stream_checking_resource_adaptor final {
    *
    * @throws `std::runtime_error` if provided an invalid stream
    */
-  void verify_stream(rmm::cuda_stream_view const stream) const
+  void verify_stream(cuda::stream_ref const stream) const
   {
-    auto cstream{stream.value()};
+    auto cstream{stream.get()};
     auto const invalid_stream =
       check_default_stream_ ? ((cstream == cudaStreamDefault) || (cstream == cudaStreamLegacy) ||
                                (cstream == cudaStreamPerThread))
-                            : (cstream != cudf::test::get_default_stream().value());
+                            : (cstream != cudf::test::get_default_stream().get());
 
     if (invalid_stream) {
       if (error_on_invalid_stream_) {

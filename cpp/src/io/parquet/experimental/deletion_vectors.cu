@@ -10,17 +10,17 @@
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/io/experimental/deletion_vectors.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 
 #include <numeric>
 
@@ -37,8 +37,8 @@ namespace detail {
 
 [[nodiscard]] table_with_metadata read_parquet(parquet_reader_options const& options,
                                                deletion_vector_info const& deletion_vector_info,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   auto const& serialized_roaring_bitmaps = deletion_vector_info.serialized_roaring_bitmaps;
   auto const& deletion_vector_row_counts = deletion_vector_info.deletion_vector_row_counts;
@@ -118,7 +118,7 @@ namespace detail {
 
 [[nodiscard]] size_t compute_num_deleted_rows(deletion_vector_info const& deletion_vector_info,
                                               cudf::size_type max_chunk_rows,
-                                              rmm::cuda_stream_view stream)
+                                              cuda::stream_ref stream)
 {
   auto const& serialized_roaring_bitmaps = deletion_vector_info.serialized_roaring_bitmaps;
   auto const& deletion_vector_row_counts = deletion_vector_info.deletion_vector_row_counts;
@@ -201,8 +201,8 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                std::size_t pass_read_limit,
                                                parquet_reader_options const& options,
                                                deletion_vector_info const& deletion_vector_info,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
   : _start_row{0},
     _is_unspecified_row_group_data{deletion_vector_info.row_group_offsets.empty()},
     _are_retentions{deletion_vector_info.are_retention_vectors},
@@ -211,7 +211,7 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
     // Use default mr for the internal chunked reader and row index column if we will
     // be applying the deletion vector to produce the output table
     _table_mr{deletion_vector_info.serialized_roaring_bitmaps.empty()
-                ? mr
+                ? mr.get_output_mr()
                 : cudf::get_current_device_resource_ref()}
 {
   auto const& serialized_roaring_bitmaps = deletion_vector_info.serialized_roaring_bitmaps;
@@ -262,8 +262,8 @@ chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
 chunked_parquet_reader::chunked_parquet_reader(std::size_t chunk_read_limit,
                                                parquet_reader_options const& options,
                                                deletion_vector_info const& deletion_vector_info,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
   : chunked_parquet_reader(chunk_read_limit,
                            parquet::detail::derive_pass_read_limit(chunk_read_limit),
                            options,
@@ -336,8 +336,8 @@ table_with_metadata chunked_parquet_reader::read_chunk()
  */
 table_with_metadata read_parquet(parquet_reader_options const& options,
                                  deletion_vector_info const& deletion_vector_info,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::read_parquet(options, deletion_vector_info, stream, mr);
@@ -348,7 +348,7 @@ table_with_metadata read_parquet(parquet_reader_options const& options,
  */
 size_t compute_num_deleted_rows(deletion_vector_info const& deletion_vector_info,
                                 cudf::size_type max_chunk_rows,
-                                rmm::cuda_stream_view stream)
+                                cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::compute_num_deleted_rows(deletion_vector_info, max_chunk_rows, stream);

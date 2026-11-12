@@ -769,7 +769,7 @@ class ColumnAccessor(MutableMapping):
         start, stop = key.start, key.stop
 
         if len(self) == 0:
-            # https://github.com/rapidsai/cudf/issues/18376
+            # https://github.com/NVIDIA/cudf/issues/18376
             # Any slice is valid when we have no columns
             return self._from_columns_like_self([], verify=False)
 
@@ -782,6 +782,7 @@ class ColumnAccessor(MutableMapping):
             stop = self.names[-1]
         start = self._pad_key(start, slice(None))
         stop = self._pad_key(stop, slice(None))
+        start_idx = stop_idx = None
         for idx, name in enumerate(self.names):
             if _keys_equal(name, start):  # type: ignore[arg-type]  # (padded key matches label shape)
                 start_idx = idx
@@ -790,6 +791,12 @@ class ColumnAccessor(MutableMapping):
             if _keys_equal(name, stop):  # type: ignore[arg-type]  # (padded key matches label shape)
                 stop_idx = len(self) - idx
                 break
+        if start_idx is None or stop_idx is None:
+            # Pandas uses insertion positions for missing bounds on sorted
+            # indexes and raises KeyError on unsorted indexes.
+            start_idx, stop_idx = self.to_pandas_index.slice_locs(
+                key.start, key.stop
+            )
         keys = self.names[start_idx:stop_idx]
         return type(self)(
             {k: self._data[k] for k in keys},

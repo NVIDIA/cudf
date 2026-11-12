@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -137,14 +138,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 "i_size",
             ]
         )
-        .agg(
-            # Polars sum() returns 0 for all-null groups; SQL returns NULL.
-            # See https://github.com/rapidsai/cudf/issues/19560.
-            pl.when(pl.col(amountone).count() > 0)
-            .then(pl.col(amountone).sum())
-            .otherwise(None)
-            .alias("netpaid")
-        )
+        .agg(sql_sum(pl.col(amountone)).alias("netpaid"))
     )
 
     threshold_table = ssales.select(
@@ -160,10 +154,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
             .agg(
                 # Polars sum() returns 0 for all-null groups; SQL returns NULL.
                 # See https://github.com/rapidsai/cudf/issues/19560.
-                pl.when(pl.col("netpaid").count() > 0)
-                .then(pl.col("netpaid").sum())
-                .otherwise(None)
-                .alias("paid")
+                sql_sum("netpaid").alias("paid")
             )
             .join(threshold_table, how="cross")
             .filter(pl.col("paid") > pl.col("threshold"))

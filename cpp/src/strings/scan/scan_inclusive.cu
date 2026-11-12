@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,11 +11,11 @@
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
 
@@ -71,13 +71,14 @@ struct null_iterator {
 template <typename Op>
 std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        bitmask_type const* mask,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   auto d_input = column_device_view::create(input, stream);
 
   // build indices of the scan operation results
-  rmm::device_uvector<size_type> result_map(input.size(), stream);
+  cuda::device_buffer<size_type> result_map(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{input.size()},
@@ -109,13 +110,13 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
 
 template std::unique_ptr<column> scan_inclusive<DeviceMin>(column_view const& input,
                                                            bitmask_type const* mask,
-                                                           rmm::cuda_stream_view stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr);
 
 template std::unique_ptr<column> scan_inclusive<DeviceMax>(column_view const& input,
                                                            bitmask_type const* mask,
-                                                           rmm::cuda_stream_view stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace strings

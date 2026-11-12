@@ -63,7 +63,7 @@ files:
       - py_version
       - test_base
       - test_stumpy
-  # TODO: Re-enable https://github.com/rapidsai/cudf/issues/21875
+  # TODO: Re-enable https://github.com/NVIDIA/cudf/issues/21875
   # test_tensorflow:
   #   output: none
   #   includes:
@@ -177,6 +177,10 @@ dependencies:
               cuda: "13.3"
             packages:
               - cuda-version=13.3
+          - matrix:
+              cuda: "13.4"
+            packages:
+              - cuda-version=13.4
       - output_types: requirements
         matrices:
           # if use_cuda_wheels=false is provided, do not add dependencies on any CUDA wheels
@@ -232,14 +236,15 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - cuda-toolkit==13.3.*
+          - matrix:
+              cuda: "13.4"
+              use_cuda_wheels: "true"
+            packages:
+              - cuda-toolkit==13.4.*
   py_version:
     specific:
       - output_types: conda
         matrices:
-          - matrix:
-              py: "3.11"
-            packages:
-              - python=3.11
           - matrix:
               py: "3.12"
             packages:
@@ -254,12 +259,12 @@ dependencies:
               - python=3.14
           - matrix:
             packages:
-              - python>=3.11
+              - python>=3.12
   test_base:
     common:
       - output_types: conda
         packages:
-          - cudf==26.10.*,>=0.0.0a0
+          - cudf==27.2.*,>=0.0.0a0
           - pandas
           - pytest
           - pytest-xdist
@@ -284,6 +289,17 @@ dependencies:
         packages:
           - numpy
           - pytorch>=2.4.0
+    specific:
+      - output_types: conda
+        matrices:
+          - matrix:
+              arch: x86_64
+            packages:
+              # mkl 2026.2.0 is missing libmkl_gf_lp64, which aborts numpy imports
+              # https://github.com/conda-forge/intel_repack-feedstock/issues/145
+              - mkl<2026.2
+          - matrix:
+            packages:
   test_seaborn:
     common:
       - output_types: conda
@@ -316,12 +332,10 @@ dependencies:
     common:
       - output_types: conda
         packages:
-        # TODO: Remove hypothesis pinning once https://github.com/HypothesisWorks/hypothesis/issues/4365 is resolved
-          - hypothesis>=6.131.7
+          - hypothesis
           - numpy
           - scipy
           - scikit-learn
-          - pip
           - xgboost>=2.0.1
   test_catboost:
     common:
@@ -335,13 +349,13 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - cuml==26.10.*,>=0.0.0a0
+          - cuml==27.2.*,>=0.0.0a0
           - scikit-learn
   test_cugraph:
     common:
       - output_types: conda
         packages:
-          - cugraph==26.10.*,>=0.0.0a0
+          - cugraph==27.2.*,>=0.0.0a0
           - networkx
   test_ibis:
     common:

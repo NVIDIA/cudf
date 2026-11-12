@@ -13,7 +13,11 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/strings/detail/gather.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cooperative_groups/reduce.h>
+#include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/std/utility>
 #include <thrust/transform_scan.h>
@@ -46,7 +50,7 @@ constexpr int delta_length_block_size  = 32;
  */
 template <typename level_t>
 __device__ cuda::std::pair<int, int> page_bounds(
-  page_state_s* const s, size_t min_row, size_t num_rows, bool is_bounds_pg, bool has_repetition)
+  auto* const s, size_t min_row, size_t num_rows, bool is_bounds_pg, bool has_repetition)
 {
   using block_reduce = cub::BlockReduce<int, preprocess_block_size>;
   using block_scan   = cub::BlockScan<int, preprocess_block_size>;
@@ -59,15 +63,10 @@ __device__ cuda::std::pair<int, int> page_bounds(
   auto const t     = block.thread_rank();
 
   int const max_depth = s->setup.col.max_nesting_depth;
-  int const max_def   = s->nesting_info[max_depth - 1].max_def_level;
+  int const max_def   = s->nesting.nesting_info[max_depth - 1].max_def_level;
 
-  auto const pp = &s->setup.page;
-  // Clamp to decoded level count; for chunked reads we may have decoded fewer values than
-  // num_input_values (skip_rows/num_rows), and the level buffers are only that large.
-  int const actual_num_values =
-    (pp->num_decoded_level_values > 0)
-      ? cuda::std::min(pp->num_input_values, pp->num_decoded_level_values)
-      : pp->num_input_values;
+  auto const pp               = &s->setup.page;
+  int const actual_num_values = num_values_with_decoded_levels(*pp, s->setup.col);
 
   // can skip all this if we know there are no nulls
   if (max_def == 0 && !is_bounds_pg) {
@@ -411,78 +410,91 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
                                                                    int end_value)
 {
   using cudf::detail::warp_size;
-  using WarpReduce = cub::WarpReduce<uleb128_t>;
-
-  __shared__ typename WarpReduce::TempStorage temp_storage[2];
 
   __shared__ __align__(16) delta_binary_decoder prefixes;
   __shared__ __align__(16) delta_binary_decoder suffixes;
 
-  int const t       = threadIdx.x;
-  int const lane_id = t % warp_size;
-  int const warp_id = t / warp_size;
+  auto const block  = cg::this_thread_block();
+  auto const warp   = cg::tiled_partition<cudf::detail::warp_size>(block);
+  int const t       = block.thread_rank();
+  int const lane_id = warp.thread_rank();
 
   if (t == 0) {
     auto const* suffix_start = prefixes.find_end_of_block(data, end);
     suffixes.init_binary_block(suffix_start, end);
   }
-  __syncthreads();
+  block.sync();
 
   // two warps will traverse the prefixes and suffixes and sum them up
-  auto const db = t < warp_size ? &prefixes : t < 2 * warp_size ? &suffixes : nullptr;
+  auto const warp_id = warp.meta_group_rank();
 
   size_t total_bytes = 0;
   uleb128_t max_len  = 0;
 
-  if (db != nullptr) {
+  // traverse one decoder's values, accumulating into total_bytes/max_len. dispatched below on a
+  // compile-time-constant decoder per warp rather than a runtime-selected `db` pointer: selecting
+  // the object at runtime makes the compiler speculatively load both prefixes and suffixes on
+  // every `db->` access, so the suffix warp reads prefix state (and vice versa) while the other
+  // warp writes it, which compute-sanitizer racecheck reports as a cross-warp hazard.
+  auto const traverse = [&](delta_binary_decoder& db) {
     // initialize with first value (which is stored in last_value)
-    if (lane_id == 0 && start_value == 0) { total_bytes = db->last_value; }
+    if (lane_id == 0 && start_value == 0) { total_bytes = db.last_value; }
 
     uleb128_t lane_sum = 0;
     uleb128_t lane_max = 0;
-    while (db->current_value_idx < end_value &&
-           db->current_value_idx < db->num_encoded_values(true)) {
-      // calculate values for current mini-block
-      db->calc_mini_block_values(lane_id);
+    while (db.current_value_idx < end_value && db.current_value_idx < db.num_encoded_values(true)) {
+      if (not db.advance_past_first_value(warp)) { break; }
 
-      // get per lane sum for mini-block
-      for (uint32_t i = 0; i < db->values_per_mb; i += 32) {
-        uint32_t const idx = db->current_value_idx + i + lane_id;
-        if (idx >= start_value && idx < end_value && idx < db->value_count) {
-          lane_sum += db->value[rolling_index<delta_rolling_buf_size>(idx)];
+      // decode one warp_size-wide pass at a time and read it back immediately: a whole
+      // mini-block is only fully resident in the rolling buffer while it fits, but a single
+      // pass always is
+      uint32_t const num_pass = db.values_per_mb / warp_size;
+      for (uint32_t p = 0; p < num_pass; p++) {
+        db.calc_mini_block_pass(p, warp);
+
+        // get per lane sum for this pass
+        uint32_t const idx = db.current_value_idx + p * warp_size + lane_id;
+        if (idx >= start_value && idx < end_value && idx < db.value_count) {
+          lane_sum += db.value[rolling_index<delta_rolling_buf_size>(idx)];
         }
         // need lane_max over all values, not just in bounds
-        if (idx < db->value_count) {
-          lane_max = max(lane_max, db->value[rolling_index<delta_rolling_buf_size>(idx)]);
+        if (idx < db.value_count) {
+          lane_max = max(lane_max, db.value[rolling_index<delta_rolling_buf_size>(idx)]);
         }
       }
 
-      if (lane_id == 0) { db->setup_next_mini_block(true); }
-      __syncwarp();
+      warp.sync();
+      if (lane_id == 0) { db.setup_next_mini_block(true); }
+      warp.sync();
     }
 
-    // get sum for warp.
-    // note: warp_sum will only be valid on lane 0.
-    auto const warp_sum = WarpReduce(temp_storage[warp_id]).Sum(lane_sum);
-    __syncwarp();
-    auto const warp_max = WarpReduce(temp_storage[warp_id]).Reduce(lane_max, cuda::maximum{});
+    // get sum and max for warp (valid on all lanes; only lane 0 is consumed below).
+    auto const warp_sum = cg::reduce(warp, lane_sum, cg::plus<uleb128_t>{});
+    auto const warp_max = cg::reduce(warp, lane_max, cg::greater<uleb128_t>{});
 
     if (lane_id == 0) {
       total_bytes += warp_sum;
       max_len = warp_max;
     }
+  };
+
+  if (warp_id == 0) {
+    traverse(prefixes);
+  } else if (warp_id == 1) {
+    traverse(suffixes);
   }
-  __syncthreads();
+  block.sync();
 
   // now sum up total_bytes from the two warps
   auto const final_bytes =
     cudf::detail::single_lane_block_sum_reduce<delta_preproc_block_size, 0>(total_bytes);
 
-  // Sum up prefix and suffix max lengths to get a max possible string length. Multiply that
-  // by the number of strings in a mini-block, plus one to save the last string.
+  // Sum up prefix and suffix max lengths to get a max possible string length. Multiply that by
+  // the largest number of strings a decode-loop iteration can stage, plus one to save the last
+  // string.
   auto const temp_bytes =
     cudf::detail::single_lane_block_sum_reduce<delta_preproc_block_size, 0>(max_len) *
-    (db->values_per_mb + 1);
+    (delta_max_batch_size + 1);
 
   return {final_bytes, temp_bytes};
 }
@@ -512,12 +524,12 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
                                     size_t num_rows,
                                     bool all_rows)
 {
-  __shared__ __align__(16) page_state_s state_g;
+  __shared__ __align__(16) full_page_decode_state state_g;
 
-  page_state_s* const s = &state_g;
-  int const page_idx    = blockIdx.x;
-  int const t           = threadIdx.x;
-  PageInfo* const pp    = &pages[page_idx];
+  auto* const s      = &state_g;
+  int const page_idx = blockIdx.x;
+  int const t        = threadIdx.x;
+  PageInfo* const pp = &pages[page_idx];
 
   if (t == 0) {
     // don't clobber these if they're already computed from the index
@@ -550,10 +562,8 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     return;
   }
 
-  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
-
-  // if we have size info, then we only need to do this for bounds pages
-  if (pp->has_value_info && !is_bounds_pg) { return; }
+  bool const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // Zero out everything and return early if the page is pruned
   if (not page_mask.empty() and not page_mask[page_idx]) {
@@ -562,6 +572,15 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
       pp->num_valids = 0;
       pp->start_val  = 0;
       pp->end_val    = 0;
+    }
+    return;
+  }
+
+  // if we have size info, then we only need to do this for bounds pages
+  if (pp->has_value_info && !is_bounds_pg) {
+    // pages read in full decode every value, so restore the end value cleared above
+    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
+      pp->end_val = pp->num_valids;
     }
     return;
   }
@@ -634,20 +653,18 @@ CUDF_KERNEL void __launch_bounds__(delta_preproc_block_size)
 
       // only need temp space if we're skipping values
       if (start_value > 0) {
-        // just need to parse the header of the first delta binary block to get values_per_mb
-        delta_binary_decoder db;
-        db.init_binary_block(s->stream.data_start, s->stream.data_end);
-        // save enough for one mini-block plus some extra to save the last_string
-        pp->temp_string_size = s->output_cvt.dtype_len_in * (db.values_per_mb + 1);
+        // save enough for one decode batch plus some extra to save the last_string
+        pp->temp_string_size = s->output_cvt.dtype_len_in * (delta_max_batch_size + 1);
       }
     }
   } else {
-    bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
+    bool const is_bounds_pg =
+      is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
     // if we have size info, then we only need to do this for bounds pages
     if (pp->has_value_info && !is_bounds_pg) {
       // check if we need to store values from the index
-      if (t == 0 && is_page_contained(s, min_row, num_rows)) {
+      if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
         pp->str_bytes = pp->str_bytes_from_index;
       }
       return;
@@ -693,11 +710,10 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
                                                 size_t num_rows)
 {
   using cudf::detail::warp_size;
-  using WarpReduce = cub::WarpReduce<uleb128_t>;
-  __shared__ typename WarpReduce::TempStorage temp_storage;
   __shared__ __align__(16) string_size_scan_state state_g;
   __shared__ __align__(16) delta_binary_decoder string_lengths;
 
+  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
   auto* const s      = &state_g;
   int const page_idx = blockIdx.x;
   int const t        = threadIdx.x;
@@ -723,12 +739,13 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
     return;
   }
 
-  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) {
     // check if we need to store values from the index
-    if (t == 0 && is_page_contained(s, min_row, num_rows)) {
+    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
       pp->str_bytes = pp->str_bytes_from_index;
     }
     return;
@@ -751,7 +768,7 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
     auto const end_value   = pp->end_val;
 
     if (t == 0) { string_lengths.init_binary_block(s->stream.data_start, s->stream.data_end); }
-    __syncwarp();
+    warp.sync();
 
     size_t total_bytes = 0;
 
@@ -763,24 +780,30 @@ CUDF_KERNEL void __launch_bounds__(delta_length_block_size)
     uleb128_t lane_sum = 0;
     while (string_lengths.current_value_idx < end_value &&
            string_lengths.current_value_idx < string_lengths.num_encoded_values(true)) {
-      // calculate values for current mini-block
-      string_lengths.calc_mini_block_values(t);
+      if (not string_lengths.advance_past_first_value(warp)) { break; }
 
-      // get per lane sum for mini-block
-      for (uint32_t i = 0; i < string_lengths.values_per_mb; i += warp_size) {
-        uint32_t const idx = string_lengths.current_value_idx + i + t;
+      // decode one warp_size-wide pass at a time and read it back immediately: a whole
+      // mini-block is only fully resident in the rolling buffer while it fits, but a single
+      // pass always is
+      uint32_t const num_pass = string_lengths.values_per_mb / warp_size;
+      for (uint32_t p = 0; p < num_pass; p++) {
+        string_lengths.calc_mini_block_pass(p, warp);
+
+        // get per lane sum for this pass
+        uint32_t const idx = string_lengths.current_value_idx + p * warp_size + t;
         if (idx >= start_value && idx < end_value && idx < string_lengths.value_count) {
           lane_sum += string_lengths.value[rolling_index<delta_rolling_buf_size>(idx)];
         }
       }
 
+      warp.sync();
       if (t == 0) { string_lengths.setup_next_mini_block(true); }
-      __syncwarp();
+      warp.sync();
     }
 
     // get sum for warp.
     // note: warp_sum will only be valid on lane 0.
-    auto const warp_sum = WarpReduce(temp_storage).Sum(lane_sum);
+    auto const warp_sum = cg::reduce(warp, lane_sum, cg::plus<uleb128_t>{});
 
     if (t == 0) {
       total_bytes += warp_sum;
@@ -837,12 +860,13 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
     return;
   }
 
-  bool const is_bounds_pg = is_bounds_page(s, min_row, num_rows, has_repetition);
+  bool const is_bounds_pg =
+    is_bounds_page(s->setup.page, s->setup.col.start_row, min_row, num_rows, has_repetition);
 
   // if we have size info, then we only need to do this for bounds pages
   if (pp->has_value_info && !is_bounds_pg) {
     // check if we need to store values from the index
-    if (t == 0 && is_page_contained(s, min_row, num_rows)) {
+    if (t == 0 && is_page_contained(s->setup.page, s->setup.col.start_row, min_row, num_rows)) {
       pp->str_bytes = pp->str_bytes_from_index;
     }
     return;
@@ -885,14 +909,14 @@ CUDF_KERNEL void __launch_bounds__(preprocess_block_size)
           data, dict_base, s->stream.dict_bits, dict_size, (end - data), start_value, end_value);
         break;
       case Encoding::PLAIN:
-        // Check if we have precomputed offsets available
-        if (col.column_string_offset_base == nullptr || page_string_offset_indices.empty()) {
-          CUDF_UNREACHABLE("string offsets should have been preprocessed already!");
-        }
-
         if (start_value >= end_value) {
+          // No values, so no offsets are needed (the offset buffer may be empty)
           str_bytes = 0;
         } else {
+          // Check if we have precomputed offsets available
+          if (col.column_string_offset_base == nullptr || page_string_offset_indices.empty()) {
+            CUDF_UNREACHABLE("string offsets should have been preprocessed already!");
+          }
           // The span from str_offsets[start] to str_offsets[end] includes the length prefixes
           // of strings [start+1, end), but we only want the string data bytes.
           // So we need to subtract 4 bytes per string for those embedded length prefixes.
@@ -942,17 +966,17 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
                                      uint32_t kernel_mask,
                                      bool all_rows,
                                      int level_type_size,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::stream_ref stream)
 {
   dim3 const dim_block(preprocess_block_size, 1);
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   if (level_type_size == 1) {
-    compute_string_page_bounds_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    compute_string_page_bounds_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    compute_string_page_bounds_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.value()>>>(
+    compute_string_page_bounds_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows, all_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -965,7 +989,7 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
   int s_idx = 0;
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0) {
     dim3 dim_delta(delta_preproc_block_size, 1);
-    compute_delta_page_string_sizes_kernel<<<dim_grid, dim_delta, 0, streams[s_idx++].value()>>>(
+    compute_delta_page_string_sizes_kernel<<<dim_grid, dim_delta, 0, streams[s_idx++].get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -974,12 +998,12 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
     compute_delta_length_page_string_sizes_kernel<<<dim_grid,
                                                     dim_delta,
                                                     0,
-                                                    streams[s_idx++].value()>>>(
+                                                    streams[s_idx++].get()>>>(
       pages.device_ptr(), chunks, page_mask, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
   if (BitAnd(kernel_mask, STRINGS_MASK_NON_DELTA) != 0) {
-    compute_page_string_sizes_kernel<<<dim_grid, dim_block, 0, streams[s_idx++].value()>>>(
+    compute_page_string_sizes_kernel<<<dim_grid, dim_block, 0, streams[s_idx++].get()>>>(
       pages.device_ptr(), chunks, page_mask, page_string_offset_indices, min_row, num_rows);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
@@ -993,16 +1017,18 @@ void compute_page_string_sizes_pass1(cudf::detail::hostdevice_span<PageInfo> pag
  */
 void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pages,
                                      cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
-                                     rmm::device_uvector<uint8_t>& temp_string_buf,
-                                     rmm::cuda_stream_view stream)
+                                     cuda::device_buffer<uint8_t>& temp_string_buf,
+                                     cuda::stream_ref stream)
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // check for needed temp space for DELTA_BYTE_ARRAY
   auto const need_sizes =
     cudf::detail::any_of(pages.device_begin(),
                          pages.device_end(),
                          cuda::proclaim_return_type<bool>(
                            [] __device__(auto const& page) { return page.temp_string_size != 0; }),
-                         stream);
+                         stream,
+                         mr.as_temporary());
 
   if (need_sizes) {
     // sum up all of the temp_string_sizes
@@ -1013,25 +1039,27 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
                                                            page_sizes,
                                                            int64_t{0},
                                                            cuda::std::plus<int64_t>{},
-                                                           stream);
+                                                           stream,
+                                                           mr.as_temporary());
 
     // now do an exclusive scan over the temp_string_sizes to get offsets for each
     // page's chunk of the temp buffer
-    rmm::device_uvector<int64_t> page_string_offsets(pages.size(), stream);
-    thrust::transform_exclusive_scan(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      pages.device_begin(),
-      pages.device_end(),
-      page_string_offsets.begin(),
-      page_sizes,
-      0L,
-      cuda::std::plus<int64_t>{});
+    cuda::device_buffer<int64_t> page_string_offsets(
+      stream, mr.get_temporary_mr(), pages.size(), cuda::no_init);
+    thrust::transform_exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                     pages.device_begin(),
+                                     pages.device_end(),
+                                     page_string_offsets.begin(),
+                                     page_sizes,
+                                     0L,
+                                     cuda::std::plus<int64_t>{});
 
     // allocate the temp space
-    temp_string_buf.resize(total_size, stream);
+    temp_string_buf = cuda::device_buffer<uint8_t>(
+      stream, temp_string_buf.memory_resource(), total_size, cuda::no_init);
 
     // now use the offsets array to set each page's temp_string_buf pointers
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       pages.device_begin(),
                       pages.device_end(),
                       page_string_offsets.begin(),
@@ -1070,7 +1098,7 @@ inline __device__ bool prefetch_string_data(int t,
 
   // Nominally, each thread will copy an equal number of bytes; this rounds up.
   auto const nominal_thread_bytes_to_copy =
-    cudf::util::div_rounding_up_unsafe<int32_t>(total_bytes_to_copy, block_size);
+    cuda::ceil_div<int32_t, int32_t>(total_bytes_to_copy, block_size);
   int32_t const thread_offset = nominal_thread_bytes_to_copy * t;
 
   if (thread_offset < total_bytes_to_copy) {
@@ -1365,7 +1393,7 @@ void preprocess_string_offsets(cudf::detail::hostdevice_span<PageInfo> pages,
                                size_t min_row,
                                size_t num_rows,
                                kernel_error::pointer error_code,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   if (pages.size() == 0) { return; }
 
@@ -1376,13 +1404,13 @@ void preprocess_string_offsets(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
 
   preprocess_string_offsets_kernel<preprocess_block_size, prefetch_size>
-    <<<dim_grid, dim_block, 0, stream.value()>>>(pages.device_ptr(),
-                                                 chunks,
-                                                 page_string_offset_indices,
-                                                 page_mask,
-                                                 min_row,
-                                                 num_rows,
-                                                 error_code);
+    <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                               chunks,
+                                               page_string_offset_indices,
+                                               page_mask,
+                                               min_row,
+                                               num_rows,
+                                               error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

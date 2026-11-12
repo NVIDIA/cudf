@@ -32,7 +32,9 @@ Forward + return shuffle (non-decomposable aggregations)
     to the rank that originally received it (output channels are
     rank-local, so only the originating rank can emit), and the rows are
     reassembled in input order using stamps that travel with the data
-    through both shuffles.
+    through both shuffles. For duplicated input, rank 0 inserts the logical
+    rows once, and the return shuffle restores the evaluated rows to every
+    rank that owns the input.
 """
 
 from __future__ import annotations
@@ -62,12 +64,18 @@ from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     LocalRepartitioner,
     ShuffleManager,
 )
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
+from cudf_polars.streaming.actor_graph.partitioning import (
+    NormalizedPartitioning,
+    maybe_remap_partitioning,
+)
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
-    NormalizedPartitioning,
     _evaluate_chunk_sync,
     _sample_chunks,
     allgather_and_reduce,
@@ -78,7 +86,6 @@ from cudf_polars.streaming.actor_graph.utils import (
     evaluate_batch,
     evaluate_chunk,
     gather_in_task_group,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     replay_buffered_channel,
@@ -252,6 +259,10 @@ def _origin_stamps_for(ir: Over) -> OriginStamps:
     return OriginStamps(next(names), next(names), next(names))
 
 
+# _append_origin_stamps appends three int32 columns.
+_ORIGIN_STAMP_BYTES_PER_ROW = 3 * 4
+
+
 def _append_origin_stamps(
     chunk: TableChunk,
     chunk_index: int,
@@ -327,31 +338,29 @@ def _evaluate_window_with_stamps(
     return result.with_columns(stamp_cols, stream=stream)
 
 
-def _partition_by_origin_rank(
+def _split_off_origin_rank(
     result: DataFrame,
-    num_ranks: int,
     br: Any,
-) -> tuple[TableChunk | None, list[int]]:
+) -> tuple[TableChunk, TableChunk] | None:
     """
-    Rearrange rows so partition i contains rows whose origin rank is i.
+    Split the origin-rank stamp off the evaluated result.
 
-    Returns a chunk with the rank stamp dropped and the per-rank split
-    indices for direct insertion into the return shuffle.
+    Returns the payload and the single-column rank map that routes each row
+    back to its origin, or ``None`` when there is nothing to route. The
+    rearrangement itself is left to ``insert_index``, which reserves for it.
     """
     if result.table.num_rows() == 0:
-        return None, []
+        return None
 
     stream = result.stream
     columns = result.table.columns()
-    rank_column = columns[-1]
-    payload = plc.Table(columns[:-1])
-
-    rearranged, offsets = plc.partitioning.partition(
-        payload, rank_column, num_ranks, stream=stream
-    )
     return (
-        TableChunk.from_pylibcudf_table(rearranged, stream, exclusive_view=True, br=br),
-        list(offsets[1:-1]),
+        TableChunk.from_pylibcudf_table(
+            plc.Table(columns[:-1]), stream, exclusive_view=True, br=br
+        ),
+        TableChunk.from_pylibcudf_table(
+            plc.Table([columns[-1]]), stream, exclusive_view=True, br=br
+        ),
     )
 
 
@@ -498,46 +507,55 @@ async def _distribute_by_group(
     chunk_index = 0
     async with forward_shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
-            chunk = TableChunk.from_message(
-                msg, br=context.br()
-            ).make_available_and_spill(context.br(), allow_overbooking=True)
+            chunk = TableChunk.from_message(msg, br=context.br())
+            stamp_bytes = (
+                0 if skip_insert else _ORIGIN_STAMP_BYTES_PER_ROW * chunk.shape[0]
+            )
+            # The chunk's data moves into shuffler-owned packed buffers, so the
+            # stamp columns _append_origin_stamps allocates below are both the
+            # extra we need and the only lasting addition.
+            chunk, extra = await make_table_chunks_available_or_wait(
+                context,
+                chunk,
+                reserve_extra=stamp_bytes,
+                net_memory_delta=stamp_bytes,
+            )
             sequence_numbers.append(msg.sequence_number)
             if not skip_insert:
-                # TODO: For duplicated input only rank 0 inserts here, and
-                # every row is stamped with origin_rank=0, so the return
-                # shuffle routes all output back to rank 0 and ranks
-                # 1..nranks-1 sit idle on emit. Slice the duplicated input
-                # across ranks (e.g. stripe by row index) and stamp each
-                # slice with its target origin rank to distribute emit work.
-                stamped = await ir_context.to_thread(
-                    _append_origin_stamps,
-                    chunk,
-                    chunk_index,
-                    comm.rank,
-                    ir_context.get_cuda_stream(),
-                    context.br(),
-                )
-                inserter.insert_hash(stamped, key_indices)
+                # Insert duplicated input only once so each logical row
+                # participates once in its window group. The return shuffle
+                # restores the result to all ranks owning the input rows.
+                with opaque_memory_usage(extra):
+                    stamped = await ir_context.to_thread(
+                        _append_origin_stamps,
+                        chunk,
+                        chunk_index,
+                        comm.rank,
+                        ir_context.get_cuda_stream(),
+                        context.br(),
+                    )
+                await inserter.insert_hash(stamped, key_indices)
             chunk_index += 1
     return sequence_numbers
 
 
 async def _evaluate_and_route_to_origin(
     context: Context,
+    comm: Communicator,
     ir: Over,
     ir_context: IRExecutionContext,
     forward_shuffle: ShuffleManager,
     return_shuffle: ShuffleManager,
-    num_ranks: int,
     stamps: OriginStamps,
     *,
     sort_by_input_order: bool,
+    duplicated_origin: bool,
 ) -> None:
     """Window-evaluate each local forward partition, then ship rows back to their origin."""
     async with return_shuffle.inserting() as inserter:
         for partition_id in forward_shuffle.local_partitions():
             stream = ir_context.get_cuda_stream()
-            extracted = forward_shuffle.extract_chunk(partition_id, stream)
+            extracted = await forward_shuffle.extract_chunk(partition_id, stream)
             if extracted.num_rows() == 0:
                 continue
             partition = TableChunk.from_pylibcudf_table(
@@ -551,11 +569,23 @@ async def _evaluate_and_route_to_origin(
                 stamps,
                 sort_by_input_order=sort_by_input_order,
             )
-            routed, splits = await ir_context.to_thread(
-                _partition_by_origin_rank, evaluated, num_ranks, context.br()
+            routed = await ir_context.to_thread(
+                _split_off_origin_rank, evaluated, context.br()
             )
             if routed is not None:
-                inserter.insert_split(routed, splits)
+                if duplicated_origin:
+                    # Duplicated input was inserted by rank 0 only. Every
+                    # input owner needs the window result, with the same
+                    # chunk/row stamps for local reassembly and HConcat.
+                    payload, _ = routed
+                    nrows = payload.shape[0]
+                    for rank in range(comm.nranks):
+                        await inserter.insert_split(
+                            payload,
+                            [0] * rank + [nrows] * (comm.nranks - rank - 1),
+                        )
+                else:
+                    await inserter.insert_index(*routed)
 
 
 async def _reassemble_input_chunks(
@@ -588,7 +618,7 @@ async def _reassemble_input_chunks(
         # Distinct stream per chunk so downstream work on different
         # chunks can overlap on the GPU.
         stream = ir_context.get_cuda_stream()
-        tbl = local.extract_chunk(chunk_index, stream)
+        tbl = await local.extract_chunk(chunk_index, stream)
         if tbl.num_rows() == 0:
             chunk = empty_table_chunk(ir, context, stream)
         else:
@@ -631,7 +661,7 @@ async def _shuffle_and_reassemble(
         partitioning=maybe_remap_partitioning(
             ir, metadata_in.partitioning, context=context
         ),
-        duplicated=False,
+        duplicated=metadata_in.duplicated,
     )
     await send_metadata(ch_out, context, metadata_out)
 
@@ -648,7 +678,10 @@ async def _shuffle_and_reassemble(
     )
 
     forward_shuffle = ShuffleManager(
-        context, comm, forward_modulus, forward_shuffle_collective_id
+        context,
+        comm,
+        forward_modulus,
+        forward_shuffle_collective_id,
     )
     return_shuffle = ShuffleManager(
         context,
@@ -673,19 +706,25 @@ async def _shuffle_and_reassemble(
             skip_insert,
         ),
         replay_buffered_channel(
-            context, ch_replay, ch_in, sample.chunks, metadata_in, trace_ir=ir
+            context,
+            ch_replay,
+            ch_in,
+            sample.local_sample.chunks,
+            metadata_in,
+            trace_ir=ir,
         ),
     )
 
     await _evaluate_and_route_to_origin(
         context,
+        comm,
         ir,
         ir_context,
         forward_shuffle,
         return_shuffle,
-        comm.nranks,
         stamps,
         sort_by_input_order=sort_by_input_order,
+        duplicated_origin=metadata_in.duplicated,
     )
     await _reassemble_input_chunks(
         context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer
@@ -740,8 +779,14 @@ async def over_actor(
         time. ``None`` for non-scalar Over nodes.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
-    ) as tracer:
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         metadata_in = await recv_metadata(ch_in, context)
 
         partitioning = NormalizedPartitioning.from_keys(
@@ -750,7 +795,9 @@ async def over_actor(
             keys=ir.key_indices,
             allow_subset=True,
         )
-        if partitioning.is_strictly_partitioned():
+        if partitioning.is_strictly_partitioned(
+            level="local" if metadata_in.duplicated else "flat",
+        ):
             metadata_out = ChannelMetadata(
                 local_count=metadata_in.local_count,
                 partitioning=maybe_remap_partitioning(
@@ -765,6 +812,7 @@ async def over_actor(
                 ch_out,
                 ch_in,
                 metadata_out,
+                input_metadata=metadata_in,
                 tracer=tracer,
             )
             return
@@ -824,12 +872,13 @@ def _(
         else 0
     )
     scalar_plan = _build_scalar_over_plan(ir) if ir.is_scalar else None
+    ir_context = ir_context_for_node(rec, ir)
     actors[ir] = [
         over_actor(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             channels[ir].reserve_input_slot(),
             channels[ir.children[0]].reserve_output_slot(),
             collective_ids,

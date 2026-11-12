@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,8 @@
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/find.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -258,9 +260,9 @@ TEST_F(StringsFindTest, StartsWith)
   {
     std::vector<char const*> h_targets{"éa", "th", "e", "ll", nullptr, ""};
     cudf::test::strings_column_wrapper targets(
-      h_targets.begin(),
-      h_targets.end(),
-      thrust::make_transform_iterator(h_targets.begin(), [](auto str) { return str != nullptr; }));
+      h_targets.begin(), h_targets.end(), cuda::transform_iterator(h_targets.begin(), [](auto str) {
+        return str != nullptr;
+      }));
 
     auto targets_view = cudf::strings_column_view(targets);
     cudf::test::fixed_width_column_wrapper<bool> expected({0, 1, 0, 0, 0, 1},
@@ -300,9 +302,9 @@ TEST_F(StringsFindTest, EndsWith)
   {
     std::vector<char const*> h_targets{"éa", "sé", "th", nullptr, "tést strings", ""};
     cudf::test::strings_column_wrapper targets(
-      h_targets.begin(),
-      h_targets.end(),
-      thrust::make_transform_iterator(h_targets.begin(), [](auto str) { return str != nullptr; }));
+      h_targets.begin(), h_targets.end(), cuda::transform_iterator(h_targets.begin(), [](auto str) {
+        return str != nullptr;
+      }));
 
     auto targets_view = cudf::strings_column_view(targets);
     cudf::test::fixed_width_column_wrapper<bool> expected({0, 1, 0, 0, 1, 1},

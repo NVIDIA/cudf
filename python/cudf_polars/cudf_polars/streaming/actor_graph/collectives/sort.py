@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import math
+from functools import partial
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -12,37 +13,54 @@ import polars as pl
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import (
     ChannelMetadata,
-    OrderKey,
-    OrderScheme,
-    Ordering,
     Partitioning,
+    RowOrdering,
+    RowOrderingScope,
 )
-from cudf_streaming.table_chunk import TableChunk
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl.expr import Col, NamedExpr
-from cudf_polars.dsl.ir import Empty, Sort
+from cudf_polars.dsl.ir import Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.collectives.sort_utils import (
+    build_order_scheme,
+    compute_sort_boundaries,
+    find_sort_splits,
+    select_local_split_candidates,
+    sort_by_column_names,
+    sort_to_order_keys,
+)
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.nodes import (
     default_node_single,
     shutdown_on_error,
+)
+from cudf_polars.streaming.actor_graph.partitioning import (
+    NormalizedPartitioning,
+    is_row_ordered_by,
+    maybe_remap_partitioning,
+    replace_row_orderings,
 )
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     ChunkStore,
-    NormalizedPartitioning,
     _sample_chunks,
     allgather_reduce,
     chunk_to_frame,
     chunkwise_evaluate,
-    concat_batch,
     empty_table_chunk,
     evaluate_batch,
     evaluate_chunk,
@@ -53,15 +71,13 @@ from cudf_polars.streaming.actor_graph.utils import (
     send_metadata,
 )
 from cudf_polars.streaming.repartition import Repartition
-from cudf_polars.streaming.sort import (
-    _get_final_sort_boundaries,
-    _has_simple_zlice,
-    _select_local_split_candidates,
-    find_sort_splits,
-)
+from cudf_polars.streaming.sort import _has_simple_zlice
 from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from cudf_streaming.channel_metadata import OrderKey, Ordering
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
@@ -89,7 +105,15 @@ async def _simple_top_or_bottom_k(
     await send_metadata(
         ch_out,
         context,
-        ChannelMetadata(local_count=1, partitioning=None, duplicated=True),
+        ChannelMetadata(
+            local_count=1,
+            partitioning=Partitioning(
+                row_orderings=(
+                    RowOrdering(sort_to_order_keys(ir), RowOrderingScope.GLOBAL),
+                )
+            ),
+            duplicated=True,
+        ),
     )
 
     chunks: list[TableChunk] = []
@@ -115,7 +139,7 @@ async def _simple_top_or_bottom_k(
     if comm.nranks > 1 and not metadata_in.duplicated:
         allgather = AllGatherManager(context, comm, collective_ids.pop())
         with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
+            await inserter.insert(comm.rank, chunk)
 
         stream = ir_context.get_cuda_stream()
         chunk = await evaluate_chunk(
@@ -135,84 +159,6 @@ async def _simple_top_or_bottom_k(
     await send_chunk(context, ch_out, chunk, comm.rank, tracer=tracer)
 
     await ch_out.drain(context)
-
-
-def _boundary_schema(by: list[str], by_dtypes: list[DataType]) -> Schema:
-    """Schema of boundaries table."""
-    name_gen = unique_names(by)
-    part_id_dtype = DataType(pl.UInt32())
-    return dict(
-        zip(
-            [*by, next(name_gen), next(name_gen)],
-            [*by_dtypes, part_id_dtype, part_id_dtype],
-            strict=True,
-        )
-    )
-
-
-async def _compute_sort_boundaries(
-    context: Context,
-    comm: Communicator,
-    ir_context: IRExecutionContext,
-    local_candidates_list: list[TableChunk],
-    ir: Sort,
-    by: list[str],
-    num_partitions: int,
-    allgather_id: int | None,
-) -> DataFrame:
-    """Compute global sort boundaries."""
-    column_order = list(ir.order)
-    null_order = list(ir.null_order)
-    by_dtypes = [ir.schema[b] for b in by]
-    boundary_ir = Empty(_boundary_schema(by, by_dtypes))
-    local_boundaries_df = _get_final_sort_boundaries(
-        chunk_to_frame(
-            await concat_batch(
-                local_candidates_list,
-                context,
-                boundary_ir.schema,
-                ir_context,
-            )
-            if local_candidates_list
-            else empty_table_chunk(
-                boundary_ir,
-                context,
-                ir_context.get_cuda_stream(),
-            ),
-            boundary_ir,
-        ),
-        column_order,
-        null_order,
-        num_partitions,
-    )
-    stream = local_boundaries_df.stream
-
-    if allgather_id is not None:
-        chunk = TableChunk.from_pylibcudf_table(
-            local_boundaries_df.table,
-            stream,
-            exclusive_view=True,
-            br=context.br(),
-        )
-        allgather = AllGatherManager(context, comm, allgather_id)
-        with allgather.inserting() as inserter:
-            inserter.insert(comm.rank, chunk)
-        concat_table = await allgather.extract_concatenated(
-            stream, ordered=True, ir_context=ir_context
-        )
-        return _get_final_sort_boundaries(
-            DataFrame.from_table(
-                concat_table,
-                list(boundary_ir.schema.keys()),
-                list(boundary_ir.schema.values()),
-                stream=stream,
-            ),
-            column_order,
-            null_order,
-            num_partitions,
-        )
-    else:
-        return local_boundaries_df
 
 
 async def _sample_chunks_for_size_estimate(
@@ -254,7 +200,7 @@ async def _sample_chunks_for_size_estimate(
         global_size = sample.total_size
 
     num_partitions = max(1, math.ceil(global_size / target_partition_size))
-    return sample.chunks, num_partitions
+    return sample.local_sample.chunks, num_partitions
 
 
 async def _receive_and_buffer_chunks(
@@ -286,7 +232,7 @@ async def _receive_and_buffer_chunks(
         )
         local_candidates_list.append(
             TableChunk.from_pylibcudf_table(
-                _select_local_split_candidates(
+                select_local_split_candidates(
                     df.select(by), by, num_partitions, seq_num
                 ).table,
                 df.stream,
@@ -364,9 +310,14 @@ async def _insert_chunks_into_shuffle(
             if skip_insert:
                 continue
             seq_num = msg.sequence_number
-            available_chunk = TableChunk.from_message(
-                msg, br=context.br()
-            ).make_available_and_spill(context.br(), allow_overbooking=True)
+            # The chunk's data moves into shuffler-owned packed buffers,
+            # nothing lasting is added.
+            available_chunk, _ = await make_table_chunks_available_or_wait(
+                context,
+                TableChunk.from_message(msg, br=context.br()),
+                reserve_extra=0,
+                net_memory_delta=0,
+            )
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
 
@@ -386,7 +337,7 @@ async def _insert_chunks_into_shuffle(
                 stream=stream,
                 chunk_relative=True,
             )
-            inserter.insert_split(available_chunk, splits)
+            await inserter.insert_split(available_chunk, splits)
 
     post_sort_ir = ir
     if ir.stable:
@@ -422,7 +373,7 @@ async def _extract_partitions_and_send(
     ncols_out = len(output_schema)
     for partition_id in shuffle.local_partitions():
         stream = ir_context.get_cuda_stream()
-        table = shuffle.extract_chunk(partition_id, stream)
+        table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
             table = post_sort_ir.do_evaluate(
                 *post_sort_ir._non_child_args,
@@ -444,70 +395,38 @@ async def _extract_partitions_and_send(
     await ch_out.drain(context)
 
 
-def _sort_by_column_names(ir: Sort) -> list[str]:
-    """
-    Resolve the underlying column names for a ``Sort`` node's keys.
-
-    A sort key's ``NamedExpr.name`` reflects its output alias, which may differ from
-    the referenced column after upstream renames. E.g., a join dedup may leave
-    ``ORDER BY df2.text`` represented as ``Col('text:df2').alias('text')``. Resolve
-    through the underlying ``Col`` so schema lookups use the actual column name.
-
-    Raises
-    ------
-    NotImplementedError
-        If any sort key is not a bare column reference.
-    """
-    by = [ne.value.name for ne in ir.by if isinstance(ne.value, Col)]
-    if len(by) != len(ir.by):
-        raise NotImplementedError("Sorting columns must be column names.")
-    return by
+def _can_sort_chunkwise(
+    ordering: Ordering | None, order_keys: Sequence[OrderKey]
+) -> bool:
+    """Return true when ordering avoids a global sort."""
+    if ordering is None:
+        return False
+    keys = tuple(ordering.keys)
+    return keys == tuple(order_keys[: len(keys)]) and (
+        len(keys) == len(order_keys) or ordering.strict_boundaries
+    )
 
 
-def _sort_to_order_keys(ir: Sort) -> list[OrderKey]:
-    """Convert Sort IR to list of OrderKeys."""
-    return [
-        OrderKey(index, order, null_order)
-        for index, order, null_order in zip(
-            names_to_indices(tuple(_sort_by_column_names(ir)), ir.schema),
-            ir.order,
-            ir.null_order,
-            strict=False,
-        )
-    ]
-
-
-def _build_order_scheme(
+def _sort_partitioning(
+    ir: Sort,
+    child_metadatas: Sequence[ChannelMetadata],
     context: Context,
-    order_keys: list[OrderKey],
-    sort_boundaries_df: DataFrame,
-) -> OrderScheme:
-    """Build output OrderScheme metadata."""
-    n_keys = len(order_keys)
-    stream = sort_boundaries_df.stream
-    # sort_boundaries_df will contain a tie-breaker column
-    by_table = plc.Table(sort_boundaries_df.table.columns()[:n_keys])
-    n_rows = by_table.num_rows()
-
-    strict_boundaries = (
-        n_rows == 0
-        # TODO: Use unique_count_table
-        # Requires https://github.com/rapidsai/cudf/pull/22487
-        or plc.stream_compaction.unique(
-            by_table,
-            list(range(n_keys)),
-            plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
-            plc.types.NullEquality.EQUAL,
-            stream=stream,
-        ).num_rows()
-        == n_rows
+) -> Partitioning:
+    """Preserve partition layout and replace row-order metadata after a sort."""
+    partitioning = (
+        maybe_remap_partitioning(
+            ir,
+            child_metadatas[0].partitioning,
+            context=context,
+            preserves_row_order=False,
+        )
+        or Partitioning()
     )
-
-    boundaries_chunk = TableChunk.from_pylibcudf_table(
-        by_table, stream, exclusive_view=False, br=context.br()
-    )
-    return OrderScheme(
-        [Ordering(order_keys, boundaries_chunk, strict_boundaries=strict_boundaries)]
+    if not all(isinstance(ne.value, Col) for ne in ir.by):
+        return partitioning
+    return replace_row_orderings(
+        partitioning,
+        (RowOrdering(sort_to_order_keys(ir), RowOrderingScope.GLOBAL),),
     )
 
 
@@ -527,11 +446,13 @@ async def _global_sort(
     tracer: ActorTracer | None,
 ) -> None:
     """Global sort."""
+    order_keys = sort_to_order_keys(ir)
     output_metadata = ChannelMetadata(
         local_count=max(1, num_partitions // comm.nranks),
         partitioning=Partitioning(
-            _build_order_scheme(context, _sort_to_order_keys(ir), sort_boundaries_df),
+            build_order_scheme(context, order_keys, sort_boundaries_df),
             "inherit",
+            row_orderings=(RowOrdering(order_keys, RowOrderingScope.GLOBAL),),
         ),
     )
     await send_metadata(ch_out, context, output_metadata)
@@ -577,14 +498,14 @@ async def sort_actor(
     ch_chunk_store = context.create_channel()
     async with shutdown_on_error(
         context,
-        ch_in,
-        ch_out,
-        ch_sample_replay,
-        ch_chunk_store,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        chs_aux=(ch_sample_replay, ch_chunk_store),
         trace_ir=ir,
         ir_context=ir_context,
-    ) as tracer:
-        # TODO: Skip sort if OrderScheme metadata is present and compatible.
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         metadata_in = await recv_metadata(ch_in, context)
 
         if ir.zlice is not None:
@@ -604,20 +525,45 @@ async def sort_actor(
             )
             return
 
-        order_keys = _sort_to_order_keys(ir)
+        order_keys = sort_to_order_keys(ir)
+        if is_row_ordered_by(
+            metadata_in.partitioning, order_keys, scope=RowOrderingScope.GLOBAL
+        ):
+            if tracer is not None:
+                tracer.decision = "already_row_ordered"
+                tracer.set_duplicated(duplicated=metadata_in.duplicated)
+            await send_metadata(ch_out, context, metadata_in)
+            while (msg := await ch_in.recv(context)) is not None:
+                if tracer is not None:
+                    tracer.add_chunk()
+                await ch_out.send(context, msg)
+            await ch_out.drain(context)
+            return
+
         partitioning = NormalizedPartitioning.from_keys(
             metadata_in.partitioning, comm.nranks, keys=order_keys
         )
-        if partitioning.is_strictly_sorted(order_keys):
+        ordering = partitioning.get_ordering(
+            level="local" if metadata_in.duplicated else "flat"
+        )
+        if _can_sort_chunkwise(ordering, order_keys):
             if tracer is not None:
                 tracer.decision = "already_sorted"
+            metadata_out = ChannelMetadata(
+                local_count=metadata_in.local_count,
+                partitioning=replace_row_orderings(
+                    metadata_in.partitioning or Partitioning(),
+                    (RowOrdering(order_keys, RowOrderingScope.GLOBAL),),
+                ),
+                duplicated=metadata_in.duplicated,
+            )
             await chunkwise_evaluate(
                 context,
                 ir,
                 ir_context,
                 ch_out,
                 ch_in,
-                metadata_in,
+                metadata_out,
                 tracer=tracer,
             )
             return
@@ -649,7 +595,7 @@ async def sort_actor(
         )
 
         need_allgather = comm.nranks > 1 and not metadata_in.duplicated
-        sort_boundaries_df = await _compute_sort_boundaries(
+        sort_boundaries_df = await compute_sort_boundaries(
             context,
             comm,
             ir_context,
@@ -681,10 +627,11 @@ async def sort_actor(
 
 @generate_ir_sub_network.register(Sort)
 def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]:
-    """Wire multi-partition ``Sort`` to ``sort_actor``; single-partition uses ``default_node_single``."""
+    """Use ``sort_actor`` for multi-partition sorts and the default actor otherwise."""
     executor = rec.state["config_options"].executor
     partition_info = rec.state["partition_info"]
     dynamic = executor.dynamic_planning is not None
+    ir_context = ir_context_for_node(rec, ir)
 
     if partition_info[ir].count == 1 and (
         not dynamic or isinstance(ir.children[0], Repartition)
@@ -695,16 +642,17 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
             default_node_single(
                 rec.state["context"],
                 ir,
-                rec.state["ir_context"],
+                ir_context,
                 channels[ir].reserve_input_slot(),
                 channels[ir.children[0]].reserve_output_slot(),
+                partitioning_callback=partial(_sort_partitioning, ir),
             )
         ]
         return nodes, channels
 
     (child,) = ir.children
     nodes, channels = rec(child)
-    by = _sort_by_column_names(ir)
+    by = sort_by_column_names(ir)
 
     collective_ids = list(rec.state["collective_id_map"][ir])
     expected_id_count = 3 if dynamic else 2
@@ -718,7 +666,7 @@ def _sort_rapidsmpf_network(ir: Sort, rec: SubNetGenerator) -> tuple[dict, dict]
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             ch_in=channels[child].reserve_output_slot(),
             ch_out=channels[ir].reserve_input_slot(),
             by=by,

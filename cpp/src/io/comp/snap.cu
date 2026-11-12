@@ -6,7 +6,7 @@
 #include "gpuinflate.hpp"
 #include "io/utilities/block_utils.cuh"
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::io::detail {
 constexpr int hash_bits = 12;
@@ -313,12 +313,12 @@ CUDF_KERNEL void __launch_bounds__(128)
 void gpu_snap(device_span<device_span<uint8_t const> const> inputs,
               device_span<device_span<uint8_t> const> outputs,
               device_span<codec_exec_result> results,
-              rmm::cuda_stream_view stream)
+              cuda::stream_ref stream)
 {
   dim3 dim_block(128, 1);  // 4 warps per stream, 1 stream per block
   dim3 dim_grid(inputs.size(), 1);
   if (inputs.size() > 0) {
-    snap_kernel_no_racecheck<<<dim_grid, dim_block, 0, stream.value()>>>(inputs, outputs, results);
+    snap_kernel_no_racecheck<<<dim_grid, dim_block, 0, stream.get()>>>(inputs, outputs, results);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }

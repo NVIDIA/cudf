@@ -20,7 +20,6 @@
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
 #include <thrust/tabulate.h>
-#include <thrust/transform.h>
 
 namespace cudf {
 namespace detail {
@@ -29,7 +28,8 @@ namespace detail {
  * @see cudf::detail::get_list_child_to_list_row_mapping
  */
 std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view const& offsets,
-                                                           rmm::cuda_stream_view stream)
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr)
 {
   // First, scatter the count for each repeated offset (except the first and last),
   // into a column of N `0`s, where N == number of child rows.
@@ -42,27 +42,26 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
   //   scatter result == [0, 0, 1, 0, 0, 2, 0, 0, 1, 0, 0, 1, 0]
   //
 
-  auto const num_child_rows{
-    cudf::detail::get_value<size_type>(offsets, offsets.size() - 1, stream)};
+  auto const num_child_rows{cudf::detail::get_value<int32_t>(offsets, offsets.size() - 1, stream)};
   auto per_row_mapping       = make_fixed_width_column(data_type{type_to_id<size_type>()},
                                                  num_child_rows,
                                                  mask_state::UNALLOCATED,
                                                  stream,
-                                                 cudf::get_current_device_resource_ref());
+                                                 mr.get_output_mr());
   auto per_row_mapping_begin = per_row_mapping->mutable_view().template begin<size_type>();
-  thrust::fill_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                  per_row_mapping_begin,
                  num_child_rows,
                  0);
 
   auto const begin = cuda::counting_iterator<size_type>{0};
-  thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter_if(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                      begin,
                      begin + offsets.size() - 1,
-                     offsets.begin<size_type>(),
+                     offsets.begin<int32_t>(),
                      begin,  // stencil iterator
                      per_row_mapping_begin,
-                     [offset = offsets.begin<size_type>()] __device__(auto i) {
+                     [offset = offsets.begin<int32_t>()] __device__(auto i) {
                        return offset[i] != offset[i + 1];
                      });  // [0,0,1,0,0,3,...]
 
@@ -74,7 +73,7 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
   // For the case with an empty list at index 2:
   //   scatter result == [0, 0, 1, 0, 0, 3, 0, 0, 4, 0, 0, 5, 0]
   //   inclusive_scan == [0, 0, 1, 1, 1, 3, 3, 3, 4, 4, 4, 5, 5]
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          per_row_mapping_begin,
                          per_row_mapping_begin + num_child_rows,
                          per_row_mapping_begin,
@@ -87,9 +86,10 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
-  auto input_device_view = column_device_view::create(input, stream);
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto input_device_view    = column_device_view::create(input, stream);
 
   auto input_row_is_null = [d_input = *input_device_view] __device__(auto i) {
     return d_input.is_null_nocheck(i);
@@ -98,7 +98,8 @@ size_type count_child_nulls(column_view const& input,
   return cudf::detail::count_if(gather_map->view().begin<size_type>(),
                                 gather_map->view().end<size_type>(),
                                 input_row_is_null,
-                                stream);
+                                stream,
+                                mr.as_temporary());
 }
 
 /**
@@ -109,9 +110,10 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& gather_map,
   column_view const& offsets,
   size_type num_child_nulls,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto input_device_view = column_device_view::create(input, stream);
 
   auto input_row_not_null = [d_input = *input_device_view] __device__(auto i) -> bool {
@@ -128,7 +130,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
                               gather_map.template end<size_type>(),
                               new_gather_map->mutable_view().template begin<size_type>(),
                               input_row_not_null,
-                              stream);
+                              stream,
+                              mrs.as_temporary());
 
   // Recalculate offsets after null entries are purged.
   auto new_sizes = make_fixed_width_column(data_type{type_to_id<size_type>()},
@@ -141,7 +144,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
                    new_sizes->mutable_view().template begin<size_type>(),
                    new_sizes->mutable_view().template end<size_type>(),
                    [d_gather_map  = gather_map.template begin<size_type>(),
-                    d_old_offsets = offsets.template begin<size_type>(),
+                    d_old_offsets = offsets.template begin<int32_t>(),
                     input_row_not_null] __device__(auto i) {
                      return thrust::count_if(thrust::seq,
                                              d_gather_map + d_old_offsets[i],

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -11,12 +11,18 @@ from pylibcudf.libcudf.utilities.span cimport host_span
 from rmm.pylibrmm.stream cimport Stream
 
 from ..utils cimport _get_stream
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 
 __all__ = ["join_streams"]
 
 
-cpdef void join_streams(list streams, object stream):
+cpdef void join_streams(
+    list streams: list[CudaStreamLike], object stream: CudaStreamLike
+):
     """Synchronize a stream to an event on a set of streams.
 
     This function synchronizes the joined stream with the waited-on streams
@@ -44,12 +50,12 @@ cpdef void join_streams(list streams, object stream):
     >>> # ... continue work on join_stream ...
     """
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef vector[cudaStream_t] c_streams
 
     c_streams.reserve(len(streams))
     for s in streams:
-        c_streams.push_back((<Stream>_get_stream(s)).view().value())
+        c_streams.push_back((<Stream>_get_stream(s)).view().get())
 
     with nogil:
         cpp_stream_pool.join_streams(

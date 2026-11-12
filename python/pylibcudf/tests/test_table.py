@@ -3,7 +3,7 @@
 
 import pyarrow as pa
 import pytest
-from utils import assert_table_eq
+from utils import assert_column_eq, assert_table_eq
 
 from rmm.pylibrmm.stream import Stream
 
@@ -105,6 +105,37 @@ def test_from_arrow_zero_column_preserves_num_rows():
     tbl = plc.Table.from_arrow(arrow_tbl)
     assert tbl.num_columns() == 0
     assert tbl.num_rows() == 5
+
+
+@pytest.mark.parametrize(
+    "values",
+    [[], [None, None], [[1, 2, 3]], [[1, 2, 3], [4, 5, 6]]],
+)
+def test_from_arrow_fixed_size_list_normalizes_to_list(values):
+    fixed = pa.array(values, type=pa.list_(pa.int64(), list_size=3))
+    expected = pa.array(values, type=pa.list_(pa.int64()))
+
+    column = plc.Column.from_arrow(fixed)
+    assert_column_eq(expected, column)
+
+    table = plc.Table.from_arrow(pa.table({"a": fixed}))
+    assert_table_eq(pa.table({"a": expected}), table)
+
+
+def test_from_arrow_fixed_size_list_in_mixed_table():
+    fixed = pa.array(
+        [[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64(), list_size=3)
+    )
+    arrow_table = pa.table(
+        {"fixed": fixed, "integer": pa.array([7, 8]), "string": ["a", "b"]}
+    )
+    expected = arrow_table.set_column(
+        0,
+        "fixed",
+        pa.array([[1, 2, 3], [4, 5, 6]], type=pa.list_(pa.int64())),
+    )
+
+    assert_table_eq(expected, plc.Table.from_arrow(arrow_table))
 
 
 def test_to_arrow_zero_column_preserves_num_rows():

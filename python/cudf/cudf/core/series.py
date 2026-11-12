@@ -61,7 +61,7 @@ from cudf.core.indexed_frame import (
 from cudf.core.mixins import NoNewAttributesMixin
 from cudf.core.resample import SeriesResampler
 from cudf.core.single_column_frame import SingleColumnFrame
-from cudf.core.udf.scalar_function import SeriesApplyKernel
+from cudf.core.udf.mlir_backend.scalar_function import SeriesApplyKernel
 from cudf.utils import docutils
 from cudf.utils.docutils import copy_docstring
 from cudf.utils.dtypes import (
@@ -1251,7 +1251,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         return NotImplemented
 
     @_performance_tracking
-    def map(self, arg, na_action: None | Literal["ignore"] = None) -> Self:
+    def map(self, arg, na_action: Literal["ignore"] | None = None) -> Self:
         """
         Map values of Series according to input correspondence.
 
@@ -1882,7 +1882,7 @@ class Series(SingleColumnFrame, IndexedFrame):
     @_performance_tracking
     def fillna(
         self,
-        value: None | ScalarLike | Series,
+        value: ScalarLike | Series | None,
         *,
         axis: Axis | None = None,
         inplace: bool = False,
@@ -2618,8 +2618,8 @@ class Series(SingleColumnFrame, IndexedFrame):
         Thus the allowed operations within ``func`` are limited to `those
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
-        For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
+        For more information, see the :doc:`cuDF guide to user defined functions
+        </cudf/guide-to-udfs>`.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -2751,8 +2751,8 @@ class Series(SingleColumnFrame, IndexedFrame):
         >>> sr.apply(f)  # doctest: +SKIP
 
         For a complete list of supported functions and methods that may be
-        used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
+        used to manipulate string data, see the :doc:`UDF guide
+        </cudf/guide-to-udfs>`
 
         """
         if convert_dtype is not True:
@@ -3043,7 +3043,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         >>> ser1 = cudf.Series([0.9, 0.13, 0.62])
         >>> ser2 = cudf.Series([0.12, 0.26, 0.51])
         >>> ser1.corr(ser2, method="pearson")
-        np.float64(-0.20454263717316126)
+        np.float64(-0.20454263717316123)
         >>> ser1.corr(ser2, method="spearman")
         np.float64(-0.5)
         """
@@ -5158,7 +5158,7 @@ class DatetimeProperties(BaseDatelikeProperties):
             )
 
         # TODO: Remove following validations
-        # once https://github.com/rapidsai/cudf/issues/5991
+        # once https://github.com/NVIDIA/cudf/issues/5991
         # is implemented
         not_implemented_formats = {
             "%c",
@@ -5170,7 +5170,7 @@ class DatetimeProperties(BaseDatelikeProperties):
                 raise NotImplementedError(
                     f"{d_format} date-time format is not "
                     f"supported yet, Please follow this issue "
-                    f"https://github.com/rapidsai/cudf/issues/5991 "
+                    f"https://github.com/NVIDIA/cudf/issues/5991 "
                     f"for tracking purposes."
                 )
         if isinstance(self.series.dtype, pd.ArrowDtype):

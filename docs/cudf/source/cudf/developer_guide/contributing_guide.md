@@ -16,7 +16,7 @@ These linting checks must all pass when submitting a pull request, and the
 Linter configurations are primarily stored in `pyproject.toml`, shared among other Python projects, and extended with cudf specific configurations in `python/cudf/pyproject.toml`
 
 For more information on how to use pre-commit hooks, see the code formatting section of the
-[overall contributing guide](https://github.com/rapidsai/cudf/blob/main/CONTRIBUTING.md#using-pre-commit-hooks).
+[overall contributing guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#using-pre-commit-hooks).
 
 ## Deprecating and removing code
 
@@ -41,6 +41,7 @@ A mock example of a deprecation:
 ```python
 import warnings
 
+
 def foo(self):
     """
     Return a result from foo
@@ -51,7 +52,7 @@ def foo(self):
     warnings.warn(
         "`Series.foo` is deprecated and will be removed in a future version of cudf. "
         "Use `Series.new_foo` instead.",
-        FutureWarning
+        FutureWarning,
     )
 ```
 

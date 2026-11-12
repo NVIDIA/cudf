@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,7 +17,7 @@ namespace reduction::detail {
 
 /**
  * @copydoc cudf::reduce(column_view const&, reduce_aggregation const&, data_type,
- * std::optional<std::reference_wrapper<scalar const>>, rmm::device_async_resource_ref)
+ * std::optional<std::reference_wrapper<scalar const>>, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
@@ -25,8 +25,8 @@ std::unique_ptr<scalar> reduce(column_view const& col,
                                reduce_aggregation const& agg,
                                data_type output_dtype,
                                std::optional<std::reference_wrapper<scalar const>> init,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr);
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr);
 
 }  // namespace reduction::detail
 }  // namespace cudf

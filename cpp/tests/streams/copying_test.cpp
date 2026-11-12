@@ -17,6 +17,7 @@
 #include <cuda/iterator>
 
 #include <limits>
+#include <span>
 
 class CopyingTest : public cudf::test::BaseFixture {};
 
@@ -340,7 +341,7 @@ TEST_F(CopyingTest, ContiguousSplit)
 
   std::vector<std::string> base_strings(
     {"banana", "pear", "apple", "pecans", "vanilla", "cat", "mouse", "green"});
-  auto string_randomizer = thrust::make_transform_iterator(
+  auto string_randomizer = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
     [&base_strings](cudf::size_type i) { return base_strings[rand() % base_strings.size()]; });
 
@@ -348,7 +349,8 @@ TEST_F(CopyingTest, ContiguousSplit)
   std::vector<std::string> strings(string_randomizer, string_randomizer + size);
   cudf::test::strings_column_wrapper col2(strings.begin(), strings.end());
   cudf::table_view tbl({col, col2});
-  auto result = cudf::contiguous_split(tbl, splits, cudf::test::get_default_stream());
+  auto result = cudf::contiguous_split(
+    tbl, std::span<cudf::size_type const>{splits}, cudf::test::get_default_stream());
 }
 
 CUDF_TEST_PROGRAM_MAIN()

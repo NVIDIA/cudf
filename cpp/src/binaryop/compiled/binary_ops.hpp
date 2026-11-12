@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2018-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -26,22 +26,22 @@ std::unique_ptr<column> string_null_min_max(scalar const& lhs,
                                             column_view const& rhs,
                                             binary_operator op,
                                             data_type output_type,
-                                            rmm::cuda_stream_view stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr);
 
 std::unique_ptr<column> string_null_min_max(column_view const& lhs,
                                             scalar const& rhs,
                                             binary_operator op,
                                             data_type output_type,
-                                            rmm::cuda_stream_view stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr);
 
 std::unique_ptr<column> string_null_min_max(column_view const& lhs,
                                             column_view const& rhs,
                                             binary_operator op,
                                             data_type output_type,
-                                            rmm::cuda_stream_view stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr);
 
 /**
  * @brief Performs a binary operation between a string scalar and a string
@@ -59,15 +59,15 @@ std::unique_ptr<column> string_null_min_max(column_view const& lhs,
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream      CUDA stream used for device memory operations and kernel launches.
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return std::unique_ptr<column> Output column
  */
 std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr);
 
 /**
  * @brief Performs a binary operation between a string column and a string
@@ -85,15 +85,15 @@ std::unique_ptr<column> binary_operation(scalar const& lhs,
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream      CUDA stream used for device memory operations and kernel launches.
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return std::unique_ptr<column> Output column
  */
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          scalar const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr);
 
 /**
  * @brief Performs a binary operation between two string columns.
@@ -110,31 +110,34 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
  * @param op          The binary operator enum
  * @param output_type The desired data type of the output column
  * @param stream      CUDA stream used for device memory operations and kernel launches.
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return std::unique_ptr<column> Output column
  */
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr);
 
 void binary_operation(mutable_column_view& out,
                       scalar const& lhs,
                       column_view const& rhs,
                       binary_operator op,
-                      rmm::cuda_stream_view stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       scalar const& rhs,
                       binary_operator op,
-                      rmm::cuda_stream_view stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 void binary_operation(mutable_column_view& out,
                       column_view const& lhs,
                       column_view const& rhs,
                       binary_operator op,
-                      rmm::cuda_stream_view stream);
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr);
 
 // Defined in util.cpp
 /**
@@ -157,6 +160,21 @@ std::optional<data_type> get_common_type(data_type out, data_type lhs, data_type
  */
 bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_operator op);
 
+/**
+ * @brief Check if the operation is a STRING NULL_MIN or NULL_MAX.
+ *
+ * These operations are not handled by the type-dispatched implementation and are instead
+ * computed by `string_null_min_max`. This is the single source of truth shared by
+ * `binary_operation` and the public `cudf::binops::is_supported_operation`.
+ *
+ * @param out output type of the binary operation
+ * @param lhs first operand type of the binary operation
+ * @param rhs second operand type of the binary operation
+ * @param op binary operator enum.
+ * @return true if all types are STRING and @p op is NULL_MIN or NULL_MAX
+ */
+bool is_string_null_min_max(data_type out, data_type lhs, data_type rhs, binary_operator op);
+
 // Defined in individual .cu files.
 /**
  * @brief Deploys single type or double type dispatcher that runs binary operation on each element
@@ -178,7 +196,7 @@ void apply_binary_op(mutable_column_view& out,
                      column_view const& rhs,
                      bool is_lhs_scalar,
                      bool is_rhs_scalar,
-                     rmm::cuda_stream_view stream);
+                     cuda::stream_ref stream);
 /**
  * @brief Deploys single type or double type dispatcher that runs equality operation on each element
  * of @p lhs and @p rhs columns.
@@ -202,7 +220,7 @@ void dispatch_equality_op(mutable_column_view& out,
                           bool is_lhs_scalar,
                           bool is_rhs_scalar,
                           binary_operator op,
-                          rmm::cuda_stream_view stream);
+                          cuda::stream_ref stream);
 }  // namespace compiled
 }  // namespace binops
 }  // namespace cudf

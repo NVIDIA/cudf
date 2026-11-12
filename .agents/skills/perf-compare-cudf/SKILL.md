@@ -4,14 +4,14 @@ description: Benchmark a cuDF branch, WIP changes, or a PR against the `main` br
 ---
 
 Use this skill when the user asks to compare libcudf benchmark performance for:
-- **the current branch or WIP changes** against `rapidsai/cudf` `main`.
-- **a cudf PR link or number** against `rapidsai/cudf` `main`.
+- **the current branch or WIP changes** against `NVIDIA/cudf` `main`.
+- **a cudf PR link or number** against `NVIDIA/cudf` `main`.
 
 # Goal
 
-Run the same selected libcudf NVBench benchmarks on the target (current WIP or cudf PR) and then on `rapidsai/cudf` `main`, then report meaningful differences.
+Run the same selected libcudf NVBench benchmarks on the target (current WIP or cudf PR) and then on `NVIDIA/cudf` `main`, then report meaningful differences.
 
-`<cudf-remote>` is the git remote for `https://github.com/rapidsai/cudf` (often `upstream`). Detect it with `git remote -v`.
+`<cudf-remote>` is the git remote for `https://github.com/NVIDIA/cudf` (often `upstream`). Detect it with `git remote -v`.
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ Run the same selected libcudf NVBench benchmarks on the target (current WIP or c
 - For current-branch or WIP targets: keep target changes applied for the target run.
 - For PR targets: Stash any unrelated local changes, record the stash name, and check out the PR:
   ```bash
-  gh pr checkout <PR_NUMBER> --repo rapidsai/cudf
+  gh pr checkout <PR_NUMBER> --repo NVIDIA/cudf
   ```
 - For PR targets: After switching, check if the PR branch is behind `<cudf-remote>/main` and add a merge commit. DO **NOT** push anything. If there are merge conflicts, stop and guide the user to fix them.
 

@@ -10,15 +10,12 @@ import pytest
 import polars as pl
 
 from cudf_polars import execute_with_cudf
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
-from cudf_polars.utils.versions import (
-    POLARS_VERSION_LT_136,
-    POLARS_VERSION_LT_138,
-)
 
 
 @pytest.fixture
@@ -152,15 +149,37 @@ def test_supported_stringfunction_expression(engine: pl.GPUEngine, ldf):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_starts_ends_with_null_literal(engine: pl.GPUEngine):
+    q = pl.LazyFrame({"a": ["apple", None, "banana"]}).select(
+        pl.col("a").str.starts_with(pl.lit(None, dtype=pl.String)).alias("starts"),
+        pl.col("a").str.ends_with(pl.lit(None, dtype=pl.String)).alias("ends"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_unsupported_stringfunction(engine: pl.GPUEngine, ldf):
     q = ldf.select(pl.col("a").str.encode("hex"))
 
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-def test_contains_re_non_strict_raises(engine: pl.GPUEngine, ldf):
+def test_contains_re_non_strict(engine: pl.GPUEngine, ldf):
     q = ldf.select(pl.col("a").str.contains(".", strict=False))
+    assert_gpu_result_equal(q, engine=engine)
 
+
+def test_contains_re_non_strict_invalid(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.contains("[", strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_contains_empty_regex_with_null(engine: pl.GPUEngine):
+    q = pl.LazyFrame({"a": ["abc", None, ""]}).select(pl.col("a").str.contains(""))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_contains_re_non_strict_libcudf_unsupported(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.contains("a{1000}", strict=False))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -231,6 +250,20 @@ def test_slice_column(engine: pl.GPUEngine, slice_column_data):
     else:
         q = slice_column_data.select(pl.col("a").str.slice(pl.col("start")))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+    translator = Translator(q._ldf.visit(), engine)
+    translator.translate_ir()
+    assert any(
+        "only supports literal start and stop" in str(e) for e in translator.errors
+    )
+
+
+@pytest.mark.parametrize("name", ["head", "tail"])
+def test_head_tail_expr_n(engine: pl.GPUEngine, name):
+    df = pl.LazyFrame(
+        {"a": ["abcdef", "hello", None, "xy", "abcd"], "n": [2, 0, 3, None, -1]}
+    )
+    q = df.select(getattr(pl.col("a").str, name)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.fixture
@@ -304,7 +337,7 @@ def test_to_datetime(
         assert_ir_translation_raises(q, engine, NotImplementedError)
     elif outcome == "collect_error":
         with pytest.raises(pl.exceptions.InvalidOperationError):
-            q.collect()
+            q.collect(engine="in-memory")
         if is_streaming_engine(engine):
             with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
                 q.collect(engine=engine)
@@ -313,6 +346,34 @@ def test_to_datetime(
                 q.collect(engine=engine)
     else:
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "format",
+    [
+        "%Y-%m-%dT%H:%M:%S%#z",
+        "%#z",
+        # A literal "%%" does not cancel a following "%#" flag.
+        "%Y-%m-%d %%%#z",
+    ],
+)
+def test_to_datetime_unsupported_format_raises(engine: pl.GPUEngine, format):
+    df = pl.LazyFrame({"a": ["2020-01-01T00:00:00Z", "invalid"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime, format, strict=False, cache=False)
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_to_datetime_escaped_percent_hash(engine: pl.GPUEngine):
+    # "%%" is a literal "%", so "%%#" is not the "#" flag. The literal suffix
+    # is "#x" rather than "#z": Polars matches the "%#z" substring of "%%#z"
+    # as a timezone directive and rejects every conversion.
+    df = pl.LazyFrame({"a": ["2020-01-01 %#x", "2021-06-15 %#x"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime("ms"), "%Y-%m-%d %%#x", cache=False)
+    )
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -339,13 +400,13 @@ def test_replace_re(engine: pl.GPUEngine, ldf):
 @pytest.mark.parametrize(
     "target,repl",
     [
-        (["A", "de", "kLm", "awef"], "a"),
-        (["A", "de", "kLm", "awef"], ""),
+        (["A", "de", "kLm", "awef"], ["a"]),
+        (["A", "de", "kLm", "awef"], [""]),
         (["A", "de", "kLm", "awef"], ["a", "b", "c", "d"]),
         (["A", "de", "kLm", "awef"], ["a", "b", "c", ""]),
         (
-            pl.lit(pl.Series(["A", "de", "kLm", "awef"])),
-            pl.lit(pl.Series(["a", "b", "c", "d"])),
+            pl.lit(pl.Series(["A", "de", "kLm", "awef"])).implode(),
+            pl.lit(pl.Series(["a", "b", "c", "d"])).implode(),
         ),
     ],
 )
@@ -356,7 +417,10 @@ def test_replace_many(engine: pl.GPUEngine, ldf, target, repl):
 
 @pytest.mark.parametrize(
     "target,repl",
-    [(["A", ""], ["a", "b"]), (pl.col("a").drop_nulls(), pl.col("a").drop_nulls())],
+    [
+        (["A", ""], ["a", "b"]),
+        (pl.col("a").drop_nulls().implode(), pl.col("a").drop_nulls().implode()),
+    ],
 )
 def test_replace_many_notimplemented(engine: pl.GPUEngine, ldf, target, repl):
     q = ldf.select(pl.col("a").str.replace_many(target, repl))
@@ -365,15 +429,16 @@ def test_replace_many_notimplemented(engine: pl.GPUEngine, ldf, target, repl):
 
 def test_replace_many_ascii_case(engine: pl.GPUEngine, ldf):
     q = ldf.select(
-        pl.col("a").str.replace_many(["a", "b", "c"], "a", ascii_case_insensitive=True)
+        pl.col("a").str.replace_many(
+            ["a", "b", "c"], ["a"], ascii_case_insensitive=True
+        )
     )
 
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
-@pytest.mark.skipif(POLARS_VERSION_LT_136, reason="leftmost arg added in 1.36")
 def test_replace_many_leftmost(engine: pl.GPUEngine, ldf):
-    q = ldf.select(pl.col("a").str.replace_many(["a", "b"], "x", leftmost=True))
+    q = ldf.select(pl.col("a").str.replace_many(["a", "b"], ["x"], leftmost=True))
 
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
@@ -461,15 +526,42 @@ def test_invalid_regex_raises():
         q.collect(engine=pl.GPUEngine(executor="in-memory", raise_on_fail=True))
 
 
-@pytest.mark.parametrize("pattern", ["a{1000}", "a(?i:B)", ""])
+@pytest.mark.parametrize("pattern", ["a{1000}", "a(?-i:B)", ""])
 def test_unsupported_regex_raises(engine: pl.GPUEngine, pattern):
     df = pl.LazyFrame({"a": ["abc"]})
 
     q = df.select(pl.col("a").str.contains(pattern, strict=True))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    if pattern == "":
+        assert_gpu_result_equal(q, engine=engine)
+    else:
+        assert_ir_translation_raises(q, engine, NotImplementedError)
 
     q = df.select(pl.col("a").str.count_matches(pattern))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "(?i)ab",
+        "a(?i)b",
+        "(?i:a)b",
+        "(?m)^b",
+        "(?s)a.b",
+        "(?ims)^A.B$",
+        "x(?i)Y",
+        "(?s)",
+        "(?i)(?m)",
+    ],
+)
+def test_regex_inline_flags(engine: pl.GPUEngine, pattern):
+    df = pl.LazyFrame({"a": ["ab", "AB", "aB", "Ab", "x\nb", "a\nb", "xy\nAB", None]})
+
+    q = df.select(pl.col("a").str.contains(pattern, strict=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+    q = df.select(pl.col("a").str.count_matches(pattern))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_string_to_integer(engine: pl.GPUEngine, str_to_integer_data, integer_type):
@@ -516,6 +608,23 @@ def test_string_from_integer(engine: pl.GPUEngine, str_from_integer_data):
 
 def test_string_to_float(engine: pl.GPUEngine, str_to_float_data, floating_type):
     q = str_to_float_data.select(pl.col("a").cast(floating_type))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("scale", [0, 1, 2, 4])
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["1.23", "-4.5", None, "0", "123456789.01", "abc", "1.234"],
+        [],
+        [None, None],
+        ["1.23"],
+    ],
+    ids=["mixed", "empty", "all-null", "single-row"],
+)
+def test_string_to_decimal(engine: pl.GPUEngine, scale, values):
+    ldf = pl.LazyFrame({"a": pl.Series(values, dtype=pl.String)})
+    q = ldf.select(pl.col("a").str.to_decimal(scale=scale))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -758,6 +867,43 @@ def test_string_head(engine: pl.GPUEngine, ldf, head):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("operation", ["head", "tail"])
+@pytest.mark.parametrize("integer_type", [pl.Int32, pl.Int64])
+def test_string_head_tail_by_column(engine: pl.GPUEngine, operation, integer_type):
+    ldf = pl.LazyFrame(
+        {
+            "a": ["AbC", "de", "FGHI", None, "", "Wïth ünicode"],
+            "n": pl.Series([1, -1, 0, 2, None, 999], dtype=integer_type),
+        }
+    )
+    q = ldf.select(getattr(pl.col("a").str, operation)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("operation", ["head", "tail"])
+@pytest.mark.parametrize(
+    "a,n",
+    [
+        (
+            pl.Series([], dtype=pl.String),
+            pl.Series([], dtype=pl.Int64),
+        ),
+        (
+            pl.Series([None, None], dtype=pl.String),
+            pl.Series([1, -1], dtype=pl.Int64),
+        ),
+        (
+            pl.Series(["abc", None], dtype=pl.String),
+            pl.Series([None, None], dtype=pl.Int64),
+        ),
+    ],
+)
+def test_string_head_tail_by_column_shortcuts(engine: pl.GPUEngine, operation, a, n):
+    ldf = pl.LazyFrame({"a": a, "n": n})
+    q = ldf.select(getattr(pl.col("a").str, operation)(pl.col("n")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("ignore_nulls", [True, False])
 @pytest.mark.parametrize("separator", ["*", ""])
 def test_concat_horizontal(engine: pl.GPUEngine, ldf, ignore_nulls, separator):
@@ -791,8 +937,15 @@ def test_count_matches(engine: pl.GPUEngine, ldf):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_count_matches_literal_unsupported(engine: pl.GPUEngine, ldf):
-    q = ldf.select(pl.col("a").str.count_matches("a", literal=True))
+@pytest.mark.parametrize("pattern", ["a", ".", "a+", "+", "L"])
+def test_count_matches_literal(engine: pl.GPUEngine, pattern):
+    df = pl.LazyFrame({"a": ["a.b.c", "a1b2", "...", "", None, "a+a+a", "kLm"]})
+    q = df.select(pl.col("a").str.count_matches(pattern, literal=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_count_matches_literal_empty_unsupported(engine: pl.GPUEngine, ldf):
+    q = ldf.select(pl.col("a").str.count_matches("", literal=True))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -874,8 +1027,16 @@ def ldf_find():
     )
 
 
-def test_find_literal_false_strict_false_unsupported(engine: pl.GPUEngine, ldf_find):
-    q = ldf_find.select(pl.col("a").str.find("a", literal=False, strict=False))
+@pytest.mark.parametrize("pattern", ["a", "[", ""])
+def test_find_literal_false_strict_false(engine: pl.GPUEngine, ldf_find, pattern):
+    q = ldf_find.select(pl.col("a").str.find(pattern, literal=False, strict=False))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_find_literal_false_strict_false_libcudf_unsupported(
+    engine: pl.GPUEngine, ldf_find
+):
+    q = ldf_find.select(pl.col("a").str.find("a{1000}", literal=False, strict=False))
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -896,15 +1057,15 @@ def ldf_extract():
     return pl.LazyFrame({"a": ["?!. 123 foo", None]})
 
 
-@pytest.mark.parametrize("group_index", [1, 2])
+@pytest.mark.parametrize("group_index", [0, 1, 2])
 def test_extract(engine: pl.GPUEngine, ldf_extract, group_index):
     q = ldf_extract.select(pl.col("a").str.extract(r"(\S+) (\d+) (.+)", group_index))
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_extract_group_index_0_unsupported(engine: pl.GPUEngine, ldf_extract):
-    q = ldf_extract.select(pl.col("a").str.extract(r"(\S+) (\d+) (.+)", 0))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+def test_extract_group_index_0_no_capture_group(engine: pl.GPUEngine, ldf_extract):
+    q = ldf_extract.select(pl.col("a").str.extract(r"\d+", 0))
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_extract_groups(engine: pl.GPUEngine, ldf_extract):
@@ -941,9 +1102,6 @@ def test_concat_str_with_boolean(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="Split with literal parameter added in 1.38"
-)
 def test_split_regex_not_supported(engine: pl.GPUEngine):
     lf = pl.LazyFrame({"a": ["foo1bar", "baz456boo", "abc321"]})
 
@@ -963,4 +1121,26 @@ def test_split_regex_not_supported(engine: pl.GPUEngine):
 def test_escape_regex(engine: pl.GPUEngine, data):
     lf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.String)})
     q = lf.select(pl.col("a").str.escape_regex())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("s").str.contains(""),
+        pl.col("s").str.find(""),
+        pl.col("s").str.head(0),
+        pl.col("s").str.tail(0),
+        pl.col("s").cast(pl.Int64, strict=False),
+    ],
+)
+def test_sliced_input_with_nulls(engine: pl.GPUEngine, expr):
+    # sort().slice() hands the expression a column with a nonzero offset.
+    ldf = pl.LazyFrame(
+        {
+            "s": ["0", None, "2", "3", "x", "5", None, "7", "x", "9"],
+            "k": range(10),
+        }
+    )
+    q = ldf.sort("k").slice(3, 6).select(expr)
     assert_gpu_result_equal(q, engine=engine)

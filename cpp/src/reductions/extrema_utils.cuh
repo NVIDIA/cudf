@@ -11,13 +11,14 @@
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/extrema.h>
 
 namespace cudf::reduction::simple::detail {
@@ -61,40 +62,37 @@ class arg_minmax_dispatcher {
   template <typename InputIterator, typename... Args>
   size_type find_extremum_idx(InputIterator it,
                               size_type size,
-                              rmm::cuda_stream_view stream,
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr,
                               Args&&... args) const
   {
-    auto const pos = [&] {
+    auto const temp_mr = mr.get_temporary_mr();
+    auto const pos     = [&] {
       if constexpr (K == aggregation::ARGMIN) {
         return thrust::min_element(
-          rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-          it,
-          it + size,
-          std::forward<Args>(args)...);
+          rmm::exec_policy_nosync(stream, temp_mr), it, it + size, std::forward<Args>(args)...);
       } else {
         return thrust::max_element(
-          rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-          it,
-          it + size,
-          std::forward<Args>(args)...);
+          rmm::exec_policy_nosync(stream, temp_mr), it, it + size, std::forward<Args>(args)...);
       }
     }();
     return static_cast<size_type>(cuda::std::distance(it, pos));
   }
 
-  template <typename ElementType>
+  template <cudf::concepts::nested ElementType>
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
-                                          rmm::cuda_stream_view stream) const
-    requires(cudf::is_nested<ElementType>())
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr) const
   {
     using Op = std::conditional_t<K == aggregation::ARGMIN,
                                   reduction::detail::op::min,
                                   reduction::detail::op::max>;
     auto const binop_generator =
-      reduction::detail::arg_minmax_binop_generator::create<Op>(input, stream);
+      reduction::detail::arg_minmax_binop_generator::create<Op>(input, stream, mr);
     return find_extremum_idx(cuda::counting_iterator<cudf::size_type>{0},
                              input.size(),
                              stream,
+                             mr,
                              noinline_adapter_fn{binop_generator.less()});
   }
 
@@ -104,26 +102,28 @@ class arg_minmax_dispatcher {
   // directly, so no decoding is required and no assumption is made that the keys are sorted.
   template <typename ElementType>
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
-                                          rmm::cuda_stream_view stream) const
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr) const
     requires(not cudf::is_nested<ElementType>() and not cudf::is_numeric<ElementType>())
   {
     // Nulls are considered "greater" (ARGMIN), or "less" (ARGMAX) than non-null values.
     auto const null_orders =
       std::vector<null_order>{K == aggregation::ARGMIN ? null_order::AFTER : null_order::BEFORE};
     auto const comparator = cudf::detail::row::lexicographic::self_comparator{
-      table_view{{input}}, {}, null_orders, stream};
+      table_view{{input}}, {}, null_orders, stream, mr};
     auto d_comp =
       comparator.less<false /* has_nested_columns */>(nullate::DYNAMIC{input.has_nulls()});
     return find_extremum_idx(cuda::counting_iterator<cudf::size_type>{0},
                              input.size(),
                              stream,
+                             mr,
                              noinline_adapter_fn{std::move(d_comp)});
   }
 
-  template <typename ElementType>
+  template <cudf::concepts::arithmetic ElementType>  // integer + floating point numbers
   [[nodiscard]] size_type find_arg_minmax(column_view const& input,
-                                          rmm::cuda_stream_view stream) const
-    requires(cudf::is_numeric<ElementType>())  // integer + floating point numbers
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr) const
   {
     using Op = std::conditional_t<K == aggregation::ARGMIN,
                                   reduction::detail::op::min,
@@ -132,26 +132,26 @@ class arg_minmax_dispatcher {
     // not identify the min/max key. Read `keys[indices[i]]` directly per row via a lazy
     // iterator instead of decoding (and copying) the whole column.
     if (is_dictionary(input.type())) {
-      auto const d_dict = column_device_view::create(input, stream);
+      auto const d_dict = column_device_view::create(input, stream, mr.get_temporary_mr());
       if (input.has_nulls()) {
         auto const transformer =
           Op{}.template get_null_replacing_element_transformer<ElementType>();
         auto const p =
           cudf::dictionary::detail::make_dictionary_pair_iterator<ElementType>(*d_dict, true);
-        auto const it = thrust::make_transform_iterator(p, transformer);
-        return find_extremum_idx(it, input.size(), stream);
+        auto const it = cuda::transform_iterator(p, transformer);
+        return find_extremum_idx(it, input.size(), stream, mr);
       }
       auto const it = cudf::dictionary::detail::make_dictionary_iterator<ElementType>(*d_dict);
-      return find_extremum_idx(it, input.size(), stream);
+      return find_extremum_idx(it, input.size(), stream, mr);
     }
     if (input.has_nulls()) {
-      auto const d_input     = column_device_view::create(input, stream);
+      auto const d_input     = column_device_view::create(input, stream, mr.get_temporary_mr());
       auto const transformer = Op{}.template get_null_replacing_element_transformer<ElementType>();
       auto const it =
-        thrust::make_transform_iterator(d_input->pair_begin<ElementType, true>(), transformer);
-      return find_extremum_idx(it, input.size(), stream);
+        cuda::transform_iterator(d_input->pair_begin<ElementType, true>(), transformer);
+      return find_extremum_idx(it, input.size(), stream, mr);
     } else {
-      return find_extremum_idx(input.begin<ElementType>(), input.size(), stream);
+      return find_extremum_idx(input.begin<ElementType>(), input.size(), stream, mr);
     }
   }
 
@@ -162,22 +162,22 @@ class arg_minmax_dispatcher {
    * @tparam ElementType The input column type
    * @param input Input column (must be numeric)
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the returned scalar's device memory
+   * @param mr Memory resources used for temporary allocations and the returned scalar
    */
   template <typename ElementType>
   [[nodiscard]] std::unique_ptr<scalar> operator()(column_view const& input,
-                                                   rmm::cuda_stream_view stream,
-                                                   rmm::device_async_resource_ref mr) const
+                                                   cuda::stream_ref stream,
+                                                   cudf::memory_resources mr) const
     requires(is_supported<ElementType>())
   {
-    auto const idx = find_arg_minmax<ElementType>(input, stream);
-    return make_fixed_width_scalar<size_type>(idx, stream, mr);
+    auto const idx = find_arg_minmax<ElementType>(input, stream, mr.as_temporary());
+    return make_fixed_width_scalar<size_type>(idx, stream, mr.get_output_mr());
   }
 
   template <typename ElementType>
   std::unique_ptr<scalar> operator()(column_view const&,
-                                     rmm::cuda_stream_view,
-                                     rmm::device_async_resource_ref) const
+                                     cuda::stream_ref,
+                                     cudf::memory_resources) const
     requires(not is_supported<ElementType>())
   {
     CUDF_FAIL("ARGMIN/ARGMAX is not supported for this type");

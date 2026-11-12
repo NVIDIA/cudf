@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -6,14 +6,15 @@ import pytest
 import cudf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def df_with_index():
+    # All consumers except the scalar setter only read this dataframe.
     return cudf.DataFrame(
         {"A": [1, 2, 3], "B": [4, 5, 6]}, index=["x", "y", "z"]
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def df_without_index():
     return cudf.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
 
@@ -24,6 +25,7 @@ def test_dataframe_at_scalar_getitem(df_with_index):
 
 
 def test_dataframe_at_scalar_setitem(df_with_index):
+    df_with_index = df_with_index.copy(deep=True)
     df_with_index.at["x", "A"] = 10
     assert df_with_index.at["x", "A"] == 10
 
@@ -46,6 +48,7 @@ def test_dataframe_iat_scalar_getitem(df_without_index):
 
 
 def test_dataframe_iat_scalar_setitem(df_without_index):
+    df_without_index = df_without_index.copy(deep=True)
     df_without_index.iat[0, 0] = 10
     assert df_without_index.iat[0, 0] == 10
 

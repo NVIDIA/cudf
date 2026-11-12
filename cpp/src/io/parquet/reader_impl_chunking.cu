@@ -14,11 +14,13 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/gather.h>
 #include <thrust/transform_scan.h>
 
 #include <numeric>
+#include <unordered_map>
 
 namespace cudf::io::parquet::detail {
 
@@ -112,7 +114,8 @@ void reader_impl::setup_next_pass(read_mode mode)
     auto chunk_start = _file_itm_data.chunks.begin() + (row_group_start * chunks_per_rowgroup);
     auto chunk_end   = _file_itm_data.chunks.begin() + (row_group_end * chunks_per_rowgroup);
 
-    pass.chunks = cudf::detail::hostdevice_vector<ColumnChunkDesc>(num_chunks, _stream);
+    pass.chunks =
+      cudf::detail::hostdevice_vector<ColumnChunkDesc>(num_chunks, _stream, _mr.as_temporary());
     std::copy(chunk_start, chunk_end, pass.chunks.begin());
 
     // compute skip_rows / num_rows for this pass.
@@ -167,12 +170,15 @@ void reader_impl::setup_next_pass(read_mode mode)
     // store off how much memory we've used so far. This includes the compressed page data and the
     // decompressed dictionary data. we will subtract this from the available total memory for the
     // subpasses
-    auto chunk_iter =
-      thrust::make_transform_iterator(pass.chunks.d_begin(), get_chunk_compressed_size{});
+    cudf::memory_resources mrs(_mr);
+    auto chunk_iter = cuda::transform_iterator(pass.chunks.d_begin(), get_chunk_compressed_size{});
     pass.base_mem_size =
-      decomp_dict_data_size +
-      cudf::detail::reduce(
-        chunk_iter, chunk_iter + pass.chunks.size(), size_t{0}, cuda::std::plus<size_t>{}, _stream);
+      decomp_dict_data_size + cudf::detail::reduce(chunk_iter,
+                                                   chunk_iter + pass.chunks.size(),
+                                                   size_t{0},
+                                                   cuda::std::plus<size_t>{},
+                                                   _stream,
+                                                   mrs.as_temporary());
 
     // if we are doing subpass reading, generate more accurate num_row estimates for list columns.
     // this helps us to generate more accurate subpass splits.
@@ -201,7 +207,7 @@ void reader_impl::setup_next_pass(read_mode mode)
     }
 #endif
 
-    _stream.synchronize();
+    _stream.sync();
   }
 }
 
@@ -235,12 +241,12 @@ void reader_impl::setup_next_subpass(read_mode mode)
   // indices into the pass.pages array that represents the subset of pages
   // for column N to use for the subpass.
   auto [page_indices, total_pages, total_expected_size] =
-    [&]() -> std::tuple<rmm::device_uvector<page_span>, size_t, size_t> {
+    [&]() -> std::tuple<cuda::device_buffer<page_span>, size_t, size_t> {
     if (!pass.has_compressed_data || _input_pass_read_limit == 0) {
-      rmm::device_uvector<page_span> page_indices(
-        num_columns, _stream, cudf::get_current_device_resource_ref());
+      cuda::device_buffer<page_span> page_indices(
+        _stream, _mr.get_temporary_mr(), num_columns, cuda::no_init);
       auto iter = cuda::counting_iterator<size_t>{0};
-      thrust::transform(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
                         iter,
                         iter + num_columns,
                         page_indices.begin(),
@@ -252,17 +258,17 @@ void reader_impl::setup_next_subpass(read_mode mode)
     // as subpasses get decoded, the initial estimates we have for list row counts
     // get updated with accurate data, so regenerate cumulative size info and row
     // indices
-    rmm::device_uvector<cumulative_page_info> c_info(pass.pages.size(), _stream);
+    cuda::device_buffer<cumulative_page_info> c_info(
+      _stream, _mr.get_temporary_mr(), pass.pages.size(), cuda::no_init);
     auto page_keys = make_page_key_iterator(pass.pages);
-    auto page_size = thrust::make_transform_iterator(pass.pages.d_begin(), get_page_input_size{});
-    thrust::inclusive_scan_by_key(
-      rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
-      page_keys,
-      page_keys + pass.pages.size(),
-      page_size,
-      c_info.begin(),
-      cuda::std::equal_to{},
-      cumulative_page_sum{});
+    auto page_size = cuda::transform_iterator(pass.pages.d_begin(), get_page_input_size{});
+    thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+                                  page_keys,
+                                  page_keys + pass.pages.size(),
+                                  page_size,
+                                  c_info.begin(),
+                                  cuda::std::equal_to{},
+                                  cumulative_page_sum{});
 
     // include scratch space needed for decompression and string offset buffers.
     // for certain codecs (eg ZSTD) this an be considerable.
@@ -270,9 +276,14 @@ void reader_impl::setup_next_subpass(read_mode mode)
       pass.decomp_scratch_sizes =
         compute_decompression_scratch_sizes(pass.chunks, pass.pages, _stream);
       pass.string_offset_sizes = compute_string_offset_sizes(
-        pass.chunks, pass.pages, pass.skip_rows, pass.num_rows, _stream, _mr);
-      pass.level_decode_sizes = compute_level_decode_sizes(
-        pass.chunks, pass.pages, pass.level_type_size, pass.skip_rows, pass.num_rows, _stream, _mr);
+        pass.chunks, pass.pages, pass.skip_rows, pass.num_rows, _stream, _mr.get_temporary_mr());
+      pass.level_decode_sizes = compute_level_decode_sizes(pass.chunks,
+                                                           pass.pages,
+                                                           pass.level_type_size,
+                                                           pass.skip_rows,
+                                                           pass.num_rows,
+                                                           _stream,
+                                                           _mr.get_temporary_mr());
     }
     include_scratch_size(pass.decomp_scratch_sizes, c_info, _stream);
     include_scratch_size(pass.string_offset_sizes, c_info, _stream);
@@ -280,7 +291,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
 
     auto iter               = cuda::counting_iterator<size_t>{0};
     auto const pass_max_row = pass.skip_rows + pass.num_rows;
-    thrust::for_each(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
                      iter,
                      iter + pass.pages.size(),
                      set_row_index{pass.chunks, pass.pages, c_info, pass_max_row});
@@ -309,20 +320,22 @@ void reader_impl::setup_next_subpass(read_mode mode)
   // copy the appropriate subset of pages from each column and store the mapping back to the source
   // (pass) pages
   else {
-    subpass.page_buf       = cudf::detail::hostdevice_vector<PageInfo>(total_pages, _stream);
-    subpass.page_src_index = rmm::device_uvector<size_t>(total_pages, _stream);
-    auto iter              = cuda::counting_iterator<size_t>{0};
-    rmm::device_uvector<size_t> dst_offsets(num_columns + 1, _stream);
-    thrust::transform_exclusive_scan(
-      rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
-      iter,
-      iter + num_columns + 1,
-      dst_offsets.begin(),
-      get_span_size_by_index{page_indices},
-      0,
-      cuda::std::plus<size_t>{});
+    subpass.page_buf =
+      cudf::detail::hostdevice_vector<PageInfo>(total_pages, _stream, _mr.as_temporary());
+    subpass.page_src_index =
+      cuda::device_buffer<size_t>(_stream, _mr.get_temporary_mr(), total_pages, cuda::no_init);
+    auto iter = cuda::counting_iterator<size_t>{0};
+    cuda::device_buffer<size_t> dst_offsets(
+      _stream, _mr.get_temporary_mr(), num_columns + 1, cuda::no_init);
+    thrust::transform_exclusive_scan(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+                                     iter,
+                                     iter + num_columns + 1,
+                                     dst_offsets.begin(),
+                                     get_span_size_by_index{page_indices},
+                                     0,
+                                     cuda::std::plus<size_t>{});
     thrust::for_each(
-      rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+      rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
       iter,
       iter + total_pages,
       copy_subpass_page{
@@ -333,7 +346,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
   auto h_spans = cudf::detail::make_pinned_vector_async(page_indices, _stream);
   subpass.pages.device_to_host_async(_stream);
 
-  _stream.synchronize();
+  _stream.sync();
 
   subpass.column_page_count = std::vector<size_t>(num_columns);
   std::transform(
@@ -353,7 +366,7 @@ void reader_impl::setup_next_subpass(read_mode mode)
                            subpass.pages,
                            subpass_page_mask_span(),
                            _stream,
-                           _mr);
+                           _mr.get_temporary_mr());
 
     if (is_first_subpass) {
       pass.decomp_dict_data = std::move(pass_data);
@@ -378,6 +391,11 @@ void reader_impl::setup_next_subpass(read_mode mode)
     allocate_level_decode_space();
   }
   subpass.pages.host_to_device_async(_stream);
+  // The pages carry device pointers into this array, so it has to be uploaded with them. It is
+  // empty unless some page has an nz map. Nothing may copy it back to the
+  // host and re-upload it later in the subpass: the nz map producer kernels write counts into
+  // it that the decode kernels read in a subsequent launch.
+  if (!subpass.nz_map_buf.empty()) { subpass.nz_map_buf.host_to_device_async(_stream); }
 
   // preprocess pages (computes row counts for lists, computes output chunks and computes
   // the actual row counts we will be able load out of this subpass)
@@ -420,29 +438,32 @@ void reader_impl::create_global_chunk_info()
   auto const num_chunks        = row_groups_info.size() * num_input_columns;
 
   // Mapping of input column to page index column
-  std::vector<size_type> column_mapping;
+  auto column_mappings = std::unordered_map<size_type, std::vector<size_type>>{};
 
-  if (_has_offset_index and not row_groups_info.empty()) {
-    // use first row group to define mappings (assumes same schema for each file)
-    auto const& rg      = row_groups_info[0];
-    auto const& columns = _metadata->get_row_group(rg.index, rg.source_index).columns;
-    column_mapping.resize(num_input_columns);
-    std::transform(
-      _input_columns.begin(), _input_columns.end(), column_mapping.begin(), [&](auto const& col) {
-        // translate schema_idx into something we can use for the page indexes
-        if (auto it = std::find_if(columns.begin(),
-                                   columns.end(),
-                                   [&](auto const& col_chunk) {
-                                     return col_chunk.schema_idx ==
-                                            _metadata->map_schema_index(col.schema_idx,
-                                                                        rg.source_index);
-                                   });
-            it != columns.end()) {
-          return std::distance(columns.begin(), it);
-        }
-        CUDF_FAIL("cannot find column mapping");
-      });
-  }
+  auto const column_mapping_for_source = [&](auto const& rg) -> std::vector<size_type> const& {
+    auto const [iter, inserted] = column_mappings.try_emplace(rg.source_index);
+    if (inserted) {
+      auto const& columns = _metadata->get_row_group(rg.index, rg.source_index).columns;
+      auto& mapping       = iter->second;
+      mapping.resize(num_input_columns);
+      std::transform(
+        _input_columns.begin(), _input_columns.end(), mapping.begin(), [&](auto const& col) {
+          // translate schema_idx into something we can use for the page indexes
+          if (auto it = std::find_if(columns.begin(),
+                                     columns.end(),
+                                     [&](auto const& col_chunk) {
+                                       return col_chunk.schema_idx ==
+                                              _metadata->map_schema_index(col.schema_idx,
+                                                                          rg.source_index);
+                                     });
+              it != columns.end()) {
+            return static_cast<size_type>(std::distance(columns.begin(), it));
+          }
+          CUDF_FAIL("cannot find column mapping");
+        });
+    }
+    return iter->second;
+  };
 
   // Initialize column chunk information
   auto remaining_rows = num_rows;
@@ -454,6 +475,8 @@ void reader_impl::create_global_chunk_info()
     auto const adjusted_row_group_rows = skip_rows ? skip_rows - row_groups_info[0].start_row : 0;
     auto row_group_rows =
       std::min<size_t>(remaining_rows + adjusted_row_group_rows, row_group.num_rows);
+
+    auto const* const column_mapping = _has_offset_index ? &column_mapping_for_source(rg) : nullptr;
 
     // generate ColumnChunkDesc objects for everything to be decoded (all input columns)
     for (size_t i = 0; i < num_input_columns; ++i) {
@@ -480,7 +503,7 @@ void reader_impl::create_global_chunk_info()
 
       // grab the column_chunk_info for each chunk (if it exists)
       column_chunk_info const* const chunk_info =
-        _has_offset_index ? &rg.column_chunks.value()[column_mapping[i]] : nullptr;
+        _has_offset_index ? &rg.column_chunks.value()[(*column_mapping)[i]] : nullptr;
 
       chunks.emplace_back(col_meta.total_compressed_size,
                           nullptr,
@@ -575,25 +598,24 @@ void reader_impl::compute_output_chunks_for_subpass()
   }
 
   // generate row_indices and cumulative output sizes for all pages
-  rmm::device_uvector<cumulative_page_info> c_info(subpass.pages.size(), _stream);
-  auto page_input =
-    thrust::make_transform_iterator(subpass.pages.device_begin(), get_page_output_size{});
-  auto page_keys = make_page_key_iterator(subpass.pages);
-  thrust::inclusive_scan_by_key(
-    rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
-    page_keys,
-    page_keys + subpass.pages.size(),
-    page_input,
-    c_info.begin(),
-    cuda::std::equal_to{},
-    cumulative_page_sum{});
+  cuda::device_buffer<cumulative_page_info> c_info(
+    _stream, _mr.get_temporary_mr(), subpass.pages.size(), cuda::no_init);
+  auto page_input = cuda::transform_iterator(subpass.pages.device_begin(), get_page_output_size{});
+  auto page_keys  = make_page_key_iterator(subpass.pages);
+  thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
+                                page_keys,
+                                page_keys + subpass.pages.size(),
+                                page_input,
+                                c_info.begin(),
+                                cuda::std::equal_to{},
+                                cumulative_page_sum{});
   auto iter = cuda::counting_iterator<size_t>{0};
   // cap the max row in all pages by the max row we expect in the subpass. input chunking
   // can cause "dangling" row counts where for example, only 1 column has a page whose
   // maximum row is beyond our expected subpass max row, which will cause an out of
   // bounds index in compute_page_splits_by_row.
   auto const subpass_max_row = subpass.skip_rows + subpass.num_rows;
-  thrust::for_each(rmm::exec_policy_nosync(_stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
                    iter,
                    iter + subpass.pages.size(),
                    set_row_index{pass.chunks, subpass.pages, c_info, subpass_max_row});
@@ -610,8 +632,8 @@ void reader_impl::set_subpass_page_mask()
   auto const& subpass = pass->subpass;
 
   // Create a hostdevice vector to store the subpass page mask
-  _subpass_page_mask =
-    std::make_unique<cudf::detail::hostdevice_vector<bool>>(subpass->pages.size(), _stream);
+  _subpass_page_mask = std::make_unique<cudf::detail::hostdevice_vector<bool>>(
+    subpass->pages.size(), _stream, _mr.as_temporary());
 
   // Fill with all true if no pass level page mask is available
   if (_pass_page_mask.empty()) {

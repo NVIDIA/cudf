@@ -4,27 +4,32 @@
 
 # In-container build of a static libcudf install tree.
 #
-# This script runs inside the rapidsai/ci-conda container launched by
-# java/ci/build_static_libcudf.sh. It generates the build_java conda toolchain
-# environment, builds libcudf with BUILD_SHARED_LIBS=OFF, and installs the
-# resulting static libcudf (plus its static dependencies) into /output. Then
-# chowns /output to HOST_UID:HOST_GID so the host user owns the outputs.
+# Expects a RAPIDS ci-wheel environment. Sources the toolchain from
+# setup_java_env.sh, builds libcudf with BUILD_SHARED_LIBS=OFF, and installs
+# the resulting static libcudf (plus its static dependencies) into
+# INSTALL_PREFIX. When HOST_UID / HOST_GID are set, chowns the install tree so
+# the host user owns the outputs.
 #
 # Inputs (environment variables):
-#   RAPIDS_CUDA_VERSION        CUDA version, e.g. 12.9 or 12.9.1 (required).
+#   RAPIDS_CUDA_VERSION        CUDA version, e.g. 12.9.2 (required).
 #   PARALLEL_LEVEL             Build parallelism (default: nproc).
 #   CMAKE_CUDA_ARCHITECTURES   Optional override for -DCMAKE_CUDA_ARCHITECTURES.
-#   HOST_UID / HOST_GID        Chown target for /output (both required).
+#   INSTALL_PREFIX             Static libcudf install dir (default: /output).
+#   REPO_ROOT                  cuDF checkout (default: /repo).
+#   BUILD_DIR                  CMake build dir (default: /tmp/libcudf-build).
+#   HOST_UID / HOST_GID        Optional chown target for INSTALL_PREFIX.
 
 set -e
 
-INSTALL_PREFIX=/output
-REPO_ROOT=/repo
-BUILD_DIR=/tmp/libcudf-build
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_PREFIX="${INSTALL_PREFIX:-/output}"
+REPO_ROOT="${REPO_ROOT:-/repo}"
+BUILD_DIR="${BUILD_DIR:-/tmp/libcudf-build}"
 
-. /opt/conda/etc/profile.d/conda.sh
+# shellcheck disable=SC1091
+. "${SCRIPT_DIR}/setup_java_env.sh"
 
-if [[ -z ${RAPIDS_CUDA_VERSION} ]]; then
+if [[ -z ${RAPIDS_CUDA_VERSION:-} ]]; then
   echo "Error: RAPIDS_CUDA_VERSION must be set" >&2
   exit 1
 fi
@@ -34,39 +39,23 @@ if [[ -z ${HOST_UID} || -z ${HOST_GID} ]]; then
   exit 1
 fi
 
-if [[ -z ${PARALLEL_LEVEL} ]]; then
-  PARALLEL_LEVEL=$(nproc)
-fi
-
-CUDA_MAJOR_MINOR=$(echo "${RAPIDS_CUDA_VERSION}" | cut -d. -f1,2)
-
-rapids-logger "Configuring conda strict channel priority"
-conda config --set channel_priority strict
-
-rapids-logger "Generating build_java conda environment (cuda=${CUDA_MAJOR_MINOR}, arch=$(arch))"
-ENV_YAML_DIR="$(mktemp -d)"
-rapids-dependency-file-generator \
-  --output conda \
-  --file-key build_java \
-  --matrix "cuda=${CUDA_MAJOR_MINOR};arch=$(arch)" | tee "${ENV_YAML_DIR}/env.yaml"
-
-rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n build_java
-conda activate build_java
-
-rapids-print-env
-
-if [[ -z ${CUDACXX} ]]; then
-  export CUDACXX="${CONDA_PREFIX}/bin/nvcc"
-fi
-if [[ -z ${LIBCUDF_KERNEL_CACHE_PATH} ]]; then
-  export LIBCUDF_KERNEL_CACHE_PATH=/tmp/rapids-kernel-cache
-fi
+_cleanup_on_exit() {
+  local prior_status=$?
+  if ! chown -R "${HOST_UID}:${HOST_GID}" "${INSTALL_PREFIX}"; then
+    echo "Warning: chown -R ${HOST_UID}:${HOST_GID} on ${INSTALL_PREFIX} failed. Outputs may remain owned by root." >&2
+  fi
+  return "${prior_status}"
+}
+trap _cleanup_on_exit EXIT
 
 CMAKE_ARGS=(
   -S "${REPO_ROOT}/cpp"
   -B "${BUILD_DIR}"
   -GNinja
   -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}"
+  -DCMAKE_C_COMPILER="${CC}"
+  -DCMAKE_CXX_COMPILER="${CXX}"
+  -DCMAKE_CUDA_HOST_COMPILER="${CMAKE_CUDA_HOST_COMPILER}"
   -DBUILD_SHARED_LIBS=OFF
   -DBUILD_TESTS=OFF
   -DUSE_NVTX=ON
@@ -77,19 +66,30 @@ CMAKE_ARGS=(
   -DRMM_LOGGING_LEVEL=OFF
   -DCUDF_KVIKIO_REMOTE_IO=OFF
 )
-
-if [[ -n ${CMAKE_CUDA_ARCHITECTURES} ]]; then
+if [[ -n ${CMAKE_CUDA_ARCHITECTURES:-} ]]; then
   CMAKE_ARGS+=("-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
 fi
+# Forward the sccache launchers exported by setup_java_env.sh when present.
+if [[ -n ${CMAKE_C_COMPILER_LAUNCHER:-} ]]; then
+  CMAKE_ARGS+=("-DCMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER}")
+fi
+if [[ -n ${CMAKE_CXX_COMPILER_LAUNCHER:-} ]]; then
+  CMAKE_ARGS+=("-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}")
+fi
+if [[ -n ${CMAKE_CUDA_COMPILER_LAUNCHER:-} ]]; then
+  CMAKE_ARGS+=("-DCMAKE_CUDA_COMPILER_LAUNCHER=${CMAKE_CUDA_COMPILER_LAUNCHER}")
+fi
+# setup_java_env.sh builds the static Boost archives into BOOST_PREFIX.
+if [[ -d ${BOOST_PREFIX} ]]; then
+  CMAKE_ARGS+=("-DCMAKE_PREFIX_PATH=${BOOST_PREFIX}")
+fi
 
-rapids-logger "Configuring static libcudf"
-cmake "${CMAKE_ARGS[@]}"
-
-rapids-logger "Building static libcudf with ${PARALLEL_LEVEL} jobs"
+rapids-logger "Configuring/building static libcudf (cuda=${RAPIDS_CUDA_VERSION})"
+cudf_java_scl cmake "${CMAKE_ARGS[@]}"
 cmake --build "${BUILD_DIR}" --parallel "${PARALLEL_LEVEL}"
-
-rapids-logger "Installing static libcudf to ${INSTALL_PREFIX}"
 cmake --install "${BUILD_DIR}"
 
-rapids-logger "Chowning ${INSTALL_PREFIX} to ${HOST_UID}:${HOST_GID}"
-chown -R "${HOST_UID}:${HOST_GID}" "${INSTALL_PREFIX}"
+rapids-logger "Emitted static libcudf install tree to ${INSTALL_PREFIX}"
+if command -v sccache >/dev/null 2>&1; then
+  sccache --show-adv-stats || true
+fi

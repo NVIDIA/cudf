@@ -8,16 +8,16 @@
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/search.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cub/device/device_find.cuh>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 namespace cudf {
 namespace dictionary {
@@ -36,10 +36,9 @@ struct find_index_fn {
   template <typename Element>
   std::unique_ptr<scalar> operator()(dictionary_column_view const& input,
                                      scalar const& key,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(not std::is_same_v<Element, dictionary32> and
-             not std::is_same_v<Element, list_view> and not std::is_same_v<Element, struct_view>)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr) const
+    requires(not cudf::concepts::dictionary<Element> and not cudf::concepts::nested<Element>)
   {
     auto const num_keys = input.keys_size();
     if (!key.is_valid(stream) || num_keys == 0) {
@@ -60,10 +59,11 @@ struct find_index_fn {
     auto find_fn  = [find_key] __device__(auto const& k) { return k == find_key.value(); };
     auto tmp_size = std::size_t{0};
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
-      nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.value()));
-    auto tmp = rmm::device_buffer(tmp_size, stream);
+      nullptr, tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
+    auto tmp = cuda::device_buffer<std::byte>(
+      stream, cudf::get_current_device_resource_ref(), tmp_size, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceFind::FindIf(
-      tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.value()));
+      tmp.data(), tmp_size, keys, result->data(), find_fn, num_keys, stream.get()));
     if (result->value(stream) == num_keys) { result->set_valid_async(false, stream); }
     return result;
   }
@@ -71,10 +71,9 @@ struct find_index_fn {
   template <typename Element>
   std::unique_ptr<scalar> operator()(dictionary_column_view const&,
                                      scalar const&,
-                                     rmm::cuda_stream_view,
-                                     rmm::device_async_resource_ref) const
-    requires(std::is_same_v<Element, dictionary32> or std::is_same_v<Element, list_view> or
-             std::is_same_v<Element, struct_view>)
+                                     cuda::stream_ref,
+                                     cudf::memory_resources) const
+    requires(cudf::concepts::dictionary<Element> or cudf::concepts::nested<Element>)
   {
     CUDF_FAIL(
       "dictionary, list_view, and struct_view columns cannot be the keys column of a dictionary");
@@ -85,8 +84,8 @@ struct find_index_fn {
 
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   if (dictionary.is_empty()) {
     return std::make_unique<numeric_scalar<int32_t>>(0, false, stream, mr);
@@ -101,8 +100,8 @@ std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
 
 std::unique_ptr<scalar> get_index(dictionary_column_view const& dictionary,
                                   scalar const& key,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::get_index(dictionary, key, stream, mr);

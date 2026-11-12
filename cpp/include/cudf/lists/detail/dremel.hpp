@@ -6,8 +6,9 @@
 #pragma once
 
 #include <cudf/column/column.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
 
 namespace cudf {
 namespace detail {
@@ -31,9 +32,9 @@ struct dremel_device_view {
  * @see get_dremel_data() for more info.
  */
 struct dremel_data {
-  rmm::device_uvector<size_type> dremel_offsets;
-  rmm::device_uvector<uint8_t> rep_level;
-  rmm::device_uvector<uint8_t> def_level;
+  cuda::device_buffer<size_type> dremel_offsets;
+  cuda::device_buffer<uint8_t> rep_level;
+  cuda::device_buffer<uint8_t> def_level;
 
   size_type leaf_data_size;
   uint8_t max_def_level;
@@ -109,6 +110,7 @@ struct dremel_data {
  * ```
  * rep_level.size() = size of leaf column + number of empty lists in level 0
  *                                        + number of empty lists in level 1 ...
+ * number of rep_level values = size of leaf column + number of empty lists in level 0
  * ```
  *
  * We start with finding the empty lists in the penultimate level and merging it with the indices
@@ -181,12 +183,14 @@ struct dremel_data {
  * @param output_as_byte_array if `true`, then any nested list level that has a child of type
  * `uint8_t` will be considered as the last level
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resources used to allocate the returned and temporary data
  * @return A struct containing dremel data
  */
 dremel_data get_dremel_data(column_view input,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream,
+                            memory_resources mr);
 
 /**
  * @brief Get Dremel offsets, repetition levels, and modified definition levels to be used for
@@ -199,11 +203,13 @@ dremel_data get_dremel_data(column_view input,
  * @param output_as_byte_array if `true`, then any nested list level that has a child of type
  * `uint8_t` will be considered as the last level
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resources used to allocate the returned and temporary data
  * @return A struct containing dremel data
  */
 dremel_data get_comparator_data(column_view input,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
-                                rmm::cuda_stream_view stream);
+                                cuda::stream_ref stream,
+                                memory_resources mr);
 }  // namespace detail
 }  // namespace cudf

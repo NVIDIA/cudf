@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,7 +7,7 @@
 
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
@@ -26,7 +26,7 @@ namespace test {
  *
  * @return The default stream to use for tests.
  */
-rmm::cuda_stream_view const get_default_stream();
+cuda::stream_ref const get_default_stream();
 
 }  // namespace test
 }  // namespace CUDF_EXPORT cudf

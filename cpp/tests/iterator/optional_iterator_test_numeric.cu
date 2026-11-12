@@ -7,10 +7,12 @@
 #include <cudf_test/random.hpp>
 
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
 #include <cuda/std/optional>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/transform.h>
 
@@ -93,11 +95,14 @@ TYPED_TEST(NumericOptionalIteratorTest, mean_var_output)
 
   // GPU test
   auto it_dev         = d_col->template optional_begin<T>(cudf::nullate::YES{});
-  auto it_dev_squared = thrust::make_transform_iterator(it_dev, transformer);
+  auto it_dev_squared = cuda::transform_iterator(it_dev, transformer);
 
   // this can be computed with a single reduce and without a temporary output vector
   // but the approach increases the compile time by ~2x
-  auto results = rmm::device_uvector<T_output>(d_col->size(), cudf::get_default_stream());
+  auto results = cuda::device_buffer<T_output>(cudf::get_default_stream(),
+                                               cudf::get_current_device_resource_ref(),
+                                               d_col->size(),
+                                               cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(cudf::get_default_stream()),
                     it_dev_squared,
                     it_dev_squared + d_col->size(),

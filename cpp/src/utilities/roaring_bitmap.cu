@@ -6,13 +6,12 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/roaring_bitmap.cuh>
-#include <thrust/transform.h>
 
 namespace cudf {
 
@@ -53,7 +52,7 @@ class roaring_bitmap::impl {
   impl& operator=(impl&&) = default;
 
   template <roaring_bitmap_type Type>
-  void materialize(rmm::cuda_stream_view stream)
+  void materialize(cuda::stream_ref stream)
   {
     auto const bytes = _serialized_bitmap_data.data();
 
@@ -89,7 +88,7 @@ class roaring_bitmap::impl {
   }
 
   template <roaring_bitmap_type Type, typename InputIt, typename OutputIt>
-  void contains_async(InputIt first, InputIt last, OutputIt output, rmm::cuda_stream_view stream)
+  void contains_async(InputIt first, InputIt last, OutputIt output, cuda::stream_ref stream)
   {
     if (first == last) { return; }
 
@@ -140,7 +139,7 @@ roaring_bitmap::roaring_bitmap(roaring_bitmap&&) noexcept = default;
 
 roaring_bitmap& roaring_bitmap::operator=(roaring_bitmap&&) noexcept = default;
 
-void roaring_bitmap::materialize(rmm::cuda_stream_view stream) const
+void roaring_bitmap::materialize(cuda::stream_ref stream) const
 {
   dispatch_roaring_bitmap_type(
     _type, [&]<roaring_bitmap_type Type>() { _impl->materialize<Type>(stream); });
@@ -166,10 +165,9 @@ cuda::std::size_t roaring_bitmap::size_bytes() const
     _type, [&]<roaring_bitmap_type Type>() { return _impl->size_bytes<Type>(); });
 }
 
-std::unique_ptr<cudf::column> roaring_bitmap::contains_async(
-  cudf::column_view const& keys,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr) const
+std::unique_ptr<cudf::column> roaring_bitmap::contains_async(cudf::column_view const& keys,
+                                                             cuda::stream_ref stream,
+                                                             cudf::memory_resources mr) const
 {
   auto result = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::BOOL8}, keys.size(), cudf::mask_state::UNALLOCATED, stream, mr);
@@ -179,7 +177,7 @@ std::unique_ptr<cudf::column> roaring_bitmap::contains_async(
 
 void roaring_bitmap::contains_async(cudf::column_view const& keys,
                                     cudf::mutable_column_view const& output,
-                                    rmm::cuda_stream_view stream) const
+                                    cuda::stream_ref stream) const
 {
   CUDF_EXPECTS(output.type().id() == cudf::type_id::BOOL8,
                "Output column must be BOOL8",

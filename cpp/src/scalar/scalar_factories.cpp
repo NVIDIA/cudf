@@ -6,30 +6,29 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace {
 struct scalar_construction_helper {
   data_type type_;
 
-  template <typename T,
-            std::enable_if_t<is_fixed_width<T>() and not is_fixed_point<T>()>* = nullptr>
-  std::unique_ptr<scalar> operator()(rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr) const
+  template <concepts::fixed_width T>
+  std::unique_ptr<scalar> operator()(cuda::stream_ref stream, cudf::memory_resources mr) const
   {
     using Type       = device_storage_type_t<T>;
     using ScalarType = scalar_type_t<T>;
     return std::make_unique<ScalarType>(Type{}, false, stream, mr);
   }
 
-  template <typename T, std::enable_if_t<is_fixed_point<T>()>* = nullptr>
-  std::unique_ptr<scalar> operator()(rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr) const
+  template <concepts::fixed_point T>
+  std::unique_ptr<scalar> operator()(cuda::stream_ref stream, cudf::memory_resources mr) const
   {
     using Type       = device_storage_type_t<T>;
     using ScalarType = scalar_type_t<T>;
@@ -37,8 +36,9 @@ struct scalar_construction_helper {
       Type{}, numeric::scale_type{type_.scale()}, false, stream, mr);
   }
 
-  template <typename T, typename... Args, std::enable_if_t<not is_fixed_width<T>()>* = nullptr>
+  template <typename T, typename... Args>
   std::unique_ptr<scalar> operator()(Args... args) const
+    requires(not concepts::fixed_width<T>)
   {
     CUDF_FAIL("Invalid type.");
   }
@@ -47,8 +47,8 @@ struct scalar_construction_helper {
 
 // Allocate storage for a single numeric element
 std::unique_ptr<scalar> make_numeric_scalar(data_type type,
-                                            rmm::cuda_stream_view stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr)
 {
   CUDF_EXPECTS(is_numeric(type), "Invalid, non-numeric type.");
 
@@ -57,8 +57,8 @@ std::unique_ptr<scalar> make_numeric_scalar(data_type type,
 
 // Allocate storage for a single timestamp element
 std::unique_ptr<scalar> make_timestamp_scalar(data_type type,
-                                              rmm::cuda_stream_view stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(is_timestamp(type), "Invalid, non-timestamp type.");
 
@@ -67,8 +67,8 @@ std::unique_ptr<scalar> make_timestamp_scalar(data_type type,
 
 // Allocate storage for a single duration element
 std::unique_ptr<scalar> make_duration_scalar(data_type type,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   CUDF_EXPECTS(is_duration(type), "Invalid, non-duration type.");
 
@@ -77,8 +77,8 @@ std::unique_ptr<scalar> make_duration_scalar(data_type type,
 
 // Allocate storage for a single fixed width element
 std::unique_ptr<scalar> make_fixed_width_scalar(data_type type,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
 {
   CUDF_EXPECTS(is_fixed_width(type), "Invalid, non-fixed-width type.");
 
@@ -86,22 +86,22 @@ std::unique_ptr<scalar> make_fixed_width_scalar(data_type type,
 }
 
 std::unique_ptr<scalar> make_list_scalar(column_view elements,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
 {
   return std::make_unique<list_scalar>(elements, true, stream, mr);
 }
 
 std::unique_ptr<scalar> make_struct_scalar(table_view const& data,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
 {
   return std::make_unique<struct_scalar>(data, true, stream, mr);
 }
 
 std::unique_ptr<scalar> make_struct_scalar(std::span<column_view const> data,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
 {
   return std::make_unique<struct_scalar>(data, true, stream, mr);
 }
@@ -111,15 +111,13 @@ struct default_scalar_functor {
   data_type type;
 
   template <typename T, std::enable_if_t<not is_fixed_point<T>()>* = nullptr>
-  std::unique_ptr<cudf::scalar> operator()(rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+  std::unique_ptr<cudf::scalar> operator()(cuda::stream_ref stream, cudf::memory_resources mr)
   {
     return make_fixed_width_scalar(data_type(type_to_id<T>()), stream, mr);
   }
 
   template <typename T, std::enable_if_t<is_fixed_point<T>()>* = nullptr>
-  std::unique_ptr<cudf::scalar> operator()(rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+  std::unique_ptr<cudf::scalar> operator()(cuda::stream_ref stream, cudf::memory_resources mr)
   {
     auto const scale_ = numeric::scale_type{type.scale()};
     auto s            = make_fixed_point_scalar<T>(0, scale_, stream, mr);
@@ -130,28 +128,28 @@ struct default_scalar_functor {
 
 template <>
 std::unique_ptr<cudf::scalar> default_scalar_functor::operator()<string_view>(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream, cudf::memory_resources mr)
 {
   return std::unique_ptr<scalar>(new string_scalar("", false, stream, mr));
 }
 
 template <>
 std::unique_ptr<cudf::scalar> default_scalar_functor::operator()<dictionary32>(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FAIL("dictionary type not supported");
 }
 
 template <>
 std::unique_ptr<cudf::scalar> default_scalar_functor::operator()<list_view>(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FAIL("list_view type not supported");
 }
 
 template <>
 std::unique_ptr<cudf::scalar> default_scalar_functor::operator()<struct_view>(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FAIL("struct_view type not supported");
 }
@@ -159,15 +157,15 @@ std::unique_ptr<cudf::scalar> default_scalar_functor::operator()<struct_view>(
 }  // namespace
 
 std::unique_ptr<scalar> make_default_constructed_scalar(data_type type,
-                                                        rmm::cuda_stream_view stream,
-                                                        rmm::device_async_resource_ref mr)
+                                                        cuda::stream_ref stream,
+                                                        cudf::memory_resources mr)
 {
   return type_dispatcher(type, default_scalar_functor{type}, stream, mr);
 }
 
 std::unique_ptr<scalar> make_empty_scalar_like(column_view const& column,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   std::unique_ptr<scalar> result;
   switch (column.type().id()) {

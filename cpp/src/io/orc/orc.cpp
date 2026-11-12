@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "orc.hpp"
 
+#include "datetime/timezone_utils.hpp"
 #include "orc_field_reader.hpp"
 #include "orc_field_writer.hpp"
 
@@ -15,10 +16,17 @@
 #include <cuda/numeric>
 #include <thrust/tabulate.h>
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 namespace cudf::io::orc::detail {
+
+duration_s base_epoch_in_timezone(std::string_view timezone)
+{
+  static constexpr duration_s utc_epoch{orc_utc_epoch};
+  return utc_epoch - cudf::detail::get_ut_offset(std::nullopt, timezone, timestamp_s{utc_epoch});
+}
 
 namespace {
 [[nodiscard]] constexpr uint32_t varint_size(uint64_t val)
@@ -465,7 +473,7 @@ host_span<uint8_t const> orc_decompressor::decompress_blocks(host_span<uint8_t c
   return m_buf;
 }
 
-metadata::metadata(datasource* const src, rmm::cuda_stream_view stream) : source(src)
+metadata::metadata(datasource* const src, cuda::stream_ref stream) : source(src)
 {
   auto const len         = source->size();
   auto const max_ps_size = std::min(len, static_cast<size_t>(256));

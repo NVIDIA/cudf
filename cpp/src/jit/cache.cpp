@@ -4,22 +4,28 @@
  */
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <cuda_runtime.h>
 
 #include <cudf_cuda_embed.hpp>
 #include <jit/cache.hpp>
-#include <rtcx.hpp>
+#include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <future>
+#include <memory>
+#include <stdexcept>
+#include <string_view>
+#include <utility>
 
 namespace CUDF_EXPORT cudf {
 
@@ -53,6 +59,8 @@ void hash(XXH3_state_t* ctx, std::span<rtcx::memory_fragment const> memory_fragm
       XXH3_128bits_update(ctx, fragment.name, std::strlen(fragment.name));
       XXH3_128bits_update(ctx, "\0", 1);  // null terminator
     } else {
+      // The bytes are linked as the given type, so both identify an unnamed fragment.
+      XXH3_128bits_update(ctx, &fragment.type, sizeof(fragment.type));
       XXH3_128bits_update(ctx, fragment.data.data(), fragment.data.size());
       XXH3_128bits_update(ctx, "\0", 1);  // null terminator
     }
@@ -201,6 +209,8 @@ constexpr int32_t MIN_NVRTC_VERSION_PCH =
   make_cuda_version(12, 8, 0);  // minimum CUDA version for the "--pch" NVRTC flag
 constexpr int32_t MIN_NVRTC_VERSION_MINIMAL =
   make_cuda_version(12, 8, 0);  // minimum CUDA version for the "--minimal" NVRTC flag
+constexpr int32_t LTO_ARCHITECTURE =
+  CUDF_LTO_ARCHITECTURE;  // target architecture for LTO IR compilation
 
 std::tuple<rtcx::library, rtcx::blob> compile_library(
   char const* name,
@@ -242,6 +252,9 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
 
   if (use_minimal) { options.emplace_back("--minimal"); }
 
+  // suppress warnings if not in verbose mode
+  if (!cfg.jit_verbose) { options.emplace_back("--disable-warnings"); }
+
   if (use_pch) {
     options.emplace_back("--pch");
 
@@ -252,9 +265,6 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
       options.emplace_back("--pch-verbose=false");
       options.emplace_back("--pch-messages=false");
     }
-  } else {
-    // suppress warning about nv_hdrstop directive on later CUDA versions
-    options.emplace_back("--diag-suppress=161");
   }
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }
@@ -285,40 +295,32 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
   return std::make_tuple(library, std::make_shared<rtcx::blob_t>(std::move(blob)));
 }
 
-rtcx::blob compile_fragment(char const* name,
-                            char const* cuda_code,
-                            std::span<char const* const> extra_header_include_names,
-                            std::span<char const* const> extra_headers,
-                            std::span<char const* const> name_expressions)
+std::vector<std::string> make_lto_compile_options(char const* name,
+                                                  std::span<char const* const> include_paths,
+                                                  bool use_pch)
 {
-  CUDF_FUNC_RANGE();
-
-  auto& ctx               = cudf::get_context();
-  auto& cfg               = ctx.config();
-  auto& bundle            = ctx.jit_bundle();
-  auto& device_properties = ctx.get_device_properties();
-  auto sm                 = device_properties.compute_capability;
-
-  auto include_dirs = bundle.get_include_directories();
-  auto pch_dir      = ctx.get_jit_pch_dir();
+  auto& ctx = cudf::get_context();
+  auto& cfg = ctx.config();
 
   auto nvrtc_version = ctx.nvrtc_version().value();
 
-  auto use_pch     = nvrtc_version >= MIN_NVRTC_VERSION_PCH;
   auto use_minimal = nvrtc_version >= MIN_NVRTC_VERSION_MINIMAL;
 
   std::vector<std::string> options;
-
-  for (auto const& include_dir : include_dirs) {
+  // Let callers override bundled headers through their include directories.
+  for (auto const* include_dir : include_paths) {
+    options.emplace_back(std::format("-I{}", include_dir));
+  }
+  for (auto const& include_dir : ctx.jit_bundle().get_include_directories()) {
     options.emplace_back(std::format("-I{}", include_dir));
   }
 
-  options.emplace_back(std::format("--gpu-architecture=sm_{}", sm));
+  options.emplace_back(std::format("--gpu-architecture=sm_{}", LTO_ARCHITECTURE));
 
   options.emplace_back("--diag-suppress=47");
   options.emplace_back("--device-int128");
 
-  if (sm >= 100) { options.emplace_back("--device-float128"); }
+  if (LTO_ARCHITECTURE >= 100) { options.emplace_back("--device-float128"); }
 
   options.emplace_back("-std=c++20");
   options.emplace_back("--device-as-default-execution-space");
@@ -328,9 +330,11 @@ rtcx::blob compile_fragment(char const* name,
 
   if (use_minimal) { options.emplace_back("--minimal"); }
 
-  if (use_pch) {
+  // suppress warnings if not in verbose mode
+  if (!cfg.jit_verbose) { options.emplace_back("--disable-warnings"); }
+
+  if (use_pch && nvrtc_version >= MIN_NVRTC_VERSION_PCH) {
     options.emplace_back("--pch");
-    options.emplace_back(std::format("--pch-dir={}", pch_dir));
 
     if (cfg.jit_verbose) {
       options.emplace_back("--pch-verbose=true");
@@ -339,9 +343,6 @@ rtcx::blob compile_fragment(char const* name,
       options.emplace_back("--pch-verbose=false");
       options.emplace_back("--pch-messages=false");
     }
-  } else {
-    // suppress warning about nv_hdrstop directive on later CUDA versions
-    options.emplace_back("--diag-suppress=161");
   }
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }
@@ -352,6 +353,17 @@ rtcx::blob compile_fragment(char const* name,
     options.emplace_back(std::format("--fdevice-time-trace=cudf_kernel_{}_trace", name));
   }
 
+  return options;
+}
+
+rtcx::blob compile_fragment(char const* name,
+                            char const* cuda_code,
+                            std::span<char const* const> header_include_names,
+                            std::span<char const* const> headers,
+                            std::span<std::string const> options)
+{
+  CUDF_FUNC_RANGE();
+
   std::vector<char const*> options_cstr;
   for (auto const& option : options) {
     options_cstr.emplace_back(option.c_str());
@@ -359,17 +371,132 @@ rtcx::blob compile_fragment(char const* name,
 
   auto params = rtcx::compile_params{.name                 = name,
                                      .source               = cuda_code,
-                                     .header_include_names = extra_header_include_names,
-                                     .headers              = extra_headers,
+                                     .header_include_names = header_include_names,
+                                     .headers              = headers,
                                      .options              = options_cstr,
-                                     .name_expressions     = name_expressions,
                                      .target_type          = rtcx::binary_type::LTO_IR};
 
-  auto cubin = rtcx::compile(params);
-  return std::make_shared<rtcx::blob_t>(rtcx::blob_t::from_buffer(std::move(cubin)));
+  auto fragment = rtcx::compile(params);
+
+  return std::make_shared<rtcx::blob_t>(rtcx::blob_t::from_buffer(std::move(fragment)));
+}
+
+// Bundled kernels reuse their common PCH; specialization headers follow nv_hdrstop.
+rtcx::blob compile_kernel_fragment(char const* name,
+                                   char const* cuda_code,
+                                   std::span<char const* const> header_include_names,
+                                   std::span<char const* const> headers)
+{
+  CUDF_FUNC_RANGE();
+
+  auto options = make_lto_compile_options(name, {}, true);
+
+  return compile_fragment(name, cuda_code, header_include_names, headers, options);
+}
+
+rtcx::blob compile_user_fragment(char const* name,
+                                 char const* cuda_code,
+                                 std::span<char const* const> header_include_names,
+                                 std::span<char const* const> headers,
+                                 std::span<char const* const> include_paths,
+                                 bool use_pch)
+{
+  CUDF_FUNC_RANGE();
+
+  auto options = make_lto_compile_options(name, include_paths, use_pch);
+
+  return compile_fragment(name, cuda_code, header_include_names, headers, options);
 }
 
 }  // namespace
+
+lto_fragment compiled_fragment::view() const noexcept
+{
+  return lto_fragment{.type = lto_binary_type::LTO_IR, .data = blob_->view()};
+}
+
+rtcx::blob get_user_fragment(char const* name,
+                             char const* source_code,
+                             std::span<char const* const> header_include_names,
+                             std::span<char const* const> headers,
+                             std::span<char const* const> include_paths,
+                             bool use_pch)
+{
+  CUDF_FUNC_RANGE();
+
+  auto& ctx         = cudf::get_context();
+  auto const& props = ctx.get_device_properties();
+  auto spec         = std::format(
+    "ltoFragment\n"
+            "name={}\n"
+            "nvrtc={}\n"
+            "runtime={}\n"
+            "driver={}\n"
+            "arch={}\n"
+            "bundle={}\n"
+            "use_pch={}\n",
+    name,
+    ctx.nvrtc_version().value(),
+    props.runtime_version,
+    props.driver_version,
+    LTO_ARCHITECTURE,
+    ctx.jit_bundle().get_hash(),
+    use_pch);
+
+  XXH3_state_t state;
+  XXH3_INITSTATE(&state);
+  XXH3_128bits_reset(&state);
+  hash(&state, spec);
+  hash(&state, "include_names: ");
+  hash(&state, header_include_names);
+  hash(&state, "includes: ");
+  hash(&state, headers);
+  hash(&state, "include_paths: ");
+  hash(&state, include_paths);
+
+  hash(&state, "source: ");
+  hash(&state, std::string_view{source_code});
+
+  auto const digest = XXH3_128bits_digest(&state);
+  auto const key    = rtcx::hash128{digest.high64, digest.low64};
+
+  auto compile = [&] {
+    return compile_user_fragment(
+      name, source_code, header_include_names, headers, include_paths, use_pch);
+  };
+
+  return ctx.rtcx_cache()
+    .get_or_add_blob(key, rtcx::blob_compile_func::from_functor(compile))
+    .get();
+}
+
+compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
+                                         std::span<char const* const> include_names,
+                                         std::span<char const* const> includes,
+                                         std::span<char const* const> include_paths,
+                                         bool use_pch)
+{
+  CUDF_FUNC_RANGE();
+  CUDF_EXPECTS(include_names.size() == includes.size(),
+               "Header names and contents must have the same size",
+               std::invalid_argument);
+
+  return compiled_fragment(get_user_fragment(
+    "cudf_user_fragment.cu", source_code, include_names, includes, include_paths, use_pch));
+}
+
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
+{
+  switch (type) {
+    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
+    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
+    default:
+      CUDF_FAIL(
+        std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
+        std::invalid_argument);
+  }
+}
 
 kernel get_kernel(std::string const& name,
                   std::string const& source_file_id,
@@ -446,7 +573,6 @@ rtcx::blob get_kernel_fragment(std::string const& name,
   auto& device_properties = ctx.get_device_properties();
   auto runtime            = device_properties.runtime_version;
   auto driver             = device_properties.driver_version;
-  auto sm                 = device_properties.compute_capability;
   auto bundle_hash        = bundle.get_hash();
 
   auto source_file = std::format("{}/{}", bundle.get_directory(), source_file_id);
@@ -464,7 +590,7 @@ kernel_instance={}
                           name,
                           runtime,
                           driver,
-                          sm,
+                          LTO_ARCHITECTURE,
                           bundle_hash,
                           source_file,
                           kernel_instance);
@@ -484,7 +610,7 @@ kernel_instance={}
   auto compile = [&] {
     auto bundle_dir = cudf::get_context().jit_bundle().get_directory();
     auto source     = read_file_string(source_file.c_str());
-    return compile_fragment(name.c_str(), source.c_str(), header_include_names, headers, {});
+    return compile_kernel_fragment(name.c_str(), source.c_str(), header_include_names, headers);
   };
 
   auto fut = cache.get_or_add_blob(key, rtcx::blob_compile_func::from_functor(compile));

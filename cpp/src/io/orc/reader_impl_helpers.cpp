@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +15,7 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
                                             bool use_np_dtypes,
                                             data_type timestamp_type,
                                             column_name_info& schema_info,
-                                            rmm::cuda_stream_view stream)
+                                            cuda::stream_ref stream)
 {
   schema_info.name = metadata.column_name(0, orc_col_id);
   auto const kind  = metadata.get_col_type(orc_col_id).kind;
@@ -38,7 +38,7 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
                                                    schema_info.children.back(),
                                                    stream),
                                0,
-                               rmm::device_buffer{0, stream});
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream));
     }
     case MAP: {
       schema_info.children.emplace_back("offsets");
@@ -57,16 +57,17 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
                                                     stream));
         children_schema[idx].name = get_map_child_col_name(idx);
       }
-      return make_lists_column(0,
-                               make_empty_column(type_id::INT32),
-                               make_structs_column(0,
-                                                   std::move(child_columns),
-                                                   0,
-                                                   rmm::device_buffer{0, stream},
-                                                   stream,
-                                                   cudf::get_current_device_resource_ref()),
-                               0,
-                               rmm::device_buffer{0, stream});
+      return make_lists_column(
+        0,
+        make_empty_column(type_id::INT32),
+        make_structs_column(0,
+                            std::move(child_columns),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream),
+                            stream,
+                            cudf::get_current_device_resource_ref()),
+        0,
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream));
     }
 
     case STRUCT: {
@@ -84,7 +85,7 @@ std::unique_ptr<column> create_empty_column(size_type orc_col_id,
       return make_structs_column(0,
                                  std::move(child_columns),
                                  0,
-                                 rmm::device_buffer{0, stream},
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream),
                                  stream,
                                  cudf::get_current_device_resource_ref());
     }
@@ -107,8 +108,8 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               aggregate_orc_metadata const& metadata,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   auto const col_id = col_meta.orc_col_map[level][orc_col_id];
   auto& col_buffer  = col_buffers[level][col_id];

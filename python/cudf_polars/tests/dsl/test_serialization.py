@@ -7,17 +7,12 @@ import pickle
 
 import pytest
 
-from polars import polars  # type: ignore[attr-defined]
+from polars import _plr as polars
 
 from cudf_polars.dsl.expressions.boolean import BooleanFunction
 from cudf_polars.dsl.expressions.datetime import TemporalFunction
 from cudf_polars.dsl.expressions.string import StringFunction
 from cudf_polars.dsl.expressions.struct import StructFunction
-from cudf_polars.utils.versions import (
-    POLARS_VERSION_LT_138,
-    POLARS_VERSION_LT_141,
-    POLARS_VERSION_LT_142,
-)
 
 
 @pytest.fixture(
@@ -53,14 +48,6 @@ def test_from_polars_all_names(function):
             "FieldByIndex",
             "MultipleFields",
         }
-    if POLARS_VERSION_LT_138 and function == StringFunction:
-        cudf_polars_names_set = cudf_polars_names_set - {"SplitRegex"}
-    if POLARS_VERSION_LT_141 and function == BooleanFunction:
-        # 'HasNulls' and 'IsEmpty' were added to polars' BooleanFunction in 1.41.
-        cudf_polars_names_set = cudf_polars_names_set - {"HasNulls", "IsEmpty"}
-    if POLARS_VERSION_LT_142 and function == BooleanFunction:
-        # 'IsSorted' was added to polars' BooleanFunction in 1.42.
-        cudf_polars_names_set = cudf_polars_names_set - {"IsSorted"}
     assert polars_names_set == cudf_polars_names_set
     names = function.Name
     if function == StructFunction:
@@ -68,15 +55,6 @@ def test_from_polars_all_names(function):
             StructFunction.Name.FieldByIndex,
             StructFunction.Name.MultipleFields,
         }
-    if POLARS_VERSION_LT_138 and function == StringFunction:
-        names = set(names) - {StringFunction.Name.SplitRegex}
-    if POLARS_VERSION_LT_141 and function == BooleanFunction:
-        names = set(names) - {
-            BooleanFunction.Name.HasNulls,
-            BooleanFunction.Name.IsEmpty,
-        }
-    if POLARS_VERSION_LT_142 and function == BooleanFunction:
-        names = set(names) - {BooleanFunction.Name.IsSorted}
     for name in names:
         attr = getattr(polars_function, name.name)
         assert function.Name.from_polars(attr) == name

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/attributes.hpp>
 #include <cudf/strings/detail/attributes.hpp>
@@ -19,14 +20,13 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/warp/warp_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <thrust/binary_search.h>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -65,8 +65,8 @@ constexpr size_type AVG_CHAR_BYTES_THRESHOLD = 64;
 template <typename UnaryFunction>
 std::unique_ptr<column> counts_fn(strings_column_view const& strings,
                                   UnaryFunction& ufn,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   // create output column
   auto results   = make_numeric_column(data_type{type_to_id<size_type>()},
@@ -126,8 +126,8 @@ CUDF_KERNEL void count_characters_parallel_fn(column_device_view const d_strings
 }
 
 std::unique_ptr<column> count_characters_parallel(strings_column_view const& input,
-                                                  rmm::cuda_stream_view stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   // create output column
   auto results = make_numeric_column(data_type{type_to_id<size_type>()},
@@ -144,7 +144,7 @@ std::unique_ptr<column> count_characters_parallel(strings_column_view const& inp
   constexpr thread_index_type block_size = 256;
   constexpr thread_index_type warp_size  = cudf::detail::warp_size;
   cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
-  count_characters_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+  count_characters_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
     *d_strings, d_lengths);
   CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -157,8 +157,8 @@ std::unique_ptr<column> count_characters_parallel(strings_column_view const& inp
 }  // namespace
 
 std::unique_ptr<column> count_characters(strings_column_view const& input,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
 {
   if ((input.size() == input.null_count()) ||
       ((input.chars_size(stream) / (input.size() - input.null_count())) <
@@ -172,8 +172,8 @@ std::unique_ptr<column> count_characters(strings_column_view const& input,
 }
 
 std::unique_ptr<column> count_bytes(strings_column_view const& input,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto ufn = cuda::proclaim_return_type<size_type>(
     [] __device__(string_view const& d_str) { return d_str.size_bytes(); });
@@ -211,14 +211,15 @@ struct code_points_fn {
 namespace detail {
 //
 std::unique_ptr<column> code_points(strings_column_view const& input,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto strings_column = column_device_view::create(input.parent(), stream);
   auto d_column       = *strings_column;
 
   // create offsets vector to account for each string's character length
-  rmm::device_uvector<size_type> offsets(input.size() + 1, stream);
+  cuda::device_buffer<size_type> offsets(
+    stream, cudf::get_current_device_resource_ref(), input.size() + 1, cuda::no_init);
   thrust::transform_inclusive_scan(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<size_type>{0},
@@ -231,10 +232,13 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
     }),
     cuda::std::plus<size_type>());
 
-  offsets.set_element_to_zero_async(0, stream);
+  CUDF_CUDA_TRY(cudaMemsetAsync(offsets.data(), 0, sizeof(size_type), stream.get()));
 
   // the total size is the number of characters in the entire column
-  size_type num_characters = offsets.back_element(stream);
+  size_type num_characters;
+  CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+    &num_characters, offsets.data() + offsets.size() - 1, sizeof(num_characters), stream));
+  cudf::detail::sync_stream(stream);
   // create output column with no nulls
   auto results = make_numeric_column(
     data_type{type_id::INT32}, num_characters, mask_state::UNALLOCATED, stream, mr);
@@ -256,24 +260,24 @@ std::unique_ptr<column> code_points(strings_column_view const& input,
 // external APIS
 
 std::unique_ptr<column> count_characters(strings_column_view const& input,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::count_characters(input, stream, mr);
 }
 
 std::unique_ptr<column> count_bytes(strings_column_view const& input,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::count_bytes(input, stream, mr);
 }
 
 std::unique_ptr<column> code_points(strings_column_view const& input,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::code_points(input, stream, mr);

@@ -4,8 +4,6 @@
  */
 
 #pragma once
-#include "ast/jit/expressions.hpp"
-
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -16,17 +14,24 @@
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/stream>
+
+#include <ast/jit/expressions.hpp>
+
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -68,10 +73,9 @@ struct target_info {
   target id = target::CUDA;  ///< The target identifier
 };
 
-struct scalar_input {
-  std::unique_ptr<column> scalar_column =
-    nullptr;  ///< The scalar value represented as a column with a single element
-};
+///< The scalar value represented as a column with a single element or a prepared scalar column
+///< view.
+using scalar_input = std::variant<std::unique_ptr<column>, scalar_column_view>;
 
 struct column_input {
   column_view column                  = {};  ///< The column input
@@ -85,6 +89,7 @@ using input = std::variant<scalar_input, column_input>;
  * @brief The arguments needed to invoke a `cudf::transform`
  */
 struct [[nodiscard]] transform_args {
+  // Keeps materialized scalar inputs alive; borrowed scalar_column_views retain external owners.
   std::vector<std::unique_ptr<column>> scalar_columns      = {};
   std::vector<std::optional<int32_t>> input_table_sources  = {};
   std::vector<std::optional<int32_t>> input_column_indices = {};
@@ -96,7 +101,12 @@ struct [[nodiscard]] transform_args {
   std::vector<transform_output> outputs                    = {};
   std::vector<std::unique_ptr<column>> string_offsets      = {};
   std::optional<size_type> row_size                        = std::nullopt;
+  std::string udf_expression = {};  ///< The generated function, which the kernel calls by name
+  // Borrowed modules: descriptors and their bytes must stay valid until the kernel is retrieved.
+  cudf::lto_fragments lto_fragments = {};
 };
+
+struct node;
 
 /**
  * @brief The context within which the IR is instantiated.
@@ -111,17 +121,17 @@ struct [[nodiscard]] instance_context {
   std::vector<input> inputs_;                  ///< The inputs for the IR
   std::vector<var_info> input_vars_;           ///< The input variables for the IR
   std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR
-  rmm::cuda_stream_view
-    stream_;  ///< The CUDA stream for any device operations during IR generation
-  rmm::device_async_resource_ref
+  std::unordered_multimap<size_t, node const*> cse_nodes_;  ///< multimap of IR nodes
+  cuda::stream_ref stream_;  ///< The CUDA stream for any device operations during IR generation
+  cudf::memory_resources
     mr_;  ///< The device memory resource for any device memory allocation during IR generation
 
  public:
   friend struct ast_converter;
   friend struct node;
 
-  instance_context(rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
-    : stream_(stream), mr_(mr)
+  instance_context(cuda::stream_ref stream, cudf::memory_resources mr)
+    : stream_(stream), mr_(std::move(mr))
   {
   }
 
@@ -135,20 +145,56 @@ struct [[nodiscard]] instance_context {
 
   ~instance_context() = default;  ///< Destructor
 
+  /**
+   * @brief Adds an output variable to the generated transform.
+   *
+   * @return Index of the newly added output
+   */
   [[nodiscard]] int32_t add_output();
 
+  /**
+   * @brief Adds an input to the generated transform.
+   *
+   * Column inputs that identify the same source table and column reuse the existing input.
+   *
+   * @param in Input to add
+   * @return Index of the new or reused input
+   */
   [[nodiscard]] int32_t add_input(input in);
 
   [[nodiscard]] int32_t add_input(scalar const& scalar)
   {
-    return add_input(
-      scalar_input{.scalar_column = make_column_from_scalar(scalar, 1, stream_, mr_)});
+    return add_input(scalar_input{make_column_from_scalar(scalar, 1, stream_, mr_)});
+  }
+
+  [[nodiscard]] int32_t add_input(scalar_column_view const& column)
+  {
+    return add_input(scalar_input{column});
   }
 
   [[nodiscard]] int32_t add_input(column_view const& column)
   {
     return add_input(column_input{.column = column});
   }
+
+  /**
+   * @brief Finds a structurally equivalent node belonging to a previously completed output.
+   *
+   * Calls of impure functions are never equivalent to another call, but a repeated reference to
+   * an AST call is equivalent to its first reference. Calls of pure functions are equivalent when
+   * their declarations, error policies, and arguments are equivalent.
+   *
+   * @param candidate Node for which to find an equivalent common subexpression
+   * @return Equivalent node, or `nullptr` if none exists
+   */
+  [[nodiscard]] node const* find_equivalent(node const& candidate) const;
+
+  /**
+   * @brief Stages a newly instantiated node for registration after its output is completed.
+   *
+   * @param candidate Newly instantiated node
+   */
+  void add_cse_node(node const& candidate);
 
   /**
    * @brief Generate a globally unique temporary variable identifier
@@ -189,13 +235,13 @@ struct [[nodiscard]] instance_context {
    * @brief Get the CUDA stream for device operations during IR generation
    * @return The CUDA stream for device operations during IR generation
    */
-  [[nodiscard]] rmm::cuda_stream_view get_stream() const { return stream_; }
+  [[nodiscard]] cuda::stream_ref get_stream() const { return stream_; }
 
   /**
    * @brief Get the device memory resource for device memory allocation during IR generation
    * @return The device memory resource for device memory allocation during IR generation
    */
-  [[nodiscard]] rmm::device_async_resource_ref get_mr() const { return mr_; }
+  [[nodiscard]] cudf::memory_resources get_mr() const { return mr_; }
 };
 
 struct [[nodiscard]] code_sink {
@@ -210,26 +256,61 @@ struct [[nodiscard]] code_sink {
 
 struct [[nodiscard]] input_reference {
   int32_t index = 0;  ///< The index of the input variable
+
+  constexpr bool operator==(input_reference const& other) const { return index == other.index; }
+
+  constexpr bool operator!=(input_reference const& other) const { return index != other.index; }
 };
 
 struct [[nodiscard]] output_reference {
   int32_t index = 0;  ///< The index of the output variable
+
+  constexpr bool operator==(output_reference const& other) const { return index == other.index; }
+
+  constexpr bool operator!=(output_reference const& other) const { return index != other.index; }
+};
+
+struct [[nodiscard]] repeated_reference {
+  node const* first = nullptr;  ///< The node converted from the first reference to an AST call
 };
 
 struct [[nodiscard]] node {
  private:
   std::variant<std::monostate, input_reference, output_reference> reference_ =
     std::monostate{};  ///< The index of the input/output variable
-  opcode op_                           = opcode::GET_INPUT;  ///< The operation code
-  std::optional<int32_t> target_scale_ = std::nullopt;       ///< The target scale for decimal
-  input_reference scale_reference_     = {};  ///< The index of the target scale as an IR input
+
+  opcode op_ = opcode::GET_INPUT;  ///< The operation code
+
+  std::optional<int32_t> target_scale_ = std::nullopt;  ///< The target scale for decimal
+
   error_policy error_policy_ =
-    cudf::error_policy::PROPAGATE;                ///< The error policy for the operation
+    cudf::error_policy::PROPAGATE;  ///< The error policy for the operation
+
   std::vector<std::unique_ptr<node>> args_ = {};  ///< The arguments of the operation
+
+  size_t hash_ = 0;  ///< The structural hash of the IR node
+
+  std::string id_ = {};  ///< The identifier of the IR node
 
   data_type type_ = {};  ///< The resolved type information of the IR node
 
-  std::string id_ = {};  ///< The identifier of the IR node
+  input_reference scale_reference_ = {};  ///< The index of the target scale as an IR input
+
+  std::optional<ast::jit::udf> udf_ = std::nullopt;  ///< The callee of a `UDF_CALL` node
+
+  bool emitted_ = false;  ///< Whether the IR node has been emitted into the generated function
+
+  node const* alias_ = nullptr;  ///< The equivalent IR node that this IR aliases, if any. This is
+                                 ///< used to avoid emitting duplicate code for equivalent IR nodes.
+                                 ///< A repeated reference to an AST call aliases its first
+                                 ///< reference from construction.
+
+  /**
+   * @brief Computes the structural hash of this node and its arguments.
+   *
+   * @return The structural hash
+   */
+  [[nodiscard]] size_t compute_hash() const;
 
   /**
    * @brief Create a set of argument IR nodes
@@ -306,15 +387,32 @@ struct [[nodiscard]] node {
   node(input_reference input);
 
   /**
+   * @brief Construct a node that calls a consumer-supplied device function.
+   *
+   * @param udf The function to call
+   * @param error_policy How a row whose call fails is handled
+   * @param args The arguments of the call
+   */
+  node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
+
+  /**
+   * @brief Construct a node for a repeated reference to an AST call, which reuses the evaluation
+   * of its first reference.
+   *
+   * @param reference The node converted from the first reference
+   */
+  explicit node(repeated_reference reference);
+
+  /**
    * @brief Construct a new output reference IR node
-   * @param output The index of the output variable
+   * @param reference The output variable reference
    * @param arg The argument node that produces the value to be set to the output variable
    */
   node(output_reference reference, std::unique_ptr<node> arg);
 
   /**
    * @brief Construct a new output reference IR node
-   * @param output The index of the output variable
+   * @param reference The output variable reference
    * @param arg The argument node that produces the value to be set to the output variable
    */
   node(output_reference reference, node arg);
@@ -324,6 +422,21 @@ struct [[nodiscard]] node {
   node& operator=(node const& other) = delete;
   node& operator=(node&& other)      = default;  ///< Move assignment operator
   ~node()                            = default;  ///< Destructor
+
+  /**
+   * @brief Gets the cached structural hash of the IR node.
+   *
+   * @return The structural hash
+   */
+  [[nodiscard]] size_t hash() const;
+
+  /**
+   * @brief Checks whether another node represents the same expression.
+   *
+   * @param other Node to compare with this node
+   * @return `true` if the nodes are structurally equivalent
+   */
+  [[nodiscard]] bool is_equivalent(node const& other) const;
 
   /**
    * @brief Get the identifier of the IR node
@@ -355,6 +468,13 @@ struct [[nodiscard]] node {
   [[nodiscard]] std::span<std::unique_ptr<node> const> get_args() const;
 
   /**
+   * @brief Get the function a `UDF_CALL` node calls.
+   *
+   * @return The callee, or std::nullopt for any other node
+   */
+  [[nodiscard]] std::optional<ast::jit::udf> get_udf() const;
+
+  /**
    * @brief Returns `false` if this node forwards nulls from its inputs to its output.
    * e.g., `ADD` operator is not null-aware because if any of its inputs is null, the output is
    * null. but `NULL_EQUAL` operator is null-aware because it can produce a non-null output even if
@@ -373,7 +493,6 @@ struct [[nodiscard]] node {
    * @brief Instantiate the IR node with the given context and instance information, setting up any
    * necessary state and preprocessing needed for code generation.
    * @param ctx The context within which the IR is instantiated
-   * @param info The instance information
    */
   void instantiate(instance_context& ctx);
 
@@ -381,10 +500,9 @@ struct [[nodiscard]] node {
    * @brief Generate the code for the IR node based on the instance context and target information.
    * @param ctx The context within which the IR is instantiated
    * @param info The target information
-   * @param instance The instance information
    * @param sink The code sink to which the generated code is emitted
    */
-  void emit_code(instance_context& ctx, target_info const& info, code_sink& sink) const;
+  void emit_code(instance_context& ctx, target_info const& info, code_sink& sink);
 };
 
 /**
@@ -393,22 +511,25 @@ struct [[nodiscard]] node {
 struct [[nodiscard]] ast_converter {
  private:
   std::vector<std::unique_ptr<row_ir::node>> output_irs_;  ///< The output IR nodes
-  rmm::cuda_stream_view
-    stream_;  ///< CUDA stream used for device memory operations and kernel launches.
-  rmm::device_async_resource_ref
+  cuda::stream_ref stream_;  ///< CUDA stream used for device memory operations and kernel launches.
+  cudf::memory_resources
     mr_;  ///< Device memory resource used to allocate the returned table's device memory
   instance_context instance_;  ///< The instance context used during the IR generation
   table_view left_table_;      ///< The left input table for the expression
   table_view right_table_;     ///< The right input table for the expression
+  std::unordered_map<ast::jit::detail::udf_call const*, row_ir::node const*>
+    calls_;  ///< The node converted from the first reference to each AST call
 
  public:
   /**
    * @brief Construct a new AST Converter object
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the returned table's device memory
+   * @param left_table Left input table referenced by expressions
+   * @param right_table Right input table referenced by expressions
    */
-  ast_converter(rmm::cuda_stream_view stream,
-                rmm::device_async_resource_ref mr,
+  ast_converter(cuda::stream_ref stream,
+                cudf::memory_resources mr,
                 table_view left_table,
                 table_view right_table)
     : stream_(std::move(stream)),
@@ -439,28 +560,47 @@ struct [[nodiscard]] ast_converter {
 
   [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::jit::detail::operation const& expr);
 
-  [[nodiscard]] std::tuple<std::string, null_aware, output_nullability> generate_code(
-    target target, ast::expression const& expr, std::string_view function_name);
+  [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::jit::detail::udf_call const& expr);
 
   /**
-   * @brief Convert an AST `compute_column` expression to a `cudf::transform`
+   * @brief Converts multiple AST expressions into one generated transform function.
+   *
+   * @pre `expressions` is not empty
+   *
+   * @param target Code generation target
+   * @param expressions AST expressions, one for each output column
+   * @param function_name Name of the generated transform function. Declarations of the LTO
+   * callees it calls precede it, so kernels call it by this name instead of having the source
+   * parser rename the first function it finds
+   * @return Generated source, function null-awareness, and nullability policy for each output
+   */
+  [[nodiscard]] std::tuple<std::string, null_aware, std::vector<output_nullability>> generate_code(
+    target target,
+    std::span<std::reference_wrapper<ast::expression const> const> expressions,
+    std::string_view function_name);
+
+  /**
+   * @brief Converts AST expressions to arguments for a multi-output `cudf::transform`.
    * @param target The target for which the IR is generated
-   * @param expr The AST expression to convert
+   * @param expressions AST expressions, one for each output column
+   * @param fragments Device modules to link into the generated kernel
    * @param left_table The left input table for the expression
    * @param right_table The right input table for the expression
-   * @param table The input table for the expression
-   * @param function_name The name of the generated function
+   * @param function_name The name of the generated function, which kernels call it by (see
+   * `generate_code`)
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the returned table's device memory
    * @return The result of the conversion, containing the transform arguments and scalar columns
    */
-  static transform_args compute_column(target target,
-                                       ast::expression const& expr,
-                                       table_view const& left_table,
-                                       table_view const& right_table,
-                                       std::string_view function_name,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr);
+  static transform_args compute_table(
+    target target,
+    std::span<std::reference_wrapper<ast::expression const> const> expressions,
+    cudf::lto_fragments fragments,
+    table_view const& left_table,
+    table_view const& right_table,
+    std::string_view function_name,
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   /**
    * @brief Convert an AST `filter` expression to a `cudf::filter`
@@ -468,19 +608,20 @@ struct [[nodiscard]] ast_converter {
    * @param expr The AST expression to convert
    * @param left_table The left input table for the expression
    * @param right_table The right input table for the expression
-   * @param table The input table for the expression
-   * @param function_name The name of the generated function
+   * @param function_name The name of the generated function, which kernels call it by (see
+   * `generate_code`)
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the returned table's device memory
    * @return The result of the conversion, containing the filter arguments and scalar columns
    */
   static transform_args filter(target target,
                                ast::expression const& expr,
+                               cudf::lto_fragments fragments,
                                table_view const& left_table,
                                table_view const& right_table,
                                std::string_view function_name,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr);
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr);
 };
 
 }  // namespace row_ir

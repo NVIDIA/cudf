@@ -15,6 +15,10 @@ from pylibcudf.libcudf.nvtext.stemmer cimport (
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.nvtext.stemmer cimport ColumnOrSize
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.libcudf.nvtext.stemmer import letter_type as LetterType # no-cython-lint
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -27,7 +31,7 @@ cpdef Column is_letter(
     Column input,
     bool check_vowels,
     ColumnOrSize indices,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -58,7 +62,7 @@ cpdef Column is_letter(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -77,7 +81,7 @@ cpdef Column is_letter(
 
 
 cpdef Column porter_stemmer_measure(
-    Column input, object stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns the Porter Stemmer measurements of a strings column.
@@ -100,7 +104,7 @@ cpdef Column porter_stemmer_measure(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()

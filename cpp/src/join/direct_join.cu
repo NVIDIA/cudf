@@ -12,13 +12,14 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 
 #include <cub/device/device_for.cuh>
 #include <cub/device/device_transform.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 
 #include <cstdint>
 #include <memory>
@@ -71,8 +72,8 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 direct_inner_join(column_view const& left_keys,
                   column_view const& right_keys,
                   std::size_t capacity,
-                  rmm::cuda_stream_view stream,
-                  rmm::device_async_resource_ref mr)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     left_keys.type().id() == type_id::UINT32 and right_keys.type().id() == type_id::UINT32,
@@ -86,35 +87,38 @@ direct_inner_join(column_view const& left_keys,
                std::invalid_argument);
 
   if (left_keys.is_empty() or right_keys.is_empty()) {
-    return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                     std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
+    return std::pair(
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
   }
 
   // Build: scatter each right row index to the slot addressed by its key value
-  auto lookup =
-    rmm::device_uvector<size_type>(capacity, stream, cudf::get_current_device_resource_ref());
+  auto lookup = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), capacity, cuda::no_init);
   CUDF_CUDA_TRY(
-    cub::DeviceTransform::Fill(lookup.begin(), lookup.size(), JoinNoMatch, stream.value()));
+    cub::DeviceTransform::Fill(lookup.begin(), lookup.size(), JoinNoMatch, stream.get()));
   CUDF_CUDA_TRY(
     cub::DeviceFor::Bulk(right_keys.size(),
                          scatter_right_index{lookup.data(), right_keys.begin<std::uint32_t>()},
-                         stream.value()));
+                         stream.get()));
 
   // Probe: a single pass emitting the (left index, matched right index) pairs
   auto left_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr);
+    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr.get_output_mr());
   auto right_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr);
+    std::make_unique<rmm::device_uvector<size_type>>(left_keys.size(), stream, mr.get_output_mr());
 
   auto const d_left_keys = left_keys.begin<std::uint32_t>();
   auto const out_iter    = cuda::tabulate_output_iterator{
     emit_match_pair{left_indices->data(), right_indices->data(), lookup.data(), d_left_keys}};
 
+  cudf::memory_resources mrs{mr};
   auto const out_end = cudf::detail::copy_if(cuda::counting_iterator<size_type>{0},
                                              cuda::counting_iterator<size_type>{left_keys.size()},
                                              out_iter,
                                              is_match{lookup.data(), d_left_keys},
-                                             stream);
+                                             stream,
+                                             mrs.as_temporary());
 
   auto const num_matches = cuda::std::distance(out_iter, out_end);
   left_indices->resize(num_matches, stream);
@@ -130,8 +134,8 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 direct_inner_join(column_view const& left_keys,
                   column_view const& right_keys,
                   std::size_t capacity,
-                  rmm::cuda_stream_view stream,
-                  rmm::device_async_resource_ref mr)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::direct_inner_join(left_keys, right_keys, capacity, stream, mr);

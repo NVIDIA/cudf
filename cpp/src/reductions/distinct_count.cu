@@ -18,19 +18,17 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
-#include <thrust/count.h>
-#include <thrust/execution_policy.h>
+#include <cuda/std/concepts>
+#include <cuda/stream>
 #include <thrust/logical.h>
 
 #include <cmath>
 #include <cstddef>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -95,9 +93,8 @@ struct has_nans {
    *
    * @returns bool true if `input` has `NaN` else false
    */
-  template <typename T>
-  bool operator()(column_view const& input, rmm::cuda_stream_view stream)
-    requires(std::is_floating_point_v<T>)
+  template <cuda::std::floating_point T>
+  bool operator()(column_view const& input, cuda::stream_ref stream)
   {
     auto input_device_view = cudf::column_device_view::create(input, stream);
     auto device_view       = *input_device_view;
@@ -120,8 +117,7 @@ struct has_nans {
    * @returns bool Always false as non-floating point columns can't have `NaN`
    */
   template <typename T>
-  bool operator()(column_view const&, rmm::cuda_stream_view)
-    requires(not std::is_floating_point_v<T>)
+  bool operator()(column_view const&, cuda::stream_ref)
   {
     return false;
   }
@@ -130,16 +126,18 @@ struct has_nans {
 
 cudf::size_type distinct_count(table_view const& keys,
                                null_equality nulls_equal,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   auto const num_rows = keys.num_rows();
   if (num_rows == 0) { return 0; }  // early exit for empty input
   auto const has_nulls = nullate::DYNAMIC{cudf::has_nested_nulls(keys)};
+  auto const temp_mr   = cudf::get_current_device_resource_ref();
 
-  auto const preprocessed_input = cudf::detail::row::hash::preprocessed_table::create(keys, stream);
-  auto const row_hasher         = cudf::detail::row::hash::row_hasher(preprocessed_input);
-  auto const hash_key           = row_hasher.device_hasher(has_nulls);
-  auto const row_comp           = cudf::detail::row::equality::self_comparator(preprocessed_input);
+  auto const preprocessed_input =
+    cudf::detail::row::hash::preprocessed_table::create(keys, stream, temp_mr);
+  auto const row_hasher = cudf::detail::row::hash::row_hasher(preprocessed_input);
+  auto const hash_key   = row_hasher.device_hasher(has_nulls);
+  auto const row_comp   = cudf::detail::row::equality::self_comparator(preprocessed_input);
 
   auto const comparator_helper = [&](auto const row_equal) {
     using hasher_type = decltype(hash_key);
@@ -150,8 +148,8 @@ cudf::size_type distinct_count(table_view const& keys,
                                     cuco::linear_probing<1, hasher_type>{hash_key},
                                          {},
                                          {},
-                                    rmm::mr::polymorphic_allocator<char>{},
-                                    stream.value()};
+                                    rmm::mr::polymorphic_allocator<char>{temp_mr},
+                                    stream.get()};
 
     auto const iter = cuda::counting_iterator<cudf::size_type>{0};
     // when nulls are equal, we skip hashing any row that has a null
@@ -160,8 +158,7 @@ cudf::size_type distinct_count(table_view const& keys,
       cuda::counting_iterator<size_type> stencil(0);
       // We must consider a row if any of its column entries is valid,
       // hence OR together the validities of the columns.
-      auto const [row_bitmask, null_count] =
-        cudf::detail::bitmask_or(keys, stream, cudf::get_current_device_resource_ref());
+      auto const [row_bitmask, null_count] = cudf::detail::bitmask_or(keys, stream, temp_mr);
 
       // Unless all columns have a null mask, row_bitmask will be
       // null, and null_count will be zero. Equally, unless there is
@@ -169,12 +166,12 @@ cudf::size_type distinct_count(table_view const& keys,
       // zero. So, it is only when null_count is not zero that we need
       // to do a filtered insertion.
       if (null_count > 0) {
-        row_validity pred{static_cast<bitmask_type const*>(row_bitmask.data())};
-        return key_set.insert_if(iter, iter + num_rows, stencil, pred, stream.value()) + 1;
+        row_validity pred{row_bitmask.data()};
+        return key_set.insert_if(iter, iter + num_rows, stencil, pred, stream.get()) + 1;
       }
     }
     // otherwise, insert all
-    return key_set.insert(iter, iter + num_rows, stream.value());
+    return key_set.insert(iter, iter + num_rows, stream.get());
   };
 
   if (cudf::detail::has_nested_columns(keys)) {
@@ -189,7 +186,7 @@ cudf::size_type distinct_count(table_view const& keys,
 cudf::size_type distinct_count(column_view const& input,
                                null_policy null_handling,
                                nan_policy nan_handling,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   if (0 == input.size()) { return 0; }
 
@@ -221,7 +218,7 @@ cudf::size_type distinct_count(column_view const& input,
 cudf::size_type distinct_count(column_view const& input,
                                null_policy null_handling,
                                nan_policy nan_handling,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::distinct_count(input, null_handling, nan_handling, stream);
@@ -229,7 +226,7 @@ cudf::size_type distinct_count(column_view const& input,
 
 cudf::size_type distinct_count(table_view const& input,
                                null_equality nulls_equal,
-                               rmm::cuda_stream_view stream)
+                               cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::distinct_count(input, nulls_equal, stream);

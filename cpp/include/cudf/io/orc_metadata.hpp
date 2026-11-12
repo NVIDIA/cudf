@@ -59,8 +59,8 @@ struct raw_orc_statistics {
  *
  * @return Column names and encoded ORC statistics
  */
-raw_orc_statistics read_raw_orc_statistics(
-  source_info const& src_info, rmm::cuda_stream_view stream = cudf::get_default_stream());
+raw_orc_statistics read_raw_orc_statistics(source_info const& src_info,
+                                           cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Monostate type alias for the statistics variant.
@@ -212,7 +212,7 @@ struct parsed_orc_statistics {
  * @return Column names and decoded ORC statistics
  */
 parsed_orc_statistics read_parsed_orc_statistics(
-  source_info const& src_info, rmm::cuda_stream_view stream = cudf::get_default_stream());
+  source_info const& src_info, cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Schema of an ORC column, including the nested columns.
@@ -373,7 +373,7 @@ class orc_metadata {
  * @return orc_metadata with ORC schema, number of rows and number of stripes.
  */
 orc_metadata read_orc_metadata(source_info const& src_info,
-                               rmm::cuda_stream_view stream = cudf::get_default_stream());
+                               cuda::stream_ref stream = cudf::get_default_stream());
 
 /** @} */  // end of group
 }  // namespace io

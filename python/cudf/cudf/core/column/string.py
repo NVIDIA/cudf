@@ -329,7 +329,9 @@ class StringColumn(ColumnBase, Scannable):
                     "cuDF does not yet support timezone-aware datetimes"
                 )
             is_nat = self == "NaT"
-            without_nat = self.apply_boolean_mask(is_nat.unary_operator("not"))
+            without_nat = self.apply_retention_mask(
+                is_nat.unary_operator("not")
+            )
             char_counts = without_nat.count_characters()  # type: ignore[attr-defined]
             if char_counts.distinct_count(dropna=True) != 1:
                 # Unfortunately disables OK cases like:
@@ -353,7 +355,7 @@ class StringColumn(ColumnBase, Scannable):
             if target_unit != "s" and len(without_nat):
                 # libcudf parses directly into int64 values of the
                 # target unit and silently wraps on overflow
-                # (see https://github.com/rapidsai/cudf/issues/23247).
+                # (see https://github.com/NVIDIA/cudf/issues/23247).
                 # Parse to seconds first (which cannot realistically
                 # overflow) and reject values whose whole-second part
                 # falls outside the target unit's range, like pandas
@@ -393,7 +395,7 @@ class StringColumn(ColumnBase, Scannable):
         return result_col
 
     def as_datetime_column(self, dtype: np.dtype) -> DatetimeColumn:
-        not_null = self.apply_boolean_mask(self.notnull())
+        not_null = self.apply_retention_mask(self.notnull())
         if len(not_null) == 0:
             # We should hit the self.null_count == len(self) condition
             # so format doesn't matter
@@ -595,13 +597,17 @@ class StringColumn(ColumnBase, Scannable):
                 other.type
             ):
                 if op in {"__eq__", "__ne__"}:
-                    return as_column(
+                    result = as_column(
                         op == "__ne__",
                         length=len(self),
                         dtype=get_dtype_of_same_kind(
                             self.dtype, np.dtype(np.bool_)
                         ),
                     ).set_mask(self.mask, self.null_count)
+                    if self._PANDAS_NA_VALUE in {np.nan, None}:
+                        fill = op == "__ne__"
+                        result = result.fillna(fill)
+                    return result
                 else:
                     return NotImplemented
 
@@ -624,17 +630,34 @@ class StringColumn(ColumnBase, Scannable):
                 "NULL_EQUALS",
                 "NULL_NOT_EQUALS",
             }:
+                if isinstance(
+                    other, StringColumn
+                ) and other._PANDAS_NA_VALUE not in {np.nan, None}:
+                    # Comparing against an NA-semantics column: like pandas,
+                    # keep nulls and use its result dtype in either order.
+                    result_source_dtype = other.dtype
+                    fill_nulls = False
+                else:
+                    result_source_dtype = self.dtype
+                    fill_nulls = self._PANDAS_NA_VALUE in {np.nan, None}
                 if isinstance(other, pa.Scalar):
                     other = pa_scalar_to_plc_scalar(other)
                 lhs_op, rhs_op = (other, self) if reflect else (self, other)
-                return binaryop.binaryop(
+                result = binaryop.binaryop(
                     lhs=lhs_op,
                     rhs=rhs_op,
                     op=op,
                     dtype=get_dtype_of_same_kind(
-                        self.dtype, np.dtype(np.bool_)
+                        result_source_dtype, np.dtype(np.bool_)
                     ),
                 )
+                if fill_nulls and op not in {
+                    "NULL_EQUALS",
+                    "NULL_NOT_EQUALS",
+                }:
+                    fill = op == "__ne__"
+                    result = result.fillna(fill)
+                return result
         return NotImplemented
 
     def minhash(
@@ -859,12 +882,15 @@ class StringColumn(ColumnBase, Scannable):
         )
 
     def normalize_characters(
-        self, normalizer: plc.nvtext.normalize.CharacterNormalizer
+        self,
+        normalizer: plc.nvtext.normalize.CharacterNormalizer,
+        flags: int = int(plc.nvtext.normalize.NormalizeFlags.PAD_PUNCTUATION),
     ) -> Self:
         with self.access(mode="read", scope="internal"):
             plc_column = plc.nvtext.normalize.normalize_characters(
                 self.plc_column,
                 normalizer,
+                flags,
             )
             return cast(
                 "Self",
@@ -1624,25 +1650,19 @@ class StringColumn(ColumnBase, Scannable):
 
     def slice_strings(
         self,
-        start: int | None | NumericalColumn,
-        stop: int | None | NumericalColumn,
+        start: int | NumericalColumn | None,
+        stop: int | NumericalColumn | None,
         step: int | None = None,
     ) -> Self:
         with self.access(mode="read", scope="internal"):
             if isinstance(start, ColumnBase) and isinstance(stop, ColumnBase):
-                plc_start: plc.Column | plc.Scalar = start.plc_column
-                plc_stop: plc.Column | plc.Scalar = stop.plc_column
-                plc_step: plc.Scalar | None = None
+                plc_start: plc.Column | int | None = start.plc_column
+                plc_stop: plc.Column | int | None = stop.plc_column
+                plc_step: int | None = None
             elif all(isinstance(x, int) or x is None for x in (start, stop)):
-                plc_start = plc.Scalar.from_py(
-                    start, dtype=plc.DataType(plc.TypeId.INT32)
-                )
-                plc_stop = plc.Scalar.from_py(
-                    stop, dtype=plc.DataType(plc.TypeId.INT32)
-                )
-                plc_step = plc.Scalar.from_py(
-                    step, dtype=plc.DataType(plc.TypeId.INT32)
-                )
+                plc_start = cast("int | None", start)
+                plc_stop = cast("int | None", stop)
+                plc_step = step
             else:
                 raise ValueError("Invalid start and stop types")
             plc_result = plc.strings.slice.slice_strings(

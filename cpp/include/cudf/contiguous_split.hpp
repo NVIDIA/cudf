@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <span>
 #include <vector>
@@ -34,7 +35,7 @@ namespace CUDF_EXPORT cudf {
  * The memory for the output views is allocated in a single contiguous `rmm::device_buffer` returned
  * in the `packed_table`. There is no top-level owning table.
  *
- * The returned views of `input` are constructed from a vector of indices, that indicate
+ * The returned views of `input` are constructed from a span of indices, that indicate
  * where each split should occur. The `i`th returned `table_view` is sliced as
  * `[0, splits[i])` if `i`=0, else `[splits[i], input.size())` if `i` is the last view and
  * `[splits[i-1], splits[i]]` otherwise.
@@ -45,6 +46,9 @@ namespace CUDF_EXPORT cudf {
  * @note It is the caller's responsibility to ensure that the returned views
  * do not outlive the viewed device memory contained in the `all_data` field of the
  * returned packed_table.
+ *
+ * @note Every output partition of a dictionary column holds a copy of the complete keys child,
+ * including keys that the partition's rows do not reference.
  *
  * @code{.pseudo}
  * Example:
@@ -61,17 +65,51 @@ namespace CUDF_EXPORT cudf {
  * @throws std::invalid_argument When the values in the `splits` are 'strictly decreasing'.
  *
  * @param input View of a table to split
- * @param splits A vector of indices where the view will be split
+ * @param splits Span of indices where the view will be split
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr An optional memory resource to use for all returned device allocations
+ * @param mr Memory resource to allocate all returned device memory
  * @return The set of requested views of `input` indicated by the `splits` and the viewed memory
  * buffer
  */
 std::vector<packed_table> contiguous_split(
   cudf::table_view const& input,
+  std::span<size_type const> splits,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Splits a table using a vector of split points.
+ *
+ * @deprecated in 26.12 and will be removed in a future release. Use the std::span overload instead.
+ *
+ * @param input View of a table to split
+ * @param splits Vector of indices where the view will be split
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resource to allocate all returned device memory
+ * @return The set of requested views of `input` indicated by the `splits` and the viewed memory
+ * buffer
+ */
+[[deprecated("Use the std::span overload instead.")]]
+std::vector<packed_table> contiguous_split(
+  cudf::table_view const& input,
   std::vector<size_type> const& splits,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Splits a table using a list of split points.
+ *
+ * @param input View of a table to split
+ * @param splits Indices where the view will be split
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resource used for returned device allocations
+ * @return Packed tables containing the requested partitions
+ */
+std::vector<packed_table> contiguous_split(
+  cudf::table_view const& input,
+  std::initializer_list<size_type> splits,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 namespace detail {
 
@@ -104,6 +142,7 @@ struct contiguous_split_state;
  * // data. In memory constrained cases, this can be used to set aside scratch memory
  * // for `chunked_pack` at the beginning of a program.
  * auto mr = cudf::get_current_device_resource_ref();
+ * cuda::stream_ref stream = cudf::get_default_stream();
  *
  * // Define a buffer size for each chunk: the larger the buffer is, the more SMs can be
  * // occupied by this algorithm.
@@ -116,7 +155,7 @@ struct contiguous_split_state;
  * //
  * std::size_t user_buffer_size = 128*1024*1024;
  *
- * auto chunked_packer = cudf::chunked_pack::create(tv, user_buffer_size, mr);
+ * auto chunked_packer = cudf::chunked_pack::create(tv, user_buffer_size, stream, mr);
  *
  * std::size_t host_offset = 0;
  * auto host_buffer = ...; // obtain a host buffer you would like to copy to
@@ -134,7 +173,7 @@ struct contiguous_split_state;
  *     user_buffer.data(),
  *     bytes_copied,
  *     cudaMemcpyDefault,
- *     stream);
+ *     stream.get());
  *
  *   host_offset += bytes_copied;
  * }
@@ -155,7 +194,7 @@ class chunked_pack {
   explicit chunked_pack(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+    cuda::stream_ref stream                = cudf::get_default_stream(),
     rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
   /**
@@ -222,7 +261,7 @@ class chunked_pack {
   [[nodiscard]] static std::unique_ptr<chunked_pack> create(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+    cuda::stream_ref stream                = cudf::get_default_stream(),
     rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
  private:
@@ -244,8 +283,8 @@ class chunked_pack {
  *         and device memory respectively
  */
 packed_columns pack(cudf::table_view const& input,
-                    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-                    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                    cuda::stream_ref stream   = cudf::get_default_stream(),
+                    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Compute the size in bytes of the contiguous memory buffer needed to pack the input table.
@@ -261,7 +300,7 @@ packed_columns pack(cudf::table_view const& input,
  */
 std::size_t packed_size(
   cudf::table_view const& input,
-  rmm::cuda_stream_view stream           = cudf::get_default_stream(),
+  cuda::stream_ref stream                = cudf::get_default_stream(),
   rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 /**
@@ -296,6 +335,20 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
  * @return The unpacked `table_view`
  */
 table_view unpack(packed_columns const& input);
+
+/**
+ * @brief Deserialize packed table data using a sized metadata buffer.
+ *
+ * An empty metadata buffer represents a table with no columns and no rows.
+ * The returned `table_view` must not outlive the device data in `gpu_data`.
+ * No new device memory is allocated.
+ *
+ * @throws cudf::logic_error if non-empty metadata does not describe a valid column tree
+ * @param metadata The host-side metadata buffer resulting from `cudf::pack`
+ * @param gpu_data The device-side contiguous buffer referenced by the resulting `table_view`
+ * @return The unpacked `table_view`
+ */
+table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data);
 
 /**
  * @brief Deserialize the result of `cudf::pack`.
@@ -396,8 +449,9 @@ class packed_metadata_view {
   /**
    * @brief Construct a view from a metadata byte buffer.
    *
-   * @throws cudf::logic_error if the buffer is empty or does not satisfy minimum requirements for
-   * describing a valid column tree.
+   * An empty buffer represents a table with no columns and no rows.
+   *
+   * @throws cudf::logic_error if a non-empty buffer does not describe a valid column tree.
    * @param buffer The metadata bytes (as produced by `cudf::pack`)
    */
   explicit packed_metadata_view(std::span<std::uint8_t const> buffer);

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
         Slice,
     )
 
-__all__: list[str] = ["Column"]
+__all__: list[str] = ["Column", "with_mask_from"]
 
 
 # Float64 has 53-bit significand precision (52 fraction bits + 1 implicit leading bit),
@@ -312,15 +312,28 @@ class Column:
             or self.obj.type().id() == plc.TypeId.STRING
         ):
             return Column(
-                self._handle_string_cast(plc_dtype, stream=stream, strict=strict),
+                self._handle_string_cast(
+                    plc_dtype,
+                    stream=stream,
+                    strict=strict,
+                    target_name=dtype.polars_type._string_repr(),
+                ),
                 dtype=dtype,
                 name=self.name,
             )
         elif plc.traits.is_integral_not_bool(
             self.obj.type()
         ) and plc.traits.is_timestamp(plc_dtype):
+            # The target's physical type: TIMESTAMP_DAYS is stored as int32,
+            # every other timestamp as int64.
             upcasted = plc.unary.cast(
-                self.obj, plc.DataType(plc.TypeId.INT64), stream=stream
+                self.obj,
+                plc.DataType(
+                    plc.TypeId.INT32
+                    if plc_dtype.id() == plc.TypeId.TIMESTAMP_DAYS
+                    else plc.TypeId.INT64
+                ),
+                stream=stream,
             )
             plc_col = plc.column.Column(
                 plc_dtype,
@@ -376,6 +389,30 @@ class Column:
             if rep.id() != plc_dtype.id():
                 plc_col = plc.unary.cast(plc_col, plc_dtype, stream=stream)
             return Column(plc_col, dtype=dtype, name=self.name).sorted_like(self)
+        elif plc.traits.is_floating_point(plc_dtype) and (
+            plc.traits.is_timestamp(self.obj.type())
+            or plc.traits.is_duration(self.obj.type())
+        ):
+            phys = plc.DataType(
+                plc.TypeId.INT32
+                if self.obj.type().id()
+                in {plc.TypeId.TIMESTAMP_DAYS, plc.TypeId.DURATION_DAYS}
+                else plc.TypeId.INT64
+            )
+            plc_col = plc.column.Column(
+                phys,
+                self.obj.size(),
+                self.obj.data(),
+                self.obj.null_mask(),
+                self.obj.null_count(),
+                self.obj.offset(),
+                self.obj.children(),
+            )
+            return Column(
+                plc.unary.cast(plc_col, plc_dtype, stream=stream),
+                dtype=dtype,
+                name=self.name,
+            ).sorted_like(self)
         elif plc.traits.is_floating_point(
             self.obj.type()
         ) and plc.traits.is_fixed_point(plc_dtype):
@@ -413,7 +450,7 @@ class Column:
             return result
 
     def _handle_string_cast(
-        self, dtype: plc.DataType, stream: Stream, *, strict: bool
+        self, dtype: plc.DataType, stream: Stream, *, strict: bool, target_name: str
     ) -> plc.Column:
         if dtype.id() == plc.TypeId.STRING:
             if plc.traits.is_floating_point(self.obj.type()):
@@ -448,7 +485,7 @@ class Column:
                 f"Unsupported casting from {self.dtype.id()} to {dtype.id()}."
             )
 
-        castable = type_checker(self.obj, stream=stream)  # type: ignore[call-arg]
+        castable = type_checker(self.obj, stream=stream)  # type: ignore[call-arg,unused-ignore]
         if not plc.reduce.reduce(
             castable,
             plc.aggregation.all(),
@@ -457,15 +494,14 @@ class Column:
         ).to_py(stream=stream):
             if strict:
                 raise InvalidOperationError(
-                    f"Conversion from {self.dtype.id()} to {dtype.id()} failed."
+                    f"conversion from `str` to `{target_name}` failed"
                 )
-            else:
-                values = self.obj.with_mask(
-                    *plc.transform.bools_to_mask(castable, stream=stream)
-                )
-        else:
-            values = self.obj
-        return type_caster(values, dtype, stream=stream)
+            # Mask the cast result rather than self.obj: castable starts at
+            # bit 0, while self.obj may be a slice with a nonzero offset.
+            return type_caster(self.obj, dtype, stream=stream).with_mask(
+                *plc.transform.bools_to_mask(castable, stream=stream)
+            )
+        return type_caster(self.obj, dtype, stream=stream)
 
     def copy_metadata(self, from_: pl_Series, /) -> Self:
         """
@@ -553,12 +589,12 @@ class Column:
         )
 
     def mask_nans(self, stream: Stream) -> Self:
-        """Return a shallow copy of self with nans masked out."""
+        """Return a copy of self with nans masked out."""
         if plc.traits.is_floating_point(self.obj.type()):
             old_count = self.null_count
-            mask, new_count = plc.transform.nans_to_nulls(self.obj, stream=stream)
-            result = type(self)(self.obj.with_mask(mask, new_count), self.dtype)
-            if old_count == new_count:
+            obj = plc.transform.column_nans_to_nulls(self.obj, stream=stream)
+            result = type(self)(obj, self.dtype)
+            if old_count == obj.null_count():
                 return result.sorted_like(self)
             return result
         return self.copy()
@@ -580,7 +616,7 @@ class Column:
         """
         result: int
         if self.size > 0 and plc.traits.is_floating_point(self.obj.type()):
-            # See https://github.com/rapidsai/cudf/issues/20202 for we type ignore
+            # See https://github.com/NVIDIA/cudf/issues/20202 for we type ignore
             result = plc.reduce.reduce(  # type: ignore[assignment]
                 plc.unary.is_nan(self.obj, stream=stream),
                 plc.aggregation.sum(),
@@ -627,3 +663,39 @@ class Column:
         )
         (column,) = table.columns()
         return type(self)(column, name=self.name, dtype=self.dtype).sorted_like(self)
+
+
+def with_mask_from(target: plc.Column, source: Column, stream: Stream) -> plc.Column:
+    """
+    Return ``target`` with the null mask of ``source``.
+
+    A null mask is read from its column's offset, so the mask buffer of
+    ``source.obj`` is only reused when ``target`` has the same offset.
+    Otherwise ``source`` is a slice and the mask of its rows is copied to a
+    new buffer starting at bit 0, which ``target`` must also start at.
+    Unlike ``plc.Column.with_mask``, which takes a raw buffer, this reads the
+    offset from ``source``.
+
+    Parameters
+    ----------
+    target
+        Column with the same number of rows as ``source``.
+    source
+        Column whose nulls are copied onto ``target``.
+    stream
+        CUDA stream used for device memory operations and kernel launches.
+        ``source.obj`` and ``target`` must be valid on this stream, and the
+        result will be valid on this stream.
+
+    Returns
+    -------
+    ``target`` with the nulls of ``source``.
+    """
+    if source.null_count == 0:
+        return target.with_mask(None, 0)
+    if target.offset() == source.obj.offset():
+        return target.with_mask(source.obj.null_mask(), source.null_count)
+    assert target.offset() == 0
+    return target.with_mask(
+        plc.null_mask.copy_bitmask(source.obj, stream=stream), source.null_count
+    )

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/unary.hpp>
 
@@ -42,7 +43,7 @@ using vcol_views  = std::vector<cudf::column_view>;
 
 /**
  * @brief Compute `COUNT_VALID`, `MEAN`, `M2` aggregations for the given values columns.
- * @return A pair of unique keys column and a structs column containing the computed values of
+ * @return A pair of distinct keys column and a structs column containing the computed values of
  *         (`COUNT_VALID`, `MEAN`, `M2`).
  */
 auto compute_partial_results(cudf::column_view const& keys, cudf::column_view const& values)
@@ -62,15 +63,18 @@ auto compute_partial_results(cudf::column_view const& keys, cudf::column_view co
                                               cudf::data_type(cudf::type_id::INT64),
                                               cudf::get_default_stream());
   auto const num_output_rows     = out_keys->num_rows();
-  return std::pair(std::move(out_keys->release()[0]),
-                   cudf::make_structs_column(
-                     num_output_rows, std::move(out_results[0].results), 0, rmm::device_buffer{}));
+  return std::pair(
+    std::move(out_keys->release()[0]),
+    cudf::make_structs_column(num_output_rows,
+                              std::move(out_results[0].results),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
 }
 
 /**
  * @brief Perform merging for partial results of M2 aggregations.
  *
- * @return A pair of unique keys column and a structs column containing the merged values of
+ * @return A pair of distinct keys column and a structs column containing the merged values of
  *         (`COUNT_VALID`, `MEAN`, `M2`).
  */
 auto merge_M2(vcol_views const& keys_cols, vcol_views const& values_cols)
@@ -87,7 +91,12 @@ auto merge_M2(vcol_views const& keys_cols, vcol_views const& values_cols)
 
   auto gb_obj = cudf::groupby::groupby(cudf::table_view({*keys}));
   auto result = gb_obj.aggregate(requests);
-  return std::pair(std::move(result.first->release()[0]), std::move(result.second[0].results[0]));
+  auto ordered =
+    cudf::sort_by_key(
+      cudf::table_view{{result.first->view().column(0), result.second[0].results[0]->view()}},
+      result.first->view())
+      ->release();
+  return std::pair(std::move(ordered[0]), std::move(ordered[1]));
 }
 
 template <typename CountType>

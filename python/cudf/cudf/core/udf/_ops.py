@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2022, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import math
 import operator
+from collections.abc import Callable
 
 arith_ops = [
     operator.add,
@@ -23,7 +24,7 @@ arith_ops = [
 
 bitwise_ops = [operator.and_, operator.or_, operator.xor]
 
-unary_ops = [
+unary_ops: list[Callable] = [
     math.acos,
     math.acosh,
     math.asin,

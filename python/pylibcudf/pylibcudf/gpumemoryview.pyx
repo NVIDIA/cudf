@@ -1,12 +1,41 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pylibcudf.libcudf.types cimport bitmask_type
 from libc.stddef cimport size_t
 from libc.stdint cimport uintptr_t, uint64_t
+from libcpp.memory cimport unique_ptr
+from libcpp.utility cimport move
+from collections.abc import Mapping
+import cython
 import functools
 import operator
+from typing import Any
 
 from .types cimport DataType, size_of, type_id
+from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
+
+
+cdef class _CudaDeviceBuffer:
+    @property
+    def __cuda_array_interface__(self):
+        return {
+            "data": (<uintptr_t>self.c_obj.get().data(), False),
+            "shape": (self.c_obj.get().size() * sizeof(bitmask_type),),
+            "typestr": "|u1",
+            "version": 3,
+        }
+
+
+cdef gpumemoryview _from_cuda_device_buffer(
+    unique_ptr[device_buffer[bitmask_type]] buf, object stream, object mr
+):
+    cdef _CudaDeviceBuffer owner = _CudaDeviceBuffer.__new__(_CudaDeviceBuffer)
+    owner.c_obj = move(buf)
+    # Keep the stream and memory resource alive until the allocation is freed.
+    owner.stream = stream
+    owner.mr = mr
+    return gpumemoryview(owner)
 
 
 cdef gpumemoryview _slice(gpumemoryview parent, uintptr_t ptr, uint64_t nbytes):
@@ -60,7 +89,7 @@ cdef class gpumemoryview:
     It will be expanded to encompass more memoryview functionality over time.
     """
     # TODO: dlpack support
-    def __init__(self, object obj):
+    def __init__(self, object obj: Any):
         try:
             cai = obj.__cuda_array_interface__
         except AttributeError:
@@ -83,7 +112,7 @@ cdef class gpumemoryview:
         self.nbytes = functools.reduce(operator.mul, cai["shape"]) * itemsize
 
     @property
-    def __cuda_array_interface__(self):
+    def __cuda_array_interface__(self) -> Mapping[str, Any]:
         return self.cai
 
     @property
@@ -95,10 +124,11 @@ cdef class gpumemoryview:
         """
         return self.nbytes
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.cai["shape"][0]
 
-    def byte_slice(self, s):
+    @cython.annotation_typing(False)
+    def byte_slice(self, s: slice) -> gpumemoryview:
         """Return a byte-range sub-view of this buffer.
 
         Parameters

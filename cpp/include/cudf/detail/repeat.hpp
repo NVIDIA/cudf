@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,7 +9,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -17,23 +17,22 @@ namespace cudf {
 namespace detail {
 
 /**
- * @copydoc cudf::repeat(table_view const&, column_view const&, bool,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * @copydoc cudf::repeat(table_view const&, column_view const&,
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<table> repeat(table_view const& input_table,
                               column_view const& count,
-                              bool check_count,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::repeat(table_view const&, size_type,
- * rmm::cuda_stream_view, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<table> repeat(table_view const& input_table,
                               size_type count,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

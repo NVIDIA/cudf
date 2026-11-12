@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 /**
  * @file
@@ -62,7 +62,7 @@ class lists_column_view : private column_view {
   using column_view::null_mask;
   using column_view::offset;
   using column_view::size;
-  using offset_iterator = size_type const*;  ///< Iterator type for offsets
+  using offset_iterator = int32_t const*;  ///< Iterator type for offsets
 
   /**
    * @brief Returns the parent column.
@@ -99,7 +99,7 @@ class lists_column_view : private column_view {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return A sliced child column view
    */
-  [[nodiscard]] column_view get_sliced_child(rmm::cuda_stream_view stream) const;
+  [[nodiscard]] column_view get_sliced_child(cuda::stream_ref stream) const;
 
   /**
    * @brief Return first offset (accounting for column offset)
@@ -108,7 +108,7 @@ class lists_column_view : private column_view {
    */
   [[nodiscard]] offset_iterator offsets_begin() const noexcept
   {
-    return offsets().begin<size_type>() + offset();
+    return offsets().begin<int32_t>() + offset();
   }
 
   /**

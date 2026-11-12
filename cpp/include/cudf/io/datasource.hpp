@@ -10,11 +10,12 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <future>
 #include <memory>
 #include <optional>
+#include <span>
 
 /**
  * @file
@@ -76,6 +77,13 @@ class datasource {
     {
       return cudf::host_span<uint8_t const>{data(), size()};
     }
+
+    /**
+     * @brief Implicit conversion operator to std::span<uint8_t const>
+     *
+     * @return A std::span view of the buffer's data
+     */
+    operator std::span<uint8_t const>() const { return {data(), size()}; }
 
     /**
      * @brief Factory to construct a datasource buffer object from a container.
@@ -237,6 +245,20 @@ class datasource {
   }
 
   /**
+   * @brief Returns whether a device read of the given size is issued as a direct transfer to device
+   * memory, rather than staged through host memory by cuDF or KvikIO.
+   *
+   * Returns `false` when `supports_device_read()` is `false`.
+   *
+   * @note For file sources, `true` means KvikIO hands the read to cuFile. cuFile may still stage
+   * it through host memory if it falls back to its own compatibility mode, which is not observable.
+   *
+   * @param size Number of bytes to read
+   * @return whether a device read of the given size is issued as a direct transfer
+   */
+  [[nodiscard]] virtual bool is_device_read_direct(size_t size) const { return false; }
+
+  /**
    * @brief Returns a device buffer with a subset of data from the source.
    *
    * For optimal performance, should only be called when `is_device_read_preferred` returns `true`.
@@ -254,7 +276,7 @@ class datasource {
    */
   virtual std::unique_ptr<datasource::buffer> device_read(size_t offset,
                                                           size_t size,
-                                                          rmm::cuda_stream_view stream)
+                                                          cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read must override it.");
   }
@@ -276,7 +298,7 @@ class datasource {
    *
    * @return The number of bytes read (can be smaller than size)
    */
-  virtual size_t device_read(size_t offset, size_t size, uint8_t* dst, rmm::cuda_stream_view stream)
+  virtual size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read must override it.");
   }
@@ -299,7 +321,7 @@ class datasource {
    * @param dst Address of the existing device memory
    *            It must not be used asynchronously before the returned future is completed,
    *            because the implementation is not guaranteed to follow stream-ordering.
-   *            See https://github.com/rapidsai/cudf/pull/18279#issuecomment-2727726886
+   *            See https://github.com/NVIDIA/cudf/pull/18279#issuecomment-2727726886
    * @param stream CUDA stream to use
    *
    * @return The number of bytes read as a future value (can be smaller than size)
@@ -307,7 +329,7 @@ class datasource {
   virtual std::future<size_t> device_read_async(size_t offset,
                                                 size_t size,
                                                 uint8_t* dst,
-                                                rmm::cuda_stream_view stream)
+                                                cuda::stream_ref stream)
   {
     CUDF_FAIL("datasource classes that support device_read_async must override it.");
   }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,14 +13,13 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/cmath>
-#include <cuda/std/type_traits>
+#include <cuda/std/concepts>
+#include <cuda/stream>
 #include <thrust/count.h>
-#include <thrust/execution_policy.h>
 
 namespace cudf {
 namespace detail {
@@ -30,15 +29,13 @@ namespace {
  * the row `index` of `column_device_view` is `NaN`.
  */
 struct check_nan {
-  template <typename T>
+  template <cuda::std::floating_point T>
   __device__ inline bool operator()(column_device_view const& input, size_type index)
-    requires(cuda::std::is_floating_point_v<T>)
   {
     return cuda::std::isnan(input.data<T>()[index]);
   }
   template <typename T>
   __device__ inline bool operator()(column_device_view const&, size_type)
-    requires(not cuda::std::is_floating_point_v<T>)
   {
     return false;
   }
@@ -48,27 +45,31 @@ struct check_nan {
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   auto const num_rows = input.size();
 
-  if (num_rows == 0 or num_rows == input.null_count()) { return 0; }
+  if (num_rows == 0) { return 0; }
+  if (num_rows == input.null_count()) {
+    return static_cast<size_type>(null_handling == null_policy::INCLUDE);
+  }
 
   auto const count_nulls      = null_handling == null_policy::INCLUDE;
   auto const nan_is_null      = nan_handling == nan_policy::NAN_IS_NULL;
   auto const should_check_nan = cudf::is_floating_point(input.type());
-  auto input_device_view      = cudf::column_device_view::create(input, stream);
+  auto const temp_mr          = cudf::get_current_device_resource_ref();
+  auto input_device_view      = cudf::column_device_view::create(input, stream, temp_mr);
   auto device_view            = *input_device_view;
   auto input_table_view       = table_view{{input}};
-
-  auto const comparator = cudf::detail::row::equality::self_comparator{input_table_view, stream};
-  auto const comp       = comparator.equal_to<false>(
+  auto const comparator =
+    cudf::detail::row::equality::self_comparator{input_table_view, stream, temp_mr};
+  auto const comp = comparator.equal_to<false>(
     nullate::DYNAMIC{cudf::has_nulls(input_table_view)},
     null_equality::EQUAL,
     cudf::detail::row::equality::nan_equal_physical_equality_comparator{});
 
   return thrust::count_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator<cudf::size_type>{num_rows},
     [count_nulls, nan_is_null, should_check_nan, device_view, comp] __device__(cudf::size_type i) {
@@ -91,7 +92,7 @@ cudf::size_type unique_count(column_view const& input,
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
                              nan_policy nan_handling,
-                             rmm::cuda_stream_view stream)
+                             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
   return detail::unique_count(input, null_handling, nan_handling, stream);

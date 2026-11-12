@@ -8,11 +8,11 @@
 #include "nested_json.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/tokenize_json.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
@@ -74,13 +74,14 @@ void validate_token_stream(device_span<char const> d_input,
                            device_span<PdaTokenT> tokens,
                            device_span<SymbolOffsetT> token_indices,
                            cudf::io::json_reader_options const& options,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   if (!options.is_strict_validation()) { return; }
 
-  rmm::device_uvector<bool> d_invalid = cudf::detail::make_zeroed_device_uvector_async<bool>(
-    tokens.size(), stream, cudf::get_current_device_resource_ref());
+  auto d_invalid = cudf::detail::make_zeroed_device_buffer_async<bool>(
+    tokens.size(), stream, mr.get_temporary_mr());
 
   using token_t = cudf::io::json::token_t;
   auto literals = options.get_na_values();
@@ -280,7 +281,7 @@ void validate_token_stream(device_span<char const> d_input,
     [d_invalid = d_invalid.begin()] __device__(size_type i, bool x) -> void {
       if (x) { d_invalid[i] = true; }
     }));
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                     count_it,
                     count_it + num_tokens,
                     conditional_invalidout_it,
@@ -300,13 +301,12 @@ void validate_token_stream(device_span<char const> d_input,
       return {static_cast<token_t>(tokens[i]), tokens[i] == token_t::LineEnd};
     });
 
-  thrust::transform_inclusive_scan(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    count_it,
-    count_it + num_tokens,
-    conditional_output_it,
-    transform_op,
-    binary_op);  // in-place scan
+  thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                   count_it,
+                                   count_it + num_tokens,
+                                   conditional_output_it,
+                                   transform_op,
+                                   binary_op);  // in-place scan
 }
 }  // namespace detail
 }  // namespace cudf::io::json

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,9 +7,10 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf::strings::detail {
 
@@ -27,7 +28,7 @@ namespace cudf::strings::detail {
  */
 std::unique_ptr<column> create_offsets_from_positions(strings_column_view const& input,
                                                       device_span<int64_t const> const& positions,
-                                                      rmm::cuda_stream_view stream,
-                                                      rmm::device_async_resource_ref mr);
+                                                      cuda::stream_ref stream,
+                                                      cudf::memory_resources mr);
 
 }  // namespace cudf::strings::detail

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -17,11 +17,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/transform.h>
 
 #include <cstdlib>
@@ -29,23 +29,18 @@
 
 namespace cudf::strings {
 namespace detail {
+namespace {
 
-/**
- * @copydoc create_string_vector_from_column
- */
-rmm::device_uvector<string_view> create_string_vector_from_column(
-  cudf::strings_column_view const input,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+void populate_string_views(strings_column_view input,
+                           device_span<string_view> output,
+                           cuda::stream_ref stream)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
-
-  auto strings_vector = rmm::device_uvector<string_view>(input.size(), stream, mr);
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
-                    strings_vector.begin(),
+                    output.begin(),
                     [d_strings = *d_strings] __device__(size_type idx) {
                       // placeholder for factory function that takes a span of string_views
                       auto const null_string_view = string_view{nullptr, 0};
@@ -56,7 +51,19 @@ rmm::device_uvector<string_view> create_string_vector_from_column(
                       auto const empty_string_view = string_view{};
                       return d_str.empty() ? empty_string_view : d_str;
                     });
+}
 
+}  // namespace
+
+/**
+ * @copydoc create_string_vector_from_column
+ */
+cuda::device_buffer<string_view> create_string_vector_from_column(
+  cudf::strings_column_view const input, cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  auto strings_vector =
+    cuda::device_buffer<string_view>(stream, mr.get_output_mr(), input.size(), cuda::no_init);
+  populate_string_views(input, strings_vector, stream);
   return strings_vector;
 }
 
@@ -65,8 +72,8 @@ rmm::device_uvector<string_view> create_string_vector_from_column(
  */
 std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
                                                     size_type count,
-                                                    rmm::cuda_stream_view stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr)
 {
   auto const threshold = get_offset64_threshold();
   if (!is_large_strings_enabled()) {
@@ -98,7 +105,7 @@ thread_safe_per_context_cache<special_case_mapping> d_special_case_mappings;
 /**
  * @copydoc cudf::strings::detail::get_character_flags_table
  */
-character_flags_table_type const* get_character_flags_table(rmm::cuda_stream_view stream)
+character_flags_table_type const* get_character_flags_table(cuda::stream_ref stream)
 {
   return d_character_codepoint_flags.find_or_initialize([&](void) {
     character_flags_table_type* table = nullptr;
@@ -106,9 +113,13 @@ character_flags_table_type const* get_character_flags_table(rmm::cuda_stream_vie
                                           g_character_codepoint_flags,
                                           sizeof(g_character_codepoint_flags),
                                           0,
-                                          cudaMemcpyHostToDevice,
-                                          stream.value()));
+                                          cudaMemcpyDefault,
+                                          stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_codepoint_flags));
+    // The copy above is asynchronous and the cached pointer is shared across
+    // callers/streams; synchronize so the table is fully populated before it is
+    // handed out (first-use only).
+    stream.sync();
     return table;
   });
 }
@@ -116,7 +127,7 @@ character_flags_table_type const* get_character_flags_table(rmm::cuda_stream_vie
 /**
  * @copydoc cudf::strings::detail::get_character_cases_table
  */
-character_cases_table_type const* get_character_cases_table(rmm::cuda_stream_view stream)
+character_cases_table_type const* get_character_cases_table(cuda::stream_ref stream)
 {
   return d_character_cases_table.find_or_initialize([&](void) {
     character_cases_table_type* table = nullptr;
@@ -124,9 +135,13 @@ character_cases_table_type const* get_character_cases_table(rmm::cuda_stream_vie
                                           g_character_cases_table,
                                           sizeof(g_character_cases_table),
                                           0,
-                                          cudaMemcpyHostToDevice,
-                                          stream.value()));
+                                          cudaMemcpyDefault,
+                                          stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_cases_table));
+    // The copy above is asynchronous and the cached pointer is shared across
+    // callers/streams; synchronize so the table is fully populated before it is
+    // handed out (first-use only).
+    stream.sync();
     return table;
   });
 }
@@ -134,7 +149,7 @@ character_cases_table_type const* get_character_cases_table(rmm::cuda_stream_vie
 /**
  * @copydoc cudf::strings::detail::get_special_case_mapping_table
  */
-special_case_mapping const* get_special_case_mapping_table(rmm::cuda_stream_view stream)
+special_case_mapping const* get_special_case_mapping_table(cuda::stream_ref stream)
 {
   return d_special_case_mappings.find_or_initialize([&](void) {
     special_case_mapping* table = nullptr;
@@ -142,9 +157,13 @@ special_case_mapping const* get_special_case_mapping_table(rmm::cuda_stream_view
                                           g_special_case_mappings,
                                           sizeof(g_special_case_mappings),
                                           0,
-                                          cudaMemcpyHostToDevice,
-                                          stream.value()));
+                                          cudaMemcpyDefault,
+                                          stream.get()));
     CUDF_CUDA_TRY(cudaGetSymbolAddress((void**)&table, character_special_case_mappings));
+    // The copy above is asynchronous and the cached pointer is shared across
+    // callers/streams; synchronize so the table is fully populated before it is
+    // handed out (first-use only).
+    stream.sync();
     return table;
   });
 }
@@ -169,9 +188,7 @@ bool is_large_strings_enabled()
 #endif
 }
 
-int64_t get_offset_value(cudf::column_view const& offsets,
-                         size_type index,
-                         rmm::cuda_stream_view stream)
+int64_t get_offset_value(cudf::column_view const& offsets, size_type index, cuda::stream_ref stream)
 {
   auto const otid = offsets.type().id();
   CUDF_EXPECTS(otid == type_id::INT64 || otid == type_id::INT32,
@@ -182,7 +199,7 @@ int64_t get_offset_value(cudf::column_view const& offsets,
 }
 
 std::pair<int64_t, int64_t> get_first_and_last_offset(cudf::strings_column_view const& input,
-                                                      rmm::cuda_stream_view stream)
+                                                      cuda::stream_ref stream)
 {
   if (input.is_empty()) { return {0L, 0L}; }
   auto const first_offset = (input.offset() == 0) ? 0
@@ -196,12 +213,13 @@ std::pair<int64_t, int64_t> get_first_and_last_offset(cudf::strings_column_view 
 }  // namespace detail
 
 rmm::device_uvector<string_view> create_string_vector_from_column(
-  cudf::strings_column_view const strings,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cudf::strings_column_view const strings, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::create_string_vector_from_column(strings, stream, mr);
+  auto strings_vector =
+    rmm::device_uvector<string_view>(strings.size(), stream, mr.get_output_mr());
+  detail::populate_string_views(strings, strings_vector, stream);
+  return strings_vector;
 }
 
 int64_t get_offset64_threshold() { return detail::get_offset64_threshold(); }

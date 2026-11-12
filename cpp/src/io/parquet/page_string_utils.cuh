@@ -10,6 +10,7 @@
 #include <cudf/strings/detail/gather.cuh>
 
 #include <cuda/atomic>
+#include <cuda/cmath>
 #include <cuda/std/bit>
 
 namespace cudf::io::parquet::detail {
@@ -94,11 +95,11 @@ __device__ inline void block_excl_sum(size_type* arr, size_type length, size_typ
  * @brief Converts string sizes to offsets if this is not a large string column.
  */
 template <int block_size, bool has_lists>
-__device__ void convert_small_string_lengths_to_offsets(page_state_s const* const state)
+__device__ void convert_small_string_lengths_to_offsets(auto const* const state)
 {
   // If this is a large string column. In the
   // latter case, offsets will be computed during string column creation.
-  auto& ni        = state->nesting_info[state->setup.col.max_nesting_depth - 1];
+  auto& ni        = state->nesting.nesting_info[state->setup.col.max_nesting_depth - 1];
   int value_count = ni.value_count;
 
   // if no repetition we haven't calculated start/end bounds and instead just skipped
@@ -118,11 +119,11 @@ __device__ void convert_small_string_lengths_to_offsets(page_state_s const* cons
  * construction
  */
 template <bool has_lists>
-inline __device__ void compute_initial_large_strings_offset(page_state_s const* const state,
+inline __device__ void compute_initial_large_strings_offset(auto const* const state,
                                                             size_t& initial_str_offset)
 {
   // Values decoded by this page.
-  int value_count = state->nesting_info[state->setup.col.max_nesting_depth - 1].value_count;
+  int value_count = state->nesting.nesting_info[state->setup.col.max_nesting_depth - 1].value_count;
 
   // if no repetition we haven't calculated start/end bounds and instead just skipped
   // values until we reach first_row. account for that here.
@@ -138,30 +139,25 @@ inline __device__ void compute_initial_large_strings_offset(page_state_s const* 
   }
 }
 
-template <int value>
-CUDF_HOST_DEVICE constexpr int log2_int()
-{
-  static_assert((value >= 1) && ((value & (value - 1)) == 0), "Only works for powers of 2!");
-  return 31 - cuda::std::countl_zero(static_cast<uint32_t>(value));
-}
-
 template <int block_size>
 __device__ inline int calc_threads_per_string_log2(int avg_string_length)  // returns log2(M)
 {
+  static_assert(cuda::is_power_of_two(block_size), "block_size must be a power of two");
+
   // From testing, performance is best when copying an average of B = 4 bytes at once.
   // So #-threads-per-string M = avg_string_length / 4
   // Help the compiler make the code fast by keeping everything a power of 2
   // For avg length < 4/8/16/..., length power-of-2 = 2/3/4/.../. Divide by 4: 0/1/...
 
   // avg - 1: Don't want extra thread at powers of 2 (e.g. 32 (0b100000 -> 0b11111 -> 5)
-  int const avg_log2     = 32 - __clz(avg_string_length - 1);
+  int const avg_log2     = cuda::std::bit_width(static_cast<uint32_t>(avg_string_length - 1));
   int const threads_log2 = avg_log2 - 2;  // Target 4 bytes / thread at once (log2(4) = 2)
 
   // This is the target (log2) for M, but we need to clamp its range
   // First clamp #-strings-at-once (N) btw 1 (all threads (T)) & 32 (cache miss if larger)
   // So, clamp #-threads-per-string M = T / N between: T (all) & T/32 (cache miss)
   // So, clamp log2(#-threads-per-string) between log2(T) & log2(T) - 5 (min 1)
-  static constexpr int block_size_log2  = log2_int<block_size>();  // 7 for block_size = 128
+  static constexpr int block_size_log2  = cuda::ilog2(block_size);  // 7 for block_size = 128
   static constexpr int min_threads_log2 = cuda::std::max(block_size_log2 - 5, 1);
 
   // Clamp log2(M) (between 2 and 7 for block_size = 128)
@@ -190,7 +186,7 @@ template <int block_size,
           bool split_decode_t,
           copy_mode copy_mode_t,
           typename state_buf>
-__device__ size_t decode_strings(page_state_s* s,
+__device__ size_t decode_strings(auto* s,
                                  state_buf* const sb,
                                  int start,
                                  int end,
@@ -202,7 +198,7 @@ __device__ size_t decode_strings(page_state_s* s,
   int const leaf_level_index    = s->setup.col.max_nesting_depth - 1;
   int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
 
-  auto const& ni = s->nesting_info[leaf_level_index];
+  auto const& ni = s->nesting.nesting_info[leaf_level_index];
 
   // decode values
   int pos = start;

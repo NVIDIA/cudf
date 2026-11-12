@@ -1,26 +1,30 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf/utilities/export.hpp>
-#include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstddef>
+#include <span>
 #include <vector>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
 
+/**
+ * @brief Interface for a pool of CUDA streams.
+ *
+ * Implementations are not required to be thread safe. A pool is owned by a single thread at a time,
+ * which is how `current_cuda_stream_pool()` hands them out, so an implementation may keep
+ * unsynchronized state. Sharing one pool between threads requires external synchronization.
+ */
 class cuda_stream_pool {
  public:
-  // matching type used in rmm::cuda_stream_pool::get_stream(stream_id)
-  using stream_id_type = std::size_t;
-
   virtual ~cuda_stream_pool()                          = default;
   cuda_stream_pool(cuda_stream_pool const&)            = delete;
   cuda_stream_pool(cuda_stream_pool&&)                 = delete;
@@ -28,70 +32,80 @@ class cuda_stream_pool {
   cuda_stream_pool& operator=(cuda_stream_pool&&)      = delete;
 
   /**
-   * @brief Get a `cuda_stream_view` of a stream in the pool.
+   * @brief Get a single stream from the pool.
    *
-   * This function is thread safe with respect to other calls to the same function.
+   * @note Use `get_streams` to obtain multiple streams. Repeated single-stream requests are not
+   * guaranteed to return different streams.
    *
-   * @return Stream view.
+   * @return Stream reference.
    */
-  virtual rmm::cuda_stream_view get_stream() = 0;
+  virtual cuda::stream_ref get_stream() = 0;
 
   /**
-   * @brief Get a `cuda_stream_view` of the stream associated with `stream_id`.
+   * @brief Get a vector of `cuda::stream_ref` objects from the pool.
    *
-   * Equivalent values of `stream_id` return a `cuda_stream_view` to the same underlying stream.
-   * This function is thread safe with respect to other calls to the same function.
+   * The returned streams are distinct unless `count` is greater than the maximum number of streams
+   * the pool provides, in which case streams are repeated.
    *
-   * @param stream_id Unique identifier for the desired stream
-   * @return Requested stream view.
+   * @param count The number of stream references to return.
+   * @return Vector containing `count` stream references.
    */
-  virtual rmm::cuda_stream_view get_stream(stream_id_type stream_id) = 0;
-
-  /**
-   * @brief Get a set of `cuda_stream_view` objects from the pool.
-   *
-   * An attempt is made to ensure that the returned vector does not contain duplicate
-   * streams, but this cannot be guaranteed if `count` is greater than the value returned by
-   * `get_stream_pool_size()`.
-   *
-   * This function is thread safe with respect to other calls to the same function.
-   *
-   * @param count The number of stream views to return.
-   * @return Vector containing `count` stream views.
-   */
-  virtual std::vector<rmm::cuda_stream_view> get_streams(std::size_t count) = 0;
-
-  /**
-   * @brief Get the number of unique stream objects in the pool.
-   *
-   * This function is thread safe with respect to other calls to the same function.
-   *
-   * @return the number of stream objects in the pool
-   */
-  [[nodiscard]] virtual std::size_t get_stream_pool_size() const = 0;
+  virtual std::vector<cuda::stream_ref> get_streams(std::size_t count) = 0;
 
  protected:
   cuda_stream_pool() = default;
 };
 
 /**
- * @brief Initialize global stream pool.
- */
-cuda_stream_pool* create_global_cuda_stream_pool();
-
-/**
- * @brief Get the global stream pool.
- */
-cuda_stream_pool& global_cuda_stream_pool();
-
-/**
- * @brief Acquire a set of `cuda_stream_view` objects and synchronize them to an event on another
- * stream.
+ * @brief Create a stream pool for a thread to use with one device.
  *
- * By default an underlying `rmm::cuda_stream_pool` is used to obtain the streams. The only other
- * implementation at present is a debugging version that always returns the stream returned by
- * `cudf::get_default_stream()`. To use this debugging version, set the environment variable
- * `LIBCUDF_USE_DEBUG_STREAM_POOL`.
+ * Overridden by the stream identification test utilities to substitute a pool that always returns
+ * the default stream.
+ *
+ * @return An owning pointer to a new pool.
+ */
+cuda_stream_pool* create_cuda_stream_pool();
+
+/**
+ * @brief Get the stream pool the calling thread should use for the current device.
+ *
+ * Each thread currently has its own pool for each device it uses, so concurrent threads are handed
+ * distinct streams. The maximum number of streams a pool provides can be configured with the
+ * `LIBCUDF_STREAM_POOL_SIZE` environment variable.
+ *
+ * The returned streams stay valid for the lifetime of the process and may be used from any thread.
+ * Once the thread that obtained them exits its pool is recycled, so another thread can be handed
+ * the same streams; holding on to them past that point gives up the isolation the pool provides.
+ *
+ * @return Reference to the calling thread's stream pool for the current device.
+ */
+cuda_stream_pool& current_cuda_stream_pool();
+
+/**
+ * @brief Get the stream pool the calling thread should use for the current device.
+ *
+ * @deprecated Renamed to `current_cuda_stream_pool`, which does not imply a process-wide pool.
+ *
+ * @return Reference to the calling thread's stream pool for the current device.
+ */
+[[deprecated("Use current_cuda_stream_pool instead.")]]  //
+inline cuda_stream_pool&
+global_cuda_stream_pool()
+{
+  return current_cuda_stream_pool();
+}
+
+/**
+ * @brief Acquire a vector of `cuda::stream_ref` objects and synchronize them to an event on
+ * another stream.
+ *
+ * By default the calling thread's stream pool is used to obtain the streams, so streams are not
+ * shared with concurrently forking threads. The only other implementation at present is a debugging
+ * version that always returns the stream returned by `cudf::get_default_stream()`. To use this
+ * debugging version, set the environment variable `LIBCUDF_USE_DEBUG_STREAM_POOL`.
+ *
+ * The returned streams stay valid after the calling thread exits, but its pool is recycled at that
+ * point, so they may then be handed to another thread as well.
  *
  * Example usage:
  * @code{.cpp}
@@ -106,19 +120,19 @@ cuda_stream_pool& global_cuda_stream_pool();
  * @endcode
  *
  * @param stream Stream that the returned streams will wait on.
- * @param count The number of `cuda_stream_view` objects to return.
- * @return Vector containing `count` stream views.
+ * @param count The number of `cuda::stream_ref` objects to return.
+ * @return Vector containing `count` stream references.
  */
-[[nodiscard]] std::vector<rmm::cuda_stream_view> fork_streams(rmm::cuda_stream_view stream,
-                                                              std::size_t count);
+[[nodiscard]] std::vector<cuda::stream_ref> fork_streams(cuda::stream_ref stream,
+                                                         std::size_t count);
 
 /**
- * @brief Synchronize a stream to an event on a set of streams.
+ * @brief Synchronize a stream to an event on each of a group of streams.
  *
  * @param streams Streams to wait on.
  * @param stream Joined stream that synchronizes with the waited-on streams.
  */
-void join_streams(host_span<rmm::cuda_stream_view const> streams, rmm::cuda_stream_view stream);
+void join_streams(std::span<cuda::stream_ref const> streams, cuda::stream_ref stream);
 
 }  // namespace detail
 }  // namespace CUDF_EXPORT cudf

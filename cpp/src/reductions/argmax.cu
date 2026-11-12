@@ -9,8 +9,8 @@ namespace cudf::reduction::detail {
 
 std::unique_ptr<scalar> argmax(column_view const& input,
                                data_type dispatch_type,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   return type_dispatcher(
     dispatch_type, simple::detail::arg_minmax_dispatcher<aggregation::ARGMAX>{}, input, stream, mr);

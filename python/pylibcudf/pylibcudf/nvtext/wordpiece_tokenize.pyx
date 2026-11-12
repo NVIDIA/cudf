@@ -13,6 +13,10 @@ from pylibcudf.libcudf.nvtext.wordpiece_tokenize cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -30,12 +34,12 @@ cdef class WordPieceVocabulary:
     def __cinit__(
         self,
         Column vocab,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         cdef column_view c_vocab = vocab.view()
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(cpp_load_wordpiece_vocabulary(
@@ -48,7 +52,7 @@ cpdef Column wordpiece_tokenize(
     Column input,
     WordPieceVocabulary vocabulary,
     size_type max_words_per_row,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -76,7 +80,7 @@ cpdef Column wordpiece_tokenize(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()

@@ -24,9 +24,9 @@ def lists_column_and_mask():
     return pa_input, pa_mask
 
 
-def test_lists_apply_boolean_mask(lists_column_and_mask):
+def test_lists_apply_retention_mask(lists_column_and_mask):
     pa_input, pa_mask = lists_column_and_mask
-    result = plc.lists.apply_boolean_mask(
+    result = plc.lists.apply_retention_mask(
         plc.Column.from_arrow(pa_input), plc.Column.from_arrow(pa_mask)
     )
     expected = pa.array([[0, 2], [4], [6, 8]], type=pa.list_(pa.int32()))
@@ -42,7 +42,7 @@ def test_lists_apply_deletion_mask(lists_column_and_mask):
     assert_column_eq(expected, result)
 
 
-def test_apply_boolean_mask():
+def test_apply_retention_mask():
     pa_table = pa.table(
         {
             "a": pa.array([10, 40, 70, 5, 2, 10], type=pa.int32()),
@@ -52,7 +52,7 @@ def test_apply_boolean_mask():
     pa_mask = pa.array(
         [True, False, True, False, True, False], type=pa.bool_()
     )
-    result = plc.stream_compaction.apply_boolean_mask(
+    result = plc.stream_compaction.apply_retention_mask(
         plc.Table.from_arrow(pa_table), plc.Column.from_arrow(pa_mask)
     )
     expected = pa_table.filter(pa_mask)
@@ -69,9 +69,9 @@ def test_apply_deletion_mask():
     assert_table_eq(expected, result)
 
 
-def test_apply_boolean_mask_zero_columns_preserves_num_rows():
+def test_apply_retention_mask_zero_columns_preserves_num_rows():
     source = plc.Table([], num_rows=4)
     mask = plc.Column.from_arrow(pa.array([True, False, True, True]))
-    result = plc.stream_compaction.apply_boolean_mask(source, mask)
+    result = plc.stream_compaction.apply_retention_mask(source, mask)
     assert result.num_columns() == 0
     assert result.num_rows() == 3

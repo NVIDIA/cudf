@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,11 +20,10 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/logical.h>
 
@@ -113,8 +112,8 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& separator,
                                     string_scalar const& narep,
                                     separator_on_nulls separate_nulls,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto const num_columns = strings_columns.num_columns();
   CUDF_EXPECTS(num_columns > 1, "At least two columns must be specified");
@@ -197,8 +196,8 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& separator_narep,
                                     string_scalar const& col_narep,
                                     separator_on_nulls separate_nulls,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto const num_columns = strings_columns.num_columns();
   CUDF_EXPECTS(num_columns > 0, "At least one column must be specified");
@@ -253,8 +252,8 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& separator,
                                     string_scalar const& narep,
                                     separator_on_nulls separate_nulls,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate(strings_columns, separator, narep, separate_nulls, stream, mr);
@@ -265,8 +264,8 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
                                     string_scalar const& separator_narep,
                                     string_scalar const& col_narep,
                                     separator_on_nulls separate_nulls,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate(

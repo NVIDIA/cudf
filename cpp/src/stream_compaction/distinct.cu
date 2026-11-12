@@ -15,19 +15,20 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/hashing.hpp>
+#include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuco/types.cuh>
+#include <cuda/stream>
 
 #include <memory>
 #include <type_traits>
@@ -77,17 +78,18 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                                 duplicate_keep_option keep,
                                                 null_equality nulls_equal,
                                                 nan_equality nans_equal,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
 {
   auto const num_rows = input.num_rows();
 
   if (num_rows == 0 or input.num_columns() == 0) {
-    return rmm::device_uvector<size_type>(0, stream, mr);
+    return rmm::device_uvector<size_type>(0, stream, mr.get_output_mr());
   }
 
+  auto temp_mr = cudf::get_current_device_resource_ref();
   auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(input, stream);
+    cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const has_nulls          = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
   auto const has_nested_columns = cudf::detail::has_nested_columns(input);
 
@@ -105,8 +107,8 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                         d_hash,
                                         {},
                                         {},
-                                        rmm::mr::polymorphic_allocator<char>{},
-                                        stream.value()};
+                                        rmm::mr::polymorphic_allocator<char>{temp_mr},
+                                        stream.get()};
     return reduce_func(set);
   };
 
@@ -115,9 +117,9 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
       auto const hashes =
         cudf::hashing::detail::murmurhash3_x86_32(preprocessed_input,
                                                   num_rows,
-                                                  cudf::DEFAULT_HASH_SEED,
+                                                  hashing::detail::DEFAULT_ALGORITHM_HASH_SEED,
                                                   stream,
-                                                  cudf::get_current_device_resource_ref());
+                                                  temp_mr);
       auto const d_hash = distinct_precomputed_hash{hashes->view().data<hash_value_type>()};
       return dispatch_row_equal<true>(
         nulls_equal, nans_equal, has_nulls, row_equal, [&](auto const& d_equal) {
@@ -150,8 +152,8 @@ std::unique_ptr<table> distinct(table_view const& input,
                                 duplicate_keep_option keep,
                                 null_equality nulls_equal,
                                 nan_equality nans_equal,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0 or keys.empty()) {
     return empty_like(input);
@@ -178,8 +180,8 @@ std::unique_ptr<table> distinct(table_view const& input,
                                 duplicate_keep_option keep,
                                 null_equality nulls_equal,
                                 nan_equality nans_equal,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::distinct(input, keys, keep, nulls_equal, nans_equal, stream, mr);
@@ -189,12 +191,13 @@ std::unique_ptr<column> distinct_indices(table_view const& input,
                                          duplicate_keep_option keep,
                                          null_equality nulls_equal,
                                          nan_equality nans_equal,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto indices = detail::distinct_indices(input, keep, nulls_equal, nans_equal, stream, mr);
-  return std::make_unique<column>(std::move(indices), rmm::device_buffer{}, 0);
+  return std::make_unique<column>(
+    std::move(indices), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 }
 
 }  // namespace cudf

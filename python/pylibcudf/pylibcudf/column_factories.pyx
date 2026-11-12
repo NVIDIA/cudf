@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
@@ -20,6 +20,10 @@ from .types cimport DataType, type_id
 
 from .types import MaskState, TypeId
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 
@@ -34,8 +38,8 @@ __all__ = [
 ]
 
 cpdef Column make_empty_column(
-    MakeEmptyColumnOperand type_or_id,
-    object stream=None,
+    MakeEmptyColumnOperand type_or_id: DataType | TypeId,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Creates an empty column of the specified type.
@@ -83,7 +87,7 @@ cpdef Column make_numeric_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Creates an empty numeric column.
@@ -104,7 +108,7 @@ cpdef Column make_numeric_column(
     else:
         raise TypeError("Invalid mask argument")
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -122,7 +126,7 @@ cpdef Column make_fixed_point_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -139,7 +143,7 @@ cpdef Column make_fixed_point_column(
     else:
         raise TypeError("Invalid mask argument")
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -158,7 +162,7 @@ cpdef Column make_timestamp_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -175,7 +179,7 @@ cpdef Column make_timestamp_column(
     else:
         raise TypeError("Invalid mask argument")
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -194,7 +198,7 @@ cpdef Column make_duration_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -211,7 +215,7 @@ cpdef Column make_duration_column(
     else:
         raise TypeError("Invalid mask argument")
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -230,7 +234,7 @@ cpdef Column make_fixed_width_column(
     DataType type_,
     size_type size,
     MaskArg mstate,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
 
@@ -247,7 +251,7 @@ cpdef Column make_fixed_width_column(
     else:
         raise TypeError("Invalid mask argument")
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:
@@ -264,7 +268,7 @@ cpdef Column make_fixed_width_column(
 
 cpdef Column make_empty_lists_column(
     DataType child_type,
-    object stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Creates an empty column of the specified type.

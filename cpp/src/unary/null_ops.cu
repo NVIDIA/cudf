@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,8 +16,8 @@
 namespace cudf {
 namespace detail {
 std::unique_ptr<column> is_null(cudf::column_view const& input,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   auto input_device_view = column_device_view::create(input, stream);
   auto device_view       = *input_device_view;
@@ -31,8 +31,8 @@ std::unique_ptr<column> is_null(cudf::column_view const& input,
 }
 
 std::unique_ptr<column> is_valid(cudf::column_view const& input,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   auto input_device_view = column_device_view::create(input, stream);
   auto device_view       = *input_device_view;
@@ -48,16 +48,16 @@ std::unique_ptr<column> is_valid(cudf::column_view const& input,
 }  // namespace detail
 
 std::unique_ptr<column> is_null(cudf::column_view const& input,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_null(input, stream, mr);
 }
 
 std::unique_ptr<column> is_valid(cudf::column_view const& input,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_valid(input, stream, mr);

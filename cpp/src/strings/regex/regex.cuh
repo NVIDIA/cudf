@@ -5,14 +5,13 @@
 #pragma once
 
 #include "common.cuh"
-#include "regcomp.h"
+#include "regcomp.hpp"
 
 #include <cudf/strings/regex/flags.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <cuda_runtime.h>
 
 #include <functional>
@@ -60,7 +59,7 @@ class alignas(16) reprog_device {
    * @return The program device object
    */
   static std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> create(
-    reprog const& prog, rmm::cuda_stream_view stream);
+    reprog const& prog, cuda::stream_ref stream);
 
   /**
    * @brief Called automatically by the unique_ptr returned from create().

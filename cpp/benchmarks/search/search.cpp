@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,7 +40,7 @@ static void bench_upper_bound_column(nvbench::state& state)
   auto data_table = cudf::sort(cudf::table_view({*column}));
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Add memory bandwidth tracking
   state.add_element_count(column_size);
@@ -88,7 +88,7 @@ static void bench_lower_bound_table(nvbench::state& state)
   auto sorted = cudf::sort(*data_table);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Add memory bandwidth tracking
   state.add_element_count(column_size * num_columns);
@@ -134,7 +134,7 @@ static void bench_contains(nvbench::state& state)
   }
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   // Add memory bandwidth tracking
   state.add_element_count(column_size);

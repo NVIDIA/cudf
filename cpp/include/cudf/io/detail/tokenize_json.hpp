@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,8 +10,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 namespace cudf::io::json {
 
@@ -117,14 +117,14 @@ namespace CUDF_EXPORT detail {
  * @param options Parsing options specifying the parsing behaviour
  * @param stream The CUDA stream to which kernels are dispatched
  * @param mr Optional, resource with which to allocate
- * @return Pair of device vectors, where the first vector represents the token types and the second
- * vector represents the index within the input corresponding to each token
+ * @return Pair of device buffers, where the first buffer represents the token types and the second
+ * buffer represents the index within the input corresponding to each token
  */
-std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> get_token_stream(
+std::pair<cuda::device_buffer<PdaTokenT>, cuda::device_buffer<SymbolOffsetT>> get_token_stream(
   device_span<SymbolT const> json_in,
   cudf::io::json_reader_options const& options,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 }  // namespace CUDF_EXPORT detail
 

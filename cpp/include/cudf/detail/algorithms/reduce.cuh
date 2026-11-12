@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,14 +8,11 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
-
 #include <cub/device/device_reduce.cuh>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/std/functional>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 namespace cudf::detail {
 
@@ -34,6 +31,7 @@ namespace cudf::detail {
  * @param init Initial value for the reduction
  * @param binary_op Binary reduction operator
  * @param stream CUDA stream to use
+ * @param mr Device memory resources to use
  * @return The reduction result
  */
 template <typename Op,
@@ -43,19 +41,19 @@ OutputType reduce(InputIterator begin,
                   InputIterator end,
                   OutputType init,
                   Op binary_op,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   auto const num_items = cuda::std::distance(begin, end);
+  auto const temp_mr   = mr.get_temporary_mr();
 
   // Device scalar to store the result
-  auto result =
-    cudf::detail::device_scalar<OutputType>(stream, cudf::get_current_device_resource_ref());
+  auto result = cudf::detail::device_scalar<OutputType>(stream, temp_mr);
 
   // Build environment with stream and memory resource for cub::DeviceReduce::Reduce
   auto env = cuda::std::execution::env{
-    cuda::std::execution::prop{cuda::get_stream_t{}, cuda::stream_ref{stream.value()}},
-    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                               cudf::get_current_device_resource_ref()}};
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
   CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(begin, result.data(), num_items, binary_op, init, env));
 
   // Copy result back to host via pinned memory
@@ -84,6 +82,7 @@ OutputType reduce(InputIterator begin,
  * @param values_output Device-accessible iterator to start of output reduced values
  * @param op Binary reduction operator
  * @param stream CUDA stream to use
+ * @param mr Device memory resources to use
  * @return A pair of iterators pointing to the end of the output key and value ranges
  */
 template <typename Op,
@@ -98,42 +97,20 @@ cuda::std::pair<KeysOutputIterator, ValuesOutputIterator> reduce_by_key(
   KeysOutputIterator keys_output,
   ValuesOutputIterator values_output,
   Op op,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto const num_items = cuda::std::distance(keys_begin, keys_end);
+  auto const temp_mr   = mr.get_temporary_mr();
 
   // Device scalar to store the number of runs (unique keys)
-  auto d_num_runs =
-    cudf::detail::device_scalar<cuda::std::size_t>(stream, cudf::get_current_device_resource_ref());
+  auto d_num_runs = cudf::detail::device_scalar<cuda::std::size_t>(stream, temp_mr);
 
-  // First call to get temporary storage size
-  size_t temp_storage_bytes = 0;
-  CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(nullptr,
-                                               temp_storage_bytes,
-                                               keys_begin,
-                                               keys_output,
-                                               values_begin,
-                                               values_output,
-                                               d_num_runs.data(),
-                                               op,
-                                               num_items,
-                                               stream.value()));
-
-  // Allocate temporary storage
-  rmm::device_buffer d_temp_storage(
-    temp_storage_bytes, stream, cudf::get_current_device_resource_ref());
-
-  // Run reduce-by-key
-  CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(d_temp_storage.data(),
-                                               temp_storage_bytes,
-                                               keys_begin,
-                                               keys_output,
-                                               values_begin,
-                                               values_output,
-                                               d_num_runs.data(),
-                                               op,
-                                               num_items,
-                                               stream.value()));
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
+  CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(
+    keys_begin, keys_output, values_begin, values_output, d_num_runs.data(), op, num_items, env));
 
   // Copy number of runs back to host via pinned memory
   auto const num_runs = d_num_runs.value(stream);
@@ -160,35 +137,22 @@ void reduce_by_key_async(KeysInputIterator keys_begin,
                          KeysOutputIterator keys_output,
                          ValuesOutputIterator values_output,
                          Op op,
-                         rmm::cuda_stream_view stream)
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   auto const num_items = cuda::std::distance(keys_begin, keys_end);
 
-  size_t temp_storage_bytes = 0;
-  CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(nullptr,
-                                               temp_storage_bytes,
-                                               keys_begin,
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, mr.get_temporary_mr()}};
+  CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(keys_begin,
                                                keys_output,
                                                values_begin,
                                                values_output,
                                                cuda::make_discard_iterator(),
                                                op,
                                                num_items,
-                                               stream.value()));
-
-  rmm::device_buffer d_temp_storage(
-    temp_storage_bytes, stream, cudf::get_current_device_resource_ref());
-
-  CUDF_CUDA_TRY(cub::DeviceReduce::ReduceByKey(d_temp_storage.data(),
-                                               temp_storage_bytes,
-                                               keys_begin,
-                                               keys_output,
-                                               values_begin,
-                                               values_output,
-                                               cuda::make_discard_iterator(),
-                                               op,
-                                               num_items,
-                                               stream.value()));
+                                               env));
 }
 
 /**
@@ -210,6 +174,7 @@ void reduce_by_key_async(KeysInputIterator keys_begin,
  * @param init Initial value for the reduction
  * @param reduce_op Binary reduction operator
  * @param stream CUDA stream to use
+ * @param mr Device memory resources to use
  * @return The reduction result
  */
 template <typename TransformationOp,
@@ -221,36 +186,20 @@ OutputType transform_reduce(InputIterator begin,
                             TransformationOp transform_op,
                             OutputType init,
                             ReductionOp reduce_op,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
   auto const num_items = cuda::std::distance(begin, end);
+  auto const temp_mr   = mr.get_temporary_mr();
 
   // Device scalar to store the result
-  auto result =
-    cudf::detail::device_scalar<OutputType>(stream, cudf::get_current_device_resource_ref());
+  auto result = cudf::detail::device_scalar<OutputType>(stream, temp_mr);
 
-  size_t temp_storage_bytes = 0;
-  CUDF_CUDA_TRY(cub::DeviceReduce::TransformReduce(nullptr,
-                                                   temp_storage_bytes,
-                                                   begin,
-                                                   result.data(),
-                                                   num_items,
-                                                   reduce_op,
-                                                   transform_op,
-                                                   init,
-                                                   stream.value()));
-
-  rmm::device_buffer d_temp_storage(
-    temp_storage_bytes, stream, cudf::get_current_device_resource_ref());
-  CUDF_CUDA_TRY(cub::DeviceReduce::TransformReduce(d_temp_storage.data(),
-                                                   temp_storage_bytes,
-                                                   begin,
-                                                   result.data(),
-                                                   num_items,
-                                                   reduce_op,
-                                                   transform_op,
-                                                   init,
-                                                   stream.value()));
+  auto env = cuda::std::execution::env{
+    cuda::std::execution::prop{cuda::get_stream_t{}, stream},
+    cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
+  CUDF_CUDA_TRY(cub::DeviceReduce::TransformReduce(
+    begin, result.data(), num_items, reduce_op, transform_op, init, env));
 
   // Copy result back to host via pinned memory
   return result.value(stream);
@@ -269,12 +218,17 @@ OutputType transform_reduce(InputIterator begin,
  * @param end Device-accessible iterator to end of input values
  * @param op Predicate operator to apply to each element
  * @param stream CUDA stream to use
+ * @param mr Device memory resources to use
  * @return true if the predicate is true for all elements, false otherwise
  */
 template <typename TransformOp, typename InputIterator>
-bool all_of(InputIterator begin, InputIterator end, TransformOp op, rmm::cuda_stream_view stream)
+bool all_of(InputIterator begin,
+            InputIterator end,
+            TransformOp op,
+            cuda::stream_ref stream,
+            cudf::memory_resources mr)
 {
-  return transform_reduce(begin, end, op, true, cuda::std::logical_and<bool>{}, stream);
+  return transform_reduce(begin, end, op, true, cuda::std::logical_and<bool>{}, stream, mr);
 }
 
 /**
@@ -290,12 +244,17 @@ bool all_of(InputIterator begin, InputIterator end, TransformOp op, rmm::cuda_st
  * @param end Device-accessible iterator to end of input values
  * @param op Predicate operator to apply to each element
  * @param stream CUDA stream to use
+ * @param mr Device memory resources to use
  * @return true if the predicate is true for any element, false otherwise
  */
 template <typename TransformOp, typename InputIterator>
-bool any_of(InputIterator begin, InputIterator end, TransformOp op, rmm::cuda_stream_view stream)
+bool any_of(InputIterator begin,
+            InputIterator end,
+            TransformOp op,
+            cuda::stream_ref stream,
+            cudf::memory_resources mr)
 {
-  return transform_reduce(begin, end, op, false, cuda::std::logical_or<bool>{}, stream);
+  return transform_reduce(begin, end, op, false, cuda::std::logical_or<bool>{}, stream, mr);
 }
 
 /**
@@ -311,12 +270,17 @@ bool any_of(InputIterator begin, InputIterator end, TransformOp op, rmm::cuda_st
  * @param end Device-accessible iterator to end of input values
  * @param op Predicate operator to apply to each element
  * @param stream CUDA stream to use
+ * @param mr Device memory resources to use
  * @return true if the predicate is false for all elements, false otherwise
  */
 template <typename TransformOp, typename InputIterator>
-bool none_of(InputIterator begin, InputIterator end, TransformOp op, rmm::cuda_stream_view stream)
+bool none_of(InputIterator begin,
+             InputIterator end,
+             TransformOp op,
+             cuda::stream_ref stream,
+             cudf::memory_resources mr)
 {
-  return not any_of(begin, end, op, stream);
+  return not any_of(begin, end, op, stream, mr);
 }
 
 /**
@@ -333,13 +297,15 @@ bool none_of(InputIterator begin, InputIterator end, TransformOp op, rmm::cuda_s
  * @param end Device-accessible iterator to end of input values
  * @param predicate Unary predicate that returns true for elements to count
  * @param stream CUDA stream to use
+ * @param mr Device memory resources to use
  * @return The count of elements satisfying the predicate
  */
 template <typename Predicate, typename InputIterator>
 cuda::std::size_t count_if(InputIterator begin,
                            InputIterator end,
                            Predicate predicate,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   // Transform each element to 0 or 1 based on predicate, then sum
   auto transform_op = [predicate] __device__(auto const& val) -> cuda::std::size_t {
@@ -347,7 +313,7 @@ cuda::std::size_t count_if(InputIterator begin,
   };
 
   return transform_reduce(
-    begin, end, transform_op, cuda::std::size_t{0}, cuda::std::plus<>{}, stream);
+    begin, end, transform_op, cuda::std::size_t{0}, cuda::std::plus<>{}, stream, mr);
 }
 
 }  // namespace cudf::detail

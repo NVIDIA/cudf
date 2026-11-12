@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column.hpp>
@@ -19,7 +19,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -94,8 +94,8 @@ std::unique_ptr<column> replace_re(strings_column_view const& input,
                                    regex_program const& prog,
                                    string_scalar const& replacement,
                                    std::optional<size_type> max_replace_count,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
@@ -141,8 +141,8 @@ std::unique_ptr<column> replace_re(strings_column_view const& strings,
                                    regex_program const& prog,
                                    string_scalar const& replacement,
                                    std::optional<size_type> max_replace_count,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_re(strings, prog, replacement, max_replace_count, stream, mr);

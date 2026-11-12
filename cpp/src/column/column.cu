@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,10 +24,10 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <iterator>
@@ -37,11 +37,11 @@
 namespace cudf {
 
 // Copy ctor w/ optional stream/mr
-column::column(column const& other, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+column::column(column const& other, cuda::stream_ref stream, cudf::memory_resources mr)
   : _type{other._type},
     _size{other._size},
-    _data{other._data, stream, mr},
-    _null_mask{other._null_mask, stream, mr},
+    _data{other._data, stream, mr.get_output_mr()},
+    _null_mask{cudf::detail::copy_bitmask(other._null_mask.data(), 0, other.size(), stream, mr)},
     _null_count{other._null_count}
 {
   _children.reserve(other.num_children());
@@ -70,14 +70,15 @@ column::contents column::release() noexcept
   _size       = 0;
   _null_count = 0;
   _type       = data_type{type_id::EMPTY};
-  return column::contents{std::make_unique<rmm::device_buffer>(std::move(_data)),
-                          std::make_unique<rmm::device_buffer>(std::move(_null_mask)),
-                          std::move(_children)};
+  return column::contents{
+    std::make_unique<rmm::device_buffer>(std::move(_data)),
+    std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(std::move(_null_mask)),
+    std::move(_children)};
 }
 
 std::size_t column::alloc_size() const
 {
-  return _data.size() + _null_mask.size() +
+  return _data.size() + _null_mask.size() * sizeof(bitmask_type) +
          std::transform_reduce(
            _children.begin(), _children.end(), std::size_t{0}, std::plus{}, [](auto const& c) {
              return c->alloc_size();
@@ -94,13 +95,7 @@ column_view column::view() const
     child_views.emplace_back(*c);
   }
 
-  return column_view{type(),
-                     size(),
-                     _data.data(),
-                     static_cast<bitmask_type const*>(_null_mask.data()),
-                     null_count(),
-                     0,
-                     child_views};
+  return column_view{type(), size(), _data.data(), _null_mask.data(), null_count(), 0, child_views};
 }
 
 // Create mutable view
@@ -115,19 +110,16 @@ mutable_column_view column::mutable_view()
     child_views.emplace_back(*c);
   }
 
-  return mutable_column_view{type(),
-                             size(),
-                             _data.data(),
-                             static_cast<bitmask_type*>(_null_mask.data()),
-                             _null_count,
-                             0,
-                             child_views};
+  return mutable_column_view{
+    type(), size(), _data.data(), _null_mask.data(), _null_count, 0, child_views};
 }
 
-void column::set_null_mask(rmm::device_buffer&& new_null_mask, size_type new_null_count)
+void column::set_null_mask(cuda::device_buffer<cudf::bitmask_type>&& new_null_mask,
+                           size_type new_null_count)
 {
   if (new_null_count > 0) {
-    CUDF_EXPECTS(new_null_mask.size() >= cudf::bitmask_allocation_size_bytes(this->size()),
+    CUDF_EXPECTS(new_null_mask.size() * sizeof(bitmask_type) >=
+                   cudf::bitmask_allocation_size_bytes(this->size()),
                  "Column with null values must be nullable and the null mask \
                   buffer size should match the size of the column.");
   }
@@ -135,16 +127,18 @@ void column::set_null_mask(rmm::device_buffer&& new_null_mask, size_type new_nul
   _null_count = new_null_count;
 }
 
-void column::set_null_mask(rmm::device_buffer const& new_null_mask,
+void column::set_null_mask(cuda::device_buffer<cudf::bitmask_type> const& new_null_mask,
                            size_type new_null_count,
-                           rmm::cuda_stream_view stream)
+                           cuda::stream_ref stream)
 {
   if (new_null_count > 0) {
-    CUDF_EXPECTS(new_null_mask.size() >= cudf::bitmask_allocation_size_bytes(this->size()),
+    CUDF_EXPECTS(new_null_mask.size() * sizeof(bitmask_type) >=
+                   cudf::bitmask_allocation_size_bytes(this->size()),
                  "Column with null values must be nullable and the null mask \
                   buffer size should match the size of the column.");
   }
-  _null_mask  = rmm::device_buffer{new_null_mask, stream};  // copy
+  _null_mask = cuda::device_buffer<cudf::bitmask_type>{
+    stream, cudf::get_current_device_resource_ref(), new_null_mask};  // copy
   _null_count = new_null_count;
 }
 
@@ -157,8 +151,8 @@ void column::set_null_count(size_type new_null_count)
 namespace {
 struct create_column_from_view {
   cudf::column_view view;
-  rmm::cuda_stream_view stream;
-  rmm::device_async_resource_ref mr;
+  cuda::stream_ref stream;
+  cudf::memory_resources mr;
 
   template <typename ColumnType>
   std::unique_ptr<column> operator()()
@@ -186,7 +180,7 @@ struct create_column_from_view {
     }
     return std::make_unique<column>(view.type(),
                                     view.size(),
-                                    rmm::device_buffer{0, stream, mr},
+                                    rmm::device_buffer{0, stream, mr.get_output_mr()},
                                     cudf::detail::copy_bitmask(view, stream, mr),
                                     view.null_count(),
                                     std::move(children));
@@ -197,7 +191,7 @@ struct create_column_from_view {
     requires(cudf::is_fixed_width<ColumnType>())
   {
     auto op       = [&](auto const& child) { return std::make_unique<column>(child, stream, mr); };
-    auto begin    = thrust::make_transform_iterator(view.child_begin(), op);
+    auto begin    = cuda::transform_iterator(view.child_begin(), op);
     auto children = std::vector<std::unique_ptr<column>>(begin, begin + view.num_children());
 
     return std::make_unique<column>(
@@ -207,7 +201,7 @@ struct create_column_from_view {
         static_cast<char const*>(view.head()) + (view.offset() * cudf::size_of(view.type())),
         view.size() * cudf::size_of(view.type()),
         stream,
-        mr},
+        mr.get_output_mr()},
       cudf::detail::copy_bitmask(view, stream, mr),
       view.null_count(),
       std::move(children));
@@ -253,14 +247,14 @@ struct create_column_from_view {
 }  // anonymous namespace
 
 // Copy from a view
-column::column(column_view view, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+column::column(column_view view, cuda::stream_ref stream, cudf::memory_resources mr)
   :  // Move is needed here because the dereference operator of unique_ptr returns
      // an lvalue reference, which would otherwise dispatch to the copy constructor
     column{std::move(*type_dispatcher(view.type(), create_column_from_view{view, stream, mr}))}
 {
 }
 
-std::unique_ptr<column> rebind_stream(column&& col, rmm::cuda_stream_view stream)
+std::unique_ptr<column> rebind_stream(column&& col, cuda::stream_ref stream)
 {
   auto const dtype      = col.type();
   auto const sz         = col.size();

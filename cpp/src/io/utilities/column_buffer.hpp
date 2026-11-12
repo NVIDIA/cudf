@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,11 +15,12 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/utility>
+#include <cuda/stream>
 
 #include <optional>
 
@@ -40,20 +41,20 @@ namespace detail {
 inline rmm::device_buffer create_data(data_type type,
                                       size_type size,
                                       bool memset_data,
-                                      rmm::cuda_stream_view stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   std::size_t data_size = size_of(type) * size;
 
-  rmm::device_buffer data(data_size, stream, mr);
-  if (memset_data) { CUDF_CUDA_TRY(cudaMemsetAsync(data.data(), 0, data_size, stream.value())); }
+  rmm::device_buffer data(data_size, stream, mr.get_output_mr());
+  if (memset_data) { CUDF_CUDA_TRY(cudaMemsetAsync(data.data(), 0, data_size, stream.get())); }
   return data;
 }
 
 inline rmm::device_buffer create_data(data_type type,
                                       size_type size,
-                                      rmm::cuda_stream_view stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   return create_data(type, size, true, stream, mr);
 }
@@ -80,7 +81,7 @@ template <class string_policy>
 std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
                                     column_name_info* schema_info,
                                     std::optional<reader_column_schema> const& schema,
-                                    rmm::cuda_stream_view stream);
+                                    cuda::stream_ref stream);
 
 template <typename string_policy>
 class column_buffer_base {
@@ -93,8 +94,8 @@ class column_buffer_base {
   column_buffer_base(data_type _type,
                      size_type _size,
                      bool _is_nullable,
-                     rmm::cuda_stream_view stream,
-                     rmm::device_async_resource_ref mr)
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
     : column_buffer_base(_type, _is_nullable)
   {
   }
@@ -111,31 +112,30 @@ class column_buffer_base {
   // preprocessing steps such as in the Parquet reader
   void create(size_type _size,
               bool memset_data,
-              rmm::cuda_stream_view stream,
-              rmm::device_async_resource_ref mr);
+              cuda::stream_ref stream,
+              cudf::memory_resources mr);
 
-  void create(size_type _size, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr);
+  void create(size_type _size, cuda::stream_ref stream, cudf::memory_resources mr);
 
   // like create(), but also takes a `cudf::mask_state` to allow initializing the null mask as
   // something other than `ALL_NULL`
   void create_with_mask(size_type _size,
                         cudf::mask_state null_mask_state,
                         bool memset_data,
-                        rmm::cuda_stream_view stream,
-                        rmm::device_async_resource_ref mr);
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr);
 
   // Create a new column_buffer that has empty data but with the same basic information as the
   // input column, including same type, nullability, name, and user_data.
   static string_policy empty_like(string_policy const& input);
 
-  void set_null_mask(rmm::device_buffer&& mask) { _null_mask = std::move(mask); }
-
-  template <typename T = uint32_t>
-  auto null_mask()
+  void set_null_mask(cuda::device_buffer<cudf::bitmask_type>&& mask)
   {
-    return static_cast<T*>(_null_mask.data());
+    _null_mask = std::move(mask);
   }
-  auto null_mask_size() { return _null_mask.size(); }
+
+  auto null_mask() { return _null_mask.data(); }
+  auto null_mask_size() { return _null_mask.size() * sizeof(bitmask_type); }
   auto& null_count() { return _null_count; }
 
   auto data() { return static_cast<string_policy*>(this)->data_impl(); }
@@ -145,16 +145,17 @@ class column_buffer_base {
     return static_cast<string_policy const*>(this)->data_size_impl();
   }
 
-  std::unique_ptr<column> make_string_column(rmm::cuda_stream_view stream)
+  std::unique_ptr<column> make_string_column(cuda::stream_ref stream)
   {
     return static_cast<string_policy*>(this)->make_string_column_impl(stream);
   }
 
  protected:
   rmm::device_buffer _data{};
-  rmm::device_buffer _null_mask{};
+  cuda::device_buffer<cudf::bitmask_type> _null_mask =
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
-  rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
+  cudf::memory_resources _mr{cudf::get_current_device_resource_ref()};
 
  public:
   data_type type{type_id::EMPTY};
@@ -171,7 +172,7 @@ class column_buffer_base {
     column_buffer_base& buffer,
     column_name_info* schema_info,
     std::optional<reader_column_schema> const& schema,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 };
 
 // column buffer that uses a string_index_pair for strings data, requiring a gather step when
@@ -189,23 +190,23 @@ class gather_column_buffer : public column_buffer_base<gather_column_buffer> {
   gather_column_buffer(data_type _type,
                        size_type _size,
                        bool _is_nullable,
-                       rmm::cuda_stream_view stream,
-                       rmm::device_async_resource_ref mr)
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr)
     : column_buffer_base<gather_column_buffer>(_type, _size, _is_nullable, stream, mr)
   {
     create(_size, stream, mr);
   }
 
-  void allocate_strings_data(bool memset_data, rmm::cuda_stream_view stream);
+  void allocate_strings_data(bool memset_data, cuda::stream_ref stream);
 
   [[nodiscard]] void* data_impl() { return _strings ? _strings->data() : _data.data(); }
   [[nodiscard]] void const* data_impl() const { return _strings ? _strings->data() : _data.data(); }
   [[nodiscard]] size_t data_size_impl() const { return _strings ? _strings->size() : _data.size(); }
 
-  std::unique_ptr<column> make_string_column_impl(rmm::cuda_stream_view stream);
+  std::unique_ptr<column> make_string_column_impl(cuda::stream_ref stream);
 
  public:
-  std::unique_ptr<rmm::device_uvector<string_index_pair>> _strings;
+  std::unique_ptr<cuda::device_buffer<string_index_pair>> _strings;
 };
 
 // column buffer that stores string data internally which can be passed directly when
@@ -223,23 +224,21 @@ class inline_column_buffer : public column_buffer_base<inline_column_buffer> {
   inline_column_buffer(data_type _type,
                        size_type _size,
                        bool _is_nullable,
-                       rmm::cuda_stream_view stream,
-                       rmm::device_async_resource_ref mr)
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr)
     : column_buffer_base<inline_column_buffer>(_type, _size, _is_nullable, stream, mr)
   {
     create(_size, stream, mr);
   }
 
-  void allocate_strings_data(bool memset_data, rmm::cuda_stream_view stream);
+  void allocate_strings_data(bool memset_data, cuda::stream_ref stream);
 
   void* data_impl() { return _data.data(); }
   [[nodiscard]] void const* data_impl() const { return _data.data(); }
   [[nodiscard]] size_t data_size_impl() const { return _data.size(); }
-  std::unique_ptr<column> make_string_column_impl(rmm::cuda_stream_view stream);
+  std::unique_ptr<column> make_string_column_impl(cuda::stream_ref stream);
 
-  void create_string_data(size_t num_bytes,
-                          bool is_large_strings_col,
-                          rmm::cuda_stream_view stream);
+  void create_string_data(size_t num_bytes, bool is_large_strings_col, cuda::stream_ref stream);
   void set_initial_string_offset(size_t offset) { initial_string_offset = offset; }
 
   void* string_data() { return _string_data.data(); }
@@ -273,8 +272,8 @@ using column_buffer = gather_column_buffer;
 template <class string_policy>
 std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
                                    column_name_info* schema_info,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr);
 
 /**
  * @brief Given a column_buffer, produce a formatted name string describing the type.

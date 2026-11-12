@@ -12,7 +12,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -101,7 +101,7 @@ class key_remapping {
   key_remapping(cudf::table_view const& right,
                 null_equality compare_nulls   = null_equality::EQUAL,
                 cudf::compute_metrics metrics = cudf::compute_metrics::YES,
-                rmm::cuda_stream_view stream  = cudf::get_default_stream(),
+                cuda::stream_ref stream       = cudf::get_default_stream(),
                 cuda::mr::any_resource<cuda::mr::device_accessible> mr =
                   cudf::get_current_device_resource_ref());
 
@@ -121,8 +121,8 @@ class key_remapping {
    * @return A column of INT32 values with the remapped key IDs
    */
   [[nodiscard]] std::unique_ptr<cudf::column> remap_right_keys(
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Remap left keys to integer IDs.
@@ -143,8 +143,8 @@ class key_remapping {
    */
   [[nodiscard]] std::unique_ptr<cudf::column> remap_left_keys(
     cudf::table_view const& keys,
-    rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Check if metrics (distinct_count, max_duplicate_count) were computed.

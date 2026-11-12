@@ -19,15 +19,14 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
-#include <thrust/for_each.h>
-#include <thrust/iterator/transform_iterator.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
 
@@ -72,21 +71,23 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
   cudf::table_view const& input,
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto nrows = input.num_rows();
 
   // iterator for partition index rotated right by start_partition positions:
-  auto rotated_iter_begin = thrust::make_transform_iterator(
-    cuda::counting_iterator<cudf::size_type>{0},
-    cuda::proclaim_return_type<cudf::size_type>(
-      [num_partitions, start_partition] __device__(auto index) {
-        return (index + num_partitions - start_partition) % num_partitions;
-      }));
+  auto rotated_iter_begin =
+    cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                             cuda::proclaim_return_type<cudf::size_type>(
+                               [num_partitions, start_partition] __device__(auto index) {
+                                 return (index + num_partitions - start_partition) % num_partitions;
+                               }));
 
   if (num_partitions == nrows) {
-    rmm::device_uvector<cudf::size_type> partition_offsets(num_partitions + 1, stream);
+    cuda::device_buffer<cudf::size_type> partition_offsets(
+      stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      partition_offsets.begin(),
                      partition_offsets.end());
@@ -100,7 +101,8 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
 
     return std::pair{std::move(uniq_tbl), cudf::detail::make_std_vector(partition_offsets, stream)};
   } else {  //( num_partitions > nrows )
-    rmm::device_uvector<cudf::size_type> d_row_indices(nrows, stream);
+    cuda::device_buffer<cudf::size_type> d_row_indices(
+      stream, cudf::get_current_device_resource_ref(), nrows, cuda::no_init);
 
     // copy rotated right partition indexes that
     // fall in the interval [0, nrows):
@@ -110,7 +112,8 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
       rotated_iter_begin + num_partitions,
       d_row_indices.begin(),
       [nrows] __device__(auto index) -> bool { return (index < nrows); },
-      stream);
+      stream,
+      mrs.as_temporary());
 
     //...and then use the result, d_row_indices, as gather map:
     auto uniq_tbl = cudf::detail::gather(input,
@@ -124,13 +127,14 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
     // iterator for number of edges of the transposed bipartite graph;
     // this composes rotated_iter transform (above) iterator with
     // calculating number of edges of transposed bi-graph:
-    auto nedges_iter_begin = thrust::make_transform_iterator(
+    auto nedges_iter_begin = cuda::transform_iterator(
       rotated_iter_begin,
       cuda::proclaim_return_type<cudf::size_type>(
         [nrows] __device__(auto index) { return (index < nrows ? 1 : 0); }));
 
     // offsets (part 2: compute partition offsets):
-    rmm::device_uvector<cudf::size_type> partition_offsets(num_partitions + 1, stream);
+    cuda::device_buffer<cudf::size_type> partition_offsets(
+      stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);
     thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                            nedges_iter_begin,
                            nedges_iter_begin + num_partitions,
@@ -152,8 +156,8 @@ std::pair<std::unique_ptr<table>, std::vector<cudf::size_type>> round_robin_part
   table_view const& input,
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto nrows = input.num_rows();
 
@@ -178,7 +182,7 @@ std::pair<std::unique_ptr<table>, std::vector<cudf::size_type>> round_robin_part
   auto np_max_size = nrows % num_partitions;  // # partitions of max size
 
   // handle case when nr `mod` np == 0;
-  // fix for bug: https://github.com/rapidsai/cudf/issues/4043
+  // fix for bug: https://github.com/NVIDIA/cudf/issues/4043
   auto num_partitions_max_size = (np_max_size > 0 ? np_max_size : num_partitions);
 
   cudf::size_type max_partition_size = std::ceil(
@@ -203,7 +207,7 @@ std::pair<std::unique_ptr<table>, std::vector<cudf::size_type>> round_robin_part
                       (start_partition - num_partitions_min_size) * max_partition_size
                   : start_partition * (max_partition_size - 1));
 
-  auto iter_begin = thrust::make_transform_iterator(
+  auto iter_begin = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::proclaim_return_type<size_type>([nrows,
                                            num_partitions,
@@ -239,7 +243,7 @@ std::pair<std::unique_ptr<table>, std::vector<cudf::size_type>> round_robin_part
   // this has the effect of rotating the set of partition sizes
   // right by start_partition positions:
   //
-  auto rotated_iter_begin = thrust::make_transform_iterator(
+  auto rotated_iter_begin = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
     [num_partitions, start_partition, max_partition_size, num_partitions_max_size](auto index) {
       return ((index + num_partitions - start_partition) % num_partitions < num_partitions_max_size
@@ -269,8 +273,8 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> round_robi
   table_view const& input,
   cudf::size_type num_partitions,
   cudf::size_type start_partition,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::round_robin_partition(input, num_partitions, start_partition, stream, mr);

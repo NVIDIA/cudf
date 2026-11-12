@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -11,7 +11,6 @@ from dask import dataframe as dd
 from dask.utils_test import hlg_layer
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 
 import dask_cudf
 from dask_cudf._expr.groupby import OPTIMIZED_AGGS, _aggs_optimized
@@ -307,10 +306,6 @@ def test_groupby_dropna_cudf(dropna, by):
         (None, ["a", "d"]),
     ],
 )
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
-)
 def test_groupby_dropna_dask(dropna, by):
     # NOTE: This test is borrowed from upstream dask
     #       (dask/dask/dataframe/tests/test_groupby.py)
@@ -516,7 +511,7 @@ def test_groupby_reset_index_string_name():
 
 
 def test_groupby_categorical_key():
-    # See https://github.com/rapidsai/cudf/issues/4608
+    # See https://github.com/NVIDIA/cudf/issues/4608
     df = dask.datasets.timeseries(seed=1)
     gddf = df.to_backend("cudf")
     gddf["name"] = gddf["name"].astype("category")

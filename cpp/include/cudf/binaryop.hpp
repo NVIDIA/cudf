@@ -7,10 +7,20 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
+
+#include <cuda/buffer>
+#include <cuda/std/type_traits>
+#include <cuda/stream>
 
 #include <memory>
+#include <string>
+#include <type_traits>
+#include <utility>
 
 /**
  * @file
@@ -58,28 +68,39 @@ enum class binary_operator : int32_t {
   BITWISE_AND,           ///< operator &
   BITWISE_OR,            ///< operator |
   BITWISE_XOR,           ///< operator ^
-  LOGICAL_AND,           ///< operator &&
-  LOGICAL_OR,            ///< operator ||
-  EQUAL,                 ///< operator ==
-  NOT_EQUAL,             ///< operator !=
+  LOGICAL_AND,           ///< operator &&: returns NULL when either operand is NULL, otherwise
+                         ///< returns true only if both operands are true
+  LOGICAL_OR,            ///< operator ||: returns NULL when either operand is NULL, otherwise
+                         ///< returns true only if either or both operands are true
+  EQUAL,                 ///< operator ==: returns NULL when either operand is NULL, otherwise
+                         ///< returns whether they are equal
+  NOT_EQUAL,             ///< operator !=: returns NULL when either operand is NULL, otherwise
+                         ///< returns whether they are unequal
   LESS,                  ///< operator <
   GREATER,               ///< operator >
   LESS_EQUAL,            ///< operator <=
   GREATER_EQUAL,         ///< operator >=
-  NULL_EQUALS,           ///< Returns true when both operands are null; false when one is null; the
-                         ///< result of equality when both are non-null
-  NULL_NOT_EQUALS,       ///< Returns false when both operands are null; true when one is null; the
-                         ///< result of inequality when both are non-null
+  NULL_EQUALS,           ///< null-safe equality (result is never null): returns true if both
+                         ///< operands are null, false if one is null, otherwise returns whether
+                         ///< they are equal
+  NULL_NOT_EQUALS,       ///< null-safe inequality (result is never null): returns false if both
+                         ///< operands are null, true if one is null, otherwise returns whether
+                         ///< they are unequal
   NULL_MAX,              ///< Returns max of operands when both are non-null; returns the non-null
                          ///< operand when one is null; or invalid when both are null
   NULL_MIN,              ///< Returns min of operands when both are non-null; returns the non-null
                          ///< operand when one is null; or invalid when both are null
   GENERIC_BINARY,        ///< generic binary operator to be generated with input
                          ///< ptx code
-  NULL_LOGICAL_AND,  ///< operator && with Spark rules: (null, null) is null, (null, true) is null,
-                     ///< (null, false) is false, and (valid, valid) == LOGICAL_AND(valid, valid)
-  NULL_LOGICAL_OR,   ///< operator || with Spark rules: (null, null) is null, (null, true) is true,
-                     ///< (null, false) is null, and (valid, valid) == LOGICAL_OR(valid, valid)
+  NULL_LOGICAL_AND,  ///< three-valued (Kleene) &&: if any operand is false, returns false; if both
+                     ///< operands are true, returns true; otherwise returns null
+  NULL_LOGICAL_OR,   ///< three-valued (Kleene) ||: if any operand is true, returns true; if both
+                     ///< operands are false, returns false; otherwise returns null
+  ADD_OVERFLOW,      ///< Addition with overflow detection
+  SUB_OVERFLOW,      ///< Subtraction with overflow detection
+  MUL_OVERFLOW,      ///< Multiplication with overflow detection
+  DIV_OVERFLOW,      ///< Division with overflow and divide-by-zero detection
+  MOD_OVERFLOW,      ///< Modulo with divide-by-zero detection
   INVALID_BINARY     ///< invalid operation
 };
 
@@ -140,28 +161,31 @@ constexpr inline bool binary_op_has_common_type_v =
  * This distinction is significant in case of non-commutative binary operations
  *
  * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands except NullMin and NullMax (logical OR).
+ * AND of the validity of the two operands, except NULL_MIN and NULL_MAX (logical
+ * OR), NULL_EQUALS and NULL_NOT_EQUALS (always valid), and NULL_LOGICAL_AND and
+ * NULL_LOGICAL_OR (see binary_operator).
  *
  * @param lhs         The left operand scalar
  * @param rhs         The right operand column
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
  * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
  * operations.
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p rhs or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   scalar const& lhs,
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between a column and a scalar.
@@ -171,28 +195,31 @@ std::unique_ptr<column> binary_operation(
  * This distinction is significant in case of non-commutative binary operations
  *
  * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands except NullMin and NullMax (logical OR).
+ * AND of the validity of the two operands, except NULL_MIN and NULL_MAX (logical
+ * OR), NULL_EQUALS and NULL_NOT_EQUALS (always valid), and NULL_LOGICAL_AND and
+ * NULL_LOGICAL_OR (see binary_operator).
  *
  * @param lhs         The left operand column
  * @param rhs         The right operand scalar
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
  * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
  * operations.
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   scalar const& rhs,
   binary_operator op,
   data_type output_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between two columns.
@@ -200,14 +227,16 @@ std::unique_ptr<column> binary_operation(
  * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
  *
  * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands except NullMin and NullMax (logical OR).
+ * AND of the validity of the two operands, except NULL_MIN and NULL_MAX (logical
+ * OR), NULL_EQUALS and NULL_NOT_EQUALS (always valid), and NULL_LOGICAL_AND and
+ * NULL_LOGICAL_OR (see binary_operator).
  *
  * @param lhs         The left operand column
  * @param rhs         The right operand column
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
@@ -215,18 +244,107 @@ std::unique_ptr<column> binary_operation(
  * operations.
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs, @p rhs, or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked binary operation between a scalar and a column.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param lhs Left operand scalar
+ * @param rhs Right operand column
+ * @param op Checked binary operator
+ * @param output_type Desired output type
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
+ * @return Output column
+ * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
+ * @throws cudf::logic_error if @p op is not a checked arithmetic operator
+ * @throws cudf::data_type_error if the input and output types do not match, are not supported
+ * arithmetic or fixed-point types, or @p output_type has an invalid fixed-point scale
+ */
+std::unique_ptr<column> binary_operation(
+  scalar const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked binary operation between a column and a scalar.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param lhs Left operand column
+ * @param rhs Right operand scalar
+ * @param op Checked binary operator
+ * @param output_type Desired output type
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
+ * @return Output column
+ * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
+ * @throws cudf::logic_error if @p op is not a checked arithmetic operator
+ * @throws cudf::data_type_error if the input and output types do not match, are not supported
+ * arithmetic or fixed-point types, or @p output_type has an invalid fixed-point scale
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  scalar const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked binary operation between two columns.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param lhs Left operand column
+ * @param rhs Right operand column
+ * @param op Checked binary operator
+ * @param output_type Desired output type
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
+ * @return Output column
+ * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
+ * @throws cudf::logic_error if @p op is not a checked arithmetic operator
+ * @throws cudf::data_type_error if the input and output types do not match, are not supported
+ * arithmetic or fixed-point types, or @p output_type has an invalid fixed-point scale
+ * @throws std::invalid_argument if @p lhs and @p rhs have different sizes
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between two columns using a
  * user-defined PTX function.
+ *
+ * @deprecated in release 26.12 and will be removed in a future release. Use `cudf::transform`
+ * instead.
  *
  * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
  *
@@ -240,20 +358,20 @@ std::unique_ptr<column> binary_operation(
  *                    that output_type is compatible with the output data type
  *                    of the function in the PTX code
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
  * @throw cudf::logic_error if @p lhs and @p rhs dtypes aren't numeric
  * @throw cudf::logic_error if @p output_type dtype isn't numeric
  */
-std::unique_ptr<column> binary_operation(
+[[deprecated("Use cudf::transform instead")]] std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   column_view const& rhs,
   std::string const& ptx,
   data_type output_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the `scale` for a `fixed_point` number based on given binary operator `op`
@@ -299,14 +417,14 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
  * @param col     Column to compute the valid mask from
  * @param s       Scalar to compute the valid mask from
  * @param stream  CUDA stream used for device memory operations and kernel launches
- * @param mr      Device memory resource used to allocate the returned valid mask
+ * @param mr      Memory resources used for temporary allocations and the returned valid mask
  * @return        Computed validity mask
  */
-std::pair<rmm::device_buffer, size_type> scalar_col_valid_mask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace binops
 
@@ -333,6 +451,6 @@ void apply_sorting_struct_binary_op(mutable_column_view& out,
                                     bool is_lhs_scalar,
                                     bool is_rhs_scalar,
                                     binary_operator op,
-                                    rmm::cuda_stream_view stream);
+                                    cuda::stream_ref stream);
 }  // namespace binops::compiled::detail
 }  // namespace CUDF_EXPORT cudf

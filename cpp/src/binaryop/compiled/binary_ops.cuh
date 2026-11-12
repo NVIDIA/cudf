@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,11 +14,11 @@
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/unary.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
+#include <cuda/stream>
 
 namespace cudf {
 namespace binops {
@@ -100,8 +100,10 @@ struct ops_wrapper {
   column_device_view const& rhs;
   bool const& is_lhs_scalar;
   bool const& is_rhs_scalar;
+  // With bit_width, nvcc 13.3 can outline decimal128 conversions and add local memory setup
+  // before type dispatch, slowing float ADD. Keep this wrapper inline to avoid that setup.
   template <typename TypeCommon>
-  __device__ void operator()(size_type i)
+  __forceinline__ __device__ void operator()(size_type i)
   {
     if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
       TypeCommon x =
@@ -244,7 +246,7 @@ void apply_binary_op(mutable_column_view& out,
                      column_view const& rhs,
                      bool is_lhs_scalar,
                      bool is_rhs_scalar,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   auto common_dtype = get_common_type(out.type(), lhs.type(), rhs.type());
 

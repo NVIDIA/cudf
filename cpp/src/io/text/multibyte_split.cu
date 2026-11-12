@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,14 +26,15 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_load.cuh>
 #include <cub/block/block_scan.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/find.h>
 #include <thrust/transform.h>
@@ -296,8 +297,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
                                               std::string_view delimiter,
                                               byte_range_info byte_range,
                                               bool strip_delimiters,
-                                              rmm::cuda_stream_view stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -343,7 +344,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     multibyte_split_init_kernel<<<TILES_PER_CHUNK,
                                   THREADS_PER_TILE,
                                   0,
-                                  stream.value()>>>(  //
+                                  stream.get()>>>(  //
       -TILES_PER_CHUNK,
       TILES_PER_CHUNK,
       tile_multistates,
@@ -397,7 +398,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       }
 
       auto tiles_in_launch =
-        cudf::util::div_rounding_up_safe(chunk->size(), static_cast<std::size_t>(ITEMS_PER_TILE));
+        cudf::detail::div_rounding_up_safe(chunk->size(), static_cast<std::size_t>(ITEMS_PER_TILE));
 
       auto row_offsets = row_offset_storage.next_output(scan_stream);
 
@@ -405,20 +406,20 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       multibyte_split_init_kernel<<<tiles_in_launch,
                                     THREADS_PER_TILE,
                                     0,
-                                    scan_stream.value()>>>(  //
+                                    scan_stream.get()>>>(  //
         base_tile_idx,
         tiles_in_launch,
         tile_multistates,
         tile_offsets);
 
-      CUDF_CUDA_TRY(cudaStreamWaitEvent(scan_stream.value(), last_launch_event));
+      CUDF_CUDA_TRY(cudaStreamWaitEvent(scan_stream.get(), last_launch_event));
 
       if (delimiter.size() == 1) {
         // the single-byte case allows for a much more efficient kernel, so we special-case it
         byte_split_kernel<<<tiles_in_launch,
                             THREADS_PER_TILE,
                             0,
-                            scan_stream.value()>>>(  //
+                            scan_stream.get()>>>(  //
           base_tile_idx,
           chunk_offset,
           row_offset_storage.size(),
@@ -431,7 +432,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         multibyte_split_kernel<<<tiles_in_launch,
                                  THREADS_PER_TILE,
                                  0,
-                                 scan_stream.value()>>>(  //
+                                 scan_stream.get()>>>(  //
           base_tile_idx,
           chunk_offset,
           row_offset_storage.size(),
@@ -492,7 +493,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         char_storage.advance_output(output_size, scan_stream);
       }
 
-      CUDF_CUDA_TRY(cudaEventRecord(last_launch_event, scan_stream.value()));
+      CUDF_CUDA_TRY(cudaEventRecord(last_launch_event, scan_stream.get()));
 
       std::swap(read_stream, scan_stream);
       base_tile_idx += tiles_in_launch;
@@ -505,7 +506,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
     cudf::detail::join_streams(streams, stream);
 
     auto chars          = char_storage.gather(stream, mr);
-    auto global_offsets = row_offset_storage.gather(stream, mr);
+    auto global_offsets = row_offset_storage.gather<cuda::device_buffer<byte_offset>>(stream, mr);
     return std::pair{std::move(global_offsets), std::move(chars)};
   }();
 
@@ -519,9 +520,17 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   // insert an offset at the beginning if we started at the beginning of the input
   bool const insert_begin = first_row_offset.value_or(0) == 0;
   // insert an offset at the end if we have not terminated the last row
-  bool const insert_end =
-    not(last_row_offset.has_value() or
-        (global_offsets.size() > 0 and global_offsets.back_element(stream) == chunk_offset));
+  auto const last_offset_matches = [&] {
+    if (global_offsets.empty()) { return false; }
+    byte_offset last_offset{};
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(&last_offset,
+                                             global_offsets.data() + global_offsets.size() - 1,
+                                             sizeof(last_offset),
+                                             stream));
+    cudf::detail::sync_stream(stream);
+    return last_offset == chunk_offset;
+  };
+  bool const insert_end  = not(last_row_offset.has_value() or last_offset_matches());
   auto const chars_bytes = chunk_offset - *first_row_offset;
   auto offsets           = cudf::strings::detail::create_offsets_child_column(
     chars_bytes, global_offsets.size() + insert_begin + insert_end, stream, mr);
@@ -562,7 +571,11 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
         }));
     return cudf::strings::detail::make_strings_column(it, it + string_count, stream, mr);
   } else {
-    return cudf::make_strings_column(string_count, std::move(offsets), chars.release(), 0, {});
+    return cudf::make_strings_column(string_count,
+                                     std::move(offsets),
+                                     chars.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
 }
 
@@ -571,8 +584,8 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source const& source,
                                               std::string_view delimiter,
                                               parse_options options,
-                                              rmm::cuda_stream_view stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr)
 {
   auto result = detail::multibyte_split(
     source, delimiter, options.byte_range, options.strip_delimiters, stream, mr);

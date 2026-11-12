@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,8 +14,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
 
@@ -78,8 +77,8 @@ namespace detail {
 std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cudf::size_type keep_threshold,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   auto keys_view = input.select(keys);
   if (keys_view.num_columns() == 0 || keys_view.num_rows() == 0) {
@@ -106,8 +105,8 @@ std::unique_ptr<table> drop_nans(table_view const& input,
 std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cudf::size_type keep_threshold,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::drop_nans(input, keys, keep_threshold, stream, mr);
@@ -117,8 +116,8 @@ std::unique_ptr<table> drop_nans(table_view const& input,
  */
 std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::drop_nans(input, keys, keys.size(), stream, mr);

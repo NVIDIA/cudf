@@ -12,10 +12,12 @@
 #include <cudf/rolling.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 #include <optional>
@@ -29,9 +31,9 @@ std::unique_ptr<column> dispatch_range_window(
   order order,
   std::optional<rolling::preprocessed_group_info> const& grouping,
   bool nulls_at_start,
-  scalar const* row_delta,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  range_window_delta const& delta,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   return type_dispatcher(orderby.type(),
                          rolling::range_window_clamper<current_row>{},
@@ -40,7 +42,7 @@ std::unique_ptr<column> dispatch_range_window(
                          order,
                          grouping,
                          nulls_at_start,
-                         row_delta,
+                         delta,
                          stream,
                          mr);
 }

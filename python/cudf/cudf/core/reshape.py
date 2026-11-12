@@ -461,7 +461,7 @@ def _concat_impl(
         empty_inner = join == "inner" and any(obj.empty for obj in objs)
 
         if len(objs) == 0:
-            # TODO: https://github.com/rapidsai/cudf/issues/16550
+            # TODO: https://github.com/NVIDIA/cudf/issues/16550
             return cudf.DataFrame()
 
         # Don't need to align indices of all `objs` since we
@@ -560,7 +560,7 @@ def _concat_impl(
         if len(objs) == 0:
             # If objs is empty, that indicates all of
             # objs are empty dataframes.
-            # TODO: https://github.com/rapidsai/cudf/issues/16550
+            # TODO: https://github.com/NVIDIA/cudf/issues/16550
             return cudf.DataFrame()
         elif len(objs) == 1:
             obj = objs[0]
@@ -1362,9 +1362,9 @@ def _unstack(
         and cudf.get_option("mode.pandas_compatible")
     ):
         # We currently produce columns in the wrong order vs pandas
-        # See https://github.com/rapidsai/cudf/issues/20446.
+        # See https://github.com/NVIDIA/cudf/issues/20446.
         # We should plan to remove once we rewrite pivot and unstack
-        # for better performance. See https://github.com/rapidsai/cudf/issues/20469
+        # for better performance. See https://github.com/NVIDIA/cudf/issues/20469
         raise NotImplementedError(
             "Unstacking multiple index levels is not yet pandas compatible"
         )

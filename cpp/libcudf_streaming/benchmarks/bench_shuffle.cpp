@@ -10,6 +10,7 @@
 #include <rapidsmpf/communicator/communicator.hpp>
 #include <rapidsmpf/communicator/logger.hpp>
 #include <rapidsmpf/error.hpp>
+#include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/memory/spill.hpp>
 #include <rapidsmpf/nvtx.hpp>
 #include <rapidsmpf/progress_thread.hpp>
@@ -259,7 +260,7 @@ void barrier(std::shared_ptr<rapidsmpf::Communicator>& comm)
 rapidsmpf::Duration do_run(rapidsmpf::shuffler::PartID const total_num_partitions,
                            std::shared_ptr<rapidsmpf::Communicator>& comm,
                            ArgumentParser const& args,
-                           rmm::cuda_stream_view stream,
+                           cuda::stream_ref stream,
                            rapidsmpf::BufferResource* br,
                            std::shared_ptr<rapidsmpf::Statistics> statistics,
                            auto&& shuffle_insert_fn)
@@ -296,7 +297,7 @@ rapidsmpf::Duration do_run(rapidsmpf::shuffler::PartID const total_num_partition
         output_partitions.emplace_back(std::move(output_partition));
       }
     }
-    stream.synchronize();
+    stream.sync();
   }
 
   auto const elapsed = rapidsmpf::Clock::now() - t0_elapsed;
@@ -330,7 +331,7 @@ template <typename TransformFn,
           typename InputPartitionsT =
             std::remove_reference_t<std::invoke_result_t<TransformFn, cudf::table&&>>>
 std::vector<InputPartitionsT> generate_input_partitions(ArgumentParser const& args,
-                                                        rmm::cuda_stream_view stream,
+                                                        cuda::stream_ref stream,
                                                         rapidsmpf::BufferResource* br,
                                                         TransformFn&& transform_fn)
 {
@@ -350,7 +351,7 @@ std::vector<InputPartitionsT> generate_input_partitions(ArgumentParser const& ar
       random_table(num_columns, num_local_rows, min_val, max_val, stream, br->device_mr());
     input_partitions.emplace_back(transform_fn(std::move(table)));
   }
-  stream.synchronize();
+  stream.sync();
   return input_partitions;
 }
 
@@ -396,7 +397,7 @@ void do_insert(rapidsmpf::shuffler::Shuffler& shuffler,
  */
 rapidsmpf::Duration run_hash_partition_inline(std::shared_ptr<rapidsmpf::Communicator>& comm,
                                               ArgumentParser const& args,
-                                              rmm::cuda_stream_view stream,
+                                              cuda::stream_ref stream,
                                               rapidsmpf::BufferResource* br,
                                               std::shared_ptr<rapidsmpf::Statistics> statistics)
 {
@@ -437,7 +438,7 @@ rapidsmpf::Duration run_hash_partition_inline(std::shared_ptr<rapidsmpf::Communi
 rapidsmpf::Duration run_hash_partition_with_datagen(
   std::shared_ptr<rapidsmpf::Communicator>& comm,
   ArgumentParser const& args,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rapidsmpf::BufferResource* br,
   std::shared_ptr<rapidsmpf::Statistics> statistics)
 {
@@ -507,13 +508,12 @@ int main(int argc, char** argv)
                     std::runtime_error);
   auto pinned_pool_properties =
     args.pinned_mem_disable ? rapidsmpf::PinnedMemoryDisabled : rapidsmpf::PinnedPoolProperties{};
-  auto br = rapidsmpf::BufferResource::create(
-    rmm_mr,
-    std::move(pinned_pool_properties),
-    std::move(memory_limits),
-    std::chrono::milliseconds{1},
-    std::make_shared<rmm::cuda_stream_pool>(16, rmm::cuda_stream::flags::non_blocking),
-    stats);
+  auto br = rapidsmpf::BufferResource::create(rmm_mr,
+                                              std::move(pinned_pool_properties),
+                                              std::move(memory_limits),
+                                              std::chrono::milliseconds{1},
+                                              std::make_shared<rapidsmpf::StreamPool>(16),
+                                              stats);
   // `BufferResource` wraps the device resource in an internal tracking
   // `RmmResourceAdaptor` (exposed via `device_mr_adaptor()`). Install the
   // tracking adaptor as the current device resource so libcudf temporary
@@ -565,7 +565,7 @@ int main(int argc, char** argv)
 
   args.pprint(*comm);
 
-  rmm::cuda_stream_view stream = cudf::get_default_stream();
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Print benchmark/hardware info.
   {

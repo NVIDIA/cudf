@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,12 +21,12 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
@@ -121,8 +121,8 @@ template <typename T, typename LeftComparator, typename RightComparator>
 std::unique_ptr<column> label_bins(column_view const& input,
                                    column_view const& left_edges,
                                    column_view const& right_edges,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   auto output = make_numeric_column(
     data_type(type_to_id<size_type>()), input.size(), mask_state::UNALLOCATED, stream, mr);
@@ -179,8 +179,8 @@ struct bin_type_dispatcher {
                                      inclusive left_inclusive,
                                      column_view const& right_edges,
                                      inclusive right_inclusive,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(detail::is_supported_bin_type<T>())
   {
     return dispatch_inclusive(left_inclusive, [&](auto li) {
@@ -200,8 +200,8 @@ std::unique_ptr<column> label_bins(column_view const& input,
                                    inclusive left_inclusive,
                                    column_view const& right_edges,
                                    inclusive right_inclusive,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(
@@ -235,8 +235,8 @@ std::unique_ptr<column> label_bins(column_view const& input,
                                    inclusive left_inclusive,
                                    column_view const& right_edges,
                                    inclusive right_inclusive,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::label_bins(

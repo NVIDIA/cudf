@@ -11,7 +11,8 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -23,16 +24,17 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cooperative_groups.h>
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/atomic>
+#include <cuda/stream>
 #include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/reduce.h>
@@ -94,7 +96,8 @@ class make_key_pair {
  public:
   CUDF_HOST_DEVICE constexpr make_key_pair(Hasher const& hash) : _hash{hash} {}
 
-  __device__ __forceinline__ auto operator()(cudf::size_type i) const noexcept
+  __device__ __forceinline__ cuco::pair<hash_value_type, T> operator()(
+    cudf::size_type i) const noexcept
   {
     return cuco::pair{_hash(i), T{i}};
   }
@@ -163,7 +166,7 @@ struct build_comparator {
 // ============================================================================
 
 /// Block size for key remapping kernel
-CUDF_HOST_DEVICE auto constexpr KEY_REMAP_BLOCK_SIZE = 128;
+auto constexpr KEY_REMAP_BLOCK_SIZE = 128;
 
 /**
  * @brief Kernel for inserting keys with counting using block-scoped atomics.
@@ -240,8 +243,8 @@ class key_remap_table_interface {
 
   virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> probe(
     cudf::table_view const& left_keys,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const = 0;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const = 0;
 
   virtual bool has_metrics() const                        = 0;
   virtual cudf::size_type get_distinct_count() const      = 0;
@@ -279,7 +282,7 @@ class key_remap_table : public key_remap_table_interface {
     RowHasher const& row_hasher,
     cudf::null_equality compare_nulls,
     bool compute_metrics,
-    rmm::cuda_stream_view stream,
+    cuda::stream_ref stream,
     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
     : _right_has_nested_columns{cudf::has_nested_columns(right)},
       _compare_nulls{compare_nulls},
@@ -294,7 +297,7 @@ class key_remap_table : public key_remap_table_interface {
                   cuco::thread_scope_device,
                   cuco_storage_type{},
                   rmm::mr::polymorphic_allocator<char>{std::move(mr)},
-                  stream.value()},
+                  stream.get()},
       _has_metrics{compute_metrics},
       _distinct_count{0},
       _max_duplicate_count{0}
@@ -314,9 +317,8 @@ class key_remap_table : public key_remap_table_interface {
     auto const row_bitmask =
       skip_nulls
         ? cudf::detail::bitmask_and(_right, stream, cudf::get_current_device_resource_ref()).first
-        : rmm::device_buffer{};
-    auto const bitmask_ptr =
-      skip_nulls ? reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data()) : nullptr;
+        : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
+    auto const bitmask_ptr = skip_nulls ? row_bitmask.data() : nullptr;
 
     if (compute_metrics) {
       // Use hash-based atomic counting for metrics computation
@@ -337,9 +339,10 @@ class key_remap_table : public key_remap_table_interface {
   void compute_metrics_atomic(cudf::size_type right_num_rows,
                               KeyIter key_iter,
                               cudf::bitmask_type const* bitmask_ptr,
-                              rmm::cuda_stream_view stream)
+                              cuda::stream_ref stream)
   {
-    rmm::device_uvector<cudf::size_type> counts(right_num_rows, stream);
+    cuda::device_buffer<cudf::size_type> counts(
+      stream, cudf::get_current_device_resource_ref(), right_num_rows, cuda::no_init);
     thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  counts.begin(),
                  counts.end(),
@@ -352,7 +355,7 @@ class key_remap_table : public key_remap_table_interface {
 
     cudf::detail::grid_1d grid{right_num_rows, KEY_REMAP_BLOCK_SIZE};
 
-    insert_and_count_kernel<<<grid.num_blocks, KEY_REMAP_BLOCK_SIZE, 0, stream.value()>>>(
+    insert_and_count_kernel<<<grid.num_blocks, KEY_REMAP_BLOCK_SIZE, 0, stream.get()>>>(
       right_num_rows, set_ref, key_iter, counts.data(), d_distinct_count.data(), bitmask_ptr);
     CUDF_CUDA_TRY(cudaGetLastError());
 
@@ -369,33 +372,36 @@ class key_remap_table : public key_remap_table_interface {
  public:
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> probe(
     cudf::table_view const& left_keys,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const override
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const override
   {
     CUDF_FUNC_RANGE();
 
     cudf::size_type const left_num_rows{left_keys.num_rows()};
 
     if (left_num_rows == 0) {
-      return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr);
+      return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
     }
 
+    auto const temp_mr = cudf::get_current_device_resource_ref();
+
     if (this->_right.num_rows() == 0) {
-      auto result =
-        std::make_unique<rmm::device_uvector<cudf::size_type>>(left_num_rows, stream, mr);
-      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
+        left_num_rows, stream, mr.get_output_mr());
+      thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                    result->begin(),
                    result->end(),
                    cudf::JoinNoMatch);
       return result;
     }
 
-    auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(left_num_rows, stream, mr);
+    auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
+      left_num_rows, stream, mr.get_output_mr());
     auto const output_begin =
       cuda::make_transform_output_iterator(result->begin(), extract_index{});
 
     auto preprocessed_left =
-      cudf::detail::row::equality::preprocessed_table::create(left_keys, stream);
+      cudf::detail::row::equality::preprocessed_table::create(left_keys, stream, temp_mr);
 
     if (cudf::detail::is_primitive_row_op_compatible(_right)) {
       auto const d_hasher = cudf::detail::row::primitive::row_hasher{
@@ -406,8 +412,12 @@ class key_remap_table : public key_remap_table_interface {
       auto const iter = cudf::detail::make_counting_transform_iterator(
         0, make_key_pair<lhs_index_type, decltype(d_hasher)>{d_hasher});
 
-      find_matches(
-        iter, probe_comparator<decltype(d_equal), true>{d_equal}, left_keys, output_begin, stream);
+      find_matches(iter,
+                   probe_comparator<decltype(d_equal), true>{d_equal},
+                   left_keys,
+                   output_begin,
+                   stream,
+                   cudf::get_current_device_resource_ref());
     } else {
       auto const two_table_equal =
         cudf::detail::row::equality::two_table_comparator(preprocessed_left, _preprocessed_right);
@@ -420,11 +430,21 @@ class key_remap_table : public key_remap_table_interface {
       if (_right_has_nested_columns) {
         auto const device_comparator =
           two_table_equal.equal_to<true>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
-        find_matches(iter, probe_comparator{device_comparator}, left_keys, output_begin, stream);
+        find_matches(iter,
+                     probe_comparator{device_comparator},
+                     left_keys,
+                     output_begin,
+                     stream,
+                     cudf::get_current_device_resource_ref());
       } else {
         auto const device_comparator =
           two_table_equal.equal_to<false>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
-        find_matches(iter, probe_comparator{device_comparator}, left_keys, output_begin, stream);
+        find_matches(iter,
+                     probe_comparator{device_comparator},
+                     left_keys,
+                     output_begin,
+                     stream,
+                     cudf::get_current_device_resource_ref());
       }
     }
     return result;
@@ -450,20 +470,20 @@ class key_remap_table : public key_remap_table_interface {
                     EqualType const& d_equal,
                     cudf::table_view const& left_keys,
                     FoundIterator found_begin,
-                    rmm::cuda_stream_view stream) const
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr) const
   {
     CUDF_FUNC_RANGE();
     auto const left_num_rows = left_keys.num_rows();
 
     if (_compare_nulls == cudf::null_equality::EQUAL or (not cudf::nullable(left_keys))) {
       _hash_table.find_async(
-        iter, iter + left_num_rows, d_equal, key_hasher{}, found_begin, stream.value());
+        iter, iter + left_num_rows, d_equal, key_hasher{}, found_begin, stream.get());
     } else {
       auto stencil = cuda::counting_iterator<cudf::size_type>{0};
       auto const row_bitmask =
-        cudf::detail::bitmask_and(left_keys, stream, cudf::get_current_device_resource_ref()).first;
-      auto const pred =
-        row_is_valid{reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data())};
+        cudf::detail::bitmask_and(left_keys, stream, mr.get_temporary_mr()).first;
+      auto const pred = row_is_valid{row_bitmask.data()};
 
       _hash_table.find_if_async(iter,
                                 iter + left_num_rows,
@@ -472,7 +492,7 @@ class key_remap_table : public key_remap_table_interface {
                                 d_equal,
                                 key_hasher{},
                                 found_begin,
-                                stream.value());
+                                stream.get());
     }
   }
 
@@ -493,14 +513,15 @@ std::unique_ptr<key_remap_table_interface> create_key_remap_table(
   cudf::table_view const& right,
   cudf::null_equality compare_nulls,
   bool compute_metrics,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cuda::mr::any_resource<cuda::mr::device_accessible> mr)
 {
   CUDF_FUNC_RANGE();
 
   if (right.num_rows() == 0 || right.num_columns() == 0) { return nullptr; }
 
-  auto preprocessed_right = cudf::detail::row::equality::preprocessed_table::create(right, stream);
+  auto preprocessed_right = cudf::detail::row::equality::preprocessed_table::create(
+    right, stream, cudf::get_current_device_resource_ref());
 
   if (cudf::detail::is_primitive_row_op_compatible(right)) {
     auto const d_hasher = cudf::detail::row::primitive::row_hasher{
@@ -565,7 +586,7 @@ class key_remapping_impl {
   key_remapping_impl(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
                      bool compute_metrics,
-                     rmm::cuda_stream_view stream,
+                     cuda::stream_ref stream,
                      cuda::mr::any_resource<cuda::mr::device_accessible> mr)
     : _right{right},
       _compare_nulls{compare_nulls},
@@ -574,10 +595,9 @@ class key_remapping_impl {
   {
   }
 
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> probe(
-    cudf::table_view const& keys,
-    rmm::cuda_stream_view stream,
-    rmm::device_async_resource_ref mr) const
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> probe(cudf::table_view const& keys,
+                                                              cuda::stream_ref stream,
+                                                              cudf::memory_resources mr) const
   {
     CUDF_EXPECTS(keys.num_columns() == _right.num_columns(),
                  "Mismatch in number of columns to be joined on",
@@ -588,12 +608,12 @@ class key_remapping_impl {
                  cudf::data_type_error);
 
     if (keys.num_rows() == 0) {
-      return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr);
+      return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
     }
 
     if (_table == nullptr) {
-      auto result =
-        std::make_unique<rmm::device_uvector<cudf::size_type>>(keys.num_rows(), stream, mr);
+      auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
+        keys.num_rows(), stream, mr.get_output_mr());
       thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    result->begin(),
                    result->end(),
@@ -637,7 +657,7 @@ class key_remapping_impl {
 key_remapping::key_remapping(cudf::table_view const& right,
                              null_equality compare_nulls,
                              cudf::compute_metrics metrics,
-                             rmm::cuda_stream_view stream,
+                             cuda::stream_ref stream,
                              cuda::mr::any_resource<cuda::mr::device_accessible> mr)
   : _impl{std::make_unique<detail::key_remapping_impl>(
       right, compare_nulls, static_cast<bool>(metrics), stream, std::move(mr))}
@@ -651,8 +671,8 @@ namespace {
 std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl const& impl,
                                                   cudf::table_view const& keys,
                                                   cudf::size_type not_found_sentinel,
-                                                  rmm::cuda_stream_view stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   auto indices = impl.probe(keys, stream, mr);
 
@@ -665,23 +685,25 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
                   not_found_sentinel);
 
   auto const row_count = static_cast<cudf::size_type>(indices->size());
-  return std::make_unique<cudf::column>(
-    cudf::data_type{cudf::type_id::INT32}, row_count, indices->release(), rmm::device_buffer{}, 0);
+  return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
+                                        row_count,
+                                        indices->release(),
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                        0);
 }
 }  // namespace
 
-std::unique_ptr<cudf::column> key_remapping::remap_right_keys(
-  rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr) const
+std::unique_ptr<cudf::column> key_remapping::remap_right_keys(cuda::stream_ref stream,
+                                                              cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   // Use the cached right table from the implementation
   return remap_keys_internal(*_impl, _impl->get_right(), KEY_REMAP_RIGHT_NULL, stream, mr);
 }
 
-std::unique_ptr<cudf::column> key_remapping::remap_left_keys(
-  cudf::table_view const& keys,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr) const
+std::unique_ptr<cudf::column> key_remapping::remap_left_keys(cudf::table_view const& keys,
+                                                             cuda::stream_ref stream,
+                                                             cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   return remap_keys_internal(*_impl, keys, KEY_REMAP_NOT_FOUND, stream, mr);

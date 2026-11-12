@@ -9,18 +9,23 @@ import cudf
 from cudf.testing import assert_eq, assert_groupby_results_equal
 
 
-@pytest.fixture(params=[False, True], ids=["no-null-keys", "null-keys"])
+@pytest.fixture(
+    scope="module", params=[False, True], ids=["no-null-keys", "null-keys"]
+)
 def keys_null(request):
     return request.param
 
 
-@pytest.fixture(params=[False, True], ids=["no-null-values", "null-values"])
+@pytest.fixture(
+    scope="module", params=[False, True], ids=["no-null-values", "null-values"]
+)
 def values_null(request):
     return request.param
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def df(keys_null, values_null):
+    # The transform tests only read these inputs across aggregation variants.
     keys = ["a", "b", "a", "c", "b", "b", "c", "a"]
     r = range(len(keys))
     if keys_null:
@@ -28,14 +33,15 @@ def df(keys_null, values_null):
     values = list(range(len(keys)))
     if values_null:
         values[1::3] = itertools.repeat(None, len(r[1::3]))
-    return cudf.DataFrame({"key": keys, "values": values})
+    gdf = cudf.DataFrame({"key": keys, "values": values})
+    return gdf, gdf.to_pandas()
 
 
 @pytest.mark.parametrize("agg", ["cumsum", "cumprod", "max", "sum", "prod"])
 def test_transform_broadcast(agg, df):
-    pf = df.to_pandas()
-    got = df.groupby("key").transform(agg)
-    expect = pf.groupby("key").transform(agg)
+    gdf, pdf = df
+    got = gdf.groupby("key").transform(agg)
+    expect = pdf.groupby("key").transform(agg)
     assert_eq(got, expect, check_dtype=False)
 
 
@@ -133,16 +139,25 @@ def test_transform_scan_lambda():
     assert_eq(expect, got)
 
 
-def test_transform_singleton_groups_index():
+@pytest.mark.parametrize("agg", ["first", "last", "mean", "max"])
+@pytest.mark.parametrize(
+    "ids",
+    [[3.0, 1.0, 2.0], [1.0, 2.0, 3.0]],
+    ids=["unsorted-keys", "sorted-keys"],
+)
+def test_transform_singleton_groups_index(ids, agg):
     # every group a singleton with sort=True: the result must still be
-    # relabeled with the original index, not the group keys
+    # relabeled with the original index, not the group keys. With the keys
+    # already in sorted order the aggregated index equals the grouping
+    # keys, so _broadcast skips alignment; that path used to leak the
+    # group labels as the result index.
     pdf = pd.DataFrame(
-        {"id": [3.0, 1.0, 2.0], "val": [10.0, 20.0, 30.0]},
+        {"id": ids, "val": [10.0, 20.0, 30.0]},
         index=["r0", "r1", "r2"],
     )
     gdf = cudf.DataFrame(pdf)
 
-    expect = pdf.groupby("id", sort=True)["val"].transform("mean")
-    got = gdf.groupby("id", sort=True)["val"].transform("mean")
+    expect = pdf.groupby("id", sort=True)["val"].transform(agg)
+    got = gdf.groupby("id", sort=True)["val"].transform(agg)
 
     assert_eq(expect, got)

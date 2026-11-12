@@ -13,10 +13,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -48,8 +48,8 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
                                    size_type source_begin,
                                    size_type source_end,
                                    size_type target_begin,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   auto target_end = target_begin + (source_end - source_begin);
   CUDF_EXPECTS(
@@ -66,7 +66,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   // create null mask
   auto [null_mask, null_count] = [&] {
     if (!target.parent().nullable() && !source.parent().nullable()) {
-      return std::pair(rmm::device_buffer{}, 0);
+      return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
     }
     return cudf::detail::valid_if(
       cuda::counting_iterator<size_type>{0},
@@ -88,7 +88,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
   // create chars
-  auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr);
+  auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
   auto d_chars    = chars_data.data();
   thrust::for_each(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

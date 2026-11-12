@@ -164,8 +164,10 @@ struct page_stats_caster : public stats_caster_base {
                 return;
               }
 
-              // Also ignore INT96 min/max that cannot bound the converted values
+              // Also ignore INT96 min/max that cannot bound the converted values, and min/max of
+              // columns whose unsupported logical type was dropped
               if (ignore_int96_min_max or
+                  per_file_metadata[src_idx].stats_ignored(mapped_schema_idx) or
                   int96_minmax_unusable<T>(colchunk.meta_data.type, min_value, max_value)) {
                 host_column<T>::set_min_max(
                   min, max, column_page_idx, std::nullopt, std::nullopt, false, {});

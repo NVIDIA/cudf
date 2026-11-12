@@ -1142,18 +1142,18 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - cuda-core
+          - cuda-core>=1.0,<2
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
           - matrix:
               cuda: "12.*"
             packages:
-              - cuda-core[cu12]
+              - cuda-core[cu12]>=1.0,<2
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
             packages:
-              - cuda-core[cu13]
+              - cuda-core[cu13]>=1.0,<2
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

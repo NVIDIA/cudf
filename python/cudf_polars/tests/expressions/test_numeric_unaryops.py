@@ -127,12 +127,13 @@ def test_negate(engine: pl.GPUEngine, ldf, col):
     ],
 )
 def test_negate_unsupported_dtype_raises(engine: pl.GPUEngine, dtype) -> None:
-    values = {
+    values_by_dtype: dict[type[pl.DataType], list[object]] = {
         pl.Boolean: [True, None],
         pl.Date: [date(2020, 1, 1), None],
         pl.Datetime: [datetime(2020, 1, 1), None],
         pl.String: ["a", None],
-    }.get(dtype.base_type(), [1, None])
+    }
+    values = values_by_dtype.get(dtype.base_type(), [1, None])
     q = pl.LazyFrame({"t": pl.Series(values, dtype=dtype)}).select(-pl.col("t"))
     with pytest.raises(pl.exceptions.InvalidOperationError) as cpu_exc:
         q.collect()

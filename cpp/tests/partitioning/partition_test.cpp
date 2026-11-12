@@ -589,6 +589,42 @@ TYPED_TEST(StringPartitionMapTypes, PartialTiles)
   }
 }
 
+TEST_F(PartitionTestNotTyped, LargeBinaryStringRanks)
+{
+  constexpr cudf::size_type rows = 4'000'001;
+  constexpr cudf::size_type skip = 7;
+  std::vector<std::string> const samples{"", "x", "é", std::string(129, 'z')};
+  auto const value = [&](cudf::size_type i) -> std::string const& {
+    return samples[i % 4096 == 0 ? 3 : i % 3];
+  };
+  auto const values = cudf::detail::make_counting_transform_iterator(0, value);
+  auto const empty  = cuda::make_constant_iterator("");
+  strings_column_wrapper strings(values, values + rows + skip);
+  strings_column_wrapper empty_strings(empty, empty + rows + skip);
+  std::vector<int32_t> bins(rows + skip);
+  for (cudf::size_type i = 0; i < rows + skip; ++i) {
+    bins[i] = (i * 13 + i / 7) % 2;
+  }
+  std::vector<cudf::size_type> order;
+  order.reserve(rows);
+  std::vector<cudf::size_type> offsets{0};
+  for (int partition = 0; partition < 2; ++partition) {
+    for (cudf::size_type i = skip; i < rows + skip; ++i) {
+      if (bins[i] == partition) { order.push_back(i); }
+    }
+    offsets.push_back(order.size());
+  }
+  auto const expected_values = cudf::detail::make_counting_transform_iterator(
+    0, [&](auto i) -> std::string const& { return value(order[i]); });
+  strings_column_wrapper expected(expected_values, expected_values + rows);
+  strings_column_wrapper expected_empty(empty, empty + rows);
+  fixed_width_column_wrapper<int32_t> map(bins.begin(), bins.end());
+  auto const input =
+    cudf::slice(cudf::table_view{{strings, empty_strings}}, {skip, rows + skip})[0];
+  auto const sliced_map = cudf::slice(cudf::column_view{map}, {skip, rows + skip})[0];
+  run_partition_test(input, sliced_map, 2, cudf::table_view{{expected, expected_empty}}, offsets);
+}
+
 TEST_F(PartitionTestNotTyped, BinaryStringSmallSchemas)
 {
   constexpr int rows = 1025;

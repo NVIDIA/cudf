@@ -6,13 +6,21 @@
 #include "partition_strings.cuh"
 
 #include <cudf/detail/gather.hpp>
+#include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/gather.cuh>
 
+#include <cub/device/device_scan.cuh>
 #include <cuda/std/cstring>
 #include <cuda/std/memory>
 
+#include <algorithm>
 #include <limits>
+#include <memory>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace cudf::detail::partition_strings_plan {
 

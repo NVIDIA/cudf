@@ -15,6 +15,7 @@ from cudf_polars.streaming.dispatch import lower_ir_node
 from cudf_polars.streaming.filter_hint import (
     ExternalDomain,
     JoinInputDomain,
+    JoinInputKeys,
     JoinWithPrefilter,
     Prefilter,
     PushdownFilterHint,
@@ -210,7 +211,23 @@ def lower_join_with_prefilters(
             continue
         assert isinstance(child, PushdownFilterHint)
 
+        target_side: JoinSide = "left" if target_index == 0 else "right"
         _target, domain = child.children
+        if isinstance(domain, JoinInputKeys):
+            # The keys of the other join input: never an external domain.
+            other_side: JoinSide = "right" if target_index == 0 else "left"
+            if other_side not in claimed_sides:
+                claimed_sides.add(other_side)
+                prefilters.append(
+                    Prefilter(
+                        target_side,
+                        child.target_on,
+                        JoinInputDomain(other_side),
+                        child.domain_on,
+                        child.nulls_equal,
+                    )
+                )
+            continue
         domain, domain_partition_info = rec(domain)
         partition_info.update(domain_partition_info)
 
@@ -237,7 +254,6 @@ def lower_join_with_prefilters(
             domain_side = None
             break
 
-        target_side: JoinSide = "left" if target_index == 0 else "right"
         if domain_side in claimed_sides:
             domain_side = None
         elif domain_side is not None:
@@ -265,6 +281,18 @@ def lower_join_with_prefilters(
                 )
             )
 
+    if not prefilters:
+        return (
+            Join(
+                ir.schema,
+                ir.left_on,
+                ir.right_on,
+                ir.options,
+                ir.predicate,
+                *lowered_targets,
+            ),
+            partition_info,
+        )
     return (
         JoinWithPrefilter(
             ir.schema,
@@ -286,7 +314,10 @@ def _(
     """Preserve optional filters for dynamic execution, otherwise discard them."""
     target, domain = ir.children
     target, partition_info = rec(target)
-    if not _dynamic_planning_on(rec.state["config_options"]):
+    if not _dynamic_planning_on(rec.state["config_options"]) or isinstance(
+        domain, JoinInputKeys
+    ):
+        # JoinInputKeys is only meaningful to the join owning the hint.
         return target, partition_info
 
     domain, domain_partition_info = rec(domain)

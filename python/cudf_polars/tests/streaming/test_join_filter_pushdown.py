@@ -28,6 +28,7 @@ from cudf_polars.quent._context import QuentConfig
 from cudf_polars.streaming.base import PartitionInfo, StatsCollector
 from cudf_polars.streaming.filter_hint import (
     JoinInputDomain,
+    JoinInputKeys,
     JoinWithPrefilter,
     Prefilter,
     PushdownFilterHint,
@@ -464,7 +465,7 @@ def test_composite_filter_pushdown_constrains_domain_first(
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
-def test_prefilter_uses_cheaper_source_domain_and_skips_expensive_domain(
+def test_prefilter_uses_cheaper_source_domain_and_join_input_for_expensive_domain(
     engine: SPMDEngine,
 ) -> None:
     part = (
@@ -521,9 +522,34 @@ def test_prefilter_uses_cheaper_source_domain_and_skips_expensive_domain(
         if hint.children[0] is lineitem_ir and hint_key_names(hint) == ("l_partkey",)
     ]
     assert partkey_hints
-    assert not any(hint.children[0] is orders_ir for hint in hints)
+    # Rebuilding the lineitem-side domain for orders would be expensive, so
+    # orders is filtered by the keys of the join input materialized anyway.
+    orders_hints = [hint for hint in hints if hint.children[0] is orders_ir]
+    assert len(orders_hints) == 1
+    assert isinstance(orders_hints[0].children[1], JoinInputKeys)
     assert contains_node(partkey_hints[0].children[1], part_ir)
     assert not contains_node(partkey_hints[0].children[1], supplier_ir)
+
+    # Lowering resolves the placeholder to the owning join's other input: the
+    # result check alone could not tell if the prefilter were dropped.
+    lowering = lower_ir_graph(
+        root, ConfigOptions.from_polars_engine(engine), StatsCollector()
+    )
+    orders_prefilters = [
+        (node, prefilter)
+        for node in traversal([lowering.lowered])
+        if isinstance(node, JoinWithPrefilter)
+        for prefilter in node.prefilters
+        if tuple(ne.name for ne in prefilter.target_on) == ("o_orderkey",)
+    ]
+    ((join, prefilter),) = orders_prefilters
+    assert prefilter.target_side == "right"
+    assert isinstance(prefilter.domain, JoinInputDomain)
+    assert prefilter.domain.side == "left"
+    assert tuple(ne.name for ne in prefilter.domain_on) == ("l_orderkey",)
+    # The keys come from the join input itself, not an external domain child.
+    assert len(join.children) == 2
+    assert not any(isinstance(node, JoinInputKeys) for node in traversal([join]))
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 

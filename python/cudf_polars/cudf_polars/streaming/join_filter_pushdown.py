@@ -101,7 +101,7 @@ from cudf_polars.dsl.utils.column_domain import (
     ColumnRef,
     column_domain_bindings,
 )
-from cudf_polars.streaming.filter_hint import PushdownFilterHint
+from cudf_polars.streaming.filter_hint import JoinInputKeys, PushdownFilterHint
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -157,6 +157,8 @@ class SimpleCandidate:
     target_key: expr.Col
     domain: _Producer
     domain_key: expr.Col
+    join_input_domain: bool = False
+    """Whether the domain is the join's other input (see ``JoinInputKeys``)."""
 
     @property
     def score(self) -> tuple[int, DomainScore]:
@@ -675,6 +677,19 @@ def _simple_candidates(
         )
         if domain is None:
             continue
+        join_input_domain = False
+        if not domain_cost_is_small(domain, target, threshold):
+            # Building this domain separately would cost too much, but the
+            # join materializes its other input anyway. Filter an unfiltered
+            # direct input with the keys of that input instead: re-executes
+            # nothing, and the runtime still decides whether to apply it.
+            if (
+                target.path
+                or target_child in facts.selective_nodes
+                or domain_child not in facts.selective_nodes
+            ):
+                continue
+            join_input_domain = True
         if domain.rows / target.rows > threshold:
             continue
         if contains_node(target.node, domain.node):
@@ -683,14 +698,13 @@ def _simple_candidates(
             target_child, target.path
         ):
             continue
-        if not domain_cost_is_small(domain, target, threshold):
-            continue
         yield SimpleCandidate(
             target_side=target_side,
             target=target,
             target_key=target_key,
             domain=domain,
             domain_key=domain_key,
+            join_input_domain=join_input_domain,
         )
 
 
@@ -760,6 +774,8 @@ def _composite_candidates(
 
 
 def _make_domain(candidate: Candidate, ir: Join) -> IR:
+    if isinstance(candidate, SimpleCandidate) and candidate.join_input_domain:
+        return JoinInputKeys({candidate.domain_key.name: candidate.domain_key.dtype})
     if isinstance(candidate, SimpleCandidate):
         return _project_bound_key(
             candidate.domain.node,

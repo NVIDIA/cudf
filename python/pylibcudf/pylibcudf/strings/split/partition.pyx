@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -58,7 +59,7 @@ cpdef Table partition(
 
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), to_device_resource_ref(mr.get_mr()))
         )
 
     cdef const string_scalar* c_delimiter = <const string_scalar*>(
@@ -71,7 +72,7 @@ cpdef Table partition(
             c_input,
             dereference(c_delimiter),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -109,7 +110,7 @@ cpdef Table rpartition(
 
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), to_device_resource_ref(mr.get_mr()))
         )
 
     cdef const string_scalar* c_delimiter = <const string_scalar*>(
@@ -122,7 +123,7 @@ cpdef Table rpartition(
             c_input,
             dereference(c_delimiter),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

@@ -13,6 +13,8 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <nvbench/nvbench.cuh>
 
 /**
@@ -63,8 +65,8 @@
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_revenue(
   cudf::column_view const& extendedprice,
   cudf::column_view const& discount,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto const one = cudf::numeric_scalar<double>(1);
   auto const one_minus_discount =

@@ -169,7 +169,7 @@ using sub_vocabulary_map_type = vocabulary_map_type;
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
                                              cuda::stream_ref,
-                                             rmm::device_async_resource_ref>;
+                                             cuda::mr::device_resource_ref>;
 
 /**
  * @brief Internal class manages all the data held by the vocabulary object

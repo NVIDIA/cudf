@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -60,7 +61,7 @@ cpdef Column strip(
 
     if to_strip is None:
         to_strip = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), to_device_resource_ref(mr.get_mr()))
         )
 
     cdef unique_ptr[column] c_result
@@ -74,7 +75,7 @@ cpdef Column strip(
             side,
             dereference(cpp_to_strip),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

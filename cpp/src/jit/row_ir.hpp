@@ -16,8 +16,6 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/stream>
 
 #include <ast/jit/expressions.hpp>

@@ -35,6 +35,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 #include <thrust/tabulate.h>
@@ -204,7 +205,7 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
                               host_span<streaming_aggregation_request const> requests,
                               size_type max_distinct_keys,
                               null_policy null_handling,
-                              cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                              cuda::mr::any_device_resource mr)
   : _max_distinct_keys{max_distinct_keys}, _null_handling{null_handling}, _mr{std::move(mr)}
 {
   CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);
@@ -626,7 +627,7 @@ streaming_groupby::streaming_groupby(host_span<size_type const> key_indices,
                                      host_span<streaming_aggregation_request const> requests,
                                      size_type max_distinct_keys,
                                      null_policy null_handling,
-                                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                     cuda::mr::any_device_resource mr)
   : _impl{std::make_unique<impl>(
       key_indices, requests, max_distinct_keys, null_handling, std::move(mr))}
 {

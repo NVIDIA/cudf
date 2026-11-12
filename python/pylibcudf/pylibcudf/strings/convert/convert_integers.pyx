@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -64,7 +65,7 @@ cpdef Column to_integers(
                 c_input,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         )
 
@@ -104,7 +105,7 @@ cpdef Column from_integers(
             cpp_convert_integers.from_integers(
                 c_integers,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         )
 
@@ -153,7 +154,7 @@ cpdef Column is_integer(
                 cpp_convert_integers.is_integer(
                     c_input,
                     _cs,
-                    mr.get_mr()
+                    to_device_resource_ref(mr.get_mr())
                 )
             )
     else:
@@ -163,7 +164,7 @@ cpdef Column is_integer(
                     c_input,
                     int_type.c_obj,
                     _cs,
-                    mr.get_mr()
+                    to_device_resource_ref(mr.get_mr())
                 )
             )
 
@@ -207,7 +208,7 @@ cpdef Column hex_to_integers(
                 c_input,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         )
 
@@ -245,7 +246,7 @@ cpdef Column is_hex(Column input, object stream: CudaStreamLike | None = None, D
             cpp_convert_integers.is_hex(
                 c_input,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         )
 
@@ -285,7 +286,7 @@ cpdef Column integers_to_hex(
             cpp_convert_integers.integers_to_hex(
                 c_input,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         )
 

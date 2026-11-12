@@ -14,6 +14,8 @@
 #include <rmm/cuda_device.hpp>
 #include <rmm/mr/per_device_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <getopt.h>
 #include <rapidsmpf/bootstrap/bootstrap.hpp>
 #include <rapidsmpf/bootstrap/utils.hpp>
@@ -172,7 +174,7 @@ streaming::Actor consume_channel(std::shared_ptr<streaming::Context> ctx,
 }
 
 std::pair<std::shared_ptr<streaming::Context>, std::shared_ptr<Communicator>> create_context(
-  ProgramOptions& arguments, cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  ProgramOptions& arguments, cuda::mr::any_device_resource mr)
 {
   rmm::mr::set_current_device_resource(mr);
   std::unordered_map<MemoryType, std::int64_t> memory_limits{};

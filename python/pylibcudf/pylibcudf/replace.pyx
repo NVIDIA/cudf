@@ -11,6 +11,7 @@ from pylibcudf.libcudf cimport replace as cpp_replace
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view, mutable_column_view
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.libcudf.replace import \
@@ -94,7 +95,7 @@ cpdef Column replace_nulls(
                     c_source_column,
                     policy,
                     _cs,
-                    mr.get_mr()
+                    to_device_resource_ref(mr.get_mr())
                 )
             return Column.from_libcudf(move(c_result), _stream, mr)
         else:
@@ -109,21 +110,21 @@ cpdef Column replace_nulls(
                 c_source_column,
                 c_replacement,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         elif ReplacementType is Scalar:
             c_result = cpp_replace.replace_nulls(
                 c_source_column,
                 dereference(replacement.c_obj),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         elif ReplacementType is replace_policy:
             c_result = cpp_replace.replace_nulls(
                 c_source_column,
                 replacement,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         else:
             assert False, "Internal error. Please contact pylibcudf developers"
@@ -175,7 +176,7 @@ cpdef Column find_and_replace_all(
             c_values_to_replace,
             c_replacement_values,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -234,7 +235,7 @@ cpdef Column clamp(
                 dereference(lo.c_obj),
                 dereference(hi.c_obj),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         else:
             c_result = cpp_replace.clamp(
@@ -244,7 +245,7 @@ cpdef Column clamp(
                 dereference(hi.c_obj),
                 dereference(hi_replace.c_obj),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -291,13 +292,13 @@ cpdef Column normalize_nans_and_zeros(
             cpp_replace.normalize_nans_and_zeros(
                 c_mutable_source_column,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         else:
             c_result = cpp_replace.normalize_nans_and_zeros(
                 c_source_column,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
 
     if not inplace:

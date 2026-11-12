@@ -15,6 +15,7 @@
 
 #include <rmm/mr/callback_memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <cuda_runtime_api.h>
 
@@ -33,9 +34,9 @@ template <typename Scalar, typename Value>
 constexpr bool has_explicit_value_constructor =
   std::is_convertible_v<Scalar const&, Scalar> && std::is_convertible_v<Scalar&&, Scalar> &&
   !std::is_convertible_v<Value, Scalar> && std::is_constructible_v<Scalar, Value> &&
-  std::is_constructible_v<Scalar, Value, bool, cuda::stream_ref, rmm::device_async_resource_ref> &&
+  std::is_constructible_v<Scalar, Value, bool, cuda::stream_ref, cuda::mr::device_resource_ref> &&
   std::is_constructible_v<Scalar, Value> && std::is_constructible_v<Scalar, Value, bool> &&
-  !std::is_constructible_v<Scalar, Value, cuda::stream_ref, rmm::device_async_resource_ref> &&
+  !std::is_constructible_v<Scalar, Value, cuda::stream_ref, cuda::mr::device_resource_ref> &&
   !std::is_constructible_v<Scalar, Value, cuda::stream_ref>;
 
 static_assert(has_explicit_value_constructor<cudf::string_scalar, std::string_view>);
@@ -184,7 +185,7 @@ TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
   cudf::string_scalar scalar{std::string_view{source.data(), source.size()},
                              true,
                              stream_ref,
-                             rmm::device_async_resource_ref{mr}};
+                             cuda::mr::device_resource_ref{mr}};
   std::fill(source.begin(), source.end(), 'x');
   EXPECT_FALSE(gate.complete());
 

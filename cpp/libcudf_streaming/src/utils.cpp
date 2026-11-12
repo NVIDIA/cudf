@@ -13,6 +13,8 @@
 
 #include <cudf_streaming/utils.hpp>
 
+#include <cuda/memory_resource>
+
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/error.hpp>
 #include <rapidsmpf/memory/buffer.hpp>
@@ -35,7 +37,7 @@ struct str_cudf_column_scalar_fn {
   std::string operator()(cudf::column_view col,
                          cudf::size_type index,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cuda::mr::device_resource_ref mr)
   {
     std::unique_ptr<cudf::scalar> scalar = cudf::get_element(col, index, stream, mr);
     if (!scalar->is_valid(stream)) { return "null"; }
@@ -49,7 +51,7 @@ struct str_cudf_column_scalar_fn {
   std::string operator()(cudf::column_view /* col */,
                          cudf::size_type /* index */,
                          cuda::stream_ref /* stream */,
-                         rmm::device_async_resource_ref /* mr */
+                         cuda::mr::device_resource_ref /* mr */
   )
   {
     RAPIDSMPF_FAIL("not implemented");
@@ -102,12 +104,12 @@ struct cudf_column_data_size_fn {
 std::string str(cudf::column_view col,
                 cudf::size_type index,
                 cuda::stream_ref stream,
-                rmm::device_async_resource_ref mr)
+                cuda::mr::device_resource_ref mr)
 {
   return cudf::type_dispatcher(col.type(), str_cudf_column_scalar_fn{}, col, index, stream, mr);
 }
 
-std::string str(cudf::column_view col, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::string str(cudf::column_view col, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   std::stringstream ss;
   ss << "Column([";
@@ -119,7 +121,7 @@ std::string str(cudf::column_view col, cuda::stream_ref stream, rmm::device_asyn
   return ss.str();
 }
 
-std::string str(cudf::table_view tbl, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::string str(cudf::table_view tbl, cuda::stream_ref stream, cuda::mr::device_resource_ref mr)
 {
   std::stringstream ss;
   ss << "Table([";

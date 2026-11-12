@@ -11,7 +11,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/buffer>
 #include <cuda/stream>

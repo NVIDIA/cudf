@@ -8,6 +8,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 namespace cudf {
@@ -52,6 +53,6 @@ void sorted_order_radix(column_view const& input,
                         mutable_column_view& indices,
                         bool ascending,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref temp_mr);
+                        cuda::mr::device_resource_ref temp_mr);
 }  // namespace detail
 }  // namespace cudf

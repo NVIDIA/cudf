@@ -15,8 +15,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/stream>
 
 #include <memory>

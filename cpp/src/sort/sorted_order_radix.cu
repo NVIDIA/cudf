@@ -18,6 +18,7 @@
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
@@ -41,11 +42,11 @@ struct float_to_pair_and_seq {
  * Should not be called if `input.has_nulls()==true`
  */
 struct sorted_order_radix_fn {
-  column_view const& input;                // keys to sort
-  mutable_column_view& indices;            // output of sort
-  bool ascending;                          // true for ascending sort
-  cuda::stream_ref stream;                 // for allocation and kernel launches
-  rmm::device_async_resource_ref temp_mr;  // temporary allocations
+  column_view const& input;               // keys to sort
+  mutable_column_view& indices;           // output of sort
+  bool ascending;                         // true for ascending sort
+  cuda::stream_ref stream;                // for allocation and kernel launches
+  cuda::mr::device_resource_ref temp_mr;  // temporary allocations
 
   template <typename T>
   void radix_sort()
@@ -160,7 +161,7 @@ void sorted_order_radix(column_view const& input,
                         mutable_column_view& indices,
                         bool ascending,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref temp_mr)
+                        cuda::mr::device_resource_ref temp_mr)
 {
   cudf::type_dispatcher<dispatch_storage_type>(
     input.type(), sorted_order_radix_fn{input, indices, ascending, stream, temp_mr});

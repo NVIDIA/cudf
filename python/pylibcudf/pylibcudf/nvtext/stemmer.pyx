@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.libcudf.nvtext.stemmer import letter_type as LetterType # no-cython-lint
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -109,7 +110,7 @@ cpdef Column porter_stemmer_measure(
 
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_porter_stemmer_measure(c_input, _cs, mr.get_mr())
+        c_result = cpp_porter_stemmer_measure(c_input, _cs, to_device_resource_ref(mr.get_mr()))
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 

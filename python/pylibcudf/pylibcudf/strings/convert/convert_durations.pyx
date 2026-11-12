@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -67,7 +68,7 @@ cpdef Column to_durations(
             duration_type.c_obj,
             c_format,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -116,7 +117,7 @@ cpdef Column from_durations(
             c_durations,
             c_format,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

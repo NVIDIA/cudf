@@ -36,6 +36,7 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
     make_timestamp_scalar,
 )
 from pylibcudf.libcudf.types cimport type_id
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from pylibcudf.libcudf.types cimport int128 as int128_t
 from pylibcudf.libcudf.wrappers.durations cimport (
     duration_ms,
@@ -236,7 +237,7 @@ cdef class Scalar:
         cdef Stream _stream = <Stream>stream
         cdef cudaStream_t _cs = _stream.view().get()
         return Scalar.from_libcudf(
-            move(make_empty_scalar_like(column.view(), _cs, mr.get_mr()))
+            move(make_empty_scalar_like(column.view(), _cs, to_device_resource_ref(mr.get_mr())))
         )
 
     @staticmethod
@@ -404,7 +405,7 @@ def _(
     cdef unique_ptr[scalar] c_obj = make_default_constructed_scalar(
         c_dtype.c_obj,
         _cs,
-        mr.get_mr()
+        to_device_resource_ref(mr.get_mr())
     )
     return _new_scalar(move(c_obj), dtype)
 
@@ -437,10 +438,10 @@ def _(
     if tid == type_id.FLOAT32:
         if not isinf(py_val) and abs(py_val) > numeric_limits[float].max():
             raise OverflowError(f"{py_val} out of range for FLOAT32 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[float]*>c_obj.get()).set_value(py_val, _cs)
     elif tid == type_id.FLOAT64:
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[double]*>c_obj.get()).set_value(py_val, _cs)
     else:
         typ = c_dtype.id()
@@ -486,7 +487,7 @@ def _(
             numeric_limits[int8_t].min() <= py_val <= numeric_limits[int8_t].max()
         ):
             raise OverflowError(f"{py_val} out of range for INT8 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[int8_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.INT16:
@@ -494,7 +495,7 @@ def _(
             numeric_limits[int16_t].min() <= py_val <= numeric_limits[int16_t].max()
         ):
             raise OverflowError(f"{py_val} out of range for INT16 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[int16_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.INT32:
@@ -502,7 +503,7 @@ def _(
             numeric_limits[int32_t].min() <= py_val <= numeric_limits[int32_t].max()
         ):
             raise OverflowError(f"{py_val} out of range for INT32 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[int32_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.INT64:
@@ -510,7 +511,7 @@ def _(
             numeric_limits[int64_t].min() <= py_val <= numeric_limits[int64_t].max()
         ):
             raise OverflowError(f"{py_val} out of range for INT64 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[int64_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.UINT8:
@@ -518,7 +519,7 @@ def _(
             raise ValueError("Cannot assign negative value to UINT8 scalar")
         if py_val > numeric_limits[uint8_t].max():
             raise OverflowError(f"{py_val} out of range for UINT8 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[uint8_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.UINT16:
@@ -526,7 +527,7 @@ def _(
             raise ValueError("Cannot assign negative value to UINT16 scalar")
         if py_val > numeric_limits[uint16_t].max():
             raise OverflowError(f"{py_val} out of range for UINT16 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[uint16_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.UINT32:
@@ -534,7 +535,7 @@ def _(
             raise ValueError("Cannot assign negative value to UINT32 scalar")
         if py_val > numeric_limits[uint32_t].max():
             raise OverflowError(f"{py_val} out of range for UINT32 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[uint32_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.UINT64:
@@ -542,13 +543,13 @@ def _(
             raise ValueError("Cannot assign negative value to UINT64 scalar")
         if py_val > numeric_limits[uint64_t].max():
             raise OverflowError(f"{py_val} out of range for UINT64 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[uint64_t]*>c_obj.get()).set_value(py_val, _cs)
 
     elif tid == type_id.BOOL8:
         if py_val not in (0, 1):
             raise ValueError(f"Cannot convert {py_val} to BOOL8 scalar")
-        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_numeric_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         (<numeric_scalar[cbool]*>c_obj.get()).set_value(py_val != 0, _cs)
 
     elif tid == type_id.DURATION_NANOSECONDS:
@@ -556,7 +557,7 @@ def _(
             raise OverflowError(
                 f"{py_val} nanoseconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_ns = duration_ns(<int64_t>py_val)
         (<duration_scalar[duration_ns]*>c_obj.get()).set_value(
             c_duration_ns, _cs
@@ -567,7 +568,7 @@ def _(
             raise OverflowError(
                 f"{py_val} microseconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_us = duration_us(<int64_t>py_val)
         (<duration_scalar[duration_us]*>c_obj.get()).set_value(
             c_duration_us, _cs
@@ -578,7 +579,7 @@ def _(
             raise OverflowError(
                 f"{py_val} milliseconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_ms = duration_ms(<int64_t>py_val)
         (<duration_scalar[duration_ms]*>c_obj.get()).set_value(
             c_duration_ms, _cs
@@ -589,7 +590,7 @@ def _(
             raise OverflowError(
                 f"{py_val} seconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_s = duration_s(<int64_t>py_val)
         (<duration_scalar[duration_s]*>c_obj.get()).set_value(
             c_duration_s, _cs
@@ -600,7 +601,7 @@ def _(
             raise OverflowError(
                 f"{py_val} days out of range for INT32 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_D = duration_D(<int32_t>py_val)
         (<duration_scalar[duration_D]*>c_obj.get()).set_value(
             c_duration_D, _cs
@@ -630,7 +631,7 @@ def _(
     cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
         (<DataType>dtype).c_obj,
         _cs,
-        mr.get_mr()
+        to_device_resource_ref(mr.get_mr())
     )
     (<numeric_scalar[cbool]*>c_obj.get()).set_value(py_val, _cs)
     return _new_scalar(move(c_obj), dtype)
@@ -650,7 +651,7 @@ def _(
             f"Cannot convert str to Scalar with dtype {tid.name}"
         )
     cdef unique_ptr[scalar] c_obj = make_string_scalar(
-        py_val.encode(), _cs, mr.get_mr()
+        py_val.encode(), _cs, to_device_resource_ref(mr.get_mr())
     )
     return _new_scalar(move(c_obj), dtype)
 
@@ -679,7 +680,7 @@ def _(
             raise OverflowError(
                 f"{total_nanoseconds} nanoseconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_ns = duration_ns(<int64_t>total_nanoseconds)
         (<duration_scalar[duration_ns]*>c_obj.get()).set_value(
             c_duration_ns, _cs
@@ -690,7 +691,7 @@ def _(
             raise OverflowError(
                 f"{total_microseconds} microseconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_us = duration_us(<int64_t>total_microseconds)
         (<duration_scalar[duration_us]*>c_obj.get()).set_value(
             c_duration_us, _cs
@@ -701,7 +702,7 @@ def _(
             raise OverflowError(
                 f"{total_milliseconds} milliseconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_ms = duration_ms(<int64_t>total_milliseconds)
         (<duration_scalar[duration_ms]*>c_obj.get()).set_value(
             c_duration_ms, _cs
@@ -712,7 +713,7 @@ def _(
             raise OverflowError(
                 f"{total_seconds} seconds out of range for INT64 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_s = duration_s(<int64_t>total_seconds)
         (<duration_scalar[duration_s]*>c_obj.get()).set_value(
             c_duration_s, _cs
@@ -723,7 +724,7 @@ def _(
             raise OverflowError(
                 f"{total_days} days out of range for INT32 limit."
             )
-        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_duration_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_D = duration_D(<int32_t>total_days)
         (<duration_scalar[duration_D]*>c_obj.get()).set_value(
             c_duration_D, _cs
@@ -771,7 +772,7 @@ def _(
             raise OverflowError(
                 f"{epoch_nanoseconds} nanoseconds out of range for INT64 limit."
             )
-        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_ns = duration_ns(<int64_t>epoch_nanoseconds)
         c_timestamp_ns = timestamp_ns(c_duration_ns)
         (<timestamp_scalar[timestamp_ns]*>c_obj.get()).set_value(
@@ -783,7 +784,7 @@ def _(
             raise OverflowError(
                 f"{epoch_microseconds} microseconds out of range for INT64 limit."
             )
-        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_us = duration_us(<int64_t>epoch_microseconds)
         c_timestamp_us = timestamp_us(c_duration_us)
         (<timestamp_scalar[timestamp_us]*>c_obj.get()).set_value(
@@ -795,7 +796,7 @@ def _(
             raise OverflowError(
                 f"{epoch_milliseconds} milliseconds out of range for INT64 limit."
             )
-        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_ms = duration_ms(<int64_t>epoch_milliseconds)
         c_timestamp_ms = timestamp_ms(c_duration_ms)
         (<timestamp_scalar[timestamp_ms]*>c_obj.get()).set_value(
@@ -807,7 +808,7 @@ def _(
             raise OverflowError(
                 f"{epoch_seconds} seconds out of range for INT64 limit."
             )
-        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_s = duration_s(<int64_t>epoch_seconds)
         c_timestamp_s = timestamp_s(c_duration_s)
         (<timestamp_scalar[timestamp_s]*>c_obj.get()).set_value(
@@ -819,7 +820,7 @@ def _(
             raise OverflowError(
                 f"{epoch_days} days out of range for INT32 limit."
             )
-        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, mr.get_mr())
+        c_obj = make_timestamp_scalar(c_dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr()))
         c_duration_D = duration_D(<int32_t>epoch_days)
         c_timestamp_D = timestamp_D(c_duration_D)
         (<timestamp_scalar[timestamp_D]*>c_obj.get()).set_value(
@@ -853,7 +854,7 @@ def _(
         val,
         scale_type(<int32_t>scale),
         _cs,
-        mr.get_mr()
+        to_device_resource_ref(mr.get_mr())
     )
     return _new_scalar(move(c_obj), dtype)
 
@@ -881,7 +882,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         cdef DataType dtype = DataType(type_id.BOOL8)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         cdef cbool c_val = np_val
         (<numeric_scalar[cbool]*>c_obj.get()).set_value(c_val, _cs)
@@ -896,7 +897,7 @@ if np is not None:
         cdef unique_ptr[scalar] c_obj = make_string_scalar(
             np_val.item().encode(),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
         return slr
@@ -907,7 +908,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT8)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[int8_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -919,7 +920,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT16)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[int16_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -931,7 +932,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT32)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[int32_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -943,7 +944,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.INT64)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[int64_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -955,7 +956,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT8)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[uint8_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -967,7 +968,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT16)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[uint16_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -979,7 +980,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT32)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[uint32_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -991,7 +992,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.UINT64)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[uint64_t]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -1003,7 +1004,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.FLOAT32)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[float]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)
@@ -1015,7 +1016,7 @@ if np is not None:
         cdef cudaStream_t _cs = _stream.view().get()
         dtype = DataType(type_id.FLOAT64)
         cdef unique_ptr[scalar] c_obj = make_numeric_scalar(
-            dtype.c_obj, _cs, mr.get_mr()
+            dtype.c_obj, _cs, to_device_resource_ref(mr.get_mr())
         )
         (<numeric_scalar[double]*>c_obj.get()).set_value(np_val, _cs)
         cdef Scalar slr = _new_scalar(move(c_obj), dtype)

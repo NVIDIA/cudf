@@ -39,6 +39,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -60,7 +61,7 @@ namespace cudf {
 
 namespace {
 
-auto make_cub_env(cuda::stream_ref stream, rmm::device_async_resource_ref temp_mr)
+auto make_cub_env(cuda::stream_ref stream, cuda::mr::device_resource_ref temp_mr)
 {
   auto mr_prop = cuda::std::execution::prop{cuda::mr::get_memory_resource, temp_mr};
   auto env     = cuda::std::execution::env{cuda::stream_ref{stream.get()}, mr_prop};
@@ -461,7 +462,7 @@ void find_typed_match_ranges(typed_run_keys_view run_keys,
                              size_type* match_starts,
                              size_type* match_counts,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref temp_mr)
+                             cuda::mr::device_resource_ref temp_mr)
 {
   dispatch_typed_search_key(left.type(), [&](auto key) {
     using T                = decltype(key);

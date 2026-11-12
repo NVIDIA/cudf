@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from libcpp.string cimport string
@@ -8,7 +8,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.types cimport size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/strings/find.hpp" namespace "cudf::strings" nogil:
@@ -17,37 +17,37 @@ cdef extern from "cudf/strings/find.hpp" namespace "cudf::strings" nogil:
         column_view source_strings,
         string_scalar target,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] contains(
         column_view source_strings,
         column_view target_strings,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] ends_with(
         column_view source_strings,
         string_scalar target,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] ends_with(
         column_view source_strings,
         column_view target_strings,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] starts_with(
         column_view source_strings,
         string_scalar target,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] starts_with(
         column_view source_strings,
         column_view target_strings,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] find(
         column_view source_strings,
@@ -55,14 +55,14 @@ cdef extern from "cudf/strings/find.hpp" namespace "cudf::strings" nogil:
         size_type start,
         size_type stop,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] find(
         column_view source_strings,
         column_view target,
         size_type start,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] rfind(
         column_view source_strings,
@@ -70,4 +70,4 @@ cdef extern from "cudf/strings/find.hpp" namespace "cudf::strings" nogil:
         size_type start,
         size_type stop,
         cudaStream_t stream,
-        device_async_resource_ref mr) except +libcudf_exception_handler
+        device_resource_ref mr) except +libcudf_exception_handler

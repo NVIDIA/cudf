@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -56,7 +57,7 @@ cdef class BPEMergePairs:
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
-                cpp_load_merge_pairs(c_pairs, _cs, mr.get_mr())
+                cpp_load_merge_pairs(c_pairs, _cs, to_device_resource_ref(mr.get_mr()))
             )
 
     __hash__ = None
@@ -99,7 +100,7 @@ cpdef Column byte_pair_encoding(
 
     if separator is None:
         separator = Scalar.from_libcudf(
-            cpp_make_string_scalar(" ".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar(" ".encode(), _stream.view().get(), to_device_resource_ref(mr.get_mr()))
         )
 
     cdef column_view c_input = input.view()
@@ -110,7 +111,7 @@ cpdef Column byte_pair_encoding(
                 dereference(merge_pairs.c_obj.get()),
                 dereference(<const string_scalar*>separator.c_obj.get()),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         )
 

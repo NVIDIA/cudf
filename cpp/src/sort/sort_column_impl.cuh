@@ -23,6 +23,7 @@
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/execution>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
@@ -166,7 +167,7 @@ struct column_sorted_order_fn {
   void merge_sort(mutable_column_view& indices,
                   Comparator comp,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref temp_mr)
+                  cuda::mr::device_resource_ref temp_mr)
   {
     auto in_keys  = cuda::counting_iterator<cudf::size_type>{0};
     auto out_keys = indices.begin<size_type>();
@@ -189,7 +190,7 @@ struct column_sorted_order_fn {
                                 bool ascending,
                                 null_order null_precedence,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref temp_mr)
+                                cuda::mr::device_resource_ref temp_mr)
   {
     auto prefixes = cuda::device_buffer<PrefixKey>(stream, temp_mr, input.size(), cuda::no_init);
     auto rows     = cuda::counting_iterator<cudf::size_type>{0};
@@ -210,7 +211,7 @@ struct column_sorted_order_fn {
                            bool ascending,
                            null_order null_precedence,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref temp_mr)
+                           cuda::mr::device_resource_ref temp_mr)
   {
     // A non-null strings column with no chars buffer contains only empty strings. Checking the
     // buffer pointer avoids the host synchronization required to read the terminal offset.
@@ -252,7 +253,7 @@ struct column_sorted_order_fn {
                     bool ascending,
                     null_order null_precedence,
                     cuda::stream_ref stream,
-                    rmm::device_async_resource_ref temp_mr)
+                    cuda::mr::device_resource_ref temp_mr)
   {
     if constexpr (std::is_same_v<T, string_view>) {
       prefix_sorted_order<uint64_t>(input, indices, ascending, null_precedence, stream, temp_mr);
@@ -270,7 +271,7 @@ struct column_sorted_order_fn {
                   bool ascending,
                   null_order null_precedence,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref temp_mr)
+                  cuda::mr::device_resource_ref temp_mr)
   {
     sorted_order<T>(input, indices, ascending, null_precedence, stream, temp_mr);
   }
@@ -294,7 +295,7 @@ struct column_sorted_order_fn {
                   bool ascending,
                   null_order null_precedence,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref temp_mr)
+                  cuda::mr::device_resource_ref temp_mr)
   {
     auto const keys = dictionary_column_view(input).keys();
     // For the keys we do an arg-sort of arg-sort to get the rank and use that as a map

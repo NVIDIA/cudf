@@ -83,7 +83,7 @@ int main(int argc, char const** argv)
   auto const base_name = enable_stats
                            ? memory_resource_name.substr(0, memory_resource_name.size() - 6)
                            : memory_resource_name;
-  auto resource        = [&]() -> cuda::mr::any_resource<cuda::mr::device_accessible> {
+  auto resource        = [&]() -> cuda::mr::any_device_resource {
     if (base_name == "pool") {
       return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
                                            rmm::percent_of_free_device_memory(50)};

@@ -18,6 +18,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 
@@ -160,13 +161,12 @@ struct check_nans_predicate {
 }  // namespace
 
 template <template <typename> class Hasher>
-approx_distinct_count<Hasher>::approx_distinct_count(
-  table_view const& input,
-  std::int32_t precision,
-  null_policy null_handling,
-  nan_policy nan_handling,
-  cuda::stream_ref stream,
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+approx_distinct_count<Hasher>::approx_distinct_count(table_view const& input,
+                                                     std::int32_t precision,
+                                                     null_policy null_handling,
+                                                     nan_policy nan_handling,
+                                                     cuda::stream_ref stream,
+                                                     cuda::mr::any_device_resource mr)
   : _storage{cuda::device_buffer<register_type>{
       stream,
       std::move(mr),
@@ -189,7 +189,7 @@ approx_distinct_count<Hasher>::approx_distinct_count(
   null_policy null_handling,
   nan_policy nan_handling,
   cuda::stream_ref stream,
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  cuda::mr::any_device_resource mr)
   : approx_distinct_count{input,
                           precision_from_standard_error(error.value),
                           null_handling,
@@ -372,7 +372,7 @@ approx_distinct_count::approx_distinct_count(table_view const& input,
                                              null_policy null_handling,
                                              nan_policy nan_handling,
                                              cuda::stream_ref stream,
-                                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                             cuda::mr::any_device_resource mr)
   : _impl(std::make_unique<impl_type>(
       input, precision, null_handling, nan_handling, stream, std::move(mr)))
 {
@@ -383,7 +383,7 @@ approx_distinct_count::approx_distinct_count(table_view const& input,
                                              null_policy null_handling,
                                              nan_policy nan_handling,
                                              cuda::stream_ref stream,
-                                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                             cuda::mr::any_device_resource mr)
   : _impl(
       std::make_unique<impl_type>(input, error, null_handling, nan_handling, stream, std::move(mr)))
 {

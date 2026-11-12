@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 from ..table cimport Table
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from cuda.bindings.cyruntime cimport cudaStream_t
 
@@ -56,7 +57,7 @@ cpdef Table make_timezone_transition_table(
             make_optional[string](c_tzdir),
             c_tzname,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

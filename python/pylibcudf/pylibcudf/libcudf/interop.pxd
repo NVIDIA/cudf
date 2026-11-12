@@ -13,7 +13,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "dlpack/dlpack.h" nogil:
@@ -41,13 +41,13 @@ cdef extern from "cudf/interop.hpp" namespace "cudf" \
     cdef unique_ptr[table] from_dlpack(
         const DLManagedTensor* managed_tensor,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     DLManagedTensor* to_dlpack(
         const table_view& input,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef cppclass column_metadata:
@@ -66,18 +66,18 @@ cdef extern from "cudf/interop.hpp" namespace "cudf::interop" \
             ArrowSchema&& schema,
             ArrowArray&& array,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         arrow_column(
             ArrowSchema&& schema,
             ArrowDeviceArray&& array,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         arrow_column(
             ArrowArrayStream&& stream,
             cudaStream_t cuda_stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         column_view view() except +libcudf_exception_handler
 
@@ -85,13 +85,13 @@ cdef extern from "cudf/interop.hpp" namespace "cudf::interop" \
         arrow_table(
             ArrowArrayStream&& stream,
             cudaStream_t cuda_stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         arrow_table(
             ArrowSchema&& schema,
             ArrowDeviceArray&& array,
             cudaStream_t stream,
-            device_async_resource_ref mr
+            device_resource_ref mr
         ) except +libcudf_exception_handler
         table_view view() except +libcudf_exception_handler
 
@@ -136,7 +136,7 @@ cdef extern from *:
     ArrowArray* to_arrow_host_raw(
       ViewType const& obj,
       cudaStream_t stream,
-      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) {
+      cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref()) {
       ArrowArray *arr = new ArrowArray();
       auto device_arr = cudf::to_arrow_host(obj, stream, mr);
       ArrowArrayMove(&device_arr->array, arr);
@@ -176,7 +176,7 @@ cdef extern from *:
       ViewType const& obj,
       PyObject* owner,
       cuda::stream_ref stream       = cudf::get_default_stream(),
-      rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) {
+      cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref()) {
       auto tmp = cudf::to_arrow_device(obj, stream, mr);
 
       // Instead of moving the whole device array, we move the underlying ArrowArray

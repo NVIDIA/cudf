@@ -10,9 +10,10 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/reduction/detail/reduction_policy.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
-#include <cudf/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -50,14 +51,13 @@ namespace detail {
  */
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::fixed_width OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
-  requires(is_fixed_width<OutputType>() && not cudf::is_fixed_point<OutputType>())
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
@@ -76,14 +76,13 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
 
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::fixed_point OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
-  requires(is_fixed_point<OutputType>())
+                               cudf::memory_resources mr)
 {
   CUDF_FAIL(
     "This function should never be called. fixed_point reduce should always go through the reduce "
@@ -93,14 +92,13 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
 // @brief string_view specialization of simple reduction
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::string_view OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
-  requires(std::is_same_v<OutputType, string_view>)
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
@@ -148,7 +146,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type valid_count,
                                cudf::size_type ddof,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<IntermediateType>(op.get_binary_op());
   auto const initial_value = op.template get_identity<IntermediateType>();

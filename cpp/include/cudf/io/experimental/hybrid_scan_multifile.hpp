@@ -26,13 +26,13 @@
  * @brief Multi-file variant of the experimental Hybrid Scan Parquet reader.
  */
 
-namespace cudf::io::parquet::experimental::detail {
+namespace cudf::io::parquet::hybrid_scan::detail {
 /**
  * @brief Internal experimental Parquet reader optimized for highly selective filters, called a
  *        Hybrid Scan operation.
  */
 class hybrid_scan_reader_impl;
-}  // namespace cudf::io::parquet::experimental::detail
+}  // namespace cudf::io::parquet::hybrid_scan::detail
 
 //! Using `byte_range_info` from cudf::io::text
 using cudf::io::text::byte_range_info;
@@ -486,7 +486,7 @@ class hybrid_scan_multifile {
    * @param stream CUDA stream used for preprocessing
    * @param mr Memory resources used to allocate temporary and output table chunk device memory
    */
-  void setup_chunking_for_payload_columns(
+  void setup_chunking_for_payload_pages(
     std::size_t chunk_read_limit,
     std::size_t pass_read_limit,
     cudf::host_span<std::vector<size_type> const> row_group_indices,
@@ -570,7 +570,7 @@ class hybrid_scan_multifile {
   [[nodiscard]] bool has_next_table_chunk();
 
  private:
-  std::unique_ptr<detail::hybrid_scan_reader_impl> _impl;
+  std::unique_ptr<hybrid_scan::detail::hybrid_scan_reader_impl> _impl;
 };
 
 /** @} */  // end of group

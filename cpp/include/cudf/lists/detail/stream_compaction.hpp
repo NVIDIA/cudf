@@ -27,18 +27,18 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                    lists_column_view const& boolean_mask,
                                    cudf::detail::mask_type mask_kind,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::distinct(lists_column_view const&, null_equality, nan_equality,
- * duplicate_keep_option, cuda::stream_ref stream, rmm::device_async_resource_ref)
+ * duplicate_keep_option, cuda::stream_ref stream, cudf::memory_resources)
  */
 std::unique_ptr<column> distinct(lists_column_view const& input,
                                  null_equality nulls_equal,
                                  nan_equality nans_equal,
                                  duplicate_keep_option keep_option,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cudf::memory_resources mr);
 
 }  // namespace lists::detail
 }  // namespace cudf

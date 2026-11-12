@@ -17,8 +17,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
-
-#include <rmm/exec_policy.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cooperative_groups.h>
 #include <cub/block/block_reduce.cuh>
@@ -34,6 +33,7 @@
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
+#include <thrust/execution_policy.h>
 
 #include <bitset>
 
@@ -637,7 +637,7 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.max_lvl_size    = 0;
         page_g.comp_data_size  = 0;
         page_g.is_compressed   = false;
-        page_g.max_hdr_size    = MAX_V1_HDR_SIZE;
+        page_g.max_hdr_size    = cuda::round_up<uint32_t>(MAX_V1_HDR_SIZE, page_align);
         page_g.max_data_size   = ck_g.uniq_data_size;
         page_g.data_size       = ck_g.uniq_data_size;
         page_g.start_row       = cur_row;
@@ -647,7 +647,9 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.dict_rle_bits   = ck_g.dict_rle_bits;     // TODO: shouldn't matter for dict page
         page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
         if (not comp_page_sizes.empty()) {
-          comp_page_offset += page_g.max_hdr_size + comp_page_sizes[ck_g.first_page];
+          // Pad to `page_align` so the next page's compressor output stays aligned
+          comp_page_offset +=
+            cuda::round_up(page_g.max_hdr_size + comp_page_sizes[ck_g.first_page], page_align);
           page_g.comp_data_size = comp_page_sizes[ck_g.first_page + num_pages];
         }
         page_headers_size += page_g.max_hdr_size;
@@ -815,9 +817,12 @@ CUDF_KERNEL void __launch_bounds__(128)
               cuda::std::distance(ck_g.uncompressed_bfr, reinterpret_cast<uint8_t*>(scratch));
           }
           if (not comp_page_sizes.empty()) {
-            // V2 does not include level data in compressed size estimate
-            comp_page_offset += page_g.max_hdr_size + page_g.max_lvl_size +
-                                comp_page_sizes[ck_g.first_page + num_pages];
+            // V2 does not include level data in compressed size estimate. The max compressed size
+            // need not be a multiple of `page_align`, so pad it to keep the compressor output of
+            // the next page or column chunk aligned.
+            comp_page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_lvl_size +
+                                                 comp_page_sizes[ck_g.first_page + num_pages],
+                                               page_align);
           }
           page_headers_size += page_g.max_hdr_size;
           max_page_data_size = max(max_page_data_size, page_g.max_data_size);
@@ -3425,7 +3430,7 @@ void InitFragmentStatistics(device_span<statistics_group> groups,
 {
   int const num_fragments = fragments.size();
   int const dim =
-    util::div_rounding_up_safe(num_fragments, encode_block_size / cudf::detail::warp_size);
+    cudf::detail::div_rounding_up_safe(num_fragments, encode_block_size / cudf::detail::warp_size);
   gpuInitFragmentStats<<<dim, encode_block_size, 0, stream.get()>>>(groups, fragments);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -3474,9 +3479,15 @@ void EncodePages(device_span<EncPage> pages,
 {
   auto num_pages = pages.size();
 
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // determine which kernels to invoke
-  auto kernel_mask = cudf::detail::transform_reduce(
-    pages.begin(), pages.end(), mask_tform{}, uint32_t{0}, cuda::std::bit_or<uint32_t>{}, stream);
+  auto kernel_mask = cudf::detail::transform_reduce(pages.begin(),
+                                                    pages.end(),
+                                                    mask_tform{},
+                                                    uint32_t{0},
+                                                    cuda::std::bit_or<uint32_t>{},
+                                                    stream,
+                                                    mr.as_temporary());
 
   // get the number of streams we need from the pool
   int nkernels = std::bitset<32>(kernel_mask).count();
@@ -3549,7 +3560,7 @@ void decide_compression(device_span<EncColumnChunk> chunks,
                         cuda::stream_ref stream)
 {
   auto const num_blocks =
-    util::div_rounding_up_safe<int>(chunks.size(), decide_compression_warps_in_block);
+    cudf::detail::div_rounding_up_safe<int>(chunks.size(), decide_compression_warps_in_block);
   decide_compression_kernel<<<num_blocks, decide_compression_block_size, 0, stream.get()>>>(
     chunks, page_level_compression);
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -3561,7 +3572,7 @@ void EncodePageHeaders(device_span<EncPage> pages,
                        statistics_chunk const* chunk_stats,
                        cuda::stream_ref stream)
 {
-  auto const num_blocks = util::div_rounding_up_safe<int>(pages.size(), encode_block_size);
+  auto const num_blocks = cudf::detail::div_rounding_up_safe<int>(pages.size(), encode_block_size);
   gpuEncodePageHeaders<<<num_blocks, encode_block_size, 0, stream.get()>>>(
     pages, comp_results, page_stats, chunk_stats);
   CUDF_CUDA_TRY(cudaGetLastError());

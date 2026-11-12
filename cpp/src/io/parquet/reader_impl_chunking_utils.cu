@@ -1020,11 +1020,17 @@ cuda::device_buffer<size_t> compute_nz_map_sizes(device_span<ColumnChunkDesc con
 {
   cuda::device_buffer<size_t> nz_map_sizes(stream, mr, pages.size(), cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    pages.begin(),
-                    pages.end(),
-                    nz_map_sizes.begin(),
-                    compute_page_nz_map_size_fn{chunks, level_type_size, skip_rows, num_rows});
+  // Summed per column, like the page sizes in `c_info` that `include_scratch_size` adds these to: a
+  // subpass ending at page i allocates the maps of every earlier page in its column too.
+  auto page_keys  = make_page_key_iterator(pages);
+  auto page_costs = cuda::transform_iterator(
+    pages.begin(), compute_page_nz_map_size_fn{chunks, level_type_size, skip_rows, num_rows});
+  thrust::inclusive_scan_by_key(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    page_keys,
+    page_keys + pages.size(),
+    page_costs,
+    nz_map_sizes.begin());
 
   return nz_map_sizes;
 }

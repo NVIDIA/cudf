@@ -297,10 +297,11 @@ CUDF_HOST_DEVICE inline void compute_page_level_decode_sizes(PageType const& pag
                                                              size_t& rep_level_size);
 
 /**
- * @brief Computes the nz map scratch each page needs, for the chunked-read budget.
+ * @brief Computes the nz map scratch for the chunked-read budget, summed per column.
  *
- * See `compute_page_nz_map_size`. Pages outside the subpass's page mask are charged too, which
- * overestimates, as the level decode sizes do.
+ * Entry i is the scratch of page i plus every earlier page in its column (see
+ * `compute_page_nz_map_size`), matching the cumulative page sizes `include_scratch_size` adds it
+ * to. Pages outside the subpass's page mask are charged too, which overestimates.
  *
  * @param chunks List of column chunk descriptors
  * @param pages List of page information
@@ -309,7 +310,8 @@ CUDF_HOST_DEVICE inline void compute_page_level_decode_sizes(PageType const& pag
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource to use for allocating the returned device_buffer
- * @returns The nz map scratch size in bytes for each page
+ * @returns For each page, the nz map scratch in bytes of that page and the earlier pages in its
+ * column
  */
 cuda::device_buffer<size_t> compute_nz_map_sizes(device_span<ColumnChunkDesc const> chunks,
                                                  device_span<PageInfo const> pages,

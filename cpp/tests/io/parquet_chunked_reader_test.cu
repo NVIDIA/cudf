@@ -1485,10 +1485,10 @@ TEST_F(ParquetChunkedReaderInputLimitTest, NzMapScratchIsBudgeted)
       .max_page_size_rows(5'000)
       .build());
 
-  // Without the map the file fits this limit in one chunk. The map's scratch must push it past.
-  // A much smaller limit falls back to the reader's minimum subpass size, which hides the
-  // difference.
-  constexpr std::size_t input_limit = 256 * 1024;
+  // Without the map the file fits this limit in one chunk. The two rank maps total about 800 KB,
+  // so the read only splits if each column's maps are summed across its pages. Charging each page
+  // just its own ~20 KB map leaves it at one chunk.
+  constexpr std::size_t input_limit = 512 * 1024;
   auto const chunks_off = nz_map_chunked_read(filepath, expected, "0", 0, input_limit, 0);
   auto const chunks_on  = nz_map_chunked_read(filepath, expected, "1", 0, input_limit, 0);
   EXPECT_GT(chunks_on, chunks_off);

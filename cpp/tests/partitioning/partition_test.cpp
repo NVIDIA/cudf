@@ -654,7 +654,7 @@ TEST_F(PartitionTestNotTyped, BinaryStringSmallSchemas)
 
 TEST_F(PartitionTestNotTyped, DirectFixedWidthSlices)
 {
-  constexpr int rows = 1025;
+  constexpr int rows = 1'025;
   std::vector<int16_t> values(rows + 7), expected;
   std::vector<int32_t> bins(rows);
   std::vector<bool> valid(rows + 7), expected_valid;

@@ -1140,11 +1140,11 @@ dependencies:
               - cuda-bindings>=13.0.2,<13.5
   depends_on_cuda_core:
     common:
-      - output_types: conda
+      - output_types: [conda, constraints]
         packages:
           - cuda-core>=1.0,<2
     specific:
-      - output_types: [requirements, constraints, pyproject]
+      - output_types: [requirements, pyproject]
         matrices:
           - matrix:
               cuda: "12.*"

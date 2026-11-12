@@ -178,7 +178,10 @@ CUDF_KERNEL void scatter_reserve(MapType const* map, int n, int p, int32_t* curs
       hist[w][q] = sum;
       sum += c;
     }
-    if (sum) base[q] = atomicAdd(cursors + q, sum);
+    if (sum) {
+      cuda::atomic_ref<int32_t, cuda::thread_scope_device> cursor{cursors[q]};
+      base[q] = cursor.fetch_add(sum, cuda::memory_order_relaxed);
+    }
   }
   __syncthreads();
 #pragma unroll

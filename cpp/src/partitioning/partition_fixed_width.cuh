@@ -6,7 +6,9 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
 
+#include <cuda/atomic>
 #include <cuda/std/bit>
+#include <cuda/std/cstddef>
 #include <cuda/std/cstring>
 #include <cuda/std/memory>
 
@@ -23,8 +25,8 @@ struct single_output {
   unsigned char* output;
   __device__ void operator()(size_type source, size_type destination) const
   {
-    copy_value<Width>(output + std::size_t(destination) * Width,
-                      input + std::size_t(source) * Width);
+    copy_value<Width>(output + cuda::std::size_t(destination) * Width,
+                      input + cuda::std::size_t(source) * Width);
   }
 };
 struct data_column {
@@ -48,8 +50,8 @@ struct table_output {
       if constexpr (Nullable)
         valid = !col.input_mask || (col.input_mask[row / 32] & (1u << (row % 32)));
       if (valid) {
-        auto const* in = col.input + std::size_t(row) * col.width;
-        auto* out      = col.output + std::size_t(destination) * col.width;
+        auto const* in = col.input + cuda::std::size_t(row) * col.width;
+        auto* out      = col.output + cuda::std::size_t(destination) * col.width;
         switch (col.width) {
           case 1: copy_value<1>(out, in); break;
           case 2: copy_value<2>(out, in); break;
@@ -59,7 +61,9 @@ struct table_output {
         }
         if constexpr (Nullable)
           if (col.output_mask) {
-            atomicOr(col.output_mask + destination / 32, 1u << (destination % 32));
+            cuda::atomic_ref<bitmask_type, cuda::thread_scope_device> mask{
+              col.output_mask[destination / 32]};
+            mask.fetch_or(1u << (destination % 32), cuda::memory_order_relaxed);
           }
       }
     }

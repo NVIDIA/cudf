@@ -120,7 +120,7 @@ std::unique_ptr<column> compute_raw_m2(data_type source_type,
                                        column_view const& sum,
                                        column_view const& count,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto output = make_numeric_column(cudf::detail::target_type(source_type, aggregation::M2),
                                     sum.size(),
@@ -497,7 +497,7 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(cuda::stream_
 }
 
 std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   if (_compacted_batches.empty()) {
     return std::make_unique<table>(_empty_key_schema->view(), stream, mr);
@@ -654,7 +654,7 @@ void streaming_groupby::do_merge(streaming_groupby const& other, cuda::stream_re
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::do_finalize(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
   return _impl->do_finalize(stream, cudf::memory_resources{mr});

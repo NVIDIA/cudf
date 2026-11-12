@@ -11,6 +11,7 @@
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/strings/detail/gather.cuh>
 #include <cudf/utilities/memory_resource.hpp>
@@ -27,6 +28,7 @@
 #include <thrust/transform_scan.h>
 
 #include <bitset>
+#include <climits>
 #include <cstdint>
 
 namespace cudf::io::parquet::detail {
@@ -1113,6 +1115,7 @@ __device__ void prefetch_string_data(string_offset_page const& page,
                                      int32_t& end)
 {
   constexpr int32_t alignment    = alignof(string_offset_window);
+  constexpr int32_t word_bytes   = sizeof(uint32_t);
   constexpr int32_t copy_bytes   = sizeof(uint4);
   constexpr int32_t stride_bytes = cudf::detail::warp_size * copy_bytes;
 
@@ -1129,18 +1132,18 @@ __device__ void prefetch_string_data(string_offset_page const& page,
   // Fast path for a full window.
   if (base >= 0 && static_cast<uint32_t>(page.bytes) - base >= string_offset_window_bytes) {
     end             = base + string_offset_window_bytes;
-    auto* dst       = window.data + lane * (copy_bytes / sizeof(uint32_t));
+    auto* dst       = window.data + lane * (copy_bytes / word_bytes);
     auto const* src = page.data + base + lane * copy_bytes;
 
     cuda::memcpy_async(
       static_cast<void*>(dst), src, cuda::aligned_size_t<copy_bytes>(copy_bytes), pipeline);
-    cuda::memcpy_async(static_cast<void*>(dst + stride_bytes / sizeof(uint32_t)),
+    cuda::memcpy_async(static_cast<void*>(dst + stride_bytes / word_bytes),
                        src + stride_bytes,
                        cuda::aligned_size_t<copy_bytes>(copy_bytes),
                        pipeline);
     pipeline.producer_commit();
     // The last word in the window is used for funnel-shift. Initialize it to 0.
-    if (lane == 0) { window.data[string_offset_window_bytes / sizeof(uint32_t)] = 0; }
+    if (lane == 0) { window.data[string_offset_window_bytes / word_bytes] = 0; }
   } else {
     // Slow path for a partial window.
     int32_t const window_bytes = static_cast<int32_t>(
@@ -1154,7 +1157,7 @@ __device__ void prefetch_string_data(string_offset_page const& page,
     for (int32_t offset = copy_begin + lane * copy_bytes; offset < copy_end;
          offset += stride_bytes) {
       auto const* src = page.data + base + offset;
-      auto* dst       = window.data + offset / sizeof(uint32_t);
+      auto* dst       = window.data + offset / word_bytes;
       cuda::memcpy_async(
         static_cast<void*>(dst), src, cuda::aligned_size_t<copy_bytes>(copy_bytes), pipeline);
     }
@@ -1163,20 +1166,22 @@ __device__ void prefetch_string_data(string_offset_page const& page,
     auto const copy_word = [&](int32_t word_index) {
       uint32_t word = 0;
 #pragma unroll
-      for (int32_t byte = 0; byte < 4; ++byte) {
-        int64_t const index = int64_t{base} + word_index * 4 + byte;
-        if (index >= 0 && index < page.bytes) { word |= uint32_t{page.data[index]} << (8 * byte); }
+      for (int32_t byte = 0; byte < word_bytes; ++byte) {
+        int64_t const index = int64_t{base} + word_index * word_bytes + byte;
+        if (index >= 0 && index < page.bytes) {
+          word |= uint32_t{page.data[index]} << (CHAR_BIT * byte);
+        }
       }
       window.data[word_index] = word;
     };
 
     // Special handling of the head and tail of the window.
-    int32_t const window_words = (window_bytes + 3) / 4;
-    int32_t const head_words   = cuda::std::min(window_words, copy_begin / 4);
+    int32_t const window_words = cudf::detail::div_rounding_up_safe(window_bytes, word_bytes);
+    int32_t const head_words   = cuda::std::min(window_words, copy_begin / word_bytes);
     if (lane < head_words) { copy_word(lane); }
 
     // On small pages, the head may already cover the entire window.
-    int32_t const tail_word = cuda::std::max(head_words, copy_end / 4) + lane;
+    int32_t const tail_word = cuda::std::max(head_words, copy_end / word_bytes) + lane;
     if (tail_word < window_words) { copy_word(tail_word); }
 
     if (lane == 0) { window.data[window_words] = 0; }

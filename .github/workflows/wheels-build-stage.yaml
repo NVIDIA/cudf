@@ -3,6 +3,9 @@ name: Build staged wheels
 on:
   workflow_call:
     inputs:
+      matrix_type:
+        required: true
+        type: string
       build-datetime:
         required: false
         type: string
@@ -44,6 +47,7 @@ jobs:
     with:
       build_type: ${{ inputs.build_type }}
       matrix_name: wheels-build
+      matrix_type: ${{ inputs.matrix_type }}
       matrix_filter: ${{ inputs.matrix_filter }}
       pure_wheel: ${{ inputs.pure-wheel }}
   build:
@@ -56,7 +60,7 @@ jobs:
     env:
       RAPIDS_ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
     container:
-      image: rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}
+      image: rapidsai/ci-wheel:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}
       env:
         RAPIDS_BUILD_TYPE: ${{ inputs.build_type }}
         RAPIDS_DATETIME_STRING: ${{ inputs.build-datetime }}

@@ -55,6 +55,7 @@ def f(row):
         return 0
     return (row["a"] + row["b"]) * 2
 
+
 df.apply(f, axis=1)
 ```
 
@@ -103,6 +104,7 @@ def f(group):
     diff = group["x"] - group["y"]
     return (diff * diff).mean()
 
+
 df.groupby("key").apply(f, engine="jit")
 ```
 
@@ -127,6 +129,7 @@ equivalent to:
 ```python
 def has_nrt_meminfo(self):
     return True
+
 
 def get_nrt_meminfo(self, value):
     return extract_field_zero(value)

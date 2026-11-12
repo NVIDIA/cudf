@@ -421,11 +421,64 @@ def pytest_report_header(config: pytest.Config) -> str:
     return f"injected GPU engine: {cls.__module__}.{cls.__name__}"
 
 
+# https://github.com/NVIDIA/cudf/issues/25021
+# libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs
+# polars) that differ only in the legacy converted_type. Which of these tests
+# hit this depends on the engine and blocksize (some pass with the streaming
+# engine), so they are marked as non-strict xfails: neither a failure nor an
+# unexpected pass fails the run.
+ICEBERG_MIXED_WRITER_REASON = (
+    "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) "
+    "that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021"
+)
+
+ICEBERG_MIXED_WRITER_TESTS: tuple[str, ...] = (
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate1]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate2]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate3]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate6]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate7]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate8]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate9]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate12]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate17]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate18]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate27]",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]",
+)
+
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
@@ -434,6 +487,23 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_filter_float_nan_ordering": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_reader_filter_float_nan[None]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type0]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type1]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg_plugin.py::test_iceberg_plugin_nan_is_not_pruned": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_filter_float_nan_ordering": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_reader_filter_float_nan[None]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type0]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type1]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
     "tests/unit/io/test_io_plugin.py::test_datetime_io_predicate_pushdown_21790": "cudf-polars validates the IO source schema exactly and does not coerce datetime time units (us vs ns)",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[small.parquet-4]": "Debug output on stderr doesn't match",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[foods*.parquet-54]": "Debug output on stderr doesn't match",
@@ -443,9 +513,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type1]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type2]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
     "tests/unit/io/test_scan.py::test_async_read_21945[scan_type3]": "chunked-reader + include_file_paths bug: chunk.num_rows_per_source only reflects the first chunk",
-    "tests/unit/io/cloud/test_cloud.py::test_sink_single_put_28356[sink_parquet-scan_parquet]": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
-    "tests/unit/io/cloud/test_metadata_prefetch.py::test_scan_parquet_metadata_without_head_request": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
-    "tests/unit/io/cloud/test_metadata_prefetch.py::test_scan_parquet_metadata_prefetch_too_small": "cudf-polars does not forward storage_options to KvikIO, which rejects the s3:// URL without AWS environment variables",
     "tests/unit/io/test_sink.py::test_collect_all_lazy": "SinkMultiple not supported by InMemory CPU Engine, which we fallback to. See pola-rs/polars/pull/26537",
     "tests/unit/io/test_parquet.py::test_resolve_heavy_sources_survives_an_unreadable_footer": "libcudf raises RuntimeError rather than polars.exceptions.ComputeError for a corrupted parquet footer",
     "tests/unit/io/test_parquet.py::test_parquet_known_source_sizes": "cudf-polars ignores the _source_sizes hint, so a wrong size does not raise polars.exceptions.ComputeError",
@@ -490,7 +557,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/sql/test_cast.py::test_cast_errors[values0-values::uint8-InvalidOperationError-conversion from `f64` to `u64` failed]": "Strict cast of out-of-range floats to integers does not raise",
     "tests/unit/sql/test_cast.py::test_cast_errors[values1-values::uint4-InvalidOperationError-conversion from `i64` to `u32` failed]": "Strict cast of out-of-range integers does not raise",
     "tests/unit/sql/test_cast.py::test_cast_errors[values2-values::int1-InvalidOperationError-conversion from `i64` to `i8` failed]": "Strict cast of out-of-range integers does not raise",
-    "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Strict cast failure message differs from polars",
     "tests/unit/sql/test_joins.py::test_constant_key_join_keeps_validation": "Join validation is not supported",
     "tests/unit/operations/namespaces/string/test_pad.py::test_str_zfill_unicode_not_respected": "polars doesn't add zeros for unicode characters.",
     "tests/unit/lazyframe/test_predicates.py::test_predicate_pushdown_split_pushable": "Casting that raises not supported on GPU",
@@ -513,14 +579,24 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values5-expr5]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values6-expr6]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[dtype4-expr4]": "Overflowing arithmetic on the GPU does not raise as polars does: https://github.com/NVIDIA/cudf/issues/24839",
-    "tests/unit/operations/test_sort.py::test_sort_by_scalar_key_29583_29760": "The error for a failed cast in a scalar sort_by key reads differently from polars ('conversion'): https://github.com/NVIDIA/cudf/issues/24840",
     "tests/unit/io/test_parquet_encryption.py::test_write_plaintext_footer_readable_without_keys[column_keys0]": "libcudf does not support Parquet modular encryption: the footer parse fails on plaintext-footer encrypted files, and the GPU engine cannot detect encryption at translation: https://github.com/NVIDIA/cudf/issues/24837",
     "tests/unit/io/test_parquet_encryption.py::test_write_plaintext_footer_readable_without_keys[column_keys1]": "libcudf does not support Parquet modular encryption: the footer parse fails on plaintext-footer encrypted files, and the GPU engine cannot detect encryption at translation: https://github.com/NVIDIA/cudf/issues/24837",
 }
 
 
 TESTS_TO_SKIP: dict[str, str] = {
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
+    "tests/unit/io/test_iceberg.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[False]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[True]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
+    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_parquet_prefilter_with_column_mapping[False]": "Asserts on the verbose log of the polars native reader, which the GPU engine does not emit; GPU coverage is in python/cudf_polars/tests/test_lake.py::test_scan_iceberg_column_mapping_filter",
     "tests/unit/io/cloud/test_cloud.py::test_scan_http_same_host": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_ndjson_http_prefix_metrics_retried_body": "Checks Polars CPU object-store request counts and metrics, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[0]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[1]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_http_store_cache_size[2]": "Checks Polars CPU object-store HTTP connection caching, which the GPU engine does not use",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_ndjson_mixed_buckets_29758": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_line_format_small_files_single_request[ndjson]": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
+    "tests/unit/io/cloud/test_cloud.py::test_scan_line_format_prefix_continuation[ndjson]": "Polars does not pass storage_options to the NDJSON scan node, so the GPU engine cannot reach the mock S3 endpoint",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[False-expr7]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/io/test_order_keeping_pushdown.py::test_top_k_through_order_keeping_projection[True-expr6]": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
@@ -705,6 +781,25 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
 
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/test_sort.py::test_sort_by_scalar_key_29583_29760": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/lazyframe/test_order_observability.py::test_top_k_by_drops_scalar_keys": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[2.0]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[x]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[True]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_fallible_expression_only_over_outer_rows": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.v = (SELECT c.id * 10 FROM c WHERE c.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.id = (SELECT b.id FROM c AS b WHERE b.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/sql/test_joins.py::test_join_on_subquery_unsupported[a.v = (SELECT x FROM c)-expected no or a single value]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/functions/test_union.py::test_union_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
+    "tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_item_too_many": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/aggregation/test_aggregations.py::test_single_empty": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
+    "tests/unit/operations/test_replace.py::test_replace_invalid_old_dtype": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/functions/test_concat.py::test_concat_horizontal_lazy_strict_raises_shape_error_27415": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
+    "tests/unit/io/test_io_plugin.py::test_defer_validate_true": "correct SchemaError raised but wrapped in an ExceptionGroup under the streaming engine",
+    "tests/unit/operations/test_slice.py::test_hconcat_tail_unequal_heights_strict_raises_27552": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "Passes under the streaming engine but fails under the in-memory engine, which xfails it",
     "tests/unit/operations/aggregation/test_aggregations.py::test_boolean_aggs": "float difference in std/var in the unit of least precision",
     # Crashes the worker instead of raising cleanly; skip rather than xfail
@@ -735,6 +830,7 @@ STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
 }
 
 STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
+    "tests/unit/streaming/test_streaming_window.py::test_window_scalar_order_key": "Too slow with --inject-gpu-engine-blocksize=small: the 20,000-row frame becomes ~5,000 4-row chunks and the window shuffle partitions each chunk into ~5,000 pieces (quadratic), exceeding the CI test timeout",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q1": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q2": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/benchmark/test_group_by.py::test_groupby_h2oai_q3": "Too slow with --inject-gpu-engine-blocksize=small",
@@ -747,6 +843,8 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
     "tests/benchmark/test_join_where.py::test_strict_inequalities": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_lazy_parquet.py::test_parquet_many_row_groups_12297": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_hive.py::test_hive_write_multiple_files": "Too slow with --inject-gpu-engine-blocksize=small",
+    "tests/unit/io/test_parquet.py::test_fixed_len_byte_array_decimal[False]": "Too slow with --inject-gpu-engine-blocksize=small",
+    "tests/unit/io/test_parquet.py::test_fixed_len_byte_array_decimal[True]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_o_direct_matches_buffered": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_parquet_defer_cached_reads[0]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_parquet_defer_cached_reads[1]": "Too slow with --inject-gpu-engine-blocksize=small",
@@ -890,28 +988,10 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
-    "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/lazyframe/test_order_observability.py::test_top_k_by_drops_scalar_keys": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[2.0]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[x]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_on_groups_null_29780[True]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_fallible_expression_only_over_outer_rows": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.v = (SELECT c.id * 10 FROM c WHERE c.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_correlated_subqueries.py::test_correlated_one_input_condition_in_join_on_many_rows[a.id = (SELECT b.id FROM c AS b WHERE b.b_id = a.id)]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/sql/test_joins.py::test_join_on_subquery_unsupported[a.v = (SELECT x FROM c)-expected no or a single value]": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/functions/test_union.py::test_union_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
-    "tests/unit/functions/test_concat.py::test_concat_lazyframe_horizontal": "Correct polars.exceptions.ShapeError raised but it's in an ExceptionGroup",
     "tests/unit/functions/test_concat.py::test_concat_horizontal_zero_width_height_mismatch_26876": "https://github.com/NVIDIA/cudf/issues/21644",
-    "tests/unit/operations/test_group_by.py::test_group_by_lit_series": "Incorrect broadcasting of literals in groupby-agg",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_item_too_many": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
-    "tests/unit/operations/aggregation/test_aggregations.py::test_single_empty": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_join.py::test_empty_outer_join_22206": "https://github.com/NVIDIA/cudf/issues/22084",
-    "tests/unit/operations/test_replace.py::test_replace_invalid_old_dtype": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_window.py::test_over_literal_cum_sum_26800": "TODO: https://github.com/NVIDIA/cudf/pull/22048#discussion_r3238041970",
-    "tests/unit/functions/test_concat.py::test_concat_horizontal_lazy_strict_raises_shape_error_27415": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
-    "tests/unit/io/test_io_plugin.py::test_defer_validate_true": "correct SchemaError raised but wrapped in an ExceptionGroup under the streaming engine",
     "tests/unit/lazyframe/test_projections.py::test_merge_sorted_projection_pd": "https://github.com/NVIDIA/cudf/issues/23055",
-    "tests/unit/operations/test_slice.py::test_hconcat_tail_unequal_heights_strict_raises_27552": "horizontal-concat strict height-mismatch raised inside an ExceptionGroup under the streaming engine",
 }
 
 STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
@@ -954,3 +1034,7 @@ def pytest_mark_and_shard_items(
             item.add_marker(pytest.mark.skip(reason=skip_reason))
         elif (xfail_reason := xfails.get(item.nodeid)) is not None:
             item.add_marker(pytest.mark.xfail(reason=xfail_reason))
+        elif item.nodeid in ICEBERG_MIXED_WRITER_TESTS:
+            item.add_marker(
+                pytest.mark.xfail(reason=ICEBERG_MIXED_WRITER_REASON, strict=False)
+            )

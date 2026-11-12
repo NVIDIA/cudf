@@ -816,12 +816,21 @@ class Scan(IR):
             # TODO: polars has this implemented for parquet,
             # maybe we can do this too?
             raise NotImplementedError("slice pushdown for negative slices")
-        if self.cloud_options is not None and any(
-            self.cloud_options.get(k) is not None for k in ("aws", "azure", "gcp")
-        ):
-            raise NotImplementedError(
-                "Read from cloud storage"
-            )  # pragma: no cover; no test yet
+        cloud_config = (
+            self.cloud_options.get("config") if self.cloud_options is not None else None
+        )
+        if cloud_config is not None:  # noqa: SIM102
+            # Polars serializes the user's ``storage_options`` (endpoint, credentials,
+            # ...) into ``cloud_options["config"]`` as a mapping from provider
+            # (e.g. ``Aws``, ``Azure``, ``Gcp``) to a list of ``(key, value)``
+            # pairs. Without any ``storage_options`` the config is still present
+            # but the lists are empty (e.g. ``{"Aws": []}``), which is fine.
+            # libcudf/KvikIO can't honor explicit options, so fall back to the
+            # CPU rather than reading with the wrong endpoint or credentials.
+            if any(len(options) > 0 for options in cloud_config.values()):
+                raise NotImplementedError(
+                    "Read from cloud storage with storage_options"
+                )
         if self.typ == "csv":
             if any(
                 plc.io.SourceInfo._is_remote_uri(p) for p in self.paths
@@ -911,44 +920,6 @@ class Scan(IR):
             raise AssertionError(
                 f"Paths do not match cached parquet info. Missing paths: {missing}"
             )
-
-    @staticmethod
-    def _lake_partition_values(
-        lake_options: LakehouseScanOptions,
-        schema: Schema,
-        with_columns: list[str] | None,
-    ) -> PerPathValues | None:
-        """
-        Collect the partition fields of an Iceberg scan.
-
-        Parameters
-        ----------
-        lake_options
-            Options of the scan, holding one partition value per path for
-            each identity-partitioned field.
-        schema
-            Schema the scan must produce. Partition fields outside it are
-            skipped.
-        with_columns
-            Columns to project, or ``None`` for all of them. Partition fields
-            outside the projection are skipped.
-
-        Returns
-        -------
-        The value each path takes for each partition field in the schema and
-        projection, or ``None`` when there are no such fields.
-        """
-        assert lake_options.columns is not None
-        names = {column.physical_id: column.name for column in lake_options.columns}
-        frame = pl.DataFrame(
-            {
-                names[physical_id]: series
-                for physical_id, series in lake_options.partition_values.items()
-                if names[physical_id] in schema
-                and (with_columns is None or names[physical_id] in with_columns)
-            }
-        )
-        return None if frame.width == 0 else PerPathValues(frame)
 
     @staticmethod
     def _validate_hive_parts_info(
@@ -1386,16 +1357,7 @@ class Scan(IR):
                 and n_rows == -1
                 and not lake_options.has_deletions
             )
-            per_path_parts = [
-                parts
-                for parts in (
-                    Scan._lake_partition_values(lake_options, file_schema, with_columns)
-                    if lake_options.partition_values
-                    else None,
-                    hive_parts,
-                )
-                if parts is not None
-            ]
+            per_path_parts = [hive_parts] if hive_parts is not None else []
             rows_per_path: list[int] | None
             df, rows_per_path, source_index, exact = read_lake_files(
                 paths,
@@ -3629,11 +3591,25 @@ class Join(IR):
                         zlice
                     )
                 else:
+                    # cross_join is left-major, so for a right-primary order
+                    # swap the inputs and move the columns back.
+                    swap = maintain_order.startswith("right")
+                    major, minor = (right, left) if swap else (left, right)
                     columns = plc.join.cross_join(
-                        left.table, right.table, stream=stream
+                        major.table, minor.table, stream=stream
                     ).columns()
+                    if swap:
+                        columns = (
+                            *columns[major.num_columns :],
+                            *columns[: major.num_columns],
+                        )
+                    # Swapped, each left column repeats once per right row, so
+                    # its sortedness does not carry over.
                     left_cols = Join._build_columns(
-                        columns[: left.num_columns], left.columns, stream=stream
+                        columns[: left.num_columns],
+                        left.columns,
+                        left=not swap,
+                        stream=stream,
                     )
                     right_cols = Join._build_columns(
                         columns[left.num_columns :],
@@ -3947,10 +3923,9 @@ class Distinct(IR):
                 plc.types.NanEquality.ALL_EQUAL,
                 df.stream,
             )
-        # TODO: Is this sortedness setting correct
         result = DataFrame(
             [
-                Column(new, name=old.name, dtype=old.dtype).sorted_like(old)
+                Column(new, name=old.name, dtype=old.dtype)
                 for new, old in zip(table.columns(), df.columns, strict=True)
             ],
             stream=df.stream,

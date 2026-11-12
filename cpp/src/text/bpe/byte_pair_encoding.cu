@@ -47,6 +47,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <limits>
 
 namespace nvtext {
@@ -713,8 +714,12 @@ void encode_segments(char const* d_input_chars,
   auto const d_flags = cuda::transform_iterator(
     d_spaces,
     cuda::proclaim_return_type<IndexType>([] __device__(int8_t v) -> IndexType { return v; }));
-  auto const num_segments = cudf::detail::reduce(
-    d_flags, d_flags + chars_size, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
+  auto const num_segments = cudf::detail::reduce(d_flags,
+                                                 d_flags + chars_size,
+                                                 IndexType{0},
+                                                 cuda::std::plus<IndexType>{},
+                                                 stream,
+                                                 mr.as_temporary());
   auto d_segments =
     cuda::device_buffer<IndexType>(stream, temp_mr, num_segments + 1, cuda::no_init);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
@@ -761,8 +766,12 @@ void encode_segments(char const* d_input_chars,
                                [seg_size, is_copy] __device__(IndexType seg) -> IndexType {
                                  return seg_size(seg) <= max_short_size && !is_copy(seg);
                                }));
-  auto const num_encode = cudf::detail::reduce(
-    d_encode, d_encode + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
+  auto const num_encode = cudf::detail::reduce(d_encode,
+                                               d_encode + num_segments,
+                                               IndexType{0},
+                                               cuda::std::plus<IndexType>{},
+                                               stream,
+                                               mr.as_temporary());
   auto d_encode_ids = cuda::device_buffer<IndexType>(stream, temp_mr, num_encode, cuda::no_init);
   cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
                         cuda::counting_iterator<IndexType>{num_segments},
@@ -775,8 +784,8 @@ void encode_segments(char const* d_input_chars,
   // encode the distinct short segments with a warp per 32 segments
   auto const finder = get_bpe_merge_pairs_impl(merge_pairs)->get_rank_finder();
   if (num_encode > 0) {
-    auto const num_warps =
-      cudf::util::div_rounding_up_safe(num_encode, static_cast<IndexType>(cudf::detail::warp_size));
+    auto const num_warps = cudf::detail::div_rounding_up_safe(
+      num_encode, static_cast<IndexType>(cudf::detail::warp_size));
     auto const grid = cudf::detail::grid_1d(
       static_cast<int64_t>(num_warps) * cudf::detail::warp_size, short_block_size);
     bpe_short_kernel<decltype(finder), IndexType>
@@ -797,8 +806,12 @@ void encode_segments(char const* d_input_chars,
     d_seg_sizes, cuda::proclaim_return_type<IndexType>([] __device__(IndexType size) -> IndexType {
       return size > 0;
     }));
-  auto const num_long = cudf::detail::reduce(
-    d_is_long, d_is_long + num_segments, IndexType{0}, cuda::std::plus<IndexType>{}, stream);
+  auto const num_long = cudf::detail::reduce(d_is_long,
+                                             d_is_long + num_segments,
+                                             IndexType{0},
+                                             cuda::std::plus<IndexType>{},
+                                             stream,
+                                             mr.as_temporary());
   if (num_long > 0) {
     auto d_long_ids = cuda::device_buffer<IndexType>(stream, temp_mr, num_long, cuda::no_init);
     cudf::detail::copy_if(cuda::counting_iterator<IndexType>{0},
@@ -956,7 +969,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
   std::size_t temp_bytes = 0;
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
     nullptr, temp_bytes, d_counts, d_output, chars_size, stream.get()));
-  auto temp_storage = rmm::device_buffer(temp_bytes, stream, temp_mr);
+  auto temp_storage = cuda::device_buffer<std::byte>(stream, temp_mr, temp_bytes, cuda::no_init);
   CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
     temp_storage.data(), temp_bytes, d_counts, d_output, chars_size, stream.get()));
 

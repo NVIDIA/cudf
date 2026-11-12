@@ -96,9 +96,7 @@ import runpy
 plugin = runpy.run_path(
     "<cudf repo>/python/cudf/cudf/pandas/scripts/pandas-testing-plugin.py"
 )
-collected = {
-    line.strip() for line in open("collected.txt") if "::" in line
-}
+collected = {line.strip() for line in open("collected.txt") if "::" in line}
 for name in (
     "NODEIDS_TO_SKIP",
     "NODEIDS_TO_SKIP_WHEN_SHARDED",

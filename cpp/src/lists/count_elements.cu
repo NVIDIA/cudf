@@ -34,7 +34,7 @@ namespace detail {
  */
 std::unique_ptr<column> count_elements(lists_column_view const& input,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto device_column = cudf::column_device_view::create(input.parent(), stream);
   auto d_column      = *device_column;
@@ -63,7 +63,7 @@ std::unique_ptr<column> count_elements(lists_column_view const& input,
 
 std::unique_ptr<column> count_elements(lists_column_view const& input,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::count_elements(input, stream, mr);

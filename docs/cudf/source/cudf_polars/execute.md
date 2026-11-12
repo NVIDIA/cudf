@@ -3,9 +3,8 @@
 
 ```{warning}
 `engine.execute()` is **experimental**. Its API may change or be removed in a
-future release. Using it emits a `cudf_polars.UnstableWarning`; set the
-`CUDF_POLARS_WARN_UNSTABLE` environment variable to `1` to have that warning
-raised as an error instead. See {doc}`options`.
+future release. Set the `CUDF_POLARS_WARN_UNSTABLE` environment variable to `1`
+to emit a `cudf_polars.UnstableWarning` whenever it is used. See {doc}`options`.
 ```
 
 [`LazyFrame.collect`](https://docs.pola.rs/api/python/stable/reference/lazyframe/api/polars.LazyFrame.collect.html)
@@ -49,12 +48,7 @@ with RayEngine() as engine:
     )
 
     # Run more work on the GPU using the persisted result as input.
-    df = (
-        result.lazy()
-        .sort("amount")
-        .head(10)
-        .collect(engine=engine)
-    )
+    df = result.lazy().sort("amount").head(10).collect(engine=engine)
 ```
 
 The `LazyFrame` returned by `result.lazy()` can be collected **only** with the
@@ -100,11 +94,15 @@ with RayEngine() as engine:
     result = engine.execute(pl.scan_parquet("/data/*.parquet"))
     lazy = result.lazy()
 
-    df = lazy.collect(engine=engine)        # OK: consumes the partitions.
-    df = lazy.collect(engine=engine)        # RuntimeError: already consumed.
+    df = lazy.collect(engine=engine)  # OK: consumes the partitions.
+    df = lazy.collect(engine=engine)  # RuntimeError: already consumed.
 
     # Need it again? Re-run the query for a fresh result.
-    df = engine.execute(pl.scan_parquet("/data/*.parquet")).lazy().collect(engine=engine)
+    df = (
+        engine.execute(pl.scan_parquet("/data/*.parquet"))
+        .lazy()
+        .collect(engine=engine)
+    )
 ```
 
 ## Releasing partitions

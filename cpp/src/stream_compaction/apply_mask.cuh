@@ -16,14 +16,8 @@ namespace cudf::detail {
 template <typename MaskIterator>
 struct mask_filter {
   MaskIterator mask;  ///< Iterator over the mask values
-  bool is_retention;  ///< Whether `true` mask values keep (retention) or drop (deletion) elements
+  bool is_retention;  ///< Whether `true` mask values retain or drop values
 
-  /**
-   * @brief Returns whether the mask keeps the element at index `i`
-   *
-   * @param i Index of the element
-   * @return `true` if the element is kept, `false` otherwise
-   */
   __device__ inline bool operator()(size_type i) const noexcept { return mask[i] == is_retention; }
 };
 

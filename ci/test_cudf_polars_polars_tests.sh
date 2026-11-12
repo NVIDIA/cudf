@@ -45,12 +45,8 @@ rapids-logger "Install polars test requirements"
 sed -i '/^polars-cloud$/d' polars/py-polars/requirements-dev.txt
 # Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
 sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
-# PyTorch 2.10.0's CUDA 12 wheel pins cuda-bindings==12.9.4, which is
-# incompatible with cuda-core 1.3.0. Remove this pin once PyTorch supports
-# cuda-bindings>=12.9.8.
-if [[ "${RAPIDS_CUDA_VERSION%%.*}" == "12" ]]; then
-    sed -i 's/^torch$/torch<2.10/' polars/py-polars/requirements-ci.txt
-fi
+# torch-tests are currently excluded from the cudf-polars test selection.
+sed -i '/^torch$/d' polars/py-polars/requirements-ci.txt
 
 # notes:
 #

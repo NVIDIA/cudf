@@ -541,6 +541,7 @@ TEST_F(HybridScanTest, FilterInt96Stats)
   // libcudf doesn't write INT96 min/max, so inject them into the footer metadata. Per the Parquet
   // spec, INT96 min/max are only usable with the INT96_TIMESTAMP_ORDER column order
   using cudf::io::parquet::ColumnOrder;
+  using cudf::io::parquet::detail::duration_to_int96;
   // The default page fragment size, so each row group is a single page
   constexpr auto rows_per_row_group = 5000;
   constexpr auto num_rows           = 2 * rows_per_row_group;
@@ -586,16 +587,9 @@ TEST_F(HybridScanTest, FilterInt96Stats)
   auto const metadata   = reader->parquet_metadata();
   auto const row_groups = reader->all_row_groups(options);
 
-  auto const to_int96 = [](auto duration) {
-    auto const [nanos, julian_days] = cudf::io::parquet::detail::duration_to_int96(duration);
-    auto bytes                      = std::vector<uint8_t>(cudf::io::parquet::detail::int96_size);
-    std::memcpy(bytes.data(), &nanos, sizeof(nanos));
-    std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
-    return bytes;
-  };
   // 9999-12-31, a common open-ended sentinel that overflows `timestamp_ns`
-  auto const sentinel = to_int96(cudf::duration_D{
-    std::chrono::sys_days{std::chrono::December / 31 / 9999}.time_since_epoch().count()});
+  auto const sentinel = to_int96_bytes(duration_to_int96(cudf::duration_D{
+    std::chrono::sys_days{std::chrono::December / 31 / 9999}.time_since_epoch().count()}));
 
   // Patches the column orders and the min/max of both columns into the metadata, with the
   // post-epoch max replaced by `sentinel` if `overflow_max` is set, and only the deprecated row
@@ -607,10 +601,11 @@ TEST_F(HybridScanTest, FilterInt96Stats)
     auto patched          = metadata;
     patched.column_orders = column_orders;
     for (auto rg = 0; auto& row_group : patched.row_groups) {
-      auto const min = to_int96(timestamp(rg * rows_per_row_group));
-      auto const max = overflow_max and rg == 1
-                         ? sentinel
-                         : to_int96(timestamp((rg + 1) * rows_per_row_group - 1));
+      auto const min = to_int96_bytes(duration_to_int96(timestamp(rg * rows_per_row_group)));
+      auto const max =
+        overflow_max and rg == 1
+          ? sentinel
+          : to_int96_bytes(duration_to_int96(timestamp((rg + 1) * rows_per_row_group - 1)));
       for (auto& chunk : row_group.columns) {
         auto& stats = chunk.meta_data.statistics;
         stats.min = stats.min_value = chunk.column_index->min_values.front() = min;

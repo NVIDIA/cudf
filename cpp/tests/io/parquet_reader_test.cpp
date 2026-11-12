@@ -6590,9 +6590,7 @@ struct ParquetStatsDecoder : cudf::io::parquet::detail::stats_caster_base {
   template <typename T>
   static T decode_int96(int64_t nanos, int32_t julian_days)
   {
-    std::array<uint8_t, cudf::io::parquet::detail::int96_size> bytes{};
-    std::memcpy(bytes.data(), &nanos, sizeof(nanos));
-    std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
+    auto const bytes = to_int96_bytes({nanos, julian_days});
     return convert<T>(bytes.data(), bytes.size(), cudf::io::parquet::Type::INT96);
   }
 };

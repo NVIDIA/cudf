@@ -1,12 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import gc
 import io
+import weakref
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from utils import (
+    BLOOM_FILTER_OPTIONS,
     extract_parquet_footer,
+    requires_pyarrow_bloom_filters,
     synchronize_stream,
     write_hybrid_scan_parquet_bytes,
 )
@@ -25,7 +29,13 @@ from pylibcudf.io.experimental import (
     HybridScanMultiFile,
     ReadColumnsMode,
     RowGroupIndices,
+    UseDataPageMask,
 )
+
+
+@pytest.fixture(params=[list, tuple])
+def span_container(request):
+    return request.param
 
 
 @pytest.fixture(scope="module")
@@ -626,6 +636,7 @@ def test_hybrid_scan_multifile_materialize_all_columns(
     num_sources,
     num_rows_per_source,
     stream,
+    span_container,
 ):
     """Test full workflow of single step materialization across sources."""
     # Filter: col0 >= num_rows_per_source // 10 of source 0
@@ -673,7 +684,7 @@ def test_hybrid_scan_multifile_materialize_all_columns(
 
     result = multifile_hybrid_scan_reader.materialize_all_columns(
         filtered_row_groups,
-        all_columns_data,
+        span_container(all_columns_data),
         multifile_parquet_options,
         stream,
     )
@@ -702,6 +713,304 @@ def test_hybrid_scan_multifile_materialize_all_columns(
     expected_arrow = expected_result.tbl.to_arrow()
 
     assert expected_arrow.equals(result_arrow)
+
+
+def _fetch_to_device(parquet_bytes, byte_ranges_and_sources, stream=None):
+    """Copy the byte ranges of each source to device, keeping the input order."""
+    byte_ranges, sources = byte_ranges_and_sources
+    host_chunks = [
+        memoryview(parquet_bytes[source])[r.offset : r.offset + r.size]
+        for r, source in zip(byte_ranges, sources, strict=True)
+    ]
+    stream = plc.utils._get_stream(stream)
+    data = [
+        plc.gpumemoryview(rmm.DeviceBuffer.to_device(host_chunk, stream))
+        for host_chunk in host_chunks
+    ]
+    stream.synchronize()
+    return data
+
+
+def _equal_filter(column_name, value, stream=None):
+    return Operation(
+        ASTOperator.EQUAL,
+        ColumnNameReference(column_name),
+        Literal(plc.Scalar.from_arrow(pa.scalar(value), stream=stream)),
+    )
+
+
+def test_hybrid_scan_multifile_filter_row_groups_with_dictionary_pages(
+    multifile_parquet_bytes,
+    multifile_hybrid_scan_reader,
+    multifile_parquet_options,
+    num_rows_per_source,
+    row_group_size,
+    span_container,
+):
+    """Test filtering row groups with the dictionary pages of all sources."""
+    # The value only exists in the third row group of the second source
+    value_index = num_rows_per_source + 2 * row_group_size
+    multifile_parquet_options.set_filter(
+        _equal_filter("col1", f"str_{value_index}")
+    )
+
+    all_row_groups = multifile_hybrid_scan_reader.all_row_groups(
+        multifile_parquet_options
+    )
+    dictionary_ranges = (
+        multifile_hybrid_scan_reader.dictionary_pages_byte_ranges(
+            all_row_groups, multifile_parquet_options
+        )
+    )
+    dictionary_data = _fetch_to_device(
+        multifile_parquet_bytes, dictionary_ranges
+    )
+
+    filtered = (
+        multifile_hybrid_scan_reader.filter_row_groups_with_dictionary_pages(
+            span_container(dictionary_data),
+            all_row_groups,
+            multifile_parquet_options,
+        )
+    )
+
+    assert filtered.tolist() == [[], [2]]
+
+
+@pytest.fixture
+def multifile_bloom_filters(
+    tmp_path,
+    multifile_parquet_tables,
+    row_group_size,
+    num_rows_per_source,
+):
+    """Reader and bloom filter ranges for sources with disjoint values."""
+    paths = []
+    parquet_bytes = []
+    for i, table in enumerate(multifile_parquet_tables):
+        path = tmp_path / f"source{i}.parquet"
+        pq.write_table(
+            table,
+            path,
+            row_group_size=row_group_size,
+            bloom_filter_options={"col1": BLOOM_FILTER_OPTIONS},
+        )
+        paths.append(str(path))
+        parquet_bytes.append(path.read_bytes())
+
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([])
+    ).build()
+    # The value only exists in the third row group of the second source
+    value_index = num_rows_per_source + 2 * row_group_size
+    options.set_filter(_equal_filter("col1", f"str_{value_index}"))
+    reader = HybridScanMultiFile.from_parquet_metadatas(
+        [
+            plc.io.parquet_metadata.FileMetaData.from_bytes(
+                extract_parquet_footer(source)
+            )
+            for source in parquet_bytes
+        ],
+        options,
+    )
+
+    all_row_groups = reader.all_row_groups(options)
+    bloom_ranges, bloom_sources = reader.bloom_filters_byte_ranges(
+        all_row_groups, options
+    )
+    return reader, options, all_row_groups, paths, bloom_ranges, bloom_sources
+
+
+@requires_pyarrow_bloom_filters
+def test_hybrid_scan_multifile_filter_row_groups_with_bloom_filters(
+    multifile_bloom_filters,
+    span_container,
+):
+    """Test filtering row groups with the bloom filters of all sources."""
+    reader, options, all_row_groups, paths, bloom_ranges, bloom_sources = (
+        multifile_bloom_filters
+    )
+    bloom_data = plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+        plc.io.SourceInfo(paths),
+        bloom_ranges,
+        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+        source_indices=bloom_sources,
+    )
+    synchronize_stream()
+
+    filtered = reader.filter_row_groups_with_bloom_filters(
+        span_container(bloom_data), all_row_groups, options
+    )
+
+    assert filtered.tolist() == [[], [2]]
+
+
+@requires_pyarrow_bloom_filters
+@pytest.mark.uses_custom_stream
+def test_fetch_bloom_filters_to_device_keeps_owners_alive(
+    multifile_bloom_filters,
+):
+    _, _, _, paths, bloom_ranges, bloom_sources = multifile_bloom_filters
+
+    class Resource(rmm.mr.CallbackMemoryResource):
+        pass
+
+    class OwnedStream(Stream):
+        pass
+
+    # Keep callbacks and the underlying stream alive even if an assertion fails.
+    upstream = rmm.mr.CudaMemoryResource()
+    allocate = upstream.allocate
+    deallocate = upstream.deallocate
+    base_stream = Stream()
+    stream = OwnedStream(base_stream)
+    mr = Resource(allocate, deallocate)
+    mr_ref = weakref.ref(mr)
+    stream_ref = weakref.ref(stream)
+    views = plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+        plc.io.SourceInfo(paths),
+        bloom_ranges,
+        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+        stream=stream,
+        mr=mr,
+        source_indices=bloom_sources,
+    )
+    view = views[0]
+    del views, mr, stream
+    gc.collect()
+    try:
+        assert mr_ref() is not None
+        assert stream_ref() is not None
+        assert view.ptr % 32 == 0
+        assert (
+            len(
+                rmm.DeviceBuffer(
+                    ptr=view.ptr, size=view.size, stream=base_stream
+                ).tobytes(stream=base_stream)
+            )
+            == view.size
+        )
+    finally:
+        del view
+    gc.collect()
+    assert mr_ref() is None
+    assert stream_ref() is None
+
+
+@pytest.mark.parametrize("stream", [None, Stream()])
+@pytest.mark.parametrize(
+    "use_data_page_mask", [UseDataPageMask.NO, UseDataPageMask.YES]
+)
+def test_hybrid_scan_multifile_materialize_filter_and_payload_columns(
+    tmp_path,
+    multifile_parquet_bytes,
+    multifile_hybrid_scan_reader,
+    multifile_parquet_options,
+    num_sources,
+    num_rows_per_source,
+    stream,
+    use_data_page_mask,
+    span_container,
+):
+    """Test the two pass workflow of materializing filter and payload columns."""
+    paths = []
+    for i, source in enumerate(multifile_parquet_bytes):
+        path = tmp_path / f"source{i}.parquet"
+        path.write_bytes(source)
+        paths.append(str(path))
+    source_info = plc.io.SourceInfo(paths)
+    policy = plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE
+    filter_threshold = num_rows_per_source // 10
+    filter_expression = Operation(
+        ASTOperator.GREATER_EQUAL,
+        ColumnNameReference("col0"),
+        Literal(
+            plc.Scalar.from_arrow(
+                pa.scalar(filter_threshold, type=pa.uint32()), stream=stream
+            )
+        ),
+    )
+    multifile_parquet_options.set_filter(filter_expression)
+
+    all_row_groups = multifile_hybrid_scan_reader.all_row_groups(
+        multifile_parquet_options
+    )
+    filtered_row_groups = (
+        multifile_hybrid_scan_reader.filter_row_groups_with_stats(
+            all_row_groups, multifile_parquet_options, stream
+        )
+    )
+    row_mask = multifile_hybrid_scan_reader.build_all_true_row_mask(
+        filtered_row_groups, stream
+    )
+
+    filter_ranges = (
+        multifile_hybrid_scan_reader.filter_column_chunks_byte_ranges(
+            filtered_row_groups, multifile_parquet_options
+        )
+    )
+    filter_data = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+        source_info,
+        filter_ranges[0],
+        policy,
+        stream,
+        source_indices=filter_ranges[1],
+    )
+    synchronize_stream(stream)
+
+    filter_result = multifile_hybrid_scan_reader.materialize_filter_columns(
+        filtered_row_groups,
+        span_container(filter_data),
+        row_mask,
+        use_data_page_mask,
+        multifile_parquet_options,
+        stream,
+    )
+    synchronize_stream(stream)
+
+    expected_total = num_sources * num_rows_per_source - filter_threshold
+    assert filter_result.tbl.num_columns() == 1
+    assert filter_result.tbl.num_rows() == expected_total
+
+    payload_ranges = (
+        multifile_hybrid_scan_reader.payload_column_chunks_byte_ranges(
+            filtered_row_groups, multifile_parquet_options
+        )
+    )
+    payload_data = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
+        source_info,
+        payload_ranges[0],
+        policy,
+        stream,
+        source_indices=payload_ranges[1],
+    )
+    synchronize_stream(stream)
+
+    payload_result = multifile_hybrid_scan_reader.materialize_payload_columns(
+        filtered_row_groups,
+        span_container(payload_data),
+        row_mask,
+        use_data_page_mask,
+        multifile_parquet_options,
+        stream,
+    )
+    synchronize_stream(stream)
+
+    assert payload_result.tbl.num_columns() == 2
+    assert payload_result.tbl.num_rows() == expected_total
+
+    comparison_options = plc.io.parquet.ParquetReaderOptions.builder(
+        source_info
+    ).build()
+    comparison_options.set_filter(filter_expression)
+    expected_result = plc.io.parquet.read_parquet(comparison_options, stream)
+    synchronize_stream(stream)
+
+    hybrid_table = plc.Table(
+        filter_result.tbl.columns() + payload_result.tbl.columns()
+    )
+
+    assert expected_result.tbl.to_arrow().equals(hybrid_table.to_arrow())
 
 
 def test_hybrid_scan_multifile_setup_page_indexes(

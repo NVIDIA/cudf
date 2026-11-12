@@ -159,18 +159,23 @@ class SparseExchange:
             )
         self._exchange.insert(destination, chunk.into_packed_data(reservation))
 
-    async def finish(self) -> None:
-        """Finish insertion before extraction, even under cancellation."""
+    def start_finish(self) -> None:
+        """Signal that no more payloads will be inserted without waiting for peers."""
         if self._closed:
             raise RuntimeError("Sparse exchange is closed")
+        if self._finish_task is None and self._exchange is not None:
+            self._finish_task = asyncio.create_task(
+                self._exchange.insert_finished(self.context)
+            )
+
+    async def finish(self) -> None:
+        """Finish insertion before extraction, even under cancellation."""
         if self._finished:
             return
+        self.start_finish()
         cancelled = False
         if self._exchange is not None:
-            if self._finish_task is None:
-                self._finish_task = asyncio.create_task(
-                    self._exchange.insert_finished(self.context)
-                )
+            assert self._finish_task is not None
             # The detached C++ task borrows the exchange pointer. Keep it alive
             # through cancellation until the task has actually completed.
             while not self._finish_task.done():

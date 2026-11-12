@@ -11,6 +11,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
@@ -35,11 +36,15 @@
 
 #include <cuda/iterator>
 
+#include <src/io/parquet/timestamp_utils.cuh>
+
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <format>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 
 namespace {
@@ -529,6 +534,172 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
   EXPECT_EQ(prune(not_col0_lt_1, /*nan_count=*/std::nullopt, /*first_all_null=*/true),
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
+}
+
+TEST_F(HybridScanTest, FilterInt96Stats)
+{
+  // libcudf doesn't write INT96 min/max, so inject them into the footer metadata. Per the Parquet
+  // spec, INT96 min/max are only usable with the INT96_TIMESTAMP_ORDER column order
+  using cudf::io::parquet::ColumnOrder;
+  constexpr auto num_rows           = 10000;
+  constexpr auto rows_per_row_group = 5000;
+  constexpr auto rows_per_page      = 1000;
+  constexpr auto ns_per_row         = int64_t{1'000'000'000};
+
+  // Two identical columns, one second apart per row, the second one nullable. Row group 0 is
+  // pre-epoch: [-5000 s, -1 s]
+  auto iter = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    return cudf::timestamp_ns{cudf::duration_ns{(i - rows_per_row_group) * ns_per_row}};
+  });
+  auto const ts0 =
+    cudf::test::fixed_width_column_wrapper<cudf::timestamp_ns>(iter, iter + num_rows);
+  auto const ts1 = cudf::test::fixed_width_column_wrapper<cudf::timestamp_ns>(
+    iter, iter + num_rows, cudf::test::iterators::no_nulls());
+  auto const written_table = cudf::table_view{{ts0, ts1}};
+  auto table_metadata      = cudf::io::table_input_metadata{written_table};
+  table_metadata.column_metadata[0].set_name("col0");
+  table_metadata.column_metadata[1].set_name("col1");
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, written_table)
+      .metadata(table_metadata)
+      .int96_timestamps(true)
+      .row_group_size_rows(rows_per_row_group)
+      .max_page_size_rows(rows_per_page)
+      .max_page_fragment_size(rows_per_page)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .build());
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  auto datasource          = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const options       = cudf::io::parquet_reader_options::builder().build();
+  auto reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  auto const page_index_buffer =
+    cudf::io::parquet::fetch_page_index_to_host(*datasource, reader->page_index_byte_range());
+  reader->setup_page_index(*page_index_buffer);
+  auto const metadata   = reader->parquet_metadata();
+  auto const row_groups = reader->all_row_groups(options);
+  for (auto const& row_group : metadata.row_groups) {
+    for (auto const& chunk : row_group.columns) {
+      ASSERT_EQ(chunk.column_index->min_values.size(), rows_per_row_group / rows_per_page);
+    }
+  }
+
+  auto const to_int96 = [](auto duration) {
+    auto const [nanos, julian_days] = cudf::io::parquet::detail::duration_to_int96(duration);
+    auto bytes                      = std::vector<uint8_t>(cudf::io::parquet::detail::int96_size);
+    std::memcpy(bytes.data(), &nanos, sizeof(nanos));
+    std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
+    return bytes;
+  };
+  // 9999-12-31, a common open-ended sentinel that overflows `timestamp_ns`
+  auto const sentinel = to_int96(cudf::duration_D{
+    std::chrono::sys_days{std::chrono::December / 31 / 9999}.time_since_epoch().count()});
+
+  // Patches the column orders and the min/max of both columns into the metadata, with the max of
+  // the last post-epoch row group and page replaced by `sentinel` if `overflow_max` is set, and
+  // only the deprecated row group min/max kept if `deprecated_only` is set
+  auto const prune = [&](std::optional<std::vector<ColumnOrder>> const& column_orders,
+                         cudf::ast::expression const& filter,
+                         bool overflow_max    = false,
+                         bool deprecated_only = false) {
+    auto patched          = metadata;
+    patched.column_orders = column_orders;
+    for (auto& row_group : patched.row_groups) {
+      for (auto& chunk : row_group.columns) {
+        auto const first_row =
+          static_cast<int64_t>(&row_group - patched.row_groups.data()) * rows_per_row_group;
+        auto const min = [&](auto row) {
+          return to_int96(cudf::duration_ns{(row - rows_per_row_group) * ns_per_row});
+        };
+        chunk.meta_data.statistics.min = chunk.meta_data.statistics.min_value = min(first_row);
+        chunk.meta_data.statistics.max = chunk.meta_data.statistics.max_value =
+          min(first_row + rows_per_row_group - 1);
+        if (deprecated_only) {
+          chunk.meta_data.statistics.min_value.reset();
+          chunk.meta_data.statistics.max_value.reset();
+        }
+        for (auto page = 0; page < rows_per_row_group / rows_per_page; ++page) {
+          chunk.column_index->min_values[page] = min(first_row + page * rows_per_page);
+          chunk.column_index->max_values[page] = min(first_row + (page + 1) * rows_per_page - 1);
+        }
+      }
+    }
+    if (overflow_max) {
+      auto& chunk                          = patched.row_groups.back().columns.back();
+      chunk.meta_data.statistics.max_value = chunk.column_index->max_values.back() = sentinel;
+    }
+    auto const filter_options = cudf::io::parquet_reader_options::builder().filter(filter).build();
+    auto patched_reader =
+      cudf::io::parquet::experimental::hybrid_scan_reader(patched, filter_options);
+    auto const kept_row_groups =
+      patched_reader.filter_row_groups_with_stats(row_groups, filter_options, stream);
+    auto const row_mask =
+      patched_reader.build_row_mask_with_page_index_stats(row_groups, filter_options, stream, mr);
+    // A null in the row mask means the statistics could not decide, which keeps the row
+    auto const kept_mask =
+      cudf::replace_nulls(*row_mask, cudf::numeric_scalar<bool>(true), stream, mr);
+    auto const kept_rows = std::ranges::count(cudf::test::to_host<bool>(*kept_mask).first, true);
+    return std::pair{kept_row_groups, kept_rows};
+  };
+
+  // Filters on `col1` against -1 s, the max of the last pre-epoch row group and page, and 0 s
+  auto const col1_ref = cudf::ast::column_name_reference("col1");
+  auto minus_one_value =
+    cudf::timestamp_scalar<cudf::timestamp_ns>(cudf::duration_ns{-ns_per_row}, true);
+  auto zero_value      = cudf::timestamp_scalar<cudf::timestamp_ns>(cudf::duration_ns{0}, true);
+  auto const minus_one = cudf::ast::literal(minus_one_value);
+  auto const zero      = cudf::ast::literal(zero_value);
+  using cudf::ast::ast_operator;
+  auto const ge_minus_one = cudf::ast::operation(ast_operator::GREATER_EQUAL, col1_ref, minus_one);
+  auto const gt_minus_one = cudf::ast::operation(ast_operator::GREATER, col1_ref, minus_one);
+  auto const ge_zero      = cudf::ast::operation(ast_operator::GREATER_EQUAL, col1_ref, zero);
+  auto const lt_zero      = cudf::ast::operation(ast_operator::LESS, col1_ref, zero);
+  auto const le_zero      = cudf::ast::operation(ast_operator::LESS_EQUAL, col1_ref, zero);
+  auto const is_null      = cudf::ast::operation(ast_operator::IS_NULL, col1_ref);
+
+  using row_groups_type = std::vector<cudf::size_type>;
+  auto const all        = std::pair(row_groups_type{0, 1}, int64_t{num_rows});
+  auto const pre_epoch  = std::pair(row_groups_type{0}, int64_t{rows_per_row_group});
+  auto const post_epoch = std::pair(row_groups_type{1}, int64_t{rows_per_row_group});
+  // Both row groups, but only one page of the pre-epoch or post-epoch row group
+  auto const boundary_page =
+    std::pair(row_groups_type{0, 1}, int64_t{rows_per_row_group + rows_per_page});
+  auto const none = std::pair(row_groups_type{}, int64_t{0});
+
+  auto const type_order  = ColumnOrder{ColumnOrder::TYPE_ORDER};
+  auto const int96_order = ColumnOrder{ColumnOrder::INT96_TIMESTAMP_ORDER};
+
+  // Unordered INT96 min/max of `col1` are ignored: no column orders, `TYPE_ORDER`, or no entry
+  for (auto const& column_orders : {std::optional<std::vector<ColumnOrder>>{},
+                                    std::optional{std::vector{int96_order, type_order}},
+                                    std::optional{std::vector{int96_order}}}) {
+    SCOPED_TRACE(column_orders.has_value() ? column_orders->size() : 0);
+    EXPECT_EQ(prune(column_orders, ge_zero), all);
+    // Null counts are still used
+    EXPECT_EQ(prune(column_orders, is_null), none);
+  }
+
+  // Ordered INT96 min/max of `col1` prune row groups and pages at the boundaries
+  auto const ordered = std::optional{std::vector{type_order, int96_order}};
+  EXPECT_EQ(prune(ordered, ge_minus_one), boundary_page);
+  EXPECT_EQ(prune(ordered, gt_minus_one), post_epoch);
+  EXPECT_EQ(prune(ordered, ge_zero), post_epoch);
+  // Deprecated INT96 min/max have no defined order, so only the page index prunes
+  EXPECT_EQ(prune(ordered, ge_zero, /*overflow_max=*/false, /*deprecated_only=*/true),
+            std::pair(row_groups_type{0, 1}, int64_t{rows_per_row_group}));
+  EXPECT_EQ(prune(ordered, lt_zero), pre_epoch);
+  EXPECT_EQ(prune(ordered, le_zero), boundary_page);
+  // A max that overflows `timestamp_ns` is ignored instead of wrapping around, along with its
+  // min, as rows holding such values wrap around when read
+  EXPECT_EQ(prune(ordered, ge_zero, /*overflow_max=*/true), post_epoch);
+  EXPECT_EQ(prune(ordered, lt_zero, /*overflow_max=*/true), boundary_page);
 }
 
 TEST_F(HybridScanTest, MaterializeStrings)

@@ -14,7 +14,6 @@
 
 #include <cstddef>
 #include <optional>
-#include <stdexcept>
 
 namespace cudf::io::parquet::detail {
 
@@ -45,10 +44,10 @@ namespace {
 bool is_unordered_int96(FileMetaData const& metadata, Type physical_type, std::size_t leaf_idx)
 {
   if (physical_type != Type::INT96) { return false; }
-  if (not metadata.column_orders.has_value()) { return true; }
-  CUDF_EXPECTS(leaf_idx < metadata.column_orders->size(),
-               "Parquet column orders must have one entry per leaf column",
-               std::invalid_argument);
+  // Ignoring min/max is always safe, so treat missing column orders as unordered
+  if (not metadata.column_orders.has_value() or leaf_idx >= metadata.column_orders->size()) {
+    return true;
+  }
   return (*metadata.column_orders)[leaf_idx].type != ColumnOrder::INT96_TIMESTAMP_ORDER;
 }
 

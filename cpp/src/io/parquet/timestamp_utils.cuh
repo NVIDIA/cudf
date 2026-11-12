@@ -10,6 +10,7 @@
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/std/chrono>
+#include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/std/utility>
 
@@ -44,9 +45,29 @@ template <typename Duration>
 {
   using cuda::std::chrono::duration_cast;
   // TBD: Should be noon instead of midnight, but this matches pyarrow
-  auto const days = cudf::duration_D{julian_days - julian_day_unix_epoch};
+  auto const days = cudf::duration_D{int64_t{julian_days} - julian_day_unix_epoch};
   return duration_cast<Duration>(days).count() +
          duration_cast<Duration>(cudf::duration_ns{nanos}).count();
+}
+
+/**
+ * @brief Checks whether an INT96 timestamp fits in `Duration` without overflow
+ *
+ * @tparam Duration Output duration type, e.g. `cudf::duration_ns`
+ * @param nanos Nanoseconds of the day (first 8 bytes of the INT96 value)
+ * @param julian_days Julian day number (last 4 bytes of the INT96 value)
+ * @return Whether `int96_to_duration<Duration>` is representable
+ */
+template <typename Duration>
+[[nodiscard]] CUDF_HOST_DEVICE inline bool int96_fits_duration(int64_t nanos, int32_t julian_days)
+{
+  using cuda::std::chrono::duration_cast;
+  using rep                = typename Duration::rep;
+  auto const ticks_per_day = duration_cast<Duration>(cudf::duration_D{1}).count();
+  auto const value = __int128_t{int64_t{julian_days} - julian_day_unix_epoch} * ticks_per_day +
+                     duration_cast<Duration>(cudf::duration_ns{nanos}).count();
+  return value >= cuda::std::numeric_limits<rep>::min() and
+         value <= cuda::std::numeric_limits<rep>::max();
 }
 
 /**

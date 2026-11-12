@@ -6579,89 +6579,6 @@ TYPED_TEST(ParquetFilterPushdownTimestampPrecisions, AllPrecisions)
   }
 }
 
-TEST_F(ParquetReaderTest, FilterInt96Stats)
-{
-  // libcudf doesn't write INT96 min/max, so inject them into the footer metadata. Per the Parquet
-  // spec, INT96 min/max are only usable with the INT96_TIMESTAMP_ORDER column order
-  using cudf::io::parquet::ColumnOrder;
-  constexpr auto num_rows           = 10000;
-  constexpr auto rows_per_row_group = 5000;
-  constexpr auto ms_offset          = int64_t{rows_per_row_group} * 1000;
-
-  // Row group 0 is pre-epoch: [-5000 s, -1 s], row group 1: [0 s, 4999 s]
-  auto iter = cudf::detail::make_counting_transform_iterator(
-    0, [](auto i) { return cudf::timestamp_ms{cudf::duration_ms{i * 1000 - ms_offset}}; });
-  auto const ts_col =
-    cudf::test::fixed_width_column_wrapper<cudf::timestamp_ms>(iter, iter + num_rows);
-  auto const written_table = cudf::table_view{{ts_col}};
-
-  std::vector<char> buffer;
-  cudf::io::write_parquet(
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, written_table)
-      .int96_timestamps(true)
-      .row_group_size_rows(rows_per_row_group)
-      .stats_level(cudf::io::statistics_freq::STATISTICS_ROWGROUP)
-      .build());
-
-  auto const to_int96 = [](int64_t ms) {
-    auto const [nanos, julian_days] =
-      cudf::io::parquet::detail::duration_to_int96(cudf::duration_ms{ms});
-    auto bytes = std::vector<uint8_t>(cudf::io::parquet::detail::int96_size);
-    std::memcpy(bytes.data(), &nanos, sizeof(nanos));
-    std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
-    return bytes;
-  };
-
-  auto const source_info = cudf::io::source_info{cudf::host_span<char const>{buffer}};
-  auto const footer =
-    cudf::io::read_parquet_footers(cudf::io::make_datasources(source_info)).front();
-
-  // ts >= 0 s
-  auto literal_value = cudf::timestamp_scalar<cudf::timestamp_ms>(cudf::duration_ms{0}, true);
-  auto literal       = cudf::ast::literal(literal_value);
-  auto col_ref       = cudf::ast::column_reference(0);
-  auto filter = cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
-  auto const expected = cudf::split(written_table, {rows_per_row_group}).back();
-
-  // {name, column order, use deprecated min/max, expected row groups after stats filter}
-  using test_case = std::tuple<char const*, std::optional<ColumnOrder::Type>, bool, int>;
-  for (auto const& [name, column_order, deprecated_min_max, num_row_groups] :
-       {test_case{"no column order, deprecated min/max", std::nullopt, true, 2},
-        test_case{"TYPE_ORDER", ColumnOrder::TYPE_ORDER, false, 2},
-        test_case{"INT96_TIMESTAMP_ORDER", ColumnOrder::INT96_TIMESTAMP_ORDER, false, 1}}) {
-    SCOPED_TRACE(name);
-    auto metadata = footer;
-    metadata.column_orders.reset();
-    if (column_order.has_value()) {
-      metadata.column_orders = std::vector<ColumnOrder>{{*column_order}};
-    }
-    for (auto rg_idx = 0; auto& row_group : metadata.row_groups) {
-      auto& stats    = row_group.columns.front().meta_data.statistics;
-      auto const min = to_int96(rg_idx * ms_offset - ms_offset);
-      auto const max = to_int96((rg_idx + 1) * ms_offset - ms_offset - 1000);
-      if (deprecated_min_max) {
-        stats.min = min;
-        stats.max = max;
-      } else {
-        stats.min_value = min;
-        stats.max_value = max;
-      }
-      ++rg_idx;
-    }
-
-    auto metadatas    = std::vector<cudf::io::parquet::FileMetaData>{std::move(metadata)};
-    auto const result = cudf::io::read_parquet(
-      cudf::io::make_datasources(source_info),
-      std::move(metadatas),
-      cudf::io::parquet_reader_options::builder(source_info)
-        .timestamp_type(cudf::data_type{cudf::type_id::TIMESTAMP_MILLISECONDS})
-        .filter(filter)
-        .build());
-    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), num_row_groups);
-    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
-  }
-}
-
 struct ParquetStatsDecoder : cudf::io::parquet::detail::stats_caster_base {
   template <typename T>
   static T decode(std::initializer_list<uint8_t> bytes,
@@ -6669,7 +6586,34 @@ struct ParquetStatsDecoder : cudf::io::parquet::detail::stats_caster_base {
   {
     return convert<T>(bytes.begin(), bytes.size(), type);
   }
+
+  template <typename T>
+  static T decode_int96(int64_t nanos, int32_t julian_days)
+  {
+    std::array<uint8_t, cudf::io::parquet::detail::int96_size> bytes{};
+    std::memcpy(bytes.data(), &nanos, sizeof(nanos));
+    std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
+    return convert<T>(bytes.data(), bytes.size(), cudf::io::parquet::Type::INT96);
+  }
 };
+
+TEST_F(ParquetReaderTest, DecodeInt96Stats)
+{
+  // 1969-12-31T23:59:58.999999999, flooring to each output unit
+  auto constexpr nanos       = int64_t{86'398'999'999'999};
+  auto constexpr julian_days = int32_t{2'440'587};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(nanos, julian_days),
+            cudf::timestamp_ns{cudf::duration_ns{-1'000'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_us>(nanos, julian_days),
+            cudf::timestamp_us{cudf::duration_us{-1'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ms>(nanos, julian_days),
+            cudf::timestamp_ms{cudf::duration_ms{-1'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_s>(nanos, julian_days),
+            cudf::timestamp_s{cudf::duration_s{-2}});
+  EXPECT_THROW(
+    ParquetStatsDecoder::decode<cudf::timestamp_ns>({0x00}, cudf::io::parquet::Type::INT96),
+    cudf::logic_error);
+}
 
 TEST_F(ParquetReaderTest, DecodeVariableWidthDecimalStats)
 {

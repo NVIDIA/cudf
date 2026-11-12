@@ -119,23 +119,25 @@ struct row_group_stats_caster : public stats_caster_base {
           if (col != std::end(row_group.columns)) {
             auto const& colchunk = *col;
             auto const& stats    = colchunk.meta_data.statistics;
-            // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them
+            // Deprecated min/max use signed physical ordering, so only fall back
+            // when that ordering is compatible with the output type and defined (not INT96).
+            auto const* min_value = &stats.min_value;
+            auto const* max_value = &stats.max_value;
+            if (can_use_deprecated_minmax<T>() and colchunk.meta_data.type != Type::INT96) {
+              if (not min_value->has_value()) { min_value = &stats.min; }
+              if (not max_value->has_value()) { max_value = &stats.max; }
+            }
+            // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, and ones that
+            // overflow `T` would wrap around, so ignore them
             auto const ignore_int96_min_max =
               is_unordered_int96(source_metadata,
                                  colchunk.meta_data.type,
-                                 std::distance(row_group.columns.begin(), col));
+                                 std::distance(row_group.columns.begin(), col)) or
+              int96_minmax_overflows<T>(colchunk.meta_data.type, *min_value, *max_value);
             if (ignore_int96_min_max) {
               min.set_index(stats_idx, std::nullopt, {});
               max.set_index(stats_idx, std::nullopt, {});
             } else {
-              // Deprecated min/max use signed physical ordering, so only fall back
-              // when that ordering is compatible with the output type.
-              auto const* min_value = &stats.min_value;
-              auto const* max_value = &stats.max_value;
-              if constexpr (can_use_deprecated_minmax<T>()) {
-                if (not min_value->has_value()) { min_value = &stats.min; }
-                if (not max_value->has_value()) { max_value = &stats.max; }
-              }
               // translate binary data to Type then to <T>
               min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
               max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);

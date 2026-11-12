@@ -27,6 +27,8 @@
 #include <cuda/buffer>
 #include <cuda/std/concepts>
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <concepts>
@@ -50,8 +52,6 @@ auto constexpr stats_cols_per_column = 4;
 
 /**
  * @brief Checks whether a column chunk is INT96 without `INT96_TIMESTAMP_ORDER`
- *
- * @throws std::invalid_argument if `leaf_idx` is out of bounds of the column orders
  *
  * @param metadata File metadata
  * @param physical_type Physical type of the column chunk
@@ -96,6 +96,37 @@ class stats_caster_base {
     auto value = T{};
     std::memcpy(&value, stats_val, std::min(stats_size, sizeof(T)));
     return value;
+  }
+
+  /// Decodes an INT96 statistics value into nanoseconds of the day and Julian day
+  static inline cuda::std::pair<int64_t, int32_t> decode_int96_value(uint8_t const* stats_val,
+                                                                     size_t stats_size)
+  {
+    CUDF_EXPECTS(stats_size == static_cast<size_t>(int96_size),
+                 "Parquet reader encountered an invalid INT96 statistics vector size");
+    auto nanos = int64_t{};
+    auto days  = int32_t{};
+    std::memcpy(&nanos, stats_val, sizeof(nanos));
+    std::memcpy(&days, stats_val + sizeof(nanos), sizeof(days));
+    return {nanos, days};
+  }
+
+  /// Checks whether INT96 min/max statistics overflow the timestamp type `T` and would wrap around
+  template <typename T>
+  [[nodiscard]] static bool int96_minmax_overflows(Type type,
+                                                   std::optional<std::vector<uint8_t>> const& min,
+                                                   std::optional<std::vector<uint8_t>> const& max)
+  {
+    if constexpr (cudf::is_timestamp<T>()) {
+      if (type != Type::INT96) { return false; }
+      return std::ranges::any_of(std::array{&min, &max}, [](auto const* value) {
+        if (not value->has_value()) { return false; }
+        auto const [nanos, days] = decode_int96_value(value->value().data(), value->value().size());
+        return not int96_fits_duration<typename T::duration>(nanos, days);
+      });
+    } else {
+      return false;
+    }
   }
 
   template <typename ToType, typename FromType>
@@ -151,12 +182,7 @@ class stats_caster_base {
           decode_fixed_width_value<int64_t>(stats_val, stats_size), ts_scale);
       case Type::INT96:  // Deprecated in parquet specification
         if constexpr (cudf::is_timestamp<T>()) {
-          CUDF_EXPECTS(stats_size == static_cast<size_t>(int96_size),
-                       "Parquet reader encountered an invalid INT96 statistics vector size");
-          auto nanos = int64_t{};
-          auto days  = int32_t{};
-          std::memcpy(&nanos, stats_val, sizeof(nanos));
-          std::memcpy(&days, stats_val + sizeof(nanos), sizeof(days));
+          auto const [nanos, days] = decode_int96_value(stats_val, stats_size);
           return T{typename T::duration{int96_to_duration<typename T::duration>(nanos, days)}};
         } else {
           CUDF_FAIL("INT96 statistics are only supported for timestamp columns");

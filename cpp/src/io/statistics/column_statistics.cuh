@@ -89,12 +89,11 @@ struct calculate_group_statistics_functor {
     requires(detail::statistics_type_category<T, IO>::include_extrema and
              (IO != detail::io_file_format::PARQUET or !cuda::std::is_same_v<T, list_view>))
   {
-    // Temporarily disable stats writing for int96 timestamps
+    // Temporarily disable min/max writing for int96 timestamps, but keep the null counts
     // TODO: https://github.com/NVIDIA/cudf/issues/10438
-    if constexpr (cudf::is_timestamp<T>() and IO == detail::io_file_format::PARQUET and
-                  INT96 == detail::is_int96_timestamp::YES) {
-      return;
-    }
+    constexpr bool skip_minmax = cudf::is_timestamp<T>() and
+                                 IO == detail::io_file_format::PARQUET and
+                                 INT96 == detail::is_int96_timestamp::YES;
 
     detail::storage_wrapper<block_size> storage(temp_storage);
 
@@ -107,11 +106,12 @@ struct calculate_group_statistics_functor {
       uint32_t row = r + s.group.start_row;
       if (r < s.group.num_rows) {
         if (s.col.leaf_column->is_valid(row)) {
-          auto const element = get_element<T>(s, row);
-          if constexpr (cuda::std::is_same_v<CT, detail::timestamp_ns128>) {
-            chunk.reduce(detail::to_wall_clock_ns(element, s.col.ut_offsets));
+          if constexpr (skip_minmax) {
+            chunk.non_nulls++;
+          } else if constexpr (cuda::std::is_same_v<CT, detail::timestamp_ns128>) {
+            chunk.reduce(detail::to_wall_clock_ns(get_element<T>(s, row), s.col.ut_offsets));
           } else {
-            chunk.reduce(type_convert::convert(element));
+            chunk.reduce(type_convert::convert(get_element<T>(s, row)));
           }
         } else {
           chunk.null_count++;

@@ -6,7 +6,11 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/udf.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/optional>
+#include <cuda/std/span>
 #include <cuda_runtime.h>
 
 #include <cudf_cuda_embed.hpp>
@@ -27,6 +31,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -433,10 +438,12 @@ std::optional<compiled_fragment> get_udf_adapter(std::string_view symbol,
     append(arguments, i, false);
   }
   auto source = std::format(R"CUDA(
-#include <cudf/udf_includes.hpp>
+#include <jit/udf_abi.cuh>
 #pragma nv_hdrstop
+namespace cudf_udf_abi {{
 extern "C" __device__ cudf::errc {0}({1});
-extern "C" __device__ cudf::errc {3}({1}) {{ return ::{0}({2}); }}
+extern "C" __device__ cudf::errc {3}({1}) {{ return {0}({2}); }}
+}}
 )CUDA",
                             symbol,
                             declarations,
@@ -532,6 +539,8 @@ std::tuple<rtcx::library, rtcx::blob> link_library_uncached(
   std::vector<std::string> options;
 
   options.emplace_back("-lto");
+  options.emplace_back("-kernels-used=cudf_kernel_entry");
+  options.emplace_back("-optimize-unused-variables");
   options.emplace_back(std::format("-arch=sm_{}", sm));
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }

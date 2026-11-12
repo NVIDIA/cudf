@@ -14,7 +14,6 @@
 #include <cuda/std/concepts>
 #include <cuda/std/expected>
 #include <cuda/std/limits>
-#include <cuda/std/type_traits>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {

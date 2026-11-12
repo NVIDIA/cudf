@@ -7,7 +7,7 @@
 
 /**
  * @file
- * @brief Common device headers for CUDA UDF source and generated forwarding adapters.
+ * @brief Common device headers for CUDA UDF source.
  *
  * Provides cuDF value types, error codes, row operators, and CUDA standard-library utilities.
  * CUDA UDFs can include this header before compilation with `compile_cuda_to_lto_ir`.

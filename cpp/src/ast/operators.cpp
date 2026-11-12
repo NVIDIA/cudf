@@ -15,6 +15,7 @@
 #include <cudf/detail/operators/math.cuh>
 #include <cudf/detail/operators/null_handling.cuh>
 #include <cudf/detail/operators/trigonometric.cuh>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>

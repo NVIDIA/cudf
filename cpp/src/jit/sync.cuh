@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/types.hpp>
 
-#include <cuda/ptx>
-#include <cuda/std/bit>
+#include <cuda/ptxs/elect_sync.h>
 
 namespace cudf {
 
@@ -20,7 +19,7 @@ __device__ inline bool warp_elect(unsigned int mask)
   return cuda::ptx::elect_sync(mask);
 #else
   // fallback: manually elect a leader (e.g., the first active thread)
-  int leader = mask == 0 ? 0 : cuda::std::countr_zero(mask);
+  int leader = mask == 0 ? 0 : __ffs(mask) - 1;
   int lane   = (threadIdx.x & (cudf::detail::warp_size - 1));
   return (lane == leader);
 #endif

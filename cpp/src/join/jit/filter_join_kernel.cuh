@@ -10,7 +10,7 @@
 #include <cudf/errc.hpp>
 #include <cudf/types.hpp>
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 

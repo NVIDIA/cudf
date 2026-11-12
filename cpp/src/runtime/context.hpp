@@ -8,6 +8,7 @@
 #include <cudf/context.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 
@@ -33,6 +34,7 @@ struct [[nodiscard]] context_config {
   bool jit_verbose           : 1      = false;
   bool dump_jit_trace        : 1      = false;
   bool dump_jit_time_profile : 1      = false;
+  std::size_t jit_pch_heap_size       = std::size_t{512} * 1024 * 1024;
   std::string rtcx_cache_dir          = {};
   std::string jit_bundle_dir          = {};
   std::string jit_tmp_dir             = {};

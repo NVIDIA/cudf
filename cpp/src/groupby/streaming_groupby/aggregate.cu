@@ -59,6 +59,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
 
     compute_warp_aggregates(data.select(_value_col_indices),
                             _agg_kinds,
+                            _agg_semantics,
                             {targets.data(), targets.size()},
                             _agg_results->mutable_view(),
                             stream,

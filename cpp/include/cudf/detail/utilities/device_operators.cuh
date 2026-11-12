@@ -124,6 +124,26 @@ CUDF_HOST_DEVICE inline T ieee_maximum(T lhs, T rhs)
   if (is_nan_bits(rhs)) { return rhs; }
   return ordered_bits(lhs) >= ordered_bits(rhs) ? lhs : rhs;
 }
+
+/**
+ * @brief `minimum` of two floating-point values with `nan_semantics::TOTALLY_ORDERED` ordering
+ *
+ * NaN is greater than every other value, so a NaN is returned only when both inputs are NaN.
+ * In that case the canonical quiet NaN is returned so the result does not depend on the order
+ * of the inputs. As in `ieee_minimum`, -0 is less than +0 and only integer operations are used.
+ */
+template <typename T>
+  requires(cuda::std::is_floating_point_v<T>)
+CUDF_HOST_DEVICE inline T totally_ordered_minimum(T lhs, T rhs)
+{
+  auto const lhs_nan = is_nan_bits(lhs);
+  auto const rhs_nan = is_nan_bits(rhs);
+  if (lhs_nan || rhs_nan) {
+    if (lhs_nan && rhs_nan) { return cuda::std::numeric_limits<T>::quiet_NaN(); }
+    return lhs_nan ? rhs : lhs;
+  }
+  return ordered_bits(lhs) <= ordered_bits(rhs) ? lhs : rhs;
+}
 }  // namespace detail
 
 /**
@@ -243,6 +263,38 @@ struct DeviceMin {
   CUDF_HOST_DEVICE static constexpr T identity()
   {
     return static_cast<T>(T::max_value());
+  }
+};
+
+/**
+ * @brief binary `min` operator with `nan_semantics::TOTALLY_ORDERED` ordering of floating-point
+ * values
+ *
+ * NaN is greater than every other value, so it is the result only when every input is NaN (see
+ * `totally_ordered_minimum`). The identity is therefore NaN instead of +infinity.
+ * Non-floating-point types behave the same as `DeviceMin`.
+ */
+struct DeviceMinTotallyOrdered {
+  template <typename T>
+  CUDF_HOST_DEVICE inline auto operator()(T const& lhs, T const& rhs)
+    -> decltype(DeviceMin{}(lhs, rhs))
+  {
+    if constexpr (cuda::std::is_floating_point_v<T>) {
+      return cudf::detail::totally_ordered_minimum(lhs, rhs);
+    } else {
+      return DeviceMin{}(lhs, rhs);
+    }
+  }
+
+  template <typename T>
+  CUDF_HOST_DEVICE static constexpr T identity()
+    requires(requires { DeviceMin::identity<T>(); })
+  {
+    if constexpr (cuda::std::is_floating_point_v<T>) {
+      return cuda::std::numeric_limits<T>::quiet_NaN();
+    } else {
+      return DeviceMin::identity<T>();
+    }
   }
 };
 

@@ -179,6 +179,14 @@ struct min : public simple_op<min> {
   using transformer = cudf::detail::cast_fn<ResultType>;
 };
 
+// operator for `min` with `nan_semantics::TOTALLY_ORDERED` ordering of floating-point values
+struct min_totally_ordered : public simple_op<min_totally_ordered> {
+  using op = cudf::DeviceMinTotallyOrdered;
+
+  template <typename ResultType>
+  using transformer = cudf::detail::cast_fn<ResultType>;
+};
+
 // operator for `max`
 struct max : public simple_op<max> {
   using op = cudf::DeviceMax;

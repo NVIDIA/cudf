@@ -46,6 +46,7 @@ constexpr bool is_warp_aggregation_supported = [] {
 struct aggregation_column {
   void* output{};
   bitmask_type* validity{};
+  bool totally_ordered{};  ///< A floating-point MIN uses `nan_semantics::TOTALLY_ORDERED`
 };
 
 struct aggregation_columns {
@@ -108,23 +109,30 @@ __device__ void aggregate_value(hash::rep_type_t<T> input,
   if constexpr (is_warp_aggregation_supported<T, K>) {
     if (column.output == nullptr) { return; }
     using Result = hash::rep_type_t<cudf::detail::target_type_t<T, K>>;
-    using Op     = cudf::detail::corresponding_operator_t<K>;
     auto value   = static_cast<Result>(input);
     if constexpr (K == aggregation::SUM_OF_SQUARES) { value *= value; }
-    auto const combine  = thread_group.size() > 1;
-    auto const combined = combine ? reduce_group_value(thread_group, value, Op{}) : value;
-    if (!combine || thread_group.thread_rank() == 0) {
-      if (column.validity != nullptr && !cudf::bit_is_set(column.validity, target)) {
-        cudf::set_bit(column.validity, target);
+    auto const update = [&]<typename Op>(Op op) {
+      auto const combine  = thread_group.size() > 1;
+      auto const combined = combine ? reduce_group_value(thread_group, value, op) : value;
+      if (!combine || thread_group.thread_rank() == 0) {
+        if (column.validity != nullptr && !cudf::bit_is_set(column.validity, target)) {
+          cudf::set_bit(column.validity, target);
+        }
+        auto* const output = static_cast<Result*>(column.output);
+        if constexpr (cuda::std::same_as<Result, __int128_t>) {
+          static_assert(cuda::std::same_as<Op, cudf::DeviceSum>);
+          cudf::detail::atomic_add(output + target, combined);
+        } else {
+          cudf::detail::genericAtomicOperation(output + target, combined, op);
+        }
       }
-      auto* const output = static_cast<Result*>(column.output);
-      if constexpr (cuda::std::same_as<Result, __int128_t>) {
-        static_assert(cuda::std::same_as<Op, cudf::DeviceSum>);
-        cudf::detail::atomic_add(output + target, combined);
-      } else {
-        cudf::detail::genericAtomicOperation(output + target, combined, Op{});
-      }
+    };
+    // TOTALLY_ORDERED only changes a floating-point MIN, so only float and double instantiate
+    // DeviceMinTotallyOrdered. The output starts from its NaN identity (see impl.cu).
+    if constexpr (K == aggregation::MIN && cuda::std::is_floating_point_v<Result>) {
+      if (column.totally_ordered) { return update(cudf::DeviceMinTotallyOrdered{}); }
     }
+    update(cudf::detail::corresponding_operator_t<K>{});
   }
 }
 
@@ -225,6 +233,7 @@ struct aggregation_dispatch {
 
 void compute_warp_aggregates(table_view const& values,
                              host_span<aggregation::Kind const> kinds,
+                             host_span<nan_semantics const> semantics,
                              device_span<size_type const> targets,
                              mutable_table_view const& output,
                              cuda::stream_ref stream,
@@ -239,7 +248,9 @@ void compute_warp_aggregates(table_view const& values,
       auto& column = columns[kinds[end]];
       // Separate requests can alias the same input. Keep both outputs for repeated kinds.
       if (column.output != nullptr) { break; }
-      column = {output.column(end).head(), output.column(end).null_mask()};
+      column = {output.column(end).head(),
+                output.column(end).null_mask(),
+                kinds[end] == aggregation::MIN && semantics[end] == nan_semantics::TOTALLY_ORDERED};
       ++end;
     }
     auto const type = cudf::is_dictionary(input.type())

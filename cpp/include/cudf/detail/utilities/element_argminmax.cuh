@@ -32,6 +32,9 @@ struct element_argminmax_fn {
   column_device_view const d_col;
   bool const has_nulls;
   bool const arg_min;
+  /// Order NaN after all other values (`nan_semantics::TOTALLY_ORDERED`) for argmin, instead of
+  /// selecting the first NaN (`nan_semantics::UNORDERED`)
+  bool const totally_ordered = false;
 
   __device__ inline bool out_of_bounds_or_null(size_type idx) const
   {
@@ -64,12 +67,15 @@ struct element_argminmax_fn {
     } else {
       if constexpr (cuda::std::is_floating_point_v<T>) {
         // NaN propagates as in the IEEE 754-2019 minimum/maximum operations: the first NaN
-        // row is selected for both argmin and argmax. is_nan_bits avoids FP64 instructions
-        // (see device_operators.cuh).
+        // row is selected for both argmin and argmax. With TOTALLY_ORDERED semantics NaN is greater
+        // than every other value, which only changes argmin: a NaN row is selected only when every
+        // row is NaN. is_nan_bits avoids FP64 instructions (see device_operators.cuh).
         auto const lhs_nan = cudf::detail::is_nan_bits(lhs);
         auto const rhs_nan = cudf::detail::is_nan_bits(rhs);
         if (lhs_nan && rhs_nan) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
-        if (lhs_nan || rhs_nan) { return lhs_nan ? lhs_idx : rhs_idx; }
+        if (lhs_nan || rhs_nan) {
+          return (lhs_nan != (totally_ordered && arg_min)) ? lhs_idx : rhs_idx;
+        }
       }
       if (lhs == rhs) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
       return (lhs < rhs) == arg_min ? lhs_idx : rhs_idx;

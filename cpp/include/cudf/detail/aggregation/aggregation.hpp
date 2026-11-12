@@ -116,7 +116,25 @@ class min_aggregation final
                                                    scan_aggregation,
                                                    segmented_reduce_aggregation> {
  public:
-  min_aggregation() : aggregation(MIN) {}
+  explicit min_aggregation(nan_semantics semantics = nan_semantics::DEFAULT)
+    : aggregation(MIN),
+      _semantics{semantics == nan_semantics::DEFAULT ? nan_semantics::UNORDERED : semantics}
+  {
+  }
+
+  nan_semantics _semantics;  ///< How floating-point NaN values are ordered; never DEFAULT
+
+  [[nodiscard]] bool is_equal(aggregation const& _other) const override
+  {
+    if (!this->aggregation::is_equal(_other)) { return false; }
+    auto const& other = dynamic_cast<min_aggregation const&>(_other);
+    return _semantics == other._semantics;
+  }
+
+  [[nodiscard]] size_t do_hash() const override
+  {
+    return this->aggregation::do_hash() ^ std::hash<int>{}(static_cast<int>(_semantics));
+  }
 };
 
 /**
@@ -130,7 +148,25 @@ class max_aggregation final
                                                    scan_aggregation,
                                                    segmented_reduce_aggregation> {
  public:
-  max_aggregation() : aggregation(MAX) {}
+  explicit max_aggregation(nan_semantics semantics = nan_semantics::DEFAULT)
+    : aggregation(MAX),
+      _semantics{semantics == nan_semantics::DEFAULT ? nan_semantics::UNORDERED : semantics}
+  {
+  }
+
+  nan_semantics _semantics;  ///< How floating-point NaN values are ordered; never DEFAULT
+
+  [[nodiscard]] bool is_equal(aggregation const& _other) const override
+  {
+    if (!this->aggregation::is_equal(_other)) { return false; }
+    auto const& other = dynamic_cast<max_aggregation const&>(_other);
+    return _semantics == other._semantics;
+  }
+
+  [[nodiscard]] size_t do_hash() const override
+  {
+    return this->aggregation::do_hash() ^ std::hash<int>{}(static_cast<int>(_semantics));
+  }
 };
 
 /**
@@ -317,7 +353,25 @@ class argmax_aggregation final
   : public clonable<argmax_aggregation>::
       derived_from<rolling_aggregation, groupby_aggregation, reduce_aggregation> {
  public:
-  argmax_aggregation() : aggregation(ARGMAX) {}
+  explicit argmax_aggregation(nan_semantics semantics = nan_semantics::DEFAULT)
+    : aggregation(ARGMAX),
+      _semantics{semantics == nan_semantics::DEFAULT ? nan_semantics::UNORDERED : semantics}
+  {
+  }
+
+  nan_semantics _semantics;  ///< How floating-point NaN values are ordered; never DEFAULT
+
+  [[nodiscard]] bool is_equal(aggregation const& _other) const override
+  {
+    if (!this->aggregation::is_equal(_other)) { return false; }
+    auto const& other = dynamic_cast<argmax_aggregation const&>(_other);
+    return _semantics == other._semantics;
+  }
+
+  [[nodiscard]] size_t do_hash() const override
+  {
+    return this->aggregation::do_hash() ^ std::hash<int>{}(static_cast<int>(_semantics));
+  }
 };
 
 /**
@@ -327,8 +381,43 @@ class argmin_aggregation final
   : public clonable<argmin_aggregation>::
       derived_from<rolling_aggregation, groupby_aggregation, reduce_aggregation> {
  public:
-  argmin_aggregation() : aggregation(ARGMIN) {}
+  explicit argmin_aggregation(nan_semantics semantics = nan_semantics::DEFAULT)
+    : aggregation(ARGMIN),
+      _semantics{semantics == nan_semantics::DEFAULT ? nan_semantics::UNORDERED : semantics}
+  {
+  }
+
+  nan_semantics _semantics;  ///< How floating-point NaN values are ordered; never DEFAULT
+
+  [[nodiscard]] bool is_equal(aggregation const& _other) const override
+  {
+    if (!this->aggregation::is_equal(_other)) { return false; }
+    auto const& other = dynamic_cast<argmin_aggregation const&>(_other);
+    return _semantics == other._semantics;
+  }
+
+  [[nodiscard]] size_t do_hash() const override
+  {
+    return this->aggregation::do_hash() ^ std::hash<int>{}(static_cast<int>(_semantics));
+  }
 };
+
+/**
+ * @brief Returns how a MIN, MAX, ARGMIN, or ARGMAX aggregation orders floating-point NaN values
+ *
+ * @param agg The aggregation
+ * @return The aggregation's `nan_semantics`, never `DEFAULT`; `UNORDERED` for other kinds
+ */
+[[nodiscard]] inline nan_semantics get_nan_semantics(aggregation const& agg)
+{
+  switch (agg.kind) {
+    case aggregation::MIN: return dynamic_cast<min_aggregation const&>(agg)._semantics;
+    case aggregation::MAX: return dynamic_cast<max_aggregation const&>(agg)._semantics;
+    case aggregation::ARGMIN: return dynamic_cast<argmin_aggregation const&>(agg)._semantics;
+    case aggregation::ARGMAX: return dynamic_cast<argmax_aggregation const&>(agg)._semantics;
+    default: return nan_semantics::UNORDERED;
+  }
+}
 
 /**
  * @brief Derived class for specifying a nunique aggregation

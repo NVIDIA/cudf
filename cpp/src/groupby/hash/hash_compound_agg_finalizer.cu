@@ -89,14 +89,14 @@ void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& final
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MIN>(aggregation const& agg) const
 {
-  finalize_minmax_for_compound_types(*this, agg, make_argmin_aggregation<>);
+  finalize_minmax_for_compound_types(*this, agg, [] { return make_argmin_aggregation(); });
 }
 
 // Specialization for MAX aggregation
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MAX>(aggregation const& agg) const
 {
-  finalize_minmax_for_compound_types(*this, agg, make_argmax_aggregation<>);
+  finalize_minmax_for_compound_types(*this, agg, [] { return make_argmax_aggregation(); });
 }
 
 // Specialization for MEAN aggregation

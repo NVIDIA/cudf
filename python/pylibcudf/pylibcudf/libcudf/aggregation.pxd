@@ -10,6 +10,7 @@ from pylibcudf.libcudf.types cimport (
     data_type,
     interpolation,
     nan_equality,
+    nan_semantics,
     null_equality,
     null_order,
     null_policy,
@@ -112,9 +113,13 @@ cdef extern from "cudf/aggregation.hpp" namespace "cudf" nogil:
 
     cdef unique_ptr[T] make_product_aggregation[T]() except +libcudf_exception_handler
 
-    cdef unique_ptr[T] make_min_aggregation[T]() except +libcudf_exception_handler
+    cdef unique_ptr[T] make_min_aggregation[T](
+        nan_semantics semantics
+    ) except +libcudf_exception_handler
 
-    cdef unique_ptr[T] make_max_aggregation[T]() except +libcudf_exception_handler
+    cdef unique_ptr[T] make_max_aggregation[T](
+        nan_semantics semantics
+    ) except +libcudf_exception_handler
 
     cdef unique_ptr[T] make_count_aggregation[T](
         null_policy null_handling
@@ -141,9 +146,13 @@ cdef extern from "cudf/aggregation.hpp" namespace "cudf" nogil:
     cdef unique_ptr[T] make_quantile_aggregation[T](
         vector[double] q, interpolation i) except +libcudf_exception_handler
 
-    cdef unique_ptr[T] make_argmax_aggregation[T]() except +libcudf_exception_handler
+    cdef unique_ptr[T] make_argmax_aggregation[T](
+        nan_semantics semantics
+    ) except +libcudf_exception_handler
 
-    cdef unique_ptr[T] make_argmin_aggregation[T]() except +libcudf_exception_handler
+    cdef unique_ptr[T] make_argmin_aggregation[T](
+        nan_semantics semantics
+    ) except +libcudf_exception_handler
 
     cdef unique_ptr[T] make_nunique_aggregation[T](
         null_policy null_handling

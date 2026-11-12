@@ -19,6 +19,8 @@ namespace {
 /// Converts rolling_aggregation to corresponding reduce/groupby_aggregation.
 template <typename Base>
 struct aggregation_converter {
+  nan_semantics semantics;  ///< NaN ordering of a MIN/MAX aggregation
+
   template <aggregation::Kind k>
   std::unique_ptr<Base> operator()() const
   {
@@ -35,9 +37,9 @@ struct aggregation_converter {
     } else if constexpr (k == aggregation::Kind::SUM) {
       return cudf::make_sum_aggregation<Base>();
     } else if constexpr (k == aggregation::Kind::MIN) {
-      return cudf::make_min_aggregation<Base>();
+      return cudf::make_min_aggregation<Base>(semantics);
     } else if constexpr (k == aggregation::Kind::MAX) {
-      return cudf::make_max_aggregation<Base>();
+      return cudf::make_max_aggregation<Base>(semantics);
     } else {
       CUDF_FAIL("Unsupported aggregation kind for optimized unbounded windows.");
     }
@@ -47,7 +49,8 @@ struct aggregation_converter {
 template <typename Base>
 std::unique_ptr<Base> convert_to(cudf::rolling_aggregation const& aggr)
 {
-  return cudf::detail::aggregation_dispatcher(aggr.kind, aggregation_converter<Base>{});
+  return cudf::detail::aggregation_dispatcher(
+    aggr.kind, aggregation_converter<Base>{cudf::detail::get_nan_semantics(aggr)});
 }
 
 /// Compute unbounded rolling window via groupby-aggregation.

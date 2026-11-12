@@ -39,7 +39,9 @@ namespace detail {
 /**
  * @brief Operator for applying a generic (non-specialized) rolling aggregation on a single window.
  */
-template <typename InputType, aggregation::Kind op>
+template <typename InputType,
+          aggregation::Kind op,
+          typename AggOp = typename corresponding_operator<op>::type>
 struct DeviceRolling {
   size_type min_periods;
 
@@ -77,7 +79,6 @@ struct DeviceRolling {
                              size_type end_index,
                              size_type current_index) const
   {
-    using AggOp = typename corresponding_operator<op>::type;
     AggOp agg_op;
 
     cudf::size_type count = 0;
@@ -228,11 +229,13 @@ struct DeviceRollingArgMinMaxStruct : DeviceRollingArgMinMaxBase<cudf::struct_vi
  */
 template <aggregation::Kind op>
 struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dictionary32, op> {
-  DeviceRollingArgMinMaxDictionary(size_type _min_periods)
-    : DeviceRollingArgMinMaxBase<cudf::dictionary32, op>(_min_periods)
+  DeviceRollingArgMinMaxDictionary(size_type _min_periods, bool _totally_ordered = false)
+    : DeviceRollingArgMinMaxBase<cudf::dictionary32, op>(_min_periods),
+      totally_ordered(_totally_ordered)
   {
   }
   using DeviceRollingArgMinMaxBase<cudf::dictionary32, op>::min_periods;
+  bool totally_ordered;  ///< ARGMIN of floating-point keys uses `nan_semantics::TOTALLY_ORDERED`
 
   struct keys_dispatch_fn {
     template <cudf::concepts::dictionary_key T>
@@ -242,31 +245,35 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
                                     size_type end_index,
                                     size_type current_index)
     {
-      using AggOp = typename corresponding_operator<op>::type;
-      AggOp agg_op;
-
-      auto keys  = dict.child(1);
-      auto count = size_type{0};
-      auto val   = AggOp::template identity<T>();
-      auto index = size_type{-1};
-      for (size_type j = start_index; j < end_index; j++) {
-        if (!has_nulls || dict.is_valid_nocheck(j)) {
-          auto element = keys.element<T>(dict.element<dictionary32>(j).value());
-          val          = agg_op(element, val);
-          // A NaN result must still select a row holding a NaN
-          auto const selected = [&] {
-            if constexpr (cuda::std::is_floating_point_v<T>) {
-              return val == element ||
-                     (cudf::detail::is_nan_bits(val) && cudf::detail::is_nan_bits(element));
-            } else {
-              return val == element;
-            }
-          }();
-          if (selected) { index = j; }
-          count++;
+      auto const find_index = [&]<typename AggOp>(AggOp agg_op) {
+        auto keys  = dict.child(1);
+        auto count = size_type{0};
+        auto val   = AggOp::template identity<T>();
+        auto index = size_type{-1};
+        for (size_type j = start_index; j < end_index; j++) {
+          if (!has_nulls || dict.is_valid_nocheck(j)) {
+            auto element = keys.element<T>(dict.element<dictionary32>(j).value());
+            val          = agg_op(element, val);
+            // A NaN result must still select a row holding a NaN
+            auto const selected = [&] {
+              if constexpr (cuda::std::is_floating_point_v<T>) {
+                return val == element ||
+                       (cudf::detail::is_nan_bits(val) && cudf::detail::is_nan_bits(element));
+              } else {
+                return val == element;
+              }
+            }();
+            if (selected) { index = j; }
+            count++;
+          }
         }
+        return count >= min_periods ? index : -1;
+      };
+      // TOTALLY_ORDERED only changes ARGMIN of floating-point keys
+      if constexpr (op == aggregation::ARGMIN && cuda::std::is_floating_point_v<T>) {
+        if (totally_ordered) { return find_index(cudf::DeviceMinTotallyOrdered{}); }
       }
-      return count >= min_periods ? index : -1;
+      return find_index(typename corresponding_operator<op>::type{});
     }
     template <typename T>
     size_type __device__
@@ -276,6 +283,7 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
     }
 
     size_type min_periods;
+    bool totally_ordered;
   };
 
   template <typename OutputType>
@@ -288,13 +296,14 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
                              size_type current_index)
   {
     auto keys_type = input.child(cudf::dictionary_column_view::keys_column_index).type();
-    auto index     = type_dispatcher<dispatch_storage_type>(keys_type,
-                                                        keys_dispatch_fn{min_periods},
-                                                        input,
-                                                        has_nulls,
-                                                        start_index,
-                                                        end_index,
-                                                        current_index);
+    auto index =
+      type_dispatcher<dispatch_storage_type>(keys_type,
+                                             keys_dispatch_fn{min_periods, totally_ordered},
+                                             input,
+                                             has_nulls,
+                                             start_index,
+                                             end_index,
+                                             current_index);
 
     output.element<OutputType>(current_index) = index;
     // The gather mask shouldn't contain null values, so always return true.
@@ -763,9 +772,10 @@ struct create_rolling_operator<InputType, k> {
 template <cudf::concepts::dictionary InputType, aggregation::Kind k>
   requires(k == aggregation::Kind::ARGMIN or k == aggregation::Kind::ARGMAX)
 struct create_rolling_operator<InputType, k> {
-  auto operator()(size_type min_periods, rolling_aggregation const&)
+  auto operator()(size_type min_periods, rolling_aggregation const& agg)
   {
-    return DeviceRollingArgMinMaxDictionary<k>{min_periods};
+    return DeviceRollingArgMinMaxDictionary<k>{
+      min_periods, cudf::detail::get_nan_semantics(agg) == nan_semantics::TOTALLY_ORDERED};
   }
 };
 

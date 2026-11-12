@@ -35,7 +35,10 @@ struct argminmax_dispatcher {
                         ctx.grouped.rows.begin(),
                         output,
                         cudf::detail::element_argminmax_fn<rep_type_t<T>>{
-                          ctx.d_values, ctx.values.has_nulls(), is_argmin},
+                          ctx.d_values,
+                          ctx.values.has_nulls(),
+                          is_argmin,
+                          ctx.semantics == nan_semantics::TOTALLY_ORDERED},
                         is_argmin ? cudf::detail::ARGMIN_SENTINEL : cudf::detail::ARGMAX_SENTINEL,
                         stream,
                         mr);

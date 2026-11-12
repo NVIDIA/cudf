@@ -3,6 +3,7 @@
 #pragma once
 #include <cudf/strings/detail/gather.cuh>
 
+#include <cuda/std/cstddef>
 #include <cuda/std/cstring>
 #include <cuda/std/memory>
 namespace cudf::detail {
@@ -36,14 +37,14 @@ __device__ void copy_vector(
 /** All warp lanes participate, including groups beyond the last row. */
 template <bool RebalanceMedium = false>
 __device__ inline void copy_group(partition_string_column col,
-                                  std::size_t source_row,
+                                  cuda::std::size_t source_row,
                                   size_type destination,
                                   size_type rows)
 {
   constexpr int lanes = 4;
   auto const lane     = threadIdx.x % lanes;
   size_type begin = 0, length = 0, target = 0;
-  if (source_row < static_cast<std::size_t>(rows)) {
+  if (source_row < static_cast<cuda::std::size_t>(rows)) {
     begin  = col.input_offsets[source_row];
     length = col.input_offsets[source_row + 1] - begin;
     target = col.output_offsets[destination];
@@ -99,10 +100,10 @@ CUDF_KERNEL void copy_characters(partition_string_column const* columns,
                                  size_type rows)
 {
   auto const col = columns[blockIdx.y];
-  for (auto base = std::size_t{blockIdx.x} * 64; base < static_cast<std::size_t>(rows);
-       base += std::size_t{gridDim.x} * 64) {
+  for (auto base = cuda::std::size_t{blockIdx.x} * 64; base < static_cast<cuda::std::size_t>(rows);
+       base += cuda::std::size_t{gridDim.x} * 64) {
     auto const source = base + threadIdx.x / 4;
-    auto const target = source < static_cast<std::size_t>(rows) ? scatter_map[source] : 0;
+    auto const target = source < static_cast<cuda::std::size_t>(rows) ? scatter_map[source] : 0;
     copy_group<RebalanceMedium>(col, source, target, rows);
   }
 }

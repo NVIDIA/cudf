@@ -960,14 +960,16 @@ struct dispatch_map_type {
                  strings_column_view(col).offsets().type().id() == type_id::INT32;
         })) {
       rmm::device_uvector<size_type> gather_map(t.num_rows(), stream);
-      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       thrust::make_counting_iterator<size_type>(0),
-                       thrust::make_counting_iterator<size_type>(t.num_rows()),
-                       [map     = partition_map.begin<MapType>(),
-                        offsets = histogram.data(),
-                        gather  = gather_map.data()] __device__(size_type row) {
-                         gather[atomicAdd(&offsets[map[row]], 1)] = row;
-                       });
+      thrust::for_each(
+        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        cuda::counting_iterator<size_type>(0),
+        cuda::counting_iterator<size_type>(t.num_rows()),
+        [map     = partition_map.begin<MapType>(),
+         offsets = histogram.data(),
+         gather  = gather_map.data()] __device__(size_type row) {
+          cuda::atomic_ref<size_type, cuda::thread_scope_device> cursor{offsets[map[row]]};
+          gather[cursor.fetch_add(1, cuda::memory_order_relaxed)] = row;
+        });
       auto output = cudf::detail::gather_partition_strings(t, gather_map, stream, mr);
       if (!output) {
         output =

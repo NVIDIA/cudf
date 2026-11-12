@@ -112,6 +112,8 @@ class parquet_reader_options {
   bool _use_jit_filter = false;
   // Whether to output flat string columns as DICT32 encoded columns
   bool _output_dict_columns = false;
+  // Names of top-level string columns to output as DICT32 encoded columns
+  std::vector<std::string> _dictionary32_columns;
   // Whether column name matching is case sensitive. In case of multiple
   // case-insensitive matches, the first matched column is selected
   bool _case_sensitive_names = true;
@@ -355,6 +357,16 @@ class parquet_reader_options {
    * @return `true` if the reader returns flat string columns as DICTIONARY32 encoded columns
    */
   [[nodiscard]] bool is_enabled_output_dict_columns() const { return _output_dict_columns; }
+
+  /**
+   * @brief Returns names of top-level string columns to output as DICTIONARY32 encoded columns.
+   *
+   * @return Names of top-level string columns to output as DICTIONARY32 encoded columns
+   */
+  [[nodiscard]] std::vector<std::string> const& get_dictionary32_columns() const
+  {
+    return _dictionary32_columns;
+  }
 
   /**
    * @brief Set a new source location
@@ -665,9 +677,40 @@ class parquet_reader_options {
   /**
    * @brief Sets to enable/disable trying to output DICTIONARY32 columns for flat string columns.
    *
+   * @throw cudf::logic_error if `val` is `true` and `set_dictionary32_columns` has been previously
+   * set with a non-empty list
+   *
    * @param val Boolean indicating whether to output DICTIONARY32 columns for flat string columns
    */
-  void enable_output_dict_columns(bool val) { _output_dict_columns = val; }
+  void enable_output_dict_columns(bool val)
+  {
+    CUDF_EXPECTS(not val or _dictionary32_columns.empty(),
+                 "Cannot output all and selected columns as DICTIONARY32 simultaneously");
+    _output_dict_columns = val;
+  }
+
+  /**
+   * @brief Sets names of top-level string columns to output as DICTIONARY32 encoded columns.
+   *
+   * Only flat STRING columns are affected. Names that match a non-string or nested column, or that
+   * match a column not selected for output, are ignored. Names that do not exist in the input files
+   * are ignored silently. This behavior can be changed by setting `enable_ignore_missing_columns`
+   * to false. Names are matched according to `is_enabled_case_sensitive_names()`.
+   *
+   * When AST/JIT filters are set, the selected string columns are materialized, then operated on
+   * by the filter. The filtered results are then encoded as DICTIONARY32 columns.
+   *
+   * @throw cudf::logic_error if `col_names` is non-empty and `enable_output_dict_columns` has been
+   * previously set to `true`
+   *
+   * @param col_names Names of top-level string columns to output as DICTIONARY32 encoded columns
+   */
+  void set_dictionary32_columns(std::vector<std::string> col_names)
+  {
+    CUDF_EXPECTS(col_names.empty() or not _output_dict_columns,
+                 "Cannot output selected and all columns as DICTIONARY32 simultaneously");
+    _dictionary32_columns = std::move(col_names);
+  }
 };
 
 /**
@@ -987,6 +1030,19 @@ class parquet_reader_options_builder {
   parquet_reader_options_builder& output_dict_columns(bool val)
   {
     options.enable_output_dict_columns(val);
+    return *this;
+  }
+
+  /**
+   * @brief Sets names of top-level string columns to output as DICTIONARY32 encoded columns.
+   *
+   * @param col_names Names of top-level string columns to output as DICTIONARY32 encoded columns
+   *
+   * @return this for chaining
+   */
+  parquet_reader_options_builder& dictionary32_columns(std::vector<std::string> col_names)
+  {
+    options.set_dictionary32_columns(std::move(col_names));
     return *this;
   }
 

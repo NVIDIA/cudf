@@ -25,6 +25,8 @@
 
 #include <cuda/stream>
 
+#include <algorithm>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -209,6 +211,36 @@ class reader_impl {
    * @param out_columns The output columns vector to transcode in place.
    */
   void assemble_dict_transcoded_columns(std::vector<std::unique_ptr<column>>& out_columns);
+
+  /**
+   * @brief Whether any output column should be output as DICTIONARY32.
+   *
+   * @return `true` if any output column should be output as DICTIONARY32
+   */
+  [[nodiscard]] bool has_output_dict_columns() const
+  {
+    return std::ranges::any_of(_output_dict_column_mask, std::identity{});
+  }
+
+  /**
+   * @brief Sets which output buffers should be output as DICTIONARY32 columns.
+   *
+   * Must be called after `_output_buffers` and `_options.case_sensitive_names` are set.
+   *
+   * @param options The reader options
+   */
+  void initialize_output_dict_column_mask(parquet_reader_options const& options);
+
+  /**
+   * @brief Encodes the selected flat STRING columns of a table as DICTIONARY32 columns.
+   *
+   * @param tbl The table whose columns, after the first `num_prepended_columns`, correspond to
+   * `_output_buffers`
+   * @param num_prepended_columns Number of synthesized columns preceding the output buffer columns
+   * @return The table with the selected flat STRING columns encoded as DICTIONARY32 columns
+   */
+  [[nodiscard]] std::unique_ptr<table> encode_output_dict_columns(
+    std::unique_ptr<table> tbl, std::size_t num_prepended_columns) const;
 
   /**
    * @brief Copies over the relevant page mask information for the subpass
@@ -537,8 +569,6 @@ class reader_impl {
     bool prepend_source_index_column = false;
     // Whether to prepend the file-local row index column to the output
     bool prepend_row_index_column = false;
-    // Whether to try outputting DICTIONARY32 columns for fully dict-encoded string columns
-    bool output_dict_columns = false;
   } _options;
 
   // Converts the input filter to AST output filter.
@@ -604,6 +634,9 @@ class reader_impl {
   // Per-input-column flag indicating whether that column was selected for direct
   // Parquet-dict → DICTIONARY32 transcode.
   std::vector<bool> _dict_transcode_eligible;
+
+  // Per-output-buffer flag indicating whether that column should be output as DICTIONARY32.
+  std::vector<bool> _output_dict_column_mask;
 
   // LIBCUDF_PARQUET_NZ_MAP selector is fixed for the reader lifetime so
   // every pass and output chunk agrees on which nz map consumer kinds may

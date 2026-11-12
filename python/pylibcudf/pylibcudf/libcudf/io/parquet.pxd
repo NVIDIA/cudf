@@ -45,6 +45,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         bool is_enabled_case_sensitive_names() noexcept
         bool is_enabled_prepend_source_index_column() noexcept
         bool is_enabled_output_dict_columns() noexcept
+        const vector[string]& get_dictionary32_columns() noexcept
         # setter
 
         void set_source(source_info src) except +libcudf_exception_handler
@@ -75,7 +76,10 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         void set_decimal_width(type_id width) noexcept
         void enable_case_sensitive_names(bool val) noexcept
         void enable_prepend_source_index_column(bool val) noexcept
-        void enable_output_dict_columns(bool val) noexcept
+        void enable_output_dict_columns(bool val) except +libcudf_exception_handler
+        void set_dictionary32_columns(
+            vector[string] col_names
+        ) except +libcudf_exception_handler
 
         @staticmethod
         parquet_reader_options_builder builder(
@@ -137,7 +141,10 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         ) noexcept
         parquet_reader_options_builder& output_dict_columns(
             bool val
-        ) noexcept
+        ) except +libcudf_exception_handler
+        parquet_reader_options_builder& dictionary32_columns(
+            vector[string] col_names
+        ) except +libcudf_exception_handler
         parquet_reader_options build() except +libcudf_exception_handler
 
     cdef table_with_metadata read_parquet(

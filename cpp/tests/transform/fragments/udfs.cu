@@ -331,7 +331,7 @@ extern "C" __device__ cudf::errc fourth_power(float* C, float a)
   return cudf::errc::SUCCESS;
 }
 
-extern "C" __device__ cudf::errc square_minus_input(int* output, int input)
+extern "C" __device__ cudf::errc mulsub(int* output, int input)
 {
   *output = input * input - input;
   return cudf::errc::SUCCESS;
@@ -355,7 +355,7 @@ extern "C" __device__ cudf::errc decode_float(float* output, float input)
   return cudf::errc::SUCCESS;
 }
 
-extern "C" __device__ cudf::errc sum_times_scalar(float* out, float a, float b, float c)
+extern "C" __device__ cudf::errc addmul(float* out, float a, float b, float c)
 {
   *out = (a + b) * c;
 

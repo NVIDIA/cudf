@@ -78,6 +78,7 @@ using bitmask_type      = uint32_t;  ///< Bitmask type stored as 32-bit unsigned
 using valid_type        = uint8_t;   ///< Valid type in host memory
 using thread_index_type = int64_t;   ///< Thread index type in kernels
 using char_utf8         = uint32_t;  ///< UTF-8 characters are 1-4 bytes
+using voidptr_t         = void*;     ///< Opaque pointer passed to user-defined functions
 
 /**
  * @brief Similar to `std::distance` but returns `cudf::size_type` and performs `static_cast`
@@ -220,7 +221,7 @@ enum class type_id : int32_t {
  * @brief Opaque user-defined data.
  */
 struct user_data {
-  void* data = nullptr;  ///< Opaque user pointer
+  voidptr_t data = nullptr;  ///< Opaque user pointer
 };
 
 /**

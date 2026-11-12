@@ -584,7 +584,8 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @return The borrowed pointer, including nullptr
    */
   template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
-  [[nodiscard]] __device__ void* element([[maybe_unused]] size_type element_index) const noexcept
+  [[nodiscard]] __device__ voidptr_t
+  element([[maybe_unused]] size_type element_index) const noexcept
   {
     return const_cast<void*>(_data);
   }
@@ -613,8 +614,8 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @return The opaque user-data pointer.
    */
   template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
-  [[nodiscard]] __device__ void* nullable_element(
-    [[maybe_unused]] size_type element_index) const noexcept
+  [[nodiscard]] __device__ voidptr_t
+  nullable_element([[maybe_unused]] size_type element_index) const noexcept
   {
     return element<T>(element_index);
   }
@@ -851,7 +852,8 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @return The opaque user-data pointer, including nullptr
    */
   template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
-  [[nodiscard]] __device__ void* element([[maybe_unused]] size_type element_index) const noexcept
+  [[nodiscard]] __device__ voidptr_t
+  element([[maybe_unused]] size_type element_index) const noexcept
   {
     return const_cast<void*>(_data);
   }
@@ -880,8 +882,8 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @return The opaque user-data pointer.
    */
   template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
-  [[nodiscard]] __device__ void* nullable_element(
-    [[maybe_unused]] size_type element_index) const noexcept
+  [[nodiscard]] __device__ voidptr_t
+  nullable_element([[maybe_unused]] size_type element_index) const noexcept
   {
     return element<T>(element_index);
   }

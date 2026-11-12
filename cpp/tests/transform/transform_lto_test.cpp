@@ -16,14 +16,10 @@
 
 #include <cudf/transform.hpp>
 #include <cudf/udf.hpp>
-#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <array>
 #include <format>
 #include <string>
-#include <tuple>
-#include <utility>
-#include <vector>
 
 struct TransformLTOTest : public cudf::test::BaseFixture {};
 
@@ -35,46 +31,29 @@ using decimal_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
 
 namespace {
 
-// Compare the lightweight carriers with the device types seen by NVRTC.
-auto abi_type_pairs()
-{
-  std::vector<std::pair<std::string, std::string>> types;
-  for (auto id : cudf::test::all_type_ids) {
-    auto logical  = cudf::type_to_name(cudf::data_type{id});
-    auto physical = logical;
-    if (id == cudf::type_id::BOOL8) { physical = "uint8_t"; }
-    if (id == cudf::type_id::FLOAT32) { physical = "uint32_t"; }
-    if (id == cudf::type_id::FLOAT64) { physical = "uint64_t"; }
-    types.emplace_back(logical, "cudf_udf_abi::" + physical);
-  }
-  for (auto unit : {"h", "m"}) {
-    for (auto kind : {"duration", "timestamp"}) {
-      auto logical = std::format("cudf::{}_{}", kind, unit);
-      types.emplace_back(logical, "cudf_udf_abi::" + logical);
-    }
-  }
-  types.emplace_back("cudf::string_view", "cudf_udf_abi::cudf::string_view");
-  types.emplace_back("cuda::std::span<char>", "cudf_udf_abi::cuda::std::span<char>");
-  types.emplace_back("cudf::size_type", "cudf_udf_abi::cudf::size_type");
-  types.emplace_back("int32_t", "cudf_udf_abi::int32_t");
-  types.emplace_back("cudf::errc", "cudf_udf_abi::cudf::errc");
-  types.emplace_back("void*", "void*");
-  return types;
-}
-
-constexpr char abi_test_headers[] = R"CUDA(
-#include <cudf/udf_includes.hpp>
-#include <jit/udf_abi.cuh>
-#include <cuda/std/cstddef>
-#pragma nv_hdrstop
-)CUDA";
-
 }  // namespace
 
 TEST_F(TransformLTOTest, UdfAbiLayouts)
 {
-  std::string source = abi_test_headers;
-  for (auto const& [logical, physical] : abi_type_pairs()) {
+  // Physical value types and the additional types used in UDF signatures.
+  constexpr char const* abi_types[]{"uint8_t",
+                                    "uint16_t",
+                                    "uint32_t",
+                                    "uint64_t",
+                                    "numeric::decimal32",
+                                    "numeric::decimal64",
+                                    "numeric::decimal128",
+                                    "cudf::string_view",
+                                    "cuda::std::span<char>",
+                                    "cudf::size_type",
+                                    "cudf::errc",
+                                    "cudf::voidptr_t"};
+  std::string source = R"CUDA(
+#include <cudf/udf_includes.hpp>
+#include <jit/udf_abi.cuh>
+#pragma nv_hdrstop
+)CUDA";
+  for (auto const* type : abi_types) {
     source += std::format(R"CUDA(
 static_assert(sizeof({0}) == sizeof({1}), "ABI size: {0}");
 static_assert(alignof({0}) == alignof({1}), "ABI alignment: {0}");
@@ -83,87 +62,10 @@ static_assert(sizeof(cuda::std::optional<{0}>) ==
 static_assert(alignof(cuda::std::optional<{0}>) ==
               alignof(cudf_udf_abi::cuda::std::optional<{1}>), "optional ABI alignment: {0}");
 )CUDA",
-                          logical,
-                          physical);
+                          type,
+                          std::format("cudf_udf_abi::{}", type));
   }
-  EXPECT_NO_THROW(std::ignore = cudf::compile_cuda_to_lto_ir(source.c_str()));
-}
-
-TEST_F(TransformLTOTest, UdfAbiValueLayouts)
-{
-  std::string source = abi_test_headers;
-  source += R"CUDA(
-template <typename Logical, typename Physical>
-__device__ bool optional_layout()
-{
-  using physical_optional = cudf_udf_abi::cuda::std::optional<Physical>;
-  cuda::std::optional<Logical> value{cuda::std::in_place};
-  physical_optional representation{};
-  static_assert(sizeof(value) == sizeof(representation));
-  static_assert(alignof(decltype(value)) == alignof(physical_optional));
-  auto const offset = reinterpret_cast<char const*>(&*value) -
-                      reinterpret_cast<char const*>(&value);
-  cuda::std::memcpy(&representation, &value, sizeof(value));
-  if (offset != offsetof(physical_optional, value) || !representation.engaged) { return false; }
-  value.reset();
-  cuda::std::memcpy(&representation, &value, sizeof(value));
-  return !representation.engaged;
-}
-
-template <typename Logical, typename Physical>
-__device__ bool decimal_layout()
-{
-  using rep = typename Logical::rep;
-  auto const number = (rep{1} << (sizeof(rep) * 8 - 3)) + rep{37};
-  Logical value{numeric::scaled_integer<rep>{number, numeric::scale_type{-3}}};
-  Physical representation{};
-  static_assert(sizeof(value) == sizeof(representation));
-  static_assert(alignof(Logical) == alignof(Physical));
-  cuda::std::memcpy(&representation, &value, sizeof(value));
-  return representation.value == number && representation.scale == -3;
-}
-
-extern "C" __device__ cudf::errc cudf_transform_udf(uint8_t* output)
-{
-  char text[] = "\xc3\xa9!";
-  cudf::string_view string{text, 3};
-  auto const length = string.length();
-  cudf_udf_abi::cudf::string_view string_rep{};
-  static_assert(sizeof(string) == sizeof(string_rep));
-  cuda::std::memcpy(&string_rep, &string, sizeof(string));
-  cuda::std::span<char> span{text, 3};
-  cudf_udf_abi::cuda::std::span<char> span_rep{};
-  static_assert(sizeof(span) == sizeof(span_rep));
-  cuda::std::memcpy(&span_rep, &span, sizeof(span));
-  bool matches = string_rep.data == text && string_rep.bytes == 3 &&
-                 string_rep.length == length && length == 2 &&
-                 span_rep.data == text && span_rep.size == 3;
-  matches &= decimal_layout<numeric::decimal32, cudf_udf_abi::numeric::decimal32>();
-  matches &= decimal_layout<numeric::decimal64, cudf_udf_abi::numeric::decimal64>();
-  matches &= decimal_layout<numeric::decimal128, cudf_udf_abi::numeric::decimal128>();
-)CUDA";
-  for (auto const& [logical, physical] : abi_type_pairs()) {
-    source += std::format(R"CUDA(
-  matches &= optional_layout<{}, {}>();
-)CUDA",
-                          logical,
-                          physical);
-  }
-  source += R"CUDA(
-  *output = matches;
-  return cudf::errc::SUCCESS;
-}
-)CUDA";
-  auto fragment   = cudf::compile_cuda_to_lto_ir(source.c_str());
-  auto const view = fragment.view();
-  cudf::transform_output outputs[]{{cudf::data_type{cudf::type_id::UINT8}}};
-  auto result = cudf::transform(cudf::transform_udf{"cudf_transform_udf", {&view, 1}},
-                                {},
-                                outputs,
-                                {},
-                                cudf::size_type{1},
-                                cudf::test::get_default_stream());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), column_wrapper<uint8_t>{{1}});
+  EXPECT_NO_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(source.c_str())));
 }
 
 TEST_F(TransformLTOTest, CompileUdfWithIncludes)

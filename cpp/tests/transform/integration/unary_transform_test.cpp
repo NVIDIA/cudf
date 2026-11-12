@@ -238,8 +238,8 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
   auto op        = [](dtype a) { return a * a - a; };
   auto data_init = [](cudf::size_type row) { return row % 78; };
 
-  test_udf<dtype>(cudf::test::get_transform_udf("square_minus_input"), op, data_init, 500);
-  test_udf<dtype>(cudf::test::get_ptx_transform_udf("square_minus_input"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_transform_udf("mulsub"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_ptx_transform_udf("mulsub"), op, data_init, 500);
 }
 
 TEST_F(UnaryOperationIntegrationTest, Transform_INT8_INT8)
@@ -470,7 +470,7 @@ TEST_F(TernaryOperationTest, TransformWithScalar)
 
   cudf::transform_input cuda_inputs[]       = {a, b, cudf::scalar_column_view(c)};
   std::unique_ptr<cudf::column> cuda_result = std::move(
-    cudf::transform(cudf::test::get_transform_udf("sum_times_scalar"),
+    cudf::transform(cudf::test::get_transform_udf("addmul"),
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<T>()),
                                                       cudf::output_nullability::PRESERVE}},
@@ -483,7 +483,7 @@ TEST_F(TernaryOperationTest, TransformWithScalar)
 
   cudf::transform_input ptx_inputs[]       = {a, b, cudf::scalar_column_view(c)};
   std::unique_ptr<cudf::column> ptx_result = std::move(
-    cudf::transform(cudf::test::get_ptx_transform_udf("sum_times_scalar"),
+    cudf::transform(cudf::test::get_ptx_transform_udf("addmul"),
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<T>()),
                                                       cudf::output_nullability::PRESERVE}},

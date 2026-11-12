@@ -22,6 +22,7 @@ using uint64_t = unsigned long long;
 namespace cudf {
 
 using size_type = int32_t;
+using voidptr_t = void*;
 using error_int = int32_t;
 
 enum class errc : error_int;

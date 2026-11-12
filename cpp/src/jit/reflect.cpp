@@ -183,7 +183,7 @@ std::string reflect_input_element(transform_input_spec const& spec, bool use_phy
 
 std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type)
 {
-  if (spec.is_user_data) { return "void*"; }
+  if (spec.is_user_data) { return "cudf::voidptr_t"; }
   return type_dispatcher(data_type{spec.type}, reflect_input_value_fn{}, spec, use_physical_type);
 }
 

@@ -14,13 +14,16 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/partitioning.hpp>
 #include <cudf/sorting.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 
 #include <algorithm>
+#include <cstdlib>
 #include <numeric>
+#include <optional>
 #include <string>
 
 template <typename T>
@@ -441,4 +444,111 @@ TEST_F(PartitionTestNotTyped, NoIntegerOverflow)
   auto expected_table = cudf::table_view{{expected}};
 
   run_partition_test(table_to_partition, map, 2, expected_table, expected_offsets);
+}
+
+TEST_F(PartitionTestNotTyped, BatchedStringGatherPermutation)
+{
+  for (auto const rows : {1023, 1024, 1025}) {
+    for (auto const partitions : {2, 256, 257}) {
+      for (auto const nullable : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << rows << "/" << partitions << "/" << nullable);
+        std::vector<std::string> ids(rows + 7), values(rows + 7), expected_ids, expected_values;
+        std::vector<int32_t> bins(rows + 7);
+        std::vector<bool> valid(rows + 7), expected_valid;
+        std::vector<cudf::size_type> offsets{0};
+        for (int i = 0; i < rows + 7; ++i) {
+          ids[i]    = std::to_string(i);
+          values[i] = std::string(i % 259, 'a' + i % 26) + std::string{"\0x", 2};
+          bins[i]   = i % 5 ? 0 : (i * 17) % partitions;
+          valid[i]  = !nullable || i % 11 != 0;
+        }
+        for (int p = 0; p < partitions; ++p) {
+          for (int i = 7; i < rows + 7; ++i) {
+            if (bins[i] != p) continue;
+            expected_ids.push_back(ids[i]);
+            expected_values.push_back(values[i]);
+            expected_valid.push_back(valid[i]);
+          }
+          offsets.push_back(expected_ids.size());
+        }
+        strings_column_wrapper id(ids.begin(), ids.end());
+        std::vector<std::string> empty(rows);
+        strings_column_wrapper empty_column(empty.begin(), empty.end());
+        strings_column_wrapper value(values.begin(), values.end(), valid.begin());
+        fixed_width_column_wrapper<int32_t> map(bins.begin(), bins.end());
+        strings_column_wrapper expected_id(expected_ids.begin(), expected_ids.end());
+        strings_column_wrapper expected_value(
+          expected_values.begin(), expected_values.end(), expected_valid.begin());
+        auto const sliced = cudf::slice(cudf::table_view{{id, value}}, {7, rows + 7})[0];
+        auto input        = cudf::table_view{{sliced.column(0), sliced.column(1), empty_column}};
+        auto sliced_map   = cudf::slice(cudf::column_view{map}, {7, rows + 7})[0];
+        auto result       = cudf::partition(input, sliced_map, partitions);
+        EXPECT_EQ(result.second, offsets);
+        auto expected = cudf::table_view{{expected_id, expected_value, empty_column}};
+        for (int p = 0; p < partitions; ++p) {
+          auto actual_partition =
+            cudf::slice(result.first->view(), {offsets[p], offsets[p + 1]})[0];
+          auto expected_partition = cudf::slice(expected, {offsets[p], offsets[p + 1]})[0];
+          auto actual_sorted      = cudf::sort(actual_partition);
+          auto expected_sorted    = cudf::sort(expected_partition);
+          // An all-valid mask may be omitted by the materialization path.
+          CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view());
+        }
+      }
+    }
+  }
+}
+
+TEST_F(PartitionTestNotTyped, BatchedStringGatherOffsetThreshold)
+{
+  struct restore_environment {
+    char const* name;
+    std::optional<std::string> previous;
+
+    explicit restore_environment(char const* variable) : name(variable)
+    {
+      if (auto const value = std::getenv(name)) { previous = value; }
+    }
+
+    ~restore_environment()
+    {
+      if (previous) {
+        setenv(name, previous->c_str(), 1);
+      } else {
+        unsetenv(name);
+      }
+    }
+  };
+  restore_environment threshold_restore{"LIBCUDF_LARGE_STRINGS_THRESHOLD"};
+  restore_environment enabled_restore{"LIBCUDF_LARGE_STRINGS_ENABLED"};
+  ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_THRESHOLD", "2048", 1), 0);
+  ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_ENABLED", "1", 1), 0);
+
+  constexpr cudf::size_type rows = 1024;
+  std::vector<std::string> values(rows, "a");
+  strings_column_wrapper strings(values.begin(), values.end());
+  auto const input = cudf::table_view{{strings, strings}};
+  auto const ones  = cuda::make_constant_iterator<int32_t>(1);
+  fixed_width_column_wrapper<int32_t> map(ones, ones + rows);
+  ASSERT_EQ(cudf::strings_column_view(input.column(0)).offsets().type().id(), cudf::type_id::INT32);
+
+  // Change the threshold after construction to keep the input offsets INT32.
+  for (auto const threshold : {1025, 1024, 1023}) {
+    ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_THRESHOLD", std::to_string(threshold).c_str(), 1), 0);
+    for (auto const enabled : {true, false}) {
+      SCOPED_TRACE(::testing::Message() << threshold << "/" << enabled);
+      ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_ENABLED", enabled ? "1" : "0", 1), 0);
+      if (!enabled && rows >= threshold) {
+        EXPECT_THROW(cudf::partition(input, map, 3), std::overflow_error);
+      } else {
+        auto [output, offsets] = cudf::partition(input, map, 3);
+        EXPECT_EQ(offsets, (std::vector<cudf::size_type>{0, 0, rows, rows}));
+        auto const expected_type = rows >= threshold ? cudf::type_id::INT64 : cudf::type_id::INT32;
+        for (auto const& column : output->view()) {
+          EXPECT_EQ(cudf::strings_column_view(column).offsets().type().id(), expected_type);
+        }
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(input, output->view());
+      }
+    }
+  }
 }

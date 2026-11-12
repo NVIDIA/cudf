@@ -16,6 +16,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
 #include <thrust/equal.h>
 #include <thrust/execution_policy.h>
 
@@ -38,7 +39,7 @@ class element_equality_comparator {
    * @param rhs_element_index The index of the second element
    * @return True if lhs and rhs element are equal
    */
-  template <typename Element, CUDF_ENABLE_IF(cudf::is_equality_comparable<Element, Element>())>
+  template <cuda::std::equality_comparable Element>
   __device__ bool operator()(column_device_view const& lhs,
                              column_device_view const& rhs,
                              size_type lhs_element_index,
@@ -49,7 +50,7 @@ class element_equality_comparator {
   }
 
   // @cond
-  template <typename Element, CUDF_ENABLE_IF(not cudf::is_equality_comparable<Element, Element>())>
+  template <typename Element>
   __device__ bool operator()(column_device_view const&,
                              column_device_view const&,
                              size_type,

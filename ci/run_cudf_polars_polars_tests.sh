@@ -145,7 +145,6 @@ done
 # tests. Polars fixed this in https://github.com/pola-rs/polars/pull/29533.
 SQLALCHEMY_SQLITE_URI_WARNING="ignore:Query string argument(s) 'cache', 'mode' are not accepted by the pysqlite driver and are being ignored; SQLite URI arguments require that 'uri=true' also be present in the URL.:sqlalchemy.exc.SAWarning"
 
-# Fail fast (-x) rather than trying to continue because failed tests pollute the state
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
     configure_fallback_report in-memory
     echo "Run polars tests with injected in-memory GPU engine"
@@ -153,7 +152,6 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
        python -m pytest \
            --import-mode=importlib \
            --cache-clear \
-           -x \
            -m "${PYTEST_MARK_EXPR}" \
            -p cudf_polars.testing.inject_gpu_engine \
            -n 4 \
@@ -170,6 +168,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
 fi
 
 # TODO(ResourceWarning): https://github.com/NVIDIA/cudf/issues/22181
+# Fail fast (-x) rather than trying to continue because failed tests pollute the state
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
     configure_fallback_report spmd
     echo "Run polars tests with injected SPMD GPU engine, ${BLOCKSIZE} blocksize"

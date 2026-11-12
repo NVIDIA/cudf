@@ -30,6 +30,14 @@
 #include <cudf/detail/operation_udf.cuh>
 // clang-format on
 
+#ifdef CUDF_LTO_MODE
+namespace cudf::join::jit::lto {
+using transform_type = CUDF_UDF_TYPE;
+extern "C" __device__ transform_type transform;
+}  // namespace cudf::join::jit::lto
+#define GENERIC_JOIN_FILTER_OP(...) ::cudf::join::jit::lto::transform(__VA_ARGS__)
+#endif
+
 namespace cudf::join::jit {
 
 // TODO: Create a JIT-compatible header for JoinNoMatch to avoid this duplication.

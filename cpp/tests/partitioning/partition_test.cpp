@@ -553,3 +553,31 @@ TEST_F(PartitionTestNotTyped, BatchedStringGatherOffsetThreshold)
     }
   }
 }
+
+template <typename T>
+class StringPartitionMapTypes : public cudf::test::BaseFixture {};
+TYPED_TEST_SUITE(StringPartitionMapTypes, cudf::test::IntegralTypesNotBool);
+TYPED_TEST(StringPartitionMapTypes, PartialTiles)
+{
+  constexpr int rows = 2049;
+  std::vector<std::string> text(rows), expected;
+  std::vector<TypeParam> bins(rows);
+  for (int i = 0; i < rows; ++i)
+    text[i] = std::to_string(i);
+  strings_column_wrapper input(text.begin(), text.end());
+  for (auto const parts : {2, 3, 127}) {
+    expected.clear();
+    std::vector<cudf::size_type> offsets{0};
+    for (int i = 0; i < rows; ++i)
+      bins[i] = i % parts;
+    for (int p = 0; p < parts; ++p) {
+      for (int i = p; i < rows; i += parts)
+        expected.push_back(text[i]);
+      offsets.push_back(expected.size());
+    }
+    fixed_width_column_wrapper<TypeParam> map(bins.begin(), bins.end());
+    strings_column_wrapper output(expected.begin(), expected.end());
+    run_partition_test(
+      cudf::table_view{{input, input}}, map, parts, cudf::table_view{{output, output}}, offsets);
+  }
+}

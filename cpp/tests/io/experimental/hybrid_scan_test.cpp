@@ -42,6 +42,7 @@
 #include <array>
 #include <chrono>
 #include <format>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -591,29 +592,25 @@ TEST_F(HybridScanTest, FilterInt96Stats)
   auto const sentinel = to_int96_bytes(duration_to_int96(cudf::duration_D{
     std::chrono::sys_days{std::chrono::December / 31 / 9999}.time_since_epoch().count()}));
 
-  // Patches the column orders and the min/max of both columns into the metadata, with the
-  // post-epoch max replaced by `sentinel` if `overflow_max` is set, and only the deprecated row
-  // group min/max kept if `deprecated_only` is set
+  // Patches the column orders and the min/max of both columns into the metadata, then lets `tweak`
+  // modify the statistics and page index of each column chunk, given its row group index
+  using cudf::io::parquet::ColumnChunk;
   auto const prune = [&](std::optional<std::vector<ColumnOrder>> const& column_orders,
                          cudf::ast::expression const& filter,
-                         bool overflow_max    = false,
-                         bool deprecated_only = false) {
+                         std::function<void(int, ColumnChunk&)> const& tweak = {}) {
     auto patched          = metadata;
     patched.column_orders = column_orders;
     for (auto rg = 0; auto& row_group : patched.row_groups) {
       auto const min = to_int96_bytes(duration_to_int96(timestamp(rg * rows_per_row_group)));
       auto const max =
-        overflow_max and rg == 1
-          ? sentinel
-          : to_int96_bytes(duration_to_int96(timestamp((rg + 1) * rows_per_row_group - 1)));
+        to_int96_bytes(duration_to_int96(timestamp((rg + 1) * rows_per_row_group - 1)));
       for (auto& chunk : row_group.columns) {
         auto& stats = chunk.meta_data.statistics;
         stats.min = stats.min_value = chunk.column_index->min_values.front() = min;
         stats.max = stats.max_value = chunk.column_index->max_values.front() = max;
-        if (deprecated_only) {
-          stats.min_value.reset();
-          stats.max_value.reset();
-        }
+        // The writer skips INT96 statistics, so its pages are all marked as null
+        chunk.column_index->null_pages.front() = false;
+        if (tweak) { tweak(rg, chunk); }
       }
       ++rg;
     }
@@ -672,12 +669,40 @@ TEST_F(HybridScanTest, FilterInt96Stats)
   EXPECT_EQ(prune(ordered, lt_zero), pre_epoch);
   EXPECT_EQ(prune(ordered, le_zero), all);
   // Deprecated INT96 min/max have no defined order, so only the page index prunes
-  EXPECT_EQ(prune(ordered, ge_zero, /*overflow_max=*/false, /*deprecated_only=*/true),
+  auto const deprecated_only = [](int, ColumnChunk& chunk) {
+    chunk.meta_data.statistics.min_value.reset();
+    chunk.meta_data.statistics.max_value.reset();
+  };
+  EXPECT_EQ(prune(ordered, ge_zero, deprecated_only),
+            std::pair(row_groups_type{0, 1}, int64_t{rows_per_row_group}));
+  // A min alone cannot rule out a max that overflows, so only the page index prunes
+  auto const min_only = [](int, ColumnChunk& chunk) {
+    chunk.meta_data.statistics.max.reset();
+    chunk.meta_data.statistics.max_value.reset();
+  };
+  EXPECT_EQ(prune(ordered, lt_zero, min_only),
             std::pair(row_groups_type{0, 1}, int64_t{rows_per_row_group}));
   // A max that overflows `timestamp_ns` is ignored along with its min, as rows holding such
   // values wrap around when read
-  EXPECT_EQ(prune(ordered, ge_zero, /*overflow_max=*/true), post_epoch);
-  EXPECT_EQ(prune(ordered, lt_zero, /*overflow_max=*/true), all);
+  auto const overflow_max = [&](int rg, ColumnChunk& chunk) {
+    if (rg == 1) {
+      chunk.meta_data.statistics.max           = chunk.meta_data.statistics.max_value =
+        chunk.column_index->max_values.front() = sentinel;
+    }
+  };
+  EXPECT_EQ(prune(ordered, ge_zero, overflow_max), post_epoch);
+  EXPECT_EQ(prune(ordered, lt_zero, overflow_max), all);
+  // A post-epoch min written as a full day of nanoseconds on the day before no longer orders like
+  // the converted values, so it is ignored along with its max
+  auto const unnormalized_min = [](int rg, ColumnChunk& chunk) {
+    if (rg == 1) {
+      auto const [nanos, days]       = duration_to_int96(cudf::duration_ns{0});
+      chunk.meta_data.statistics.min = chunk.meta_data.statistics.min_value =
+        chunk.column_index->min_values.front() =
+          to_int96_bytes({nanos + 86'400 * ns_per_row, days - 1});
+    }
+  };
+  EXPECT_EQ(prune(ordered, lt_zero, unnormalized_min), all);
 }
 
 TEST_F(HybridScanTest, MaterializeStrings)

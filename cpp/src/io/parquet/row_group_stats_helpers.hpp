@@ -127,13 +127,13 @@ struct row_group_stats_caster : public stats_caster_base {
               if (not min_value->has_value()) { min_value = &stats.min; }
               if (not max_value->has_value()) { max_value = &stats.max; }
             }
-            // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, and ones that
-            // overflow `T` would wrap around, so ignore them
+            // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them,
+            // along with ones that cannot bound the converted values
             auto const ignore_int96_min_max =
               is_unordered_int96(source_metadata,
                                  colchunk.meta_data.type,
                                  std::distance(row_group.columns.begin(), col)) or
-              int96_minmax_overflows<T>(colchunk.meta_data.type, *min_value, *max_value);
+              int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
             if (ignore_int96_min_max) {
               min.set_index(stats_idx, std::nullopt, {});
               max.set_index(stats_idx, std::nullopt, {});

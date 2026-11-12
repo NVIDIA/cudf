@@ -111,18 +111,26 @@ class stats_caster_base {
     return {nanos, days};
   }
 
-  /// Checks whether INT96 min/max statistics overflow the timestamp type `T` and would wrap around
+  /**
+   * @brief Checks whether INT96 min/max statistics cannot bound the timestamps of type `T`
+   *
+   * This is the case if either bound is missing, has nanoseconds outside of a day so that it no
+   * longer orders like the converted values, or overflows `T` so that its rows would wrap around.
+   */
   template <typename T>
-  [[nodiscard]] static bool int96_minmax_overflows(Type type,
-                                                   std::optional<std::vector<uint8_t>> const& min,
-                                                   std::optional<std::vector<uint8_t>> const& max)
+  [[nodiscard]] static bool int96_minmax_unusable(Type type,
+                                                  std::optional<std::vector<uint8_t>> const& min,
+                                                  std::optional<std::vector<uint8_t>> const& max)
   {
     if constexpr (cudf::is_timestamp<T>()) {
       if (type != Type::INT96) { return false; }
       return std::ranges::any_of(std::array{&min, &max}, [](auto const* value) {
-        if (not value->has_value()) { return false; }
+        if (not value->has_value()) { return true; }
         auto const [nanos, days] = decode_int96_value(value->value().data(), value->value().size());
-        return not int96_fits_duration<typename T::duration>(nanos, days);
+        auto const nanos_per_day =
+          cuda::std::chrono::duration_cast<cudf::duration_ns>(cudf::duration_D{1}).count();
+        return nanos < 0 or nanos >= nanos_per_day or
+               not int96_fits_duration<typename T::duration>(nanos, days);
       });
     } else {
       return false;

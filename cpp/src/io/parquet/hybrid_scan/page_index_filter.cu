@@ -156,9 +156,9 @@ struct page_stats_caster : public stats_caster_base {
                 return;
               }
 
-              // INT96 min/max that overflow `T` would wrap around, so ignore them too
+              // Also ignore INT96 min/max that cannot bound the converted values
               if (ignore_int96_min_max or
-                  int96_minmax_overflows<T>(colchunk.meta_data.type, min_value, max_value)) {
+                  int96_minmax_unusable<T>(colchunk.meta_data.type, min_value, max_value)) {
                 min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
                 max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
               } else {

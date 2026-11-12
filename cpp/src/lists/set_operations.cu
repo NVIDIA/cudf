@@ -53,7 +53,7 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
                                      null_equality nulls_equal,
                                      nan_equality nans_equal,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   cudf::memory_resources mrs(mr);
   auto const temp_mr = mrs.get_temporary_mr();
@@ -124,7 +124,7 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
                                            null_equality nulls_equal,
                                            nan_equality nans_equal,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   check_compatibility(lhs, rhs);
 
@@ -183,7 +183,7 @@ std::unique_ptr<column> union_distinct(lists_column_view const& lhs,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   check_compatibility(lhs, rhs);
 
@@ -208,7 +208,7 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
                                             null_equality nulls_equal,
                                             nan_equality nans_equal,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   check_compatibility(lhs, rhs);
 
@@ -271,7 +271,7 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
                                      null_equality nulls_equal,
                                      nan_equality nans_equal,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::have_overlap(lhs, rhs, nulls_equal, nans_equal, stream, mr);
@@ -282,7 +282,7 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
                                            null_equality nulls_equal,
                                            nan_equality nans_equal,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::intersect_distinct(lhs, rhs, nulls_equal, nans_equal, stream, mr);
@@ -293,7 +293,7 @@ std::unique_ptr<column> union_distinct(lists_column_view const& lhs,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::union_distinct(lhs, rhs, nulls_equal, nans_equal, stream, mr);
@@ -304,7 +304,7 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
                                             null_equality nulls_equal,
                                             nan_equality nans_equal,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::difference_distinct(lhs, rhs, nulls_equal, nans_equal, stream, mr);

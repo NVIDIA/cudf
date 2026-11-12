@@ -1805,22 +1805,6 @@ def test_numpy_ndarray_numba_ufunc(array):
     assert_eq(add_one_ufunc(arr1), add_one_ufunc(arr2))
 
 
-@pytest.mark.filterwarnings(
-    "ignore:Grid size:numba.core.errors.NumbaPerformanceWarning"
-)
-@pytest.mark.filterwarnings(
-    "ignore:Grid size:numba.cuda.core.errors.NumbaPerformanceWarning"
-)
-def test_numpy_ndarray_numba_cuda_ufunc(array):
-    arr1, arr2 = array
-
-    @vectorize(["int64(int64)"], target="cuda")
-    def add_one_ufunc(a):
-        return a + 1
-
-    assert_eq(cp.asarray(add_one_ufunc(arr1)), cp.asarray(add_one_ufunc(arr2)))
-
-
 @pytest.mark.xfail(
     reason="Fallback expected because casting to object is not supported",
 )

@@ -555,8 +555,8 @@ class streaming_groupby {
    * @throws cudf::logic_error if no data has been accumulated
    */
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> finalize(
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Finalize results and release all accumulated state.
@@ -598,7 +598,7 @@ class streaming_groupby {
   void do_aggregate(table_view const& data, cuda::stream_ref stream);
   void do_merge(streaming_groupby const& other, cuda::stream_ref stream);
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> do_finalize(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+    cuda::stream_ref stream, cudf::memory_resources mr) const;
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
   do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr);
 };

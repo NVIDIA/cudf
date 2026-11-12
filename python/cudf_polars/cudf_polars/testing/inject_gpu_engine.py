@@ -479,8 +479,6 @@ ICEBERG_MIXED_WRITER_TESTS: tuple[str, ...] = (
 
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
     "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
@@ -847,6 +845,8 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
     "tests/benchmark/test_join_where.py::test_strict_inequalities": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_lazy_parquet.py::test_parquet_many_row_groups_12297": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_hive.py::test_hive_write_multiple_files": "Too slow with --inject-gpu-engine-blocksize=small",
+    "tests/unit/io/test_parquet.py::test_fixed_len_byte_array_decimal[False]": "Too slow with --inject-gpu-engine-blocksize=small",
+    "tests/unit/io/test_parquet.py::test_fixed_len_byte_array_decimal[True]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_o_direct_matches_buffered": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_parquet_defer_cached_reads[0]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_parquet_defer_cached_reads[1]": "Too slow with --inject-gpu-engine-blocksize=small",

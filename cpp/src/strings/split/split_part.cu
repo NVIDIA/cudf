@@ -133,7 +133,7 @@ std::unique_ptr<column> split_part_fn(strings_column_view const& input,
                                       Tokenizer tokenizer,
                                       DelimiterFn delimiter_fn,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   if (input.size() == input.null_count()) {
     return std::make_unique<column>(input.parent(), stream, mr);
@@ -167,7 +167,7 @@ std::unique_ptr<column> split_part(strings_column_view const& input,
                                    string_scalar const& delimiter,
                                    size_type index,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     delimiter.is_valid(stream), "Parameter delimiter must be valid", std::invalid_argument);
@@ -193,7 +193,7 @@ std::unique_ptr<column> split_part(strings_column_view const& input,
                                    string_scalar const& delimiter,
                                    size_type index,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::split_part(input, delimiter, index, stream, mr);

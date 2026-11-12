@@ -57,7 +57,7 @@ std::unique_ptr<column> rank_generator(column_view const& order_by,
                                        value_resolver resolver,
                                        scan_operator scan_op,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto const order_by_tview = table_view{{order_by}};
   auto const temp_mr        = cudf::get_current_device_resource_ref();
@@ -98,7 +98,7 @@ std::unique_ptr<column> rank_generator(column_view const& order_by,
 
 std::unique_ptr<column> inclusive_dense_rank_scan(column_view const& order_by,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   return rank_generator(
     order_by,
@@ -110,7 +110,7 @@ std::unique_ptr<column> inclusive_dense_rank_scan(column_view const& order_by,
 
 std::unique_ptr<column> inclusive_rank_scan(column_view const& order_by,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!cudf::structs::detail::is_or_has_nested_lists(order_by),
                "Unsupported list type in rank scan.");
@@ -122,8 +122,9 @@ std::unique_ptr<column> inclusive_rank_scan(column_view const& order_by,
     mr);
 }
 
-std::unique_ptr<column> inclusive_one_normalized_percent_rank_scan(
-  column_view const& order_by, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::unique_ptr<column> inclusive_one_normalized_percent_rank_scan(column_view const& order_by,
+                                                                   cuda::stream_ref stream,
+                                                                   cudf::memory_resources mr)
 {
   auto const rank_column =
     inclusive_rank_scan(order_by, stream, cudf::get_current_device_resource_ref());

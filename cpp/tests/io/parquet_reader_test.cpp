@@ -6610,6 +6610,24 @@ TEST_F(ParquetReaderTest, DecodeInt96Stats)
             cudf::timestamp_ms{cudf::duration_ms{-1'001}});
   EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_s>(nanos, julian_days),
             cudf::timestamp_s{cudf::duration_s{-2}});
+
+  // The `timestamp_ns` limits, whose midnight overflows at the minimum, and their neighbors
+  using cudf::io::parquet::detail::int96_fits_duration;
+  auto constexpr min_nanos = int64_t{763'145'224'192};
+  auto constexpr min_days  = int32_t{2'333'836};
+  auto constexpr max_nanos = int64_t{85'636'854'775'807};
+  auto constexpr max_days  = int32_t{2'547'339};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(min_nanos, min_days),
+            cudf::timestamp_ns::min());
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(max_nanos, max_days),
+            cudf::timestamp_ns::max());
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(min_nanos, min_days));
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(max_nanos, max_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(min_nanos - 1, min_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(max_nanos + 1, max_days));
+  // Coarser units have a wider range
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_us>(min_nanos - 1, min_days));
+
   EXPECT_THROW(
     ParquetStatsDecoder::decode<cudf::timestamp_ns>({0x00}, cudf::io::parquet::Type::INT96),
     cudf::logic_error);

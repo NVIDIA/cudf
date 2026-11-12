@@ -32,6 +32,25 @@ constexpr int32_t julian_day_unix_epoch = [] {
 static_assert(julian_day_unix_epoch == 2'440'588);
 
 /**
+ * @brief Converts the two halves of an INT96 timestamp to a 128-bit count of `Duration` since the
+ * epoch, which can't overflow
+ *
+ * @tparam Duration Output duration type, e.g. `cudf::duration_ms`
+ * @param nanos Nanoseconds of the day (first 8 bytes of the INT96 value)
+ * @param julian_days Julian day number (last 4 bytes of the INT96 value)
+ * @return 128-bit count of `Duration` since the Unix epoch
+ */
+template <typename Duration>
+[[nodiscard]] CUDF_HOST_DEVICE inline __int128_t int96_to_ticks(int64_t nanos, int32_t julian_days)
+{
+  using cuda::std::chrono::duration_cast;
+  auto const ticks_per_day = duration_cast<Duration>(cudf::duration_D{1}).count();
+  // TBD: Should be noon instead of midnight, but this matches pyarrow
+  return __int128_t{int64_t{julian_days} - julian_day_unix_epoch} * ticks_per_day +
+         duration_cast<Duration>(cudf::duration_ns{nanos}).count();
+}
+
+/**
  * @brief Converts the two halves of an INT96 timestamp to a count of `Duration` since the epoch.
  *
  * @tparam Duration Output duration type, e.g. `cudf::duration_ms`
@@ -43,11 +62,7 @@ template <typename Duration>
 [[nodiscard]] CUDF_HOST_DEVICE inline typename Duration::rep int96_to_duration(int64_t nanos,
                                                                                int32_t julian_days)
 {
-  using cuda::std::chrono::duration_cast;
-  // TBD: Should be noon instead of midnight, but this matches pyarrow
-  auto const days = cudf::duration_D{int64_t{julian_days} - julian_day_unix_epoch};
-  return duration_cast<Duration>(days).count() +
-         duration_cast<Duration>(cudf::duration_ns{nanos}).count();
+  return static_cast<typename Duration::rep>(int96_to_ticks<Duration>(nanos, julian_days));
 }
 
 /**
@@ -61,13 +76,10 @@ template <typename Duration>
 template <typename Duration>
 [[nodiscard]] CUDF_HOST_DEVICE inline bool int96_fits_duration(int64_t nanos, int32_t julian_days)
 {
-  using cuda::std::chrono::duration_cast;
-  using rep                = typename Duration::rep;
-  auto const ticks_per_day = duration_cast<Duration>(cudf::duration_D{1}).count();
-  auto const value = __int128_t{int64_t{julian_days} - julian_day_unix_epoch} * ticks_per_day +
-                     duration_cast<Duration>(cudf::duration_ns{nanos}).count();
-  return value >= cuda::std::numeric_limits<rep>::min() and
-         value <= cuda::std::numeric_limits<rep>::max();
+  using rep        = typename Duration::rep;
+  auto const ticks = int96_to_ticks<Duration>(nanos, julian_days);
+  return ticks >= cuda::std::numeric_limits<rep>::min() and
+         ticks <= cuda::std::numeric_limits<rep>::max();
 }
 
 /**

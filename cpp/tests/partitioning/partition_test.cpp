@@ -588,3 +588,30 @@ TYPED_TEST(StringPartitionMapTypes, PartialTiles)
     }
   }
 }
+
+TEST_F(PartitionTestNotTyped, BinaryStringSmallSchemas)
+{
+  constexpr int rows = 1025;
+  std::vector<std::string> text(rows), expected;
+  std::vector<int32_t> bins(rows);
+  std::vector<cudf::size_type> offsets{0};
+  for (int i = 0; i < rows; ++i) {
+    text[i] = std::to_string(i) + std::string(i % 259, 'x');
+    bins[i] = i % 7 == 0;
+  }
+  for (int part = 0; part < 2; ++part) {
+    for (int i = 0; i < rows; ++i)
+      if (bins[i] == part) expected.push_back(text[i]);
+    offsets.push_back(expected.size());
+  }
+  strings_column_wrapper input(text.begin(), text.end());
+  strings_column_wrapper output(expected.begin(), expected.end());
+  fixed_width_column_wrapper<int32_t> map(bins.begin(), bins.end());
+  for (int count : {1, 2, 3}) {
+    run_partition_test(cudf::table_view{std::vector<cudf::column_view>(count, input)},
+                       map,
+                       2,
+                       cudf::table_view{std::vector<cudf::column_view>(count, output)},
+                       offsets);
+  }
+}

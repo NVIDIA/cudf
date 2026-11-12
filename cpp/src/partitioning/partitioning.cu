@@ -6,6 +6,7 @@
 #include "partition_identity.cuh"
 #include "partition_map_plan.cuh"
 #include "partition_policy.hpp"
+#include "partition_string_plan.cuh"
 #include "partition_strings.cuh"
 
 #include <cudf/column/column_factories.hpp>
@@ -914,35 +915,9 @@ struct dispatch_map_type {
           try_partition_trivial<MapType>(t, partition_map, num_partitions, stream, mr)) {
       return std::move(*output);
     }
-    if (t.num_rows() >= 1'024 && num_partitions <= 256 && t.num_columns() >= 2 &&
-        t.num_columns() <= 65'535 && (t.num_columns() >= 4 || num_partitions != 2) &&
-        std::all_of(t.begin(), t.end(), [](auto const& col) {
-          return col.type().id() == type_id::STRING && col.null_count() == 0 &&
-                 strings_column_view(col).offsets().type().id() == type_id::INT32;
-        })) {
-      rmm::device_uvector<size_type> gather_map(t.num_rows(), stream);
-      namespace plans        = cudf::detail::partition_map_plan;
-      auto partition_offsets = plans::run(
-        partition_map.begin<MapType>(),
-        t.num_rows(),
-        num_partitions,
-        num_partitions == 2 ? plans::algorithm::binary : plans::algorithm::super2,
-        [indices = gather_map.data()] __device__(size_type source, size_type destination) {
-          indices[destination] = source;
-        },
-        false,
-        stream);
-      auto output = cudf::detail::gather_partition_strings(t, gather_map, stream, mr);
-      if (!output) {
-        output =
-          cudf::detail::gather(t,
-                               device_span<size_type const>{gather_map.data(), gather_map.size()},
-                               out_of_bounds_policy::DONT_CHECK,
-                               negative_index_policy::NOT_ALLOWED,
-                               stream,
-                               mr);
-      }
-      return std::pair{std::move(output), partition_offsets};
+    if (auto output = cudf::detail::partition_strings_plan::partition<MapType>(
+          t, partition_map, num_partitions, stream, mr)) {
+      return std::move(*output);
     }
 
     // Build a histogram of the number of rows in each partition

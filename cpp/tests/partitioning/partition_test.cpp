@@ -20,6 +20,8 @@
 #include <cuda/std/tuple>
 
 #include <algorithm>
+#include <numeric>
+#include <string>
 
 template <typename T>
 class PartitionTest : public cudf::test::BaseFixture {

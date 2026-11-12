@@ -681,3 +681,60 @@ TEST_F(PartitionTestNotTyped, DirectFixedWidthSlices)
   run_partition_test(
     cudf::table_view{{input, input}}, map, 2, cudf::table_view{{output, output}}, offsets);
 }
+
+TEST_F(PartitionTestNotTyped, LargeFixedWidthRoutes)
+{
+  constexpr cudf::size_type rows = 1'000'001;
+  constexpr cudf::size_type skip = 7;
+  std::vector<int64_t> values(rows + skip);
+  std::iota(values.begin(), values.end(), int64_t{1} << 40);
+  struct configuration {
+    int columns;
+    int partitions;
+    bool nullable;
+    bool dense;
+  };
+  for (auto const [columns, partitions, nullable, dense] : {configuration{1, 3, false, false},
+                                                            configuration{1, 16, false, false},
+                                                            configuration{2, 17, true, false}}) {
+    SCOPED_TRACE(::testing::Message()
+                 << columns << "/" << partitions << "/" << nullable << "/" << dense);
+    std::vector<int32_t> bins(rows + skip);
+    std::vector<bool> valid(rows + skip);
+    for (cudf::size_type i = 0; i < rows + skip; ++i) {
+      bins[i]  = (i * 13 + i / 7) % partitions;
+      valid[i] = !nullable || (dense ? i % 11 == 0 : i % 11 != 0);
+    }
+    std::vector<int64_t> expected;
+    std::vector<bool> expected_valid;
+    expected.reserve(rows);
+    expected_valid.reserve(rows);
+    std::vector<cudf::size_type> offsets{0};
+    for (int partition = 0; partition < partitions; ++partition) {
+      for (cudf::size_type i = skip; i < rows + skip; ++i) {
+        if (bins[i] == partition) {
+          expected.push_back(values[i]);
+          expected_valid.push_back(valid[i]);
+        }
+      }
+      offsets.push_back(expected.size());
+    }
+    auto const make_column = [&](auto const& data, auto const& validity) {
+      if (nullable) {
+        return fixed_width_column_wrapper<int64_t>(data.begin(), data.end(), validity.begin())
+          .release();
+      }
+      return fixed_width_column_wrapper<int64_t>(data.begin(), data.end()).release();
+    };
+    auto const owner  = make_column(values, valid);
+    auto const output = make_column(expected, expected_valid);
+    auto const input  = cudf::slice(owner->view(), {skip, rows + skip})[0];
+    fixed_width_column_wrapper<int32_t> map(bins.begin(), bins.end());
+    auto const sliced_map = cudf::slice(cudf::column_view{map}, {skip, rows + skip})[0];
+    run_partition_test(cudf::table_view{std::vector<cudf::column_view>(columns, input)},
+                       sliced_map,
+                       partitions,
+                       cudf::table_view{std::vector<cudf::column_view>(columns, output->view())},
+                       offsets);
+  }
+}

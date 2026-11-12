@@ -399,7 +399,6 @@ void perform_checks(null_aware is_null_aware,
           return true;
         } else {
           auto col = jit::as_column_view(value);
-          if (col.type().id() == type_id::EMPTY) { return false; }
           return is_input_value_supported(col) ||
                  (is_dictionary(col.type()) &&
                   is_input_value_supported(col.child(dictionary_keys_column_index)));

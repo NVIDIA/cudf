@@ -60,10 +60,11 @@ cpdef Column binary_operation(
         The data type to use for the output.
     semantics : NanSemantics, default NanSemantics.DEFAULT
         How floating-point NaN values compare in comparison operators and in
-        ``NULL_MAX`` and ``NULL_MIN``. ``IEEE754`` treats a NaN as unequal to
-        every value and unordered; ``ETL`` treats NaNs as equal to each other
-        and greater than every other value. ``DEFAULT`` is the libcudf default,
-        currently ``IEEE754``.
+        ``NULL_MAX`` and ``NULL_MIN``. ``UNORDERED`` treats a NaN as unequal to
+        every value and unordered, as in the IEEE 754 comparison predicates;
+        ``TOTALLY_ORDERED`` treats NaNs as equal to each other and greater than
+        every other value. ``DEFAULT`` is the libcudf default, currently
+        ``UNORDERED``.
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None

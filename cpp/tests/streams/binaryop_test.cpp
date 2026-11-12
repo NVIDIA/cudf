@@ -51,7 +51,7 @@ TEST_F(BinaryopTest, ScalarColumn)
                          cudf::test::get_default_stream());
 }
 
-TEST_F(BinaryopTest, ColumnColumnEtlComparison)
+TEST_F(BinaryopTest, ColumnColumnTotallyOrderedComparison)
 {
   auto constexpr nan = std::numeric_limits<double>::quiet_NaN();
   cudf::test::fixed_width_column_wrapper<double> lhs{1.0, nan, 3.0};
@@ -61,7 +61,7 @@ TEST_F(BinaryopTest, ColumnColumnEtlComparison)
                          rhs,
                          cudf::binary_operator::LESS,
                          cudf::data_type(cudf::type_id::BOOL8),
-                         cudf::nan_semantics::ETL,
+                         cudf::nan_semantics::TOTALLY_ORDERED,
                          cudf::test::get_default_stream());
 }
 

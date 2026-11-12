@@ -39,6 +39,55 @@ struct sizes_output {
   }
 };
 
+/** Recompute into an on-chip tile map instead of storing N global indices. */
+template <typename MapType>
+CUDF_KERNEL void copy_recomputed(MapType const* map,
+                                 size_type const* prefixes,
+                                 size_type rows,
+                                 size_type partitions,
+                                 partition_string_column const* columns,
+                                 size_type count)
+{
+  namespace plans = partition_map_plan;
+  __shared__ int histogram[plans::warps][plans::bins], base[plans::bins];
+  __shared__ int destinations[plans::tile_rows];
+  if (threadIdx.x < partitions) {
+    base[threadIdx.x] = prefixes[std::size_t{threadIdx.x} * gridDim.x + blockIdx.x];
+  }
+  __syncthreads();
+  int ranks[4], keys[4];
+  int const start = blockIdx.x * plans::tile_rows;
+  plans::local_tile<true>(map, rows, start, partitions, histogram, ranks, keys);
+  if (threadIdx.x < partitions) {
+    int sum = 0;
+    for (int w = 0; w < plans::warps; ++w) {
+      auto const value          = histogram[w][threadIdx.x];
+      histogram[w][threadIdx.x] = sum;
+      sum += value;
+    }
+  }
+  __syncthreads();
+#pragma unroll
+  for (int item = 0; item < 4; ++item) {
+    int const local = (threadIdx.x / 32) * 128 + item * 32 + threadIdx.x % 32;
+    destinations[local] =
+      start + local < rows
+        ? base[keys[item]] + histogram[threadIdx.x / 32][keys[item]] + ranks[item]
+        : 0;
+  }
+  __syncthreads();
+  // Shared targets let register ranks/keys die before copying variable-length
+  // data. Keep this loop rolled to avoid retaining all targets in registers.
+  for (size_type c = 0; c < count; ++c) {
+    auto const col = columns[c];
+#pragma unroll 1
+    for (int batch = 0; batch < plans::tile_rows / 64; ++batch) {
+      int const local = batch * 64 + threadIdx.x / 4;
+      copy_group<false>(col, start + local, destinations[local], rows);
+    }
+  }
+}
+
 CUDF_KERNEL void scatter_ranked_sizes(uint16_t const* ranks,
                                       size_type const* prefixes,
                                       size_type rows,
@@ -218,7 +267,6 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> partiti
                            mr);
     return std::pair{std::move(output), std::move(offsets)};
   }
-  if (input.num_columns() == 1 && rows >= 4'000'000) { return std::nullopt; }
   if (strings::get_offset64_threshold() != std::numeric_limits<size_type>::max()) {
     return std::nullopt;
   }
@@ -230,23 +278,50 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> partiti
     auto const blocks = (rows - 1) / plans::tile_rows + 1;
     rmm::device_uvector<size_type> prefixes(static_cast<std::size_t>(partitions) * blocks, stream);
     rmm::device_uvector<size_type> boundaries(partitions + 1, stream);
-    rmm::device_uvector<uint16_t> ranks(rows, stream);
-    plans::count_tiles<1, true, true><<<blocks, 256, 0, stream.get()>>>(
-      map.begin<MapType>(), rows, partitions, ranks.data(), prefixes.data());
+    // A single column keeps the mapless plan. For multiple columns, binary bins
+    // and tile-local ranks share two bytes per row to avoid repeated map reads.
+    bool const compact = input.num_columns() > 1;
+    std::optional<rmm::device_uvector<uint16_t>> ranks;
+    if (compact) {
+      ranks.emplace(rows, stream);
+      plans::count_tiles<1, true, true><<<blocks, 256, 0, stream.get()>>>(
+        map.begin<MapType>(), rows, partitions, ranks->data(), prefixes.data());
+    } else {
+      plans::count_tiles<1, false><<<blocks, 256, 0, stream.get()>>>(
+        map.begin<MapType>(), rows, partitions, nullptr, prefixes.data());
+    }
     plans::scan(prefixes.data(), prefixes.size(), stream);
     plans::get_offsets<<<1, 256, 0, stream.get()>>>(
       prefixes.data(), blocks, partitions, rows, boundaries.data());
-    scatter_ranked_sizes<<<blocks, 256, 0, stream.get()>>>(ranks.data(),
-                                                           prefixes.data(),
-                                                           rows,
-                                                           blocks,
-                                                           output.device_columns.data(),
-                                                           input.num_columns());
+    if (compact) {
+      scatter_ranked_sizes<<<blocks, 256, 0, stream.get()>>>(ranks->data(),
+                                                             prefixes.data(),
+                                                             rows,
+                                                             blocks,
+                                                             output.device_columns.data(),
+                                                             input.num_columns());
+    } else {
+      plans::scatter_recompute<1><<<blocks, 256, 0, stream.get()>>>(
+        map.begin<MapType>(),
+        prefixes.data(),
+        rows,
+        partitions,
+        sizes_output{output.device_columns.data(), input.num_columns(), nullptr});
+    }
     output.scan(stream);
-    auto const copy_blocks =
-      std::min<std::size_t>(65'535, (static_cast<std::size_t>(rows) + 63) / 64);
-    copy_ranked<<<dim3(copy_blocks, input.num_columns()), 256, 0, stream.get()>>>(
-      ranks.data(), prefixes.data(), rows, blocks, output.device_columns.data());
+    if (compact) {
+      auto const copy_blocks =
+        std::min<std::size_t>(65'535, (static_cast<std::size_t>(rows) + 63) / 64);
+      copy_ranked<<<dim3(copy_blocks, input.num_columns()), 256, 0, stream.get()>>>(
+        ranks->data(), prefixes.data(), rows, blocks, output.device_columns.data());
+    } else {
+      copy_recomputed<<<blocks, 256, 0, stream.get()>>>(map.begin<MapType>(),
+                                                        prefixes.data(),
+                                                        rows,
+                                                        partitions,
+                                                        output.device_columns.data(),
+                                                        input.num_columns());
+    }
     CUDF_CUDA_TRY(cudaPeekAtLastError());
     offsets = cudf::detail::make_std_vector(boundaries, stream);
   } else {

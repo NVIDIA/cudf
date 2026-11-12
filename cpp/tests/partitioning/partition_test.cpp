@@ -696,7 +696,9 @@ TEST_F(PartitionTestNotTyped, LargeFixedWidthRoutes)
   };
   for (auto const [columns, partitions, nullable, dense] : {configuration{1, 3, false, false},
                                                             configuration{1, 16, false, false},
-                                                            configuration{2, 17, true, false}}) {
+                                                            configuration{2, 17, true, false},
+                                                            configuration{3, 3, false, false},
+                                                            configuration{3, 2, true, true}}) {
     SCOPED_TRACE(::testing::Message()
                  << columns << "/" << partitions << "/" << nullable << "/" << dense);
     std::vector<int32_t> bins(rows + skip);

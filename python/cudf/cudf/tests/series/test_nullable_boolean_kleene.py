@@ -34,11 +34,10 @@ def test_nullable_boolean_kleene_scalar(op, scalar, reflected):
 def test_nullable_boolean_kleene_mixed_dtypes(op, nullable_on_left):
     ordinary = pd.Series([True, False, True, False], dtype="bool")
     nullable = pd.Series([None, None, True, False], dtype="boolean")
-    left, right = (
-        (nullable, ordinary)
-        if nullable_on_left
-        else (ordinary, nullable)
-    )
+    if nullable_on_left:
+        left, right = nullable, ordinary
+    else:
+        left, right = ordinary, nullable
 
     expected = op(left, right)
     actual = op(cudf.from_pandas(left), cudf.from_pandas(right))

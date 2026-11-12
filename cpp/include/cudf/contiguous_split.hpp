@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -349,9 +350,14 @@ struct pack_region_info {
   /// `column_view::child()` index per nesting level. Validity and offsets regions belong to the
   /// column they describe, so a list's offsets region has the list's path.
   std::vector<size_type> column_path;
-  pack_region_kind kind;           ///< Physical role of the region
-  type_id type;                    ///< Logical/native type used to configure the codec
-  std::size_t uncompressed_bytes;  ///< Size in the uncompressed payload, including padding
+  pack_region_kind kind;              ///< Physical role of the region
+  type_id type;                       ///< Logical/native type used to configure the codec
+  std::size_t uncompressed_bytes;     ///< Size in the uncompressed payload, including padding
+  std::size_t uncompressed_offset{};  ///< Offset in the uncompressed payload
+  /// Bytes from the region start that hold column data, excluding padding. Unknown only for the
+  /// string characters of uncompressed metadata, whose size is the last value of the string's
+  /// offsets region.
+  std::optional<std::size_t> data_bytes{};
 };
 
 /**
@@ -714,14 +720,19 @@ std::size_t materialize_scratch_bytes(packed_data_view input,
  * @brief Describe the physical regions of a packed table from its host metadata alone.
  *
  * Accepts metadata from `pack_into()`, `cudf::pack()` and `chunked_pack`. Regions are listed in
- * payload order, with the descriptions `make_pack_plan_builder()` reports for the packed table.
+ * payload order, with the descriptions `make_pack_plan_builder()` reports for the packed table,
+ * and the codec recorded for each region, `pack_compression::none` for uncompressed metadata.
+ *
+ * With uncompressed metadata, a region starts at `pack_region_info::uncompressed_offset` in the
+ * payload, so a reader in any memory, such as host memory, can find every buffer without the
+ * layout rules of the packed format.
  *
  * @throw cudf::logic_error if `metadata` is truncated or malformed
  *
  * @param metadata Host metadata of a packed table
- * @return One description per physical region
+ * @return One description and codec per physical region
  */
-std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> metadata);
+std::vector<pack_region> get_packed_region_info(std::span<uint8_t const> metadata);
 
 }  // namespace experimental
 

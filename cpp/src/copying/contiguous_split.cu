@@ -3894,16 +3894,19 @@ struct pack_plan_builder::impl {
       layouts(this->input.state->compute_compression_regions())
   {
     regions.reserve(layouts.size());
-    std::ranges::transform(
-      std::views::iota(std::size_t{0}, layouts.size()),
-      std::back_inserter(regions),
-      [&](std::size_t i) {
-        auto const& layout = layouts[i];
-        return pack_region{
-          pack_region_info{
-            i, layout.column_path, layout.kind, layout.type, layout.uncompressed_bytes},
-          this->options.compression};
-      });
+    std::ranges::transform(std::views::iota(std::size_t{0}, layouts.size()),
+                           std::back_inserter(regions),
+                           [&](std::size_t i) {
+                             auto const& layout = layouts[i];
+                             return pack_region{pack_region_info{i,
+                                                                 layout.column_path,
+                                                                 layout.kind,
+                                                                 layout.type,
+                                                                 layout.uncompressed_bytes,
+                                                                 layout.uncompressed_offset,
+                                                                 layout.data_bytes},
+                                                this->options.compression};
+                           });
   }
 
   plan_input input;
@@ -4371,7 +4374,7 @@ std::size_t materialize_scratch_bytes(packed_data_view input,
   return materialize_scratch(input, column_indices, stream);
 }
 
-std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> metadata)
+std::vector<pack_region> get_packed_region_info(std::span<uint8_t const> metadata)
 {
   CUDF_FUNC_RANGE();
   auto const parsed = has_compression_metadata(metadata)
@@ -4384,7 +4387,7 @@ std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> me
   // An empty buffer shares its offset with the buffer after it, and the stable sort keeps it first.
   std::ranges::stable_sort(buffers, {}, &packed_buffer::offset);
 
-  std::vector<pack_region_info> regions;
+  std::vector<pack_region> regions;
   regions.reserve(buffers.size());
   for (std::size_t i = 0; i < buffers.size(); ++i) {
     auto& buffer = buffers[i];
@@ -4397,12 +4400,26 @@ std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> me
                                               buffer.offset + *buffer.data_bytes, split_align);
     CUDF_EXPECTS(end >= buffer.offset, "Packed metadata is malformed");
     if (end == buffer.offset) { continue; }
-    buffer.info.region_index       = regions.size();
-    buffer.info.uncompressed_bytes = end - buffer.offset;
-    regions.push_back(std::move(buffer.info));
+    buffer.info.region_index        = regions.size();
+    buffer.info.uncompressed_bytes  = end - buffer.offset;
+    buffer.info.uncompressed_offset = buffer.offset;
+    buffer.info.data_bytes          = buffer.data_bytes;
+    regions.emplace_back(std::move(buffer.info), pack_compression::none);
   }
-  CUDF_EXPECTS(!parsed.has_value() || regions.size() == parsed->entries.size(),
+  if (!parsed.has_value()) { return regions; }
+
+  CUDF_EXPECTS(regions.size() == parsed->entries.size(),
                "Compressed-region metadata does not match the column metadata");
+  for (std::size_t i = 0; i < regions.size(); ++i) {
+    auto const& entry = parsed->entries[i];
+    auto& region      = regions[i];
+    CUDF_EXPECTS(entry.uncompressed_offset == region.info().uncompressed_offset &&
+                   entry.uncompressed_bytes == region.info().uncompressed_bytes,
+                 "Compressed-region metadata does not match the column metadata");
+    auto info       = region.info();
+    info.data_bytes = entry.data_bytes;
+    region = pack_region{std::move(info), static_cast<pack_compression>(entry.compression)};
+  }
   return regions;
 }
 

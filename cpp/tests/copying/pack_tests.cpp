@@ -30,8 +30,10 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 // Size of the serialized table header that precedes the column entries in the
 // packed metadata buffer: version + num_columns + num_rows + pad, four 4-byte fields.
@@ -900,16 +902,24 @@ TEST_F(ExperimentalPackUnpackTest, GetPackedRegionInfo)
   cudf::test::dictionary_column_wrapper<std::string> dictionary({"a", "bb", "a", "ccc"});
   auto const table = cudf::table_view{{structs, lists, empty_words, doubles, dictionary}};
 
-  auto const expect_regions = [](std::vector<cx::pack_region_info> const& actual,
-                                 std::span<cx::pack_region const> expected) {
+  auto const expect_regions = [](std::vector<cx::pack_region> const& actual,
+                                 std::span<cx::pack_region const> expected,
+                                 cx::pack_compression codec) {
     ASSERT_EQ(actual.size(), expected.size());
     for (std::size_t i = 0; i < actual.size(); ++i) {
+      auto const& got  = actual[i].info();
       auto const& info = expected[i].info();
-      EXPECT_EQ(actual[i].region_index, info.region_index);
-      EXPECT_EQ(actual[i].column_path, info.column_path);
-      EXPECT_EQ(actual[i].kind, info.kind);
-      EXPECT_EQ(actual[i].type, info.type);
-      EXPECT_EQ(actual[i].uncompressed_bytes, info.uncompressed_bytes) << i;
+      EXPECT_EQ(got.region_index, info.region_index);
+      EXPECT_EQ(got.column_path, info.column_path);
+      EXPECT_EQ(got.kind, info.kind);
+      EXPECT_EQ(got.type, info.type);
+      EXPECT_EQ(got.uncompressed_bytes, info.uncompressed_bytes) << i;
+      EXPECT_EQ(got.uncompressed_offset, info.uncompressed_offset) << i;
+      // Uncompressed metadata does not record the size of string characters.
+      auto const knows_size =
+        codec != cx::pack_compression::none || info.kind != cx::pack_region_kind::string_characters;
+      EXPECT_EQ(got.data_bytes, knows_size ? info.data_bytes : std::nullopt) << i;
+      EXPECT_EQ(actual[i].codec, codec) << i;
     }
   };
 
@@ -918,12 +928,59 @@ TEST_F(ExperimentalPackUnpackTest, GetPackedRegionInfo)
       cx::make_pack_plan_builder(input, make_options(cx::pack_compression::none));
     for (auto const compression : {cx::pack_compression::none, cx::pack_compression::cascaded}) {
       auto const packed = pack_to_device(cx::prepare_pack(input, make_options(compression)));
-      expect_regions(cx::get_packed_region_info(packed.result.metadata), builder.regions());
+      expect_regions(
+        cx::get_packed_region_info(packed.result.metadata), builder.regions(), compression);
     }
     auto const legacy = cudf::pack(input);
-    expect_regions(cx::get_packed_region_info(*legacy.metadata), builder.regions());
+    expect_regions(
+      cx::get_packed_region_info(*legacy.metadata), builder.regions(), cx::pack_compression::none);
   }
   EXPECT_TRUE(cx::get_packed_region_info({}).empty());
+}
+
+TEST_F(ExperimentalPackUnpackTest, GetPackedRegionInfoLocatesHostBuffers)
+{
+  // The region info alone locates every buffer of a payload copied to host memory.
+  cudf::test::fixed_width_column_wrapper<int32_t> numbers({1, 2, 3, 4}, {true, false, true, true});
+  cudf::test::strings_column_wrapper words({"a", "bb", "", "dddd"});
+  auto const input  = cudf::table_view{{numbers, words}};
+  auto const packed = cudf::pack(input);
+  std::vector<uint8_t> payload(packed.gpu_data->size());
+  CUDF_CUDA_TRY(
+    cudaMemcpy(payload.data(), packed.gpu_data->data(), payload.size(), cudaMemcpyDefault));
+
+  auto const regions = cx::get_packed_region_info(*packed.metadata);
+  auto const find    = [&](std::vector<cudf::size_type> const& path, cx::pack_region_kind kind) {
+    auto const iter = std::find_if(regions.begin(), regions.end(), [&](auto const& region) {
+      return region.info().column_path == path && region.info().kind == kind;
+    });
+    EXPECT_NE(iter, regions.end());
+    return iter->info();
+  };
+  auto const read = [&](cx::pack_region_info const& info, std::size_t index, auto value) {
+    EXPECT_LE(info.uncompressed_offset + (index + 1) * sizeof(value), payload.size());
+    std::memcpy(
+      &value, payload.data() + info.uncompressed_offset + index * sizeof(value), sizeof(value));
+    return value;
+  };
+
+  auto const values = find({0}, cx::pack_region_kind::data);
+  EXPECT_EQ(values.data_bytes, 4 * sizeof(int32_t));
+  EXPECT_EQ(read(values, 0, int32_t{}), 1);
+  EXPECT_EQ(read(values, 3, int32_t{}), 4);
+  auto const mask = find({0}, cx::pack_region_kind::validity);
+  EXPECT_EQ(read(mask, 0, cudf::bitmask_type{}) & 0xf, 0b1101);
+
+  // The size of the characters is the last string offset.
+  auto const offsets = find({1}, cx::pack_region_kind::offsets);
+  auto const chars   = find({1}, cx::pack_region_kind::string_characters);
+  EXPECT_FALSE(chars.data_bytes.has_value());
+  auto const chars_size = read(offsets, 4, int32_t{});
+  ASSERT_EQ(chars_size, 7);
+  EXPECT_LE(static_cast<std::size_t>(chars_size), chars.uncompressed_bytes);
+  EXPECT_EQ(std::string(reinterpret_cast<char const*>(payload.data()) + chars.uncompressed_offset,
+                        chars_size),
+            "abbdddd");
 }
 
 TEST_F(ExperimentalPackUnpackTest, CompressedInputValidation)

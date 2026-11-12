@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "stream_compaction/apply_mask.cuh"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/iterator.cuh>
@@ -19,6 +21,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/functional>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
@@ -55,25 +58,39 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
   };
 
   auto const make_output_offsets = [&] {
-    auto const is_retention = (mask_kind == cudf::detail::mask_type::RETENTION);
-    auto const keep_nulls   = (null_handling == null_policy::INCLUDE);
     auto const num_elements = mask_sliced_child.size();
     auto const d_mask_child = column_device_view::create(mask_sliced_child, stream);
-    // 1 if the mask element keeps its list element, 0 otherwise
-    auto const keep_begin = cuda::make_transform_iterator(
-      cudf::detail::make_null_replacement_iterator<bool>(
-        *d_mask_child, keep_nulls == is_retention, mask_sliced_child.has_nulls()),
-      cuda::proclaim_return_type<size_type>(
-        [is_retention] __device__(bool mask) -> size_type { return mask == is_retention; }));
 
     // kept_counts[i] = number of kept elements among the first `i` elements of the sliced child
     auto kept_counts = cuda::device_buffer<size_type>(
       stream, mr.get_temporary_mr(), num_elements + 1, cuda::no_init);
     CUDF_CUDA_TRY(cudaMemsetAsync(kept_counts.data(), 0, sizeof(size_type), stream.get()));
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-                           keep_begin,
-                           keep_begin + num_elements,
-                           kept_counts.data() + 1);
+
+    auto const is_retention = (mask_kind == cudf::detail::mask_type::RETENTION);
+    auto const keep_nulls   = (null_handling == null_policy::INCLUDE);
+
+    // Lambda to scan the kept counts using the mask iterator
+    auto const scan_kept_counts = [&](auto mask_iter) {
+      auto const keep_begin = cuda::make_transform_iterator(
+        cuda::counting_iterator<size_type>{0},
+        cudf::detail::mask_filter<decltype(mask_iter)>{mask_iter, is_retention});
+      // Pass a size_type init so the scan does not accumulate in bool
+      thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                             keep_begin,
+                             keep_begin + num_elements,
+                             kept_counts.data() + 1,
+                             size_type{0},
+                             cuda::std::plus<size_type>{});
+    };
+
+    if (mask_sliced_child.has_nulls()) {
+      // Replace nulls with the value that keeps (INCLUDE) or drops (EXCLUDE) the element
+      scan_kept_counts(cudf::detail::make_null_replacement_iterator<bool>(
+        *d_mask_child, keep_nulls == is_retention));
+    } else {
+      // No nulls, apply the mask directly
+      scan_kept_counts(d_mask_child->data<bool>());
+    }
 
     // Each output offset is the kept count at the corresponding mask offset
     auto output_offsets = cudf::make_numeric_column(

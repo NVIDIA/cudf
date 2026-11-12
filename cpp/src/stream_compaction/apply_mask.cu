@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "apply_mask.cuh"
+
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/copy_if.cuh>
@@ -21,28 +23,13 @@
 
 #include <algorithm>
 
-namespace {
-// Returns true if row i is kept: the mask value equals `is_retention`
-template <typename MaskIterator>
-struct mask_filter {
-  MaskIterator mask;
-  bool is_retention;
-
-  __device__ inline bool operator()(cudf::size_type i) const noexcept
-  {
-    return mask[i] == is_retention;
-  }
-};
-
-}  // namespace
-
 namespace cudf {
 namespace detail {
 /*
  * Filters a table_view using a column_view of boolean values as a mask. Masking behavior
  * (retentions or deletions) is specified by the `mask_kind` parameter.
  *
- * calls copy_if() with the `mask_filter` functor.
+ * calls copy_if() with a `mask_filter` functor.
  */
 std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,
@@ -51,12 +38,10 @@ std::unique_ptr<table> apply_mask(table_view const& input,
                                   cuda::stream_ref stream,
                                   cudf::memory_resources mr)
 {
-  auto const is_retention = (mask_kind == mask_type::RETENTION);
-  auto const keep_nulls   = (null_handling == null_policy::INCLUDE);
-
   if (boolean_mask.is_empty()) {
-    return is_retention ? empty_like(input)
-                        : std::make_unique<table>(input, stream, mr.get_output_mr());
+    return (mask_kind == mask_type::RETENTION)
+             ? empty_like(input)
+             : std::make_unique<table>(input, stream, mr.get_output_mr());
   }
 
   CUDF_EXPECTS(boolean_mask.type().id() == type_id::BOOL8, "Mask must be Boolean type");
@@ -64,6 +49,10 @@ std::unique_ptr<table> apply_mask(table_view const& input,
                "Column size mismatch");
 
   auto const d_mask = cudf::column_device_view::create(boolean_mask, stream, mr.get_temporary_mr());
+  auto const is_retention = (mask_kind == mask_type::RETENTION);
+  auto const keep_nulls   = (null_handling == null_policy::INCLUDE);
+
+  // Lambda to filter the table using the mask iterator
   auto const filter = [&](auto mask_iter) {
     return detail::copy_if(
       input, mask_filter<decltype(mask_iter)>{mask_iter, is_retention}, stream, mr);
@@ -73,6 +62,8 @@ std::unique_ptr<table> apply_mask(table_view const& input,
     // Replace nulls with the value that keeps (INCLUDE) or drops (EXCLUDE) the row
     return filter(make_null_replacement_iterator<bool>(*d_mask, keep_nulls == is_retention));
   }
+
+  // No nulls, apply the mask directly
   return filter(d_mask->data<bool>());
 }
 

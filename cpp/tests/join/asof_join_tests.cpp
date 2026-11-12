@@ -667,6 +667,30 @@ TEST_F(AsofJoinTest, NullOrderedKeyAtGroupFront)
   expect_indices(result, {cudf::JoinNoMatch, 1}, stream);
 }
 
+TEST_F(AsofJoinTest, AllNullOrderedKeyGroups)
+{
+  auto const stream   = this->stream();
+  auto const setup_mr = this->setup_resources();
+  auto const mr       = this->resources();
+
+  strings_column_wrapper right_by({"a", "a", "b"}, stream, setup_mr);
+  fixed_width_column_wrapper<int32_t> right_on(
+    {1, 2, 3}, cudf::test::iterators::all_nulls(), stream, setup_mr);
+  strings_column_wrapper left_by({"a", "a", "b", "b"}, stream, setup_mr);
+  fixed_width_column_wrapper<int32_t> left_on({0, 9, 0, 9}, stream, setup_mr);
+
+  asof_join join(cudf::table_view{{right_by}}, right_on, stream, mr);
+  auto result = join.join(cudf::table_view{{left_by}},
+                          left_on,
+                          asof_join_strategy::BACKWARD,
+                          asof_join_exact_matches::YES,
+                          stream,
+                          mr);
+
+  expect_indices(
+    result, {cudf::JoinNoMatch, cudf::JoinNoMatch, cudf::JoinNoMatch, cudf::JoinNoMatch}, stream);
+}
+
 TEST_F(AsofJoinTest, SlicedColumns)
 {
   auto const stream   = this->stream();

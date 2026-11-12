@@ -8,18 +8,18 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/replace.hpp>
 #include <cudf/detail/stream_compaction.hpp>
-#include <cudf/detail/unary.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/stream_compaction.hpp>
-#include <cudf/reduction/detail/segmented_reduction_functions.hpp>
-#include <cudf/scalar/scalar.hpp>
+#include <cudf/reduction/detail/segmented_reduction.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/functional>
+#include <cuda/iterator>
+#include <cuda/std/functional>
 #include <thrust/scan.h>
 
 namespace cudf::lists {
@@ -55,57 +55,36 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
   };
 
   auto const make_output_offsets = [&] {
-    auto mask_sliced_offsets =
-      cudf::detail::slice(boolean_mask.offsets(),
-                          {boolean_mask.offset(), boolean_mask.offset() + boolean_mask.size() + 1},
-                          stream)
-        .front();
+    auto const is_retention = (mask_kind == cudf::detail::mask_type::RETENTION);
+    auto const keep_nulls   = (null_handling == null_policy::INCLUDE);
+    auto const mask_child   = boolean_mask.child();
+    auto const d_mask_child = column_device_view::create(mask_child, stream);
+    // 1 if the mask element keeps its list element, 0 otherwise
+    auto const keep_begin = cuda::make_transform_iterator(
+      cudf::detail::make_null_replacement_iterator<bool>(
+        *d_mask_child, keep_nulls == is_retention, mask_child.has_nulls()),
+      cuda::proclaim_return_type<size_type>(
+        [is_retention] __device__(bool mask) -> size_type { return mask == is_retention; }));
 
-    auto const sizes = [&] {
-      auto const is_retention = (mask_kind == cudf::detail::mask_type::RETENTION);
-      // `mask_sliced_offsets` index the full mask child, not `mask_sliced_child`
-      auto const mask_child = boolean_mask.child();
-      // For INCLUDE, replace null mask elements with the value that keeps the element
-      auto const null_replaced_mask_child =
-        (null_handling == null_policy::INCLUDE and mask_child.has_nulls())
-          ? cudf::detail::replace_nulls(mask_child,
-                                        cudf::numeric_scalar<bool>(is_retention, true, stream),
-                                        stream,
-                                        cudf::get_current_device_resource_ref())
-          : std::unique_ptr<column>{};
-      auto const counted_mask_child =
-        null_replaced_mask_child ? null_replaced_mask_child->view() : mask_child;
-      // For DELETION, invert the mask so segmented_sum only counts the kept (`false`) elements
-      auto const inverted_mask_child =
-        is_retention ? std::unique_ptr<column>{}
-                     : cudf::detail::unary_operation(counted_mask_child,
-                                                     cudf::unary_operator::NOT,
-                                                     stream,
-                                                     cudf::get_current_device_resource_ref());
-      return cudf::reduction::detail::segmented_sum(
-        is_retention ? counted_mask_child : inverted_mask_child->view(),
-        mask_sliced_offsets,
-        offset_data_type,
-        null_policy::EXCLUDE,
-        std::nullopt,
-        stream,
-        cudf::get_current_device_resource_ref());
-    }();
-    auto const d_sizes     = column_device_view::create(*sizes, stream);
-    auto const sizes_begin = cudf::detail::make_null_replacement_iterator(*d_sizes, size_type{0});
-    auto const sizes_end   = sizes_begin + sizes->size();
-    auto output_offsets    = cudf::make_numeric_column(
+    auto output_offsets = cudf::make_numeric_column(
       offset_data_type, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
-    auto output_offsets_view = output_offsets->mutable_view();
+    auto const d_offsets = output_offsets->mutable_view().begin<size_type>();
 
-    // Could have attempted an exclusive_scan(), but it would not compute the last entry.
-    // Instead, inclusive_scan(), followed by writing `0` to the head of the offsets column.
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                           sizes_begin,
-                           sizes_end,
-                           output_offsets_view.begin<int32_t>() + 1);
-    CUDF_CUDA_TRY(
-      cudaMemsetAsync(output_offsets_view.begin<int32_t>(), 0, sizeof(int32_t), stream.get()));
+    // Count the kept elements of each row (the mask offsets index the full mask child), then scan
+    // the counts into output offsets
+    cudf::reduction::detail::segmented_reduce(keep_begin,
+                                              boolean_mask.offsets_begin(),
+                                              boolean_mask.offsets_end(),
+                                              d_offsets + 1,
+                                              cuda::std::plus<size_type>{},
+                                              size_type{0},
+                                              stream,
+                                              mr);
+    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                           d_offsets + 1,
+                           d_offsets + num_rows + 1,
+                           d_offsets + 1);
+    CUDF_CUDA_TRY(cudaMemsetAsync(d_offsets, 0, sizeof(size_type), stream.get()));
     return output_offsets;
   };
 

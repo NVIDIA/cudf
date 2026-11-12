@@ -41,19 +41,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 
   auto constexpr offset_data_type = data_type{type_id::INT32};
 
-  // For INCLUDE, replace null mask elements with the value that keeps the element so that the
-  // filtered child and the segmented sizes below agree.
-  auto const raw_mask_sliced_child = boolean_mask.get_sliced_child(stream);
-  auto const null_replaced_mask_child =
-    (null_handling == null_policy::INCLUDE and raw_mask_sliced_child.has_nulls())
-      ? cudf::detail::replace_nulls(
-          raw_mask_sliced_child,
-          cudf::numeric_scalar<bool>(mask_kind == cudf::detail::mask_type::RETENTION, true, stream),
-          stream,
-          cudf::get_current_device_resource_ref())
-      : std::unique_ptr<column>{};
-  auto const mask_sliced_child =
-    null_replaced_mask_child ? null_replaced_mask_child->view() : raw_mask_sliced_child;
+  auto const mask_sliced_child = boolean_mask.get_sliced_child(stream);
 
   auto const make_filtered_child = [&] {
     auto filtered = cudf::detail::apply_mask(cudf::table_view{{input.get_sliced_child(stream)}},
@@ -68,30 +56,40 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 
   auto const make_output_offsets = [&] {
     auto mask_sliced_offsets =
-      cudf::detail::slice(
-        boolean_mask.offsets(), {boolean_mask.offset(), boolean_mask.size() + 1}, stream)
+      cudf::detail::slice(boolean_mask.offsets(),
+                          {boolean_mask.offset(), boolean_mask.offset() + boolean_mask.size() + 1},
+                          stream)
         .front();
 
     auto const sizes = [&] {
-      // For DELETION, invert the `mask_sliced_child` so segmented_sum only counts `non-null` and
-      // `false` elements in the original mask.
+      auto const is_retention = (mask_kind == cudf::detail::mask_type::RETENTION);
+      // `mask_sliced_offsets` index the full mask child, not `mask_sliced_child`
+      auto const mask_child = boolean_mask.child();
+      // For INCLUDE, replace null mask elements with the value that keeps the element
+      auto const null_replaced_mask_child =
+        (null_handling == null_policy::INCLUDE and mask_child.has_nulls())
+          ? cudf::detail::replace_nulls(mask_child,
+                                        cudf::numeric_scalar<bool>(is_retention, true, stream),
+                                        stream,
+                                        cudf::get_current_device_resource_ref())
+          : std::unique_ptr<column>{};
+      auto const counted_mask_child =
+        null_replaced_mask_child ? null_replaced_mask_child->view() : mask_child;
+      // For DELETION, invert the mask so segmented_sum only counts the kept (`false`) elements
       auto const inverted_mask_child =
-        (mask_kind == cudf::detail::mask_type::RETENTION)
-          ? std::unique_ptr<column>{}
-          : cudf::detail::unary_operation(mask_sliced_child,
-                                          cudf::unary_operator::NOT,
-                                          stream,
-                                          cudf::get_current_device_resource_ref());
-      auto const effective_mask_sliced_child = (mask_kind == cudf::detail::mask_type::RETENTION)
-                                                 ? mask_sliced_child
-                                                 : inverted_mask_child->view();
-      return cudf::reduction::detail::segmented_sum(effective_mask_sliced_child,
-                                                    mask_sliced_offsets,
-                                                    offset_data_type,
-                                                    null_policy::EXCLUDE,
-                                                    std::nullopt,
-                                                    stream,
-                                                    cudf::get_current_device_resource_ref());
+        is_retention ? std::unique_ptr<column>{}
+                     : cudf::detail::unary_operation(counted_mask_child,
+                                                     cudf::unary_operator::NOT,
+                                                     stream,
+                                                     cudf::get_current_device_resource_ref());
+      return cudf::reduction::detail::segmented_sum(
+        is_retention ? counted_mask_child : inverted_mask_child->view(),
+        mask_sliced_offsets,
+        offset_data_type,
+        null_policy::EXCLUDE,
+        std::nullopt,
+        stream,
+        cudf::get_current_device_resource_ref());
     }();
     auto const d_sizes     = column_device_view::create(*sizes, stream);
     auto const sizes_begin = cudf::detail::make_null_replacement_iterator(*d_sizes, size_type{0});
@@ -124,9 +122,7 @@ std::unique_ptr<column> apply_retention_mask(lists_column_view const& input,
                                              cuda::stream_ref stream,
                                              cudf::memory_resources mr)
 {
-  CUDF_FUNC_RANGE();
-  return detail::apply_mask(
-    input, retention_mask, cudf::detail::mask_type::RETENTION, null_policy::EXCLUDE, stream, mr);
+  return apply_retention_mask(input, retention_mask, null_policy::EXCLUDE, stream, mr);
 }
 
 std::unique_ptr<column> apply_retention_mask(lists_column_view const& input,
@@ -145,9 +141,7 @@ std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
 {
-  CUDF_FUNC_RANGE();
-  return detail::apply_mask(
-    input, boolean_mask, cudf::detail::mask_type::RETENTION, null_policy::EXCLUDE, stream, mr);
+  return apply_retention_mask(input, boolean_mask, null_policy::EXCLUDE, stream, mr);
 }
 
 std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
@@ -155,9 +149,7 @@ std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
                                             cuda::stream_ref stream,
                                             cudf::memory_resources mr)
 {
-  CUDF_FUNC_RANGE();
-  return detail::apply_mask(
-    input, deletion_mask, cudf::detail::mask_type::DELETION, null_policy::EXCLUDE, stream, mr);
+  return apply_deletion_mask(input, deletion_mask, null_policy::EXCLUDE, stream, mr);
 }
 
 std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,

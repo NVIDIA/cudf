@@ -39,6 +39,53 @@ _TIMESTAMP_TO_DURATION = {
     plc.TypeId.TIMESTAMP_NANOSECONDS: plc.TypeId.DURATION_NANOSECONDS,
 }
 
+# libcudf reads the weekday and month names for the "%a", "%A", "%b" and "%B"
+# specifiers from a 40 element names column, after the AM/PM strings (it yields
+# empty strings if the column is empty). Polars formats with chrono, which
+# always uses English names regardless of the process locale.
+_STRFTIME_NAMES = [
+    "AM",
+    "PM",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sun",
+    "Mon",
+    "Tue",
+    "Wed",
+    "Thu",
+    "Fri",
+    "Sat",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
+
 
 def _find_tzif_dir(zone: str | None) -> str | None:
     if zone is None or zone == "UTC":
@@ -1189,7 +1236,11 @@ class TemporalFunction(Expr):
                 "pl.Datetime", self.children[0].dtype.polars_type
             ).time_zone
             self.tz_descs = (_get_tz_desc(from_zone), _get_tz_desc(self.options[0]))
-        elif self.name in self._LOCAL_FIELDS:
+        elif (
+            self.name in self._LOCAL_FIELDS
+            or self.name is TemporalFunction.Name.ToString
+        ):
+            # Calendar fields and formatted datetimes use the column's local wall clock.
             child_dtype = self.children[0].dtype.polars_type
             if isinstance(child_dtype, pl.Datetime):
                 self.tz_descs = (_get_tz_desc(child_dtype.time_zone), None)
@@ -1547,10 +1598,10 @@ class TemporalFunction(Expr):
                 )
             return Column(
                 plc.strings.convert.convert_datetime.from_timestamps(
-                    column.obj,
+                    _local_wall_clock(column.obj, self.tz_descs[0], df.stream),
                     format_string,
                     plc.Column.from_iterable_of_py(
-                        [], dtype=self.dtype.plc_type, stream=df.stream
+                        _STRFTIME_NAMES, dtype=self.dtype.plc_type, stream=df.stream
                     ),
                     stream=df.stream,
                 ),

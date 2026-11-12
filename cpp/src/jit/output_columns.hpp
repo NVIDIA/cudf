@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/string_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
@@ -42,7 +43,7 @@ struct fixed_width_column {
                                  cuda::device_buffer<cudf::bitmask_type> null_mask,
                                  size_type null_count,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
   {
     return fixed_width_column{
       make_fixed_width_column(type, size, std::move(null_mask), null_count, stream, mr)};
@@ -88,9 +89,10 @@ struct string_views_column {
                                  cuda::device_buffer<cudf::bitmask_type> null_mask,
                                  size_type null_count,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
   {
-    cuda::device_buffer<string_view> data{stream, mr, static_cast<size_t>(size), cuda::no_init};
+    cuda::device_buffer<string_view> data{
+      stream, mr.get_output_mr(), static_cast<size_t>(size), cuda::no_init};
     return string_views_column{std::move(data), size, std::move(null_mask), null_count};
   }
 

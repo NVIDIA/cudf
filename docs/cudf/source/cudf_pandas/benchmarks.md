@@ -125,11 +125,11 @@ pip install --extra-index-url https://pypi.anaconda.org/rapidsai-wheels-nightly/
     "cudf-cu${CUDA_MAJOR}>=0.0.0a0"
 ```
 
-Then install `tpchgen-cli`, a Rust-based TPC-H data generator used to produce the benchmark
+Then install `tpcgen-cli`, a Rust-based TPC-H and TPC-DS data generator used to produce the benchmark
 dataset as Parquet files:
 
 ```bash
-pip install tpchgen-cli
+pip install tpcgen-cli
 ```
 
 ### Generate data
@@ -141,7 +141,7 @@ Set the scale factor once and reuse it across all steps. The following generates
 export SCALE_FACTOR=50.0
 export DATA_PATH="data/tables/scale-${SCALE_FACTOR}"
 
-tpchgen-cli parquet -o "${DATA_PATH}" -s ${SCALE_FACTOR}
+tpcgen-cli tpch parquet -o "${DATA_PATH}" -s ${SCALE_FACTOR}
 ```
 
 ### Run

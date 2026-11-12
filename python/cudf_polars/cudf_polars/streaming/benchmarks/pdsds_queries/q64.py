@@ -180,6 +180,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         run_config.dataset_path, "store_returns", run_config.suffix
     )
     date_dim = get_data(run_config.dataset_path, "date_dim", run_config.suffix)
+    year_dtype = date_dim.collect_schema()["d_year"]
     store = get_data(run_config.dataset_path, "store", run_config.suffix)
     customer = get_data(run_config.dataset_path, "customer", run_config.suffix)
     customer_demographics = get_data(
@@ -407,7 +408,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 suffix="_1",
             )
             .filter(pl.col("cnt_1") <= pl.col("cnt"))
-            .with_columns(pl.lit(year, dtype=pl.Int64).alias("syear"))
+            .with_columns(pl.lit(year, dtype=year_dtype).alias("syear"))
             .select(
                 [
                     "product_name",
@@ -429,7 +430,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                     pl.col("s1_1"),
                     pl.col("s2_1"),
                     pl.col("s3_1"),
-                    pl.lit(year + 1, dtype=pl.Int64).alias("syear_1"),
+                    pl.lit(year + 1, dtype=year_dtype).alias("syear_1"),
                     pl.col("cnt_1"),
                 ]
             )

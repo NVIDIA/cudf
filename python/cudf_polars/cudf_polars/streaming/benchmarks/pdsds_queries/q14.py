@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 14."""
@@ -294,15 +294,11 @@ def rollup_level(y: pl.LazyFrame, group_cols: list[str]) -> pl.LazyFrame:  # noq
             ]
         )
 
-    cols = {
-        "channel": pl.Utf8,
-        "i_brand_id": pl.Int64,
-        "i_class_id": pl.Int64,
-        "i_category_id": pl.Int64,
-    }
+    cols = ["channel", "i_brand_id", "i_class_id", "i_category_id"]
     missing = [c for c in cols if c not in group_cols]
     if missing:
-        lf = lf.with_columns([pl.lit(None, dtype=cols[c]).alias(c) for c in missing])
+        schema = y.collect_schema()
+        lf = lf.with_columns([pl.lit(None, dtype=schema[c]).alias(c) for c in missing])
 
     return lf.select(
         [

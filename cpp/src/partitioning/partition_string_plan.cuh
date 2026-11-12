@@ -12,6 +12,7 @@
 #include <cudf/strings/detail/gather.cuh>
 
 #include <cub/device/device_scan.cuh>
+#include <cuda/std/cstddef>
 #include <cuda/std/cstring>
 #include <cuda/std/memory>
 
@@ -49,9 +50,9 @@ CUDF_KERNEL void scatter_ranked_sizes(uint16_t const* ranks,
   auto const one  = prefixes[tiles + blockIdx.x];
 #pragma unroll
   for (int item = 0; item < 4; ++item) {
-    auto const source =
-      std::size_t{blockIdx.x} * partition_map_plan::tile_rows + item * blockDim.x + threadIdx.x;
-    if (source < static_cast<std::size_t>(rows)) {
+    auto const source = cuda::std::size_t{blockIdx.x} * partition_map_plan::tile_rows +
+                        item * blockDim.x + threadIdx.x;
+    if (source < static_cast<cuda::std::size_t>(rows)) {
       auto const packed = ranks[source];
       auto const rank   = packed % partition_map_plan::tile_rows;
       auto const target = (packed < partition_map_plan::tile_rows ? zero : one) + rank;
@@ -69,8 +70,8 @@ CUDF_KERNEL void copy_ranked(uint16_t const* ranks,
 {
   static_assert(partition_map_plan::tile_rows % 64 == 0);
   auto const col = columns[blockIdx.y];
-  for (auto base = std::size_t{blockIdx.x} * 64; base < static_cast<std::size_t>(rows);
-       base += std::size_t{gridDim.x} * 64) {
+  for (auto base = cuda::std::size_t{blockIdx.x} * 64; base < static_cast<cuda::std::size_t>(rows);
+       base += cuda::std::size_t{gridDim.x} * 64) {
     // Each 64-row batch stays inside one tile. Load both bin bases independently
     // of the packed rank so prefix loads can overlap the rank load.
     auto const tile   = base / partition_map_plan::tile_rows;
@@ -78,7 +79,7 @@ CUDF_KERNEL void copy_ranked(uint16_t const* ranks,
     auto const one    = prefixes[tiles + tile];
     auto const source = base + threadIdx.x / 4;
     size_type target  = 0;
-    if (source < static_cast<std::size_t>(rows)) {
+    if (source < static_cast<cuda::std::size_t>(rows)) {
       auto const packed = ranks[source];
       auto const rank   = packed % partition_map_plan::tile_rows;
       target            = (packed < partition_map_plan::tile_rows ? zero : one) + rank;

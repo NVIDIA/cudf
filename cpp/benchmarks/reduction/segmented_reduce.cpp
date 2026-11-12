@@ -17,6 +17,7 @@
 #include <nvbench/nvbench.cuh>
 
 #include <memory>
+#include <type_traits>
 
 bool constexpr is_boolean_output_agg(cudf::segmented_reduce_aggregation::Kind kind)
 {
@@ -31,8 +32,16 @@ bool constexpr is_float_output_agg(cudf::segmented_reduce_aggregation::Kind kind
          kind == cudf::segmented_reduce_aggregation::STD;
 }
 
+cudf::nan_semantics nan_semantics_axis(nvbench::state& state)
+{
+  return state.get_string("nan_semantics") == "TOTALLY_ORDERED"
+           ? cudf::nan_semantics::TOTALLY_ORDERED
+           : cudf::nan_semantics::UNORDERED;
+}
+
 template <cudf::segmented_reduce_aggregation::Kind kind>
-std::unique_ptr<cudf::segmented_reduce_aggregation> make_reduce_aggregation()
+std::unique_ptr<cudf::segmented_reduce_aggregation> make_reduce_aggregation(
+  cudf::nan_semantics semantics)
 {
   switch (kind) {
     case cudf::segmented_reduce_aggregation::SUM:
@@ -40,7 +49,7 @@ std::unique_ptr<cudf::segmented_reduce_aggregation> make_reduce_aggregation()
     case cudf::segmented_reduce_aggregation::PRODUCT:
       return cudf::make_product_aggregation<cudf::segmented_reduce_aggregation>();
     case cudf::segmented_reduce_aggregation::MIN:
-      return cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>();
+      return cudf::make_min_aggregation<cudf::segmented_reduce_aggregation>(semantics);
     case cudf::segmented_reduce_aggregation::MAX:
       return cudf::make_max_aggregation<cudf::segmented_reduce_aggregation>();
     case cudf::segmented_reduce_aggregation::ALL:
@@ -88,8 +97,14 @@ void BM_Segmented_Reduction(nvbench::state& state,
   auto const column_size{cudf::size_type(state.get_int64("column_size"))};
   auto const num_segments{cudf::size_type(state.get_int64("num_segments"))};
 
+  auto const semantics = nan_semantics_axis(state);
+  if (semantics == cudf::nan_semantics::TOTALLY_ORDERED &&
+      (!std::is_floating_point_v<DataType> || kind != cudf::aggregation::MIN)) {
+    state.skip("TOTALLY_ORDERED only changes floating-point MIN");
+    return;
+  }
   auto [input, offsets] = make_test_data<DataType>(state);
-  auto agg              = make_reduce_aggregation<kind>();
+  auto agg              = make_reduce_aggregation<kind>(semantics);
 
   auto const output_type = [] {
     if (is_boolean_output_agg(kind)) { return cudf::data_type{cudf::type_id::BOOL8}; }
@@ -138,4 +153,5 @@ NVBENCH_BENCH_TYPES(BM_Segmented_Reduction, NVBENCH_TYPE_AXES(Types, AggKinds))
   .set_name("segmented_reduction")
   .set_type_axes_names({"DataType", "AggregationKinds"})
   .add_int64_axis("column_size", {100'000, 1'000'000, 10'000'000, 100'000'000})
-  .add_int64_axis("num_segments", {1'000, 10'000, 100'000});
+  .add_int64_axis("num_segments", {1'000, 10'000, 100'000})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});

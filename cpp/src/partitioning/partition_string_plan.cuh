@@ -52,7 +52,7 @@ CUDF_KERNEL void copy_recomputed(MapType const* map,
   __shared__ int histogram[plans::warps][plans::bins], base[plans::bins];
   __shared__ int destinations[plans::tile_rows];
   if (threadIdx.x < partitions) {
-    base[threadIdx.x] = prefixes[std::size_t{threadIdx.x} * gridDim.x + blockIdx.x];
+    base[threadIdx.x] = prefixes[cuda::std::size_t{threadIdx.x} * gridDim.x + blockIdx.x];
   }
   __syncthreads();
   int ranks[4], keys[4];

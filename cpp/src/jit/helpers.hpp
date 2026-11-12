@@ -46,7 +46,7 @@ std::tuple<std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView
            cuda::device_buffer<DeviceView>>
 column_views_to_device(std::span<ColumnView const> views,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cudf::memory_resources mr)
 {
   std::vector<std::unique_ptr<DeviceView, std::function<void(DeviceView*)>>> handles;
 
@@ -61,7 +61,8 @@ column_views_to_device(std::span<ColumnView const> views,
     host_array.push_back(*h);
   }
 
-  cuda::device_buffer<DeviceView> device_array{stream, mr, handles.size(), cuda::no_init};
+  cuda::device_buffer<DeviceView> device_array{
+    stream, mr.get_output_mr(), handles.size(), cuda::no_init};
   cudf::detail::cuda_memcpy<DeviceView>(device_array, host_array, stream);
 
   return std::make_tuple(std::move(handles), std::move(device_array));

@@ -368,7 +368,7 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
   std::array<transform_input, 2> inputs{lhs, rhs};
   std::array<transform_output, 1> outputs{transform_output{.type = output_type}};
   auto result =
-    cudf::transform(udf, inputs, outputs, {}, std::nullopt, stream, mr.get_output_mr())->release();
+    cudf::transform(udf, inputs, outputs, {}, std::nullopt, stream, mr)->release();
   return std::move(result.front());
 }
 

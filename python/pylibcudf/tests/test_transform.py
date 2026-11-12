@@ -4,7 +4,7 @@
 import math
 
 import pyarrow as pa
-from numba import cuda
+import pytest
 from utils import assert_column_eq, assert_table_eq
 
 import pylibcudf as plc
@@ -91,7 +91,47 @@ def test_one_hot_encode():
     assert_table_eq(expect, got)
 
 
+# Precompiled PTX for a numba-ABI device function equivalent to
+#     def op(a, b, c): return (a + b) * c
+# over (float64, float64, float64). It is checked in -- rather than generated at
+# runtime via ``numba.cuda`` -- so pylibcudf's PTX ``transform`` path can be
+# exercised without a numba-cuda dependency. The numba device ABI (int32 status
+# return, output written through the first pointer parameter) is what
+# ``cudf::transform`` expects; libcudf's nvJitLink path re-targets the PTX to the
+# running device, so ``.version 6.3`` / ``.target sm_70`` is portable across the
+# CI CUDA matrix (mirroring cpp/tests/binaryop/binop-generic-ptx-test.cpp).
+_TRANSFORM_UDF_PTX = """\
+.version 6.3
+.target sm_70
+.address_size 64
+
+.visible .func (.param .b32 func_retval0) transform_udf_op(
+\t.param .b64 transform_udf_op_param_0,
+\t.param .b64 transform_udf_op_param_1,
+\t.param .b64 transform_udf_op_param_2,
+\t.param .b64 transform_udf_op_param_3
+)
+{
+\t.reg .b32 \t%r<2>;
+\t.reg .f64 \t%fd<6>;
+\t.reg .b64 \t%rd<2>;
+\tld.param.u64 \t%rd1, [transform_udf_op_param_0];
+\tld.param.f64 \t%fd1, [transform_udf_op_param_1];
+\tld.param.f64 \t%fd2, [transform_udf_op_param_2];
+\tld.param.f64 \t%fd3, [transform_udf_op_param_3];
+\tadd.f64 \t%fd4, %fd1, %fd2;
+\tmul.f64 \t%fd5, %fd4, %fd3;
+\tst.f64 \t[%rd1], %fd5;
+\tmov.u32 \t%r1, 0;
+\tst.param.b32 \t[func_retval0+0], %r1;
+\tret;
+}
+"""
+
+
 def test_transform_udf():
+    cuda = pytest.importorskip("numba.cuda")
+
     @cuda.jit(device=True, lto=True)
     def op(a, b, c):
         return (a + b) * c
@@ -100,6 +140,20 @@ def test_transform_udf():
     def op_ptx(a, b, c):
         return (a + b) * c
 
+    for udf in (op, op_ptx):
+        _check_transform_udf(udf)
+
+
+def test_transform_precompiled_ptx():
+    udf = plc.udf.TransformUDF(
+        symbol="transform_udf_op",
+        fragments=(_TRANSFORM_UDF_PTX.encode(),),
+        binary_type=plc.udf.LTOBinaryType.PTX,
+    )
+    _check_transform_udf(udf)
+
+
+def _check_transform_udf(udf):
     A = 5.0
     B = 20.0
     C = 0.5
@@ -110,12 +164,11 @@ def test_transform_udf():
         plc.Column.from_arrow(pa.array([B] * 100)),
         plc.Column.from_arrow(pa.array([C])),
     ]
-    for udf in (op, op_ptx):
-        got = plc.transform.transform(
-            inputs,
-            transform_udf=udf,
-            output_type=plc.DataType(plc.TypeId.FLOAT64),
-            is_null_aware=plc.types.NullAware.NO,
-            null_policy=plc.types.OutputNullability.PRESERVE,
-        )
-        assert_column_eq(expect, got)
+    got = plc.transform.transform(
+        inputs,
+        transform_udf=udf,
+        output_type=plc.DataType(plc.TypeId.FLOAT64),
+        is_null_aware=plc.types.NullAware.NO,
+        null_policy=plc.types.OutputNullability.PRESERVE,
+    )
+    assert_column_eq(expect, got)

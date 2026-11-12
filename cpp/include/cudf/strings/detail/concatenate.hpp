@@ -33,7 +33,7 @@ namespace strings::detail {
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr);
+                                    cudf::memory_resources mr);
 
 }  // namespace strings::detail
 }  // namespace cudf

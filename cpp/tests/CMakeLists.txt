@@ -196,7 +196,6 @@ ConfigureTest(
   join/conditional_join_tests.cu
   join/cross_join_tests.cpp
   join/semi_anti_join_tests.cpp
-  join/mixed_join_tests.cu
   join/direct_join_tests.cpp
   join/distinct_join_tests.cpp
   join/key_remapping_tests.cpp
@@ -204,6 +203,8 @@ ConfigureTest(
   GPUS 1
   PERCENT 100
 )
+
+ConfigureTest(MIXED_JOIN_TEST join/mixed_join_tests.cu)
 
 # ##################################################################################################
 # * is_sorted tests -------------------------------------------------------------------------------
@@ -637,10 +638,14 @@ ConfigureTest(
 # ##################################################################################################
 # * large strings test ----------------------------------------------------------------------------
 ConfigureTest(
+  LARGE_STRINGS_CSV_TEST large_strings/csv_tests.cpp large_strings/large_strings_fixture.cpp
+  GPUS 1
+  PERCENT 100
+)
+ConfigureTest(
   LARGE_STRINGS_TEST
   large_strings/concatenate_tests.cpp
   large_strings/case_tests.cpp
-  large_strings/csv_tests.cpp
   large_strings/json_tests.cpp
   large_strings/large_strings_fixture.cpp
   large_strings/bpe_tests.cpp
@@ -751,7 +756,7 @@ add_dependencies(TRANSFORM_LTO_TEST cudf_test_fragments)
 target_include_directories(TRANSFORM_LTO_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
 
 # AST JIT expressions in these tests call LTO callees from the same fragments.
-foreach(test AST_TEST JOIN_TEST)
+foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST)
   target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
   add_dependencies(${test} cudf_test_fragments)
   target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})

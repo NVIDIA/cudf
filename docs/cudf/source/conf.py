@@ -162,6 +162,7 @@ extensions = [
     "breathe",
     "breathe_java",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.extlinks",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx_copybutton",
@@ -478,14 +479,19 @@ with open("../../../RAPIDS_BRANCH", "r") as f:
     branch = f.read().strip()
 intersphinx_version = "latest" if branch == "main" else version
 
+# Only the dask-cuDF landing page is linked here. Avoid requiring its
+# inventory before either project's docs can be published for a new release.
+extlinks = {
+    "dask-cudf-doc": (
+        f"https://docs.nvidia.com/dask-cudf/{intersphinx_version}/%s",
+        "%s",
+    ),
+}
+
 intersphinx_mapping = {
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
     "dask-cuda": (
         f"https://docs.nvidia.com/dask-cuda/{intersphinx_version}/",
-        None,
-    ),
-    "dask-cudf": (
-        f"https://docs.nvidia.com/dask-cudf/{intersphinx_version}/",
         None,
     ),
     "dlpack": ("https://dmlc.github.io/dlpack/latest/", None),

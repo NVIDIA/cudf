@@ -282,7 +282,7 @@ struct column_sorted_order_fn {
                   bool,
                   null_order,
                   cuda::stream_ref,
-                  rmm::device_async_resource_ref)
+                  cudf::memory_resources)
   {
     CUDF_FAIL("Column type must be relationally comparable");
   }

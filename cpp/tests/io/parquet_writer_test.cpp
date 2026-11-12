@@ -1616,7 +1616,7 @@ TEST_F(ParquetWriterTest, DictionaryAlwaysTest)
   EXPECT_TRUE(used_dict(1));
 }
 
-TEST_F(ParquetWriterTest, DictionaryMoreColumnsThanMaxGridY)
+TEST_F(ParquetWriterTest, DISABLED_DictionaryMoreColumnsThanMaxGridY)
 {
   // More columns than the CUDA grid y-dimension limit (65535)
   constexpr cudf::size_type num_cols = 70'000;

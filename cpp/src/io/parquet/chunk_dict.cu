@@ -488,7 +488,7 @@ void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
                               cudf::detail::device_2dspan<PageFragment> frags,
                               cuda::stream_ref stream)
 {
-  auto const grid_y = std::min(static_cast<uint32_t>(frags.size().first), MAX_GRID_Y_SIZE);
+  auto const grid_y = std::min<uint32_t>(frags.size().first, MAX_GRID_Y_SIZE);
   dim3 const dim_grid(frags.size().second, grid_y);
   populate_chunk_hash_maps_kernel<dict_encode_block_size>
     <<<dim_grid, dict_encode_block_size, 0, stream.get()>>>(map_storage, frags);
@@ -513,7 +513,7 @@ void get_dictionary_indices(device_span<slot_type> const map_storage,
                             cudf::detail::device_2dspan<PageFragment const> frags,
                             cuda::stream_ref stream)
 {
-  auto const grid_y = std::min(static_cast<uint32_t>(frags.size().first), MAX_GRID_Y_SIZE);
+  auto const grid_y = std::min<uint32_t>(frags.size().first, MAX_GRID_Y_SIZE);
   dim3 const dim_grid(frags.size().second, grid_y);
   get_dictionary_indices_kernel<DEFAULT_BLOCK_SIZE>
     <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(map_storage, frags);

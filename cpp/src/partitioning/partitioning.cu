@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "partition_identity.cuh"
+#include "partition_policy.hpp"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/gather.cuh>
@@ -33,6 +36,7 @@
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
+#include <optional>
 #include <stdexcept>
 
 namespace cudf {
@@ -754,6 +758,88 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   }
 }
 
+template <typename MapType>
+std::vector<size_type> make_map_partition_offsets(column_view const& partition_map,
+                                                  size_type num_partitions,
+                                                  cuda::stream_ref stream)
+{
+  rmm::device_uvector<size_type> offsets(static_cast<std::size_t>(num_partitions) + 1, stream);
+  CUDF_CUDA_TRY(
+    cudaMemsetAsync(offsets.data() + num_partitions, 0, sizeof(size_type), stream.get()));
+  std::size_t bytes = 0;
+  CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(nullptr,
+                                                    bytes,
+                                                    partition_map.begin<MapType>(),
+                                                    offsets.data(),
+                                                    num_partitions + 1,
+                                                    size_type{0},
+                                                    num_partitions,
+                                                    partition_map.size(),
+                                                    stream.get()));
+  {
+    rmm::device_buffer scratch(bytes, stream);
+    CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(scratch.data(),
+                                                      bytes,
+                                                      partition_map.begin<MapType>(),
+                                                      offsets.data(),
+                                                      num_partitions + 1,
+                                                      size_type{0},
+                                                      num_partitions,
+                                                      partition_map.size(),
+                                                      stream.get()));
+  }
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                         offsets.begin(),
+                         offsets.end(),
+                         offsets.begin());
+  auto const pinned_offsets = cudf::detail::make_pinned_vector(offsets, stream);
+  return {pinned_offsets.begin(), pinned_offsets.end()};
+}
+
+template <typename MapType>
+std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_partition_trivial(
+  table_view const& input,
+  column_view const& partition_map,
+  size_type num_partitions,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  if (num_partitions <= 0 || num_partitions == std::numeric_limits<size_type>::max()) {
+    return std::nullopt;
+  }
+  auto const rows    = input.num_rows();
+  auto const uniform = std::all_of(input.begin(), input.end(), [](auto const& col) {
+    return cudf::detail::partition_identity::is_uniform(col);
+  });
+  if (!cudf::detail::partition_policy::use_trivial(rows, num_partitions, uniform)) {
+    return std::nullopt;
+  }
+
+  std::vector<size_type> offsets;
+  if (num_partitions == 1) {
+    offsets = {0, rows};
+  } else if (rows == 1) {
+    auto const value = cudf::detail::make_std_vector(
+      device_span<MapType const>{partition_map.begin<MapType>(), 1}, stream)[0];
+    offsets.resize(static_cast<std::size_t>(num_partitions) + 1);
+    for (std::size_t p = 0; p < offsets.size(); ++p) {
+      offsets[p] = p > static_cast<std::size_t>(value) ? rows : 0;
+    }
+  } else {
+    offsets = make_map_partition_offsets<MapType>(partition_map, num_partitions, stream);
+  }
+  if (!uniform) {
+    return std::pair{cudf::detail::partition_identity::copy(input, stream, mr), std::move(offsets)};
+  }
+
+  std::vector<std::unique_ptr<column>> columns;
+  columns.reserve(input.num_columns());
+  for (auto const& col : input) {
+    columns.push_back(cudf::detail::partition_identity::uniform_column(col, stream, mr));
+  }
+  return std::pair{std::make_unique<table>(std::move(columns), rows), std::move(offsets)};
+}
+
 struct dispatch_map_type {
   /**
    * @brief Partitions the table `t` according to the `partition_map`.
@@ -783,6 +869,10 @@ struct dispatch_map_type {
     rmm::device_async_resource_ref mr) const
     requires(is_index_type<MapType>())
   {
+    if (auto output =
+          try_partition_trivial<MapType>(t, partition_map, num_partitions, stream, mr)) {
+      return std::move(*output);
+    }
     // Build a histogram of the number of rows in each partition
     rmm::device_uvector<size_type> histogram(num_partitions + 1, stream);
     std::size_t temp_storage_bytes{};

@@ -2,6 +2,8 @@
  * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "../../src/partitioning/partition_policy.hpp"
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -337,6 +339,80 @@ TEST_F(PartitionTestNotTyped, ListOfListOfListOfIntEmpty)
   auto result = cudf::partition(table_to_partition, map, 2);
   CUDF_TEST_EXPECT_TABLES_EQUAL(table_to_partition, result.first->view());
   EXPECT_EQ(3, result.second.size());
+}
+
+TEST_F(PartitionTestNotTyped, HostMetadataPolicy)
+{
+  namespace policy = cudf::detail::partition_policy;
+  int64_t value{};
+  cudf::bitmask_type mask{};
+  auto const view = [&](cudf::size_type nulls) {
+    return cudf::column_view{
+      cudf::data_type{cudf::type_id::INT64}, 1'000'000, &value, nulls ? &mask : nullptr, nulls};
+  };
+  auto const valid  = view(0);
+  auto const sparse = view(100'000);
+  auto const dense  = view(900'000);
+  auto result       = policy::select_partition_plan(cudf::table_view{{valid, valid}}, 2);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->method, policy::algorithm::recompute);
+  EXPECT_TRUE(result->direct);
+  result = policy::select_partition_plan(cudf::table_view{{sparse, sparse}}, 256);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(result->method, policy::algorithm::saved);
+  result = policy::select_partition_plan(cudf::table_view{{dense, dense, dense}}, 2);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(result->reordered);
+  EXPECT_FALSE(policy::select_partition_plan(cudf::table_view{{valid}}, 257).has_value());
+  EXPECT_FALSE(policy::select_partition_plan(cudf::table_view{{valid}}, 1).has_value());
+}
+
+TEST_F(PartitionTestNotTyped, TrivialPartitionSlices)
+{
+  for (auto const rows : {1, 1025}) {
+    for (auto const partitions : {1, 17}) {
+      if (rows > 1 && partitions > 1) continue;
+      std::vector<int32_t> ids(rows + 7);
+      std::iota(ids.begin(), ids.end(), 0);
+      std::vector<std::string> text(rows + 7, std::string("a\0b", 3));
+      fixed_width_column_wrapper<int32_t> numbers(ids.begin(), ids.end());
+      strings_column_wrapper strings(text.begin(), text.end());
+      auto input = cudf::slice(cudf::table_view{{numbers, strings}}, {7, rows + 7})[0];
+      std::vector<int32_t> assignments(rows + 3, partitions / 2);
+      fixed_width_column_wrapper<int32_t> owner(assignments.begin(), assignments.end());
+      auto map    = cudf::slice(owner, {3, rows + 3})[0];
+      auto result = cudf::partition(input, map, partitions);
+      std::vector<cudf::size_type> offsets(partitions + 1, 0);
+      for (int p = partitions / 2 + 1; p <= partitions; ++p)
+        offsets[p] = rows;
+      EXPECT_EQ(result.second, offsets);
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(input, result.first->view());
+    }
+  }
+}
+
+TEST_F(PartitionTestNotTyped, UniformPartitionColumns)
+{
+  constexpr int rows = 1025;
+  std::vector<int32_t> values(rows, 3), assignments(rows);
+  std::vector<bool> invalid(rows, false);
+  std::vector<std::string> text(rows, "payload"), empty(rows, "");
+  fixed_width_column_wrapper<int32_t> null_numbers(values.begin(), values.end(), invalid.begin());
+  strings_column_wrapper null_strings(text.begin(), text.end(), invalid.begin());
+  strings_column_wrapper empty_strings(empty.begin(), empty.end());
+  auto input = cudf::table_view{{null_numbers, null_strings, empty_strings}};
+  for (auto const partitions : {1, 17}) {
+    std::vector<cudf::size_type> expected(partitions + 1, 0);
+    for (int i = 0; i < rows; ++i) {
+      assignments[i] = (13 * i) % partitions;
+      ++expected[assignments[i] + 1];
+    }
+    std::partial_sum(expected.begin(), expected.end(), expected.begin());
+    fixed_width_column_wrapper<int32_t> map(assignments.begin(), assignments.end());
+    auto result = cudf::partition(input, map, partitions);
+    EXPECT_EQ(result.second, expected);
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(input, result.first->view());
+  }
 }
 
 TEST_F(PartitionTestNotTyped, NoIntegerOverflow)

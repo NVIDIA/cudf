@@ -5,9 +5,6 @@
 
 #include <cudf/udf_includes.hpp>
 
-#include <cstddef>
-#include <cstdint>
-
 extern "C" __device__ cudf::errc checksum(uint16_t* out,
                                           cudf::string_view const name,
                                           cudf::string_view const email)

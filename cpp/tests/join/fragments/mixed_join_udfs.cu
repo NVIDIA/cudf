@@ -5,8 +5,6 @@
 
 #include <cudf/udf_includes.hpp>
 
-#include <cstdint>
-
 extern "C" __device__ cudf::errc greater_equal_double(bool* output,
                                                       double left_col0,
                                                       double right_col0)

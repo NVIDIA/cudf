@@ -262,7 +262,6 @@ cdef vector[cpp_transform.lto_fragment] _to_lto_fragments(
     cdef cpp_transform.lto_fragment fragment
     cdef bytes data
     fragment.type = <cpp_transform.lto_binary_type>binary_type
-    result.reserve(len(fragments))
     for data in fragments:
         fragment.data = span[const_uint8_t](
             <const uint8_t*>PyBytes_AsString(data), len(data)

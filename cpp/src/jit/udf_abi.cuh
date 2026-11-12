@@ -5,8 +5,8 @@
 
 #pragma once
 
-// Self-contained register representations for forwarding UDF arguments. This header is included
-// by NVRTC-compiled adapters. It deliberately provides no operations on these values.
+// This header is included by NVRTC-compiled adapters.
+// It is intended to be a minimal fast to compile header for forwarding UDF arguments across ABIs.
 
 namespace cudf_udf_abi {
 

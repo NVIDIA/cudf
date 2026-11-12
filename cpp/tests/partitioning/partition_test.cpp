@@ -579,5 +579,12 @@ TYPED_TEST(StringPartitionMapTypes, PartialTiles)
     strings_column_wrapper output(expected.begin(), expected.end());
     run_partition_test(
       cudf::table_view{{input, input}}, map, parts, cudf::table_view{{output, output}}, offsets);
+    if (parts == 2) {
+      run_partition_test(cudf::table_view{{input, input, input, input}},
+                         map,
+                         parts,
+                         cudf::table_view{{output, output, output, output}},
+                         offsets);
+    }
   }
 }

@@ -1,13 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Sequence
 from cython.operator cimport dereference
 
 from libcpp.memory cimport unique_ptr
 from libcpp.optional cimport optional
 from libcpp.span cimport span
 from libcpp.string cimport string
+from libcpp.string_view cimport string_view
+from libc.stdint cimport uint8_t, uintptr_t
+from cpython.bytes cimport PyBytes_AsString
 from libcpp.vector cimport vector
 from libcpp.utility cimport move, pair
 
@@ -19,7 +21,6 @@ from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport (
     bitmask_type,
     size_type,
-    udf_source_type,
 )
 
 from rmm.pylibrmm.stream cimport Stream
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 from cuda.bindings.cyruntime cimport cudaStream_t
 
+ctypedef cpp_transform.const_uint8_t const_uint8_t
 ctypedef const cpp_transform.transform_input const_transform_input
 ctypedef const cpp_transform.transform_output const_transform_output
 
@@ -252,13 +254,30 @@ cpdef Column mask_to_bools(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
+cdef vector[cpp_transform.lto_fragment] _to_lto_fragments(
+    fragments, uint8_t binary_type
+):
+    # The caller retains the bytes owning these non-owning spans.
+    cdef vector[cpp_transform.lto_fragment] result
+    cdef cpp_transform.lto_fragment fragment
+    cdef bytes data
+    fragment.type = <cpp_transform.lto_binary_type>binary_type
+    result.reserve(len(fragments))
+    for data in fragments:
+        fragment.data = span[const_uint8_t](
+            <const uint8_t*>PyBytes_AsString(data), len(data)
+        )
+        result.push_back(fragment)
+    return result
+
+
 cpdef Column transform(
-    inputs: Sequence[Column],
-    str transform_udf,
+    inputs,
+    transform_udf,
     DataType output_type,
-    bool is_ptx,
     null_aware is_null_aware,
     output_nullability null_policy,
+    object row_size=None,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -267,15 +286,14 @@ cpdef Column transform(
 
     Parameters
     ----------
-    inputs : Sequence[Column]
-        Columns to transform.
-    transform_udf : str
-        The PTX/CUDA string of the transform function to apply.
+    inputs : Sequence[Column | UserData]
+        Ordered columns and borrowed pointers. Length-one columns broadcast.
+    transform_udf : callable or TransformUDF
+        Value-returning Python device callable, implicitly compiled to the CUDF ABI,
+        or an explicit symbol and compiled CUDF ABI LTO IR or PTX modules.
+        Set TransformUDF.indexed to request a logical row index before ordinary inputs.
     output_type : DataType
         The output type that is compatible with the output type in the unary_udf.
-    is_ptx : bool
-        If `True`, the UDF is treated as PTX code.
-        If `False`, the UDF is treated as CUDA code.
     is_null_aware: NullAware
         If `NO`, the UDF gets non-nullable parameters
         If `YES`, the UDF gets nullable parameters
@@ -283,6 +301,8 @@ cpdef Column transform(
         If `PRESERVE`, null-masks are produced if necessary.
         If `ALL_VALID`, null-masks are not produced.
         `ALL_VALID` has undefined behavior if the UDF can produce nulls.
+    row_size : int | None
+        Explicit row count. Required when inputs contain no columns.
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
@@ -301,15 +321,14 @@ cpdef Column transform(
     cdef vector[cpp_transform.transform_output] c_outputs
     cdef cpp_transform.transform_output c_output
     cdef unique_ptr[cpp_transform.scalar_column_view] c_scalar_input
-    cdef string c_transform_udf = transform_udf.encode()
-    cdef udf_source_type source_type = (
-        udf_source_type.PTX if is_ptx else udf_source_type.CUDA
-    )
-    cdef null_aware c_is_null_aware = is_null_aware
-    cdef output_nullability c_null_policy = null_policy
-    cdef optional[void *] user_data
-    cdef optional[size_type] row_size
+    from .udf import UserData, _as_transform_udf
+
+    cdef cpp_transform.transform_udf c_udf
+    cdef vector[cpp_transform.lto_fragment] c_fragments
+    cdef string symbol
+    cdef optional[size_type] c_row_size
     cdef column_view input_view
+    cdef cpp_transform.user_data c_user_data
     cdef size_type smallest_size
     cdef size_type largest_size
     cdef size_type base_size
@@ -318,15 +337,38 @@ cpdef Column transform(
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
-    if inputs:
-        sizes = [(<Column?>input).view().size() for input in inputs]
+    columns = [value for value in inputs if not isinstance(value, UserData)]
+    if row_size is not None:
+        base_size = row_size
+        c_row_size = base_size
+    elif columns:
+        sizes = [(<Column?>input).view().size() for input in columns]
         smallest_size = min(sizes)
         largest_size = max(sizes)
 
         base_size = 0 if largest_size == 1 and smallest_size == 0 else largest_size
-        row_size = base_size
+        c_row_size = base_size
+    else:
+        raise ValueError("row_size is required when there are no column inputs")
+    compiled = _as_transform_udf(
+        transform_udf,
+        [None if isinstance(value, UserData) else value.type().id() for value in inputs],
+        output_type.id(),
+        is_null_aware == null_aware.YES,
+    )
+    # Retain compiled's symbol and byte owners throughout linking and execution.
+    symbol = compiled.symbol.encode()
+    c_fragments = _to_lto_fragments(compiled.fragments, compiled.binary_type)
+    c_udf.is_null_aware = null_aware.YES if compiled.is_null_aware else null_aware.NO
+    c_udf.indexed = compiled.indexed
+    c_udf.symbol = string_view(symbol.data(), symbol.size())
+    c_udf.fragments = span[cpp_transform.const_lto_fragment](c_fragments.data(), c_fragments.size())
 
     for input in inputs:
+        if isinstance(input, UserData):
+            c_user_data.data = <void*><uintptr_t>input.ptr
+            c_inputs.push_back(cpp_transform.transform_input(c_user_data))
+            continue
         input_view = (<Column?>input).view()
         if input_view.size() == 1 and input_view.size() != base_size:
             c_scalar_input.reset(
@@ -339,19 +381,16 @@ cpdef Column transform(
             c_inputs.push_back(cpp_transform.transform_input(input_view))
 
     c_output.type = output_type.c_obj
-    c_output.nullability = c_null_policy
+    c_output.nullability = null_policy
     c_outputs.push_back(c_output)
 
     with nogil:
         c_table_result = cpp_transform.transform(
-            c_transform_udf,
-            source_type,
-            c_is_null_aware,
-            user_data,
+            c_udf,
             span[const_transform_input](c_inputs.data(), c_inputs.size()),
             span[const_transform_output](c_outputs.data(), c_outputs.size()),
             move(string_offsets),
-            row_size,
+            c_row_size,
             _cs,
             mr.get_mr()
         )

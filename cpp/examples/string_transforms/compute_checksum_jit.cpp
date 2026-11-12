@@ -19,34 +19,13 @@ std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
-  auto udf = R"***(
- __device__ void checksum(uint16_t* out,
-                          cudf::string_view const name,
-                          cudf::string_view const email)
- {
-   auto fletcher16 = [](cudf::string_view str) -> uint16_t {
-     uint16_t sum1 = 0;
-     uint16_t sum2 = 0;
-     for (cudf::size_type i = 0; i < str.size_bytes(); ++i) {
-       sum1 = (sum1 + str.data()[i]) % 255;
-       sum2 = (sum2 + sum1) % 255;
-     }
-     return (sum2 << 8) | sum1;
-   };
-   *out = fletcher16(name) ^ fletcher16(email);
- }
-   )***";
-
   auto transformed               = std::vector<int32_t>{0, 1};
   auto name                      = table.column(0);
   auto email                     = table.column(1);
   cudf::transform_input inputs[] = {name, email};
 
   auto result = std::move(
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
-                    cudf::null_aware::NO,
-                    std::nullopt,
+    cudf::transform(get_transform_udf("checksum"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::UINT16},
                                                       cudf::output_nullability::PRESERVE}},

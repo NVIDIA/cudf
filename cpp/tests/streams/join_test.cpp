@@ -20,6 +20,9 @@
 #include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
+
+#include <cudf_test_fragments.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -224,13 +227,16 @@ TEST_F(JoinTest, FullJoinWithPostFilter)
                                           cudf::join_kind::FULL_JOIN,
                                           size,
                                           stream);
-  auto jit_result     = cudf::filter_join_indices_jit(conditional0,
-                                                  conditional1,
+  auto const range    = cudf_test_fragments::file_ranges[cudf_test_fragments::mixed_join_udfs];
+  cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
+                                    cudf_test_fragments::files.subspan(range[0], range[1])};
+  auto jit_result = cudf::filter_join_indices_jit(conditional0.view().select({0}),
+                                                  conditional1.view().select({0}),
                                                   left_indices,
                                                   right_indices,
-                                                  predicate,
+                                                  {"greater_int32_t", {&fragment, 1}},
                                                   cudf::join_kind::FULL_JOIN,
-                                                      {},
+                                                  {},
                                                   stream);
   EXPECT_EQ(size, table0.num_rows() + table1.num_rows());
   EXPECT_EQ(result.first->size(), table0.num_rows() + table1.num_rows());

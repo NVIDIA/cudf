@@ -12,14 +12,11 @@
 #include <cudf/errc.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/traits.hpp>
 
-#include <cuda/atomic>
 #include <cuda/std/algorithm>
-#include <cuda/std/utility>
 
-#include <jit/column_accessor.cuh>
 #include <jit/sync.cuh>
-#include <jit/type_list.cuh>
 
 namespace cudf::detail {
 
@@ -40,7 +37,7 @@ __device__ void transform_kernel(size_type row_size,
                                  bitmask_type const* __restrict__ stencil,
                                  column_device_view_core const* __restrict__ input_cols,
                                  mutable_column_device_view_core const* __restrict__ output_cols,
-                                 int32_t* __restrict__ max_error,
+                                 error_int* __restrict__ max_error,
                                  RowOperation&& operation)
 {
   constexpr auto all_fixed_width_repr_compatible = []<typename... A>() {
@@ -114,8 +111,7 @@ __device__ void transform_kernel(size_type row_size,
 
   if (thread_error == errc::SUCCESS) { return; }
 
-  cuda::atomic_ref ref(*max_error);
-  ref.fetch_max(static_cast<int32_t>(thread_error), cuda::std::memory_order_relaxed);
+  atomicMax(max_error, static_cast<error_int>(thread_error));
 }
 
 }  // namespace cudf::detail

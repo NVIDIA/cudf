@@ -1,9 +1,10 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
+enable_language(ASM)
 
 add_library(
   cudf_streaming_ndsh concatenate.cpp groupby.cpp join.cpp parquet_writer.cpp sort.cpp utils.cpp
@@ -45,6 +46,26 @@ foreach(query IN ITEMS ${CUDF_STREAMING_NDSH_QUERIES})
                      cudf_streaming::optional_communication $<TARGET_NAME_IF_EXISTS:conda_env>
   )
 endforeach()
+
+# Compile the CUDA UDFs once into an LTO fatbin and embed the module in the shared NDSH library.
+include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/thirdparty/get_xxhash.cmake")
+include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/thirdparty/get_rtcx.cmake")
+include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/Modules/AddFragment.cmake")
+get_target_property(cudf_compile_definitions cudf::cudf INTERFACE_COMPILE_DEFINITIONS)
+list(FILTER cudf_compile_definitions INCLUDE REGEX "^CUDF_LTO_ARCHITECTURE=")
+string(REPLACE "CUDF_LTO_ARCHITECTURE=" "" CUDF_LTO_ARCHITECTURE "${cudf_compile_definitions}")
+rtcx_add_embed(streaming_ndsh_fragments)
+add_fragment(
+  streaming_ndsh_fragments FRAGMENT ndsh_udfs SOURCE fragments.cu LINK_LIBRARIES cudf::cudf
+)
+rtcx_embed(
+  streaming_ndsh_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
+)
+target_sources(
+  cudf_streaming_ndsh PRIVATE ${streaming_ndsh_fragments_SOURCE_DIR}/streaming_ndsh_fragments.s
+)
+target_include_directories(cudf_streaming_ndsh PRIVATE ${streaming_ndsh_fragments_SOURCE_DIR})
+add_dependencies(cudf_streaming_ndsh streaming_ndsh_fragments)
 
 install(
   TARGETS cudf_streaming_ndsh

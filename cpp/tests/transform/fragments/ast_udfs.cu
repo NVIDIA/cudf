@@ -6,12 +6,7 @@
 // Device functions that AST JIT expressions call (cudf::ast::jit::call with an ast::jit::udf),
 // in tests/ast/jit_expressions_tests.cpp and tests/join/mixed_join_tests.cu.
 
-#include <cudf/errc.hpp>
-#include <cudf/fixed_point/fixed_point.hpp>
-#include <cudf/strings/string_view.cuh>
-#include <cudf/wrappers/timestamps.hpp>
-
-#include <cuda/std/optional>
+#include <cudf/udf_includes.hpp>
 
 extern "C" __device__ cudf::errc lto_add_one(int32_t* out, int32_t a)
 {

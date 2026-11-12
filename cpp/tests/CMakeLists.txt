@@ -721,25 +721,11 @@ ConfigureTest(AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp ast/jit_ex
 # -------------------------------------------------------------------------------------
 rtcx_add_embed(cudf_test_fragments)
 
-add_fragment(
-  cudf_test_fragments FRAGMENT bankers_rounding SOURCE transform/fragments/bankers_rounding.cu
-)
-
-add_fragment(cudf_test_fragments FRAGMENT distance SOURCE transform/fragments/distance.cu)
-
-add_fragment(cudf_test_fragments FRAGMENT invsqrt SOURCE transform/fragments/invsqrt.cu)
-
-add_fragment(cudf_test_fragments FRAGMENT lehmer_mean SOURCE transform/fragments/lehmer_mean.cu)
-
-add_fragment(
-  cudf_test_fragments FRAGMENT sum_of_squares SOURCE transform/fragments/sum_of_squares.cu
-)
-
-add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
-
-add_fragment(
-  cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
-)
+add_fragment(cudf_test_fragments FRAGMENT udfs_lto_ir SOURCE transform/fragments/udfs.cu)
+add_fragment(cudf_test_fragments FRAGMENT udfs_ptx SOURCE transform/fragments/udfs.cu PTX)
+add_fragment(cudf_test_fragments FRAGMENT ast_udfs SOURCE transform/fragments/ast_udfs.cu)
+add_fragment(cudf_test_fragments FRAGMENT filter_udfs SOURCE filter/fragments/filter_udfs.cu)
+add_fragment(cudf_test_fragments FRAGMENT mixed_join_udfs SOURCE join/fragments/mixed_join_udfs.cu)
 
 rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
@@ -752,8 +738,8 @@ ConfigureTest(
 add_dependencies(TRANSFORM_LTO_TEST cudf_test_fragments)
 target_include_directories(TRANSFORM_LTO_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
 
-# AST JIT expressions in these tests call LTO callees from the same fragments.
-foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST)
+# Share the LTO and PTX modules between the integration test executables.
+foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST TRANSFORM_TEST FILTER_TEST BINARYOP_TEST)
   target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
   add_dependencies(${test} cudf_test_fragments)
   target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
@@ -786,8 +772,6 @@ ConfigureTest(LABEL_BINS_TEST labeling/label_bins_tests.cpp)
 
 # ##################################################################################################
 # * jit tests ----------------------------------------------------------------------------------
-ConfigureTest(JIT_PARSER_TEST jit/parse_ptx_function.cpp)
-target_include_directories(JIT_PARSER_TEST PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>")
 
 ConfigureTest(ROW_IR_TEST jit/row_ir.cpp)
 
@@ -800,6 +784,9 @@ if(CUDF_BUILD_STREAMS_TEST_UTIL)
 endif()
 
 ConfigureTest(STREAM_BINARYOP_TEST streams/binaryop_test.cpp STREAM_MODE testing)
+target_sources(STREAM_BINARYOP_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
+target_include_directories(STREAM_BINARYOP_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+add_dependencies(STREAM_BINARYOP_TEST cudf_test_fragments)
 ConfigureTest(STREAM_COLUMN_VIEW_TEST streams/column_view_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_CONCATENATE_TEST streams/concatenate_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_COPYING_TEST streams/copying_test.cpp STREAM_MODE testing)
@@ -820,6 +807,9 @@ ConfigureTest(
   STREAM_IO_HYBRID_SCAN_TEST streams/io/experimental/hybrid_scan_test.cpp STREAM_MODE testing
 )
 ConfigureTest(STREAM_JOIN_TEST streams/join_test.cpp STREAM_MODE testing)
+target_sources(STREAM_JOIN_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
+target_include_directories(STREAM_JOIN_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+add_dependencies(STREAM_JOIN_TEST cudf_test_fragments)
 ConfigureTest(STREAM_LABELING_BINS_TEST streams/labeling_bins_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_LISTS_TEST streams/lists_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_MERGE_TEST streams/merge_test.cpp STREAM_MODE testing)
@@ -849,6 +839,11 @@ ConfigureTest(STREAM_SCALAR_TEST streams/scalar_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_SEARCH_TEST streams/search_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_SORTING_TEST streams/sorting_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_STREAM_COMPACTION_TEST streams/stream_compaction_test.cpp STREAM_MODE testing)
+target_sources(
+  STREAM_STREAM_COMPACTION_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
+)
+target_include_directories(STREAM_STREAM_COMPACTION_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+add_dependencies(STREAM_STREAM_COMPACTION_TEST cudf_test_fragments)
 ConfigureTest(
   STREAM_STRINGS_TEST
   streams/strings/attributes_test.cpp
@@ -881,6 +876,11 @@ ConfigureTest(
   testing
 )
 ConfigureTest(STREAM_TRANSFORM_TEST streams/transform_test.cpp STREAM_MODE testing)
+target_sources(
+  STREAM_TRANSFORM_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
+)
+target_include_directories(STREAM_TRANSFORM_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+add_dependencies(STREAM_TRANSFORM_TEST cudf_test_fragments)
 ConfigureTest(STREAM_TRANSPOSE_TEST streams/transpose_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_UNARY_TEST streams/unary_test.cpp STREAM_MODE testing)
 

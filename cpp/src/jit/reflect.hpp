@@ -39,7 +39,7 @@ struct transform_reflection {
 /**
  * @brief Reflects input/output accessors.
  *
- * @param source_type The type of the UDF source (either CUDA source or LTO binary).
+ * @param use_physical_types Whether the ABI uses physical storage types.
  * @param inputs The input type specifications.
  * @param outputs The output type specifications.
  * @param input_table_sources Optional mapping of input table sources. If empty, the default table
@@ -53,7 +53,7 @@ struct transform_reflection {
  *
  * @return A transform_reflection containing the reflected accessors.
  */
-transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
+transform_reflection reflect(bool use_physical_types,
                              std::span<transform_input_spec const> inputs,
                              std::span<transform_output_spec const> outputs,
                              std::span<int32_t const> input_table_sources  = {},
@@ -63,7 +63,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
 
 /** @brief Reflects accessors from column storage.
  *
- * @param source_type The type of the UDF source (either CUDA source or LTO binary).
+ * @param use_physical_types Whether the ABI uses physical storage types.
  * @param inputs The input columns or scalars.
  * @param outputs The output columns.
  * @param input_table_sources Optional mapping of input table sources. If empty, the default table
@@ -77,7 +77,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
  *
  * @return A transform_reflection containing the reflected accessors.
  */
-transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
+transform_reflection reflect(bool use_physical_types,
                              std::span<transform_input const> inputs,
                              std::span<output_column const> outputs,
                              std::span<int32_t const> input_table_sources  = {},
@@ -112,36 +112,44 @@ std::vector<transform_output_spec> make_output_specs(
   std::span<transform_output const> outputs,
   std::span<std::unique_ptr<column> const> string_offsets);
 
-/** @brief Reflects the UDF function signature from type specifications.
+/** @brief Reflects ordered UDF parameter types: requested indices, outputs, then inputs.
+ */
+std::vector<std::string> reflect_udf_parameter_types(bool is_null_aware,
+                                                     std::span<transform_input_spec const> inputs,
+                                                     std::span<transform_output_spec const> outputs,
+                                                     bool use_physical_types,
+                                                     int32_t index_count);
+
+/** @brief Reflects the private normalized kernel signature, including requested row indices.
  *
  * @param is_null_aware Whether the UDF is null-aware.
- * @param has_user_data Whether the UDF has user data.
  * @param inputs The input type specifications.
  * @param outputs The output type specifications.
  * @param use_physical_types Whether to use physical types in the signature.
+ * @param index_count Number of indices: zero if unindexed, one for transform, two for join.
  *
  * @return A string representing the UDF function signature.
  */
 std::string reflect_udf_signature(bool is_null_aware,
-                                  bool has_user_data,
                                   std::span<transform_input_spec const> inputs,
                                   std::span<transform_output_spec const> outputs,
-                                  bool use_physical_types);
+                                  bool use_physical_types,
+                                  int32_t index_count);
 
 /** @brief Reflects the UDF function signature from column storage.
  *
  * @param is_null_aware Whether the UDF is null-aware.
- * @param has_user_data Whether the UDF has user data.
  * @param inputs The input columns or scalars.
  * @param outputs The output columns.
  * @param use_physical_types Whether to use physical types in the signature.
+ * @param index_count Number of indices: zero if unindexed, one for transform, two for join.
  *
  * @return A string representing the UDF function signature.
  */
 std::string reflect_udf_signature(bool is_null_aware,
-                                  bool has_user_data,
                                   std::span<transform_input const> inputs,
                                   std::span<output_column const> outputs,
-                                  bool use_physical_types);
+                                  bool use_physical_types,
+                                  int32_t index_count);
 
 }  // namespace cudf::jit

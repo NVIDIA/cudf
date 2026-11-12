@@ -38,11 +38,11 @@ cpdef Column mask_to_bools(
 
 cpdef Column transform(
     inputs,
-    str transform_udf,
+    transform_udf,
     DataType output_type,
-    bool is_ptx,
     null_aware is_null_aware,
     output_nullability null_policy,
+    object row_size = *,
     object stream = *,
     DeviceMemoryResource mr = *,
 )

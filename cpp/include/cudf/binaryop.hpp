@@ -8,6 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -341,7 +342,7 @@ std::unique_ptr<column> binary_operation(
 
 /**
  * @brief Performs a binary operation between two columns using a
- * user-defined PTX function.
+ * compiled user-defined device function.
  *
  * @deprecated in release 26.12 and will be removed in a future release. Use `cudf::transform`
  * instead.
@@ -353,10 +354,10 @@ std::unique_ptr<column> binary_operation(
  *
  * @param lhs         The left operand column
  * @param rhs         The right operand column
- * @param ptx         String containing the PTX of a binary function
+ * @param udf         The user-defined device function to apply
  * @param output_type The desired data type of the output column. It is assumed
  *                    that output_type is compatible with the output data type
- *                    of the function in the PTX code
+ *                    of the function
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
@@ -368,7 +369,7 @@ std::unique_ptr<column> binary_operation(
 [[deprecated("Use cudf::transform instead")]] std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   column_view const& rhs,
-  std::string const& ptx,
+  transform_udf const& udf,
   data_type output_type,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());

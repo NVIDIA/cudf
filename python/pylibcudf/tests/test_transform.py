@@ -3,7 +3,6 @@
 
 import math
 
-import numba
 import pyarrow as pa
 from numba import cuda
 from utils import assert_column_eq, assert_table_eq
@@ -93,29 +92,30 @@ def test_one_hot_encode():
 
 
 def test_transform_udf():
-    @cuda.jit(device=True)
+    @cuda.jit(device=True, lto=True)
     def op(a, b, c):
         return (a + b) * c
 
-    ptx, _ = cuda.compile_ptx_for_current_device(
-        op, (numba.float64, numba.float64, numba.float64), device=True
-    )
+    @cuda.jit(device=True)
+    def op_ptx(a, b, c):
+        return (a + b) * c
 
     A = 5.0
     B = 20.0
     C = 0.5
 
     expect = pa.array([(A + B) * C] * 100)
-    got = plc.transform.transform(
-        [
-            plc.Column.from_arrow(pa.array([A] * 100)),
-            plc.Column.from_arrow(pa.array([B] * 100)),
-            plc.Column.from_arrow(pa.array([C])),
-        ],
-        transform_udf=ptx,
-        output_type=plc.DataType(plc.TypeId.FLOAT64),
-        is_ptx=True,
-        is_null_aware=plc.types.NullAware.NO,
-        null_policy=plc.types.OutputNullability.PRESERVE,
-    )
-    assert_column_eq(expect, got)
+    inputs = [
+        plc.Column.from_arrow(pa.array([A] * 100)),
+        plc.Column.from_arrow(pa.array([B] * 100)),
+        plc.Column.from_arrow(pa.array([C])),
+    ]
+    for udf in (op, op_ptx):
+        got = plc.transform.transform(
+            inputs,
+            transform_udf=udf,
+            output_type=plc.DataType(plc.TypeId.FLOAT64),
+            is_null_aware=plc.types.NullAware.NO,
+            null_policy=plc.types.OutputNullability.PRESERVE,
+        )
+        assert_column_eq(expect, got)

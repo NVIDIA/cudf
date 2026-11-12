@@ -217,6 +217,13 @@ enum class type_id : int32_t {
 };
 
 /**
+ * @brief Opaque user-defined data.
+ */
+struct user_data {
+  void* data = nullptr;  ///< Opaque user pointer
+};
+
+/**
  * @brief A function is null-aware if its output value uses the input validity.
  *
  * For example, ADD is not null-aware, but IS_NULL and NULL_LOGICAL_AND are null-aware.
@@ -260,14 +267,6 @@ enum class output_nullability : uint8_t {
 enum class error_policy : uint8_t {
   PROPAGATE = 0,  ///< The function propagates errors
   NULLIFY   = 1   ///< The function nullifies its output on error
-};
-
-/**
- * @brief Indicates the source language of a user defined function (UDF) to be used in JIT APIs.
- */
-enum class udf_source_type : uint8_t {
-  CUDA = 0,  ///< The UDF is a CUDA function
-  PTX  = 1   ///< The UDF is a PTX function
 };
 
 /**

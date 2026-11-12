@@ -21,8 +21,8 @@
 #include <cuda/std/optional>
 
 #include <jit/column_accessor.cuh>
-#include <jit/transform_kernel.cuh>
 #include <jit/type_list.cuh>
+#include <transform/jit/transform_kernel.cuh>
 
 #include <string>
 #include <type_traits>
@@ -115,7 +115,7 @@ CUDF_KERNEL void checked_binary_kernel(size_type row_size,
                                        column_device_view rhs,
                                        mutable_column_device_view out,
                                        binary_operator op,
-                                       int32_t* max_error)
+                                       error_int* max_error)
 {
   using input_accessors  = jit::type_list<jit::column_accessor<0, T, LhsIsScalar, 0>,
                                           jit::column_accessor<1, T, RhsIsScalar, 0>>;
@@ -132,7 +132,7 @@ CUDF_KERNEL void checked_unary_kernel(size_type row_size,
                                       column_device_view input,
                                       mutable_column_device_view out,
                                       unary_operator op,
-                                      int32_t* max_error)
+                                      error_int* max_error)
 {
   using input_accessors  = jit::type_list<jit::column_accessor<0, T, false, 0>>;
   using output_accessors = jit::type_list<jit::column_accessor<0, T, false, 0>>;
@@ -167,8 +167,8 @@ struct binary_launcher {
       auto lhs_device    = column_device_view::create(lhs, stream, temp_mr);
       auto rhs_device    = column_device_view::create(rhs, stream, temp_mr);
       auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
-      cudf::detail::device_scalar<int32_t> max_error{
-        static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
+      cudf::detail::device_scalar<error_int> max_error{
+        static_cast<error_int>(errc::SUCCESS), stream, temp_mr};
 
       cudf::detail::grid_1d config(out.size(), 256);
       checked_binary_kernel<T, LhsIsScalar, RhsIsScalar>
@@ -197,8 +197,8 @@ struct unary_launcher {
       auto const temp_mr = mr.get_temporary_mr();
       auto input_device  = column_device_view::create(input, stream, temp_mr);
       auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
-      cudf::detail::device_scalar<int32_t> max_error{
-        static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
+      cudf::detail::device_scalar<error_int> max_error{
+        static_cast<error_int>(errc::SUCCESS), stream, temp_mr};
 
       cudf::detail::grid_1d config(out.size(), 256);
       checked_unary_kernel<T><<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(

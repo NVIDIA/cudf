@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from pylibcudf.udf import TransformUDF, UserData
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
@@ -41,12 +42,12 @@ def mask_to_bools(
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def transform(
-    inputs: Sequence[Column],
-    transform_udf: str,
+    inputs: Sequence[Column | UserData],
+    transform_udf: Callable | TransformUDF,
     output_type: DataType,
-    is_ptx: bool,
-    null_aware: NullAware = NullAware.NO,
+    is_null_aware: NullAware = NullAware.NO,
     null_policy: OutputNullability = OutputNullability.PRESERVE,
+    row_size: int | None = None,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...

@@ -5,12 +5,14 @@
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/udf.hpp>
 
 #include <cudf/binaryop.hpp>
 #include <cudf/transform.hpp>
 
-#include <cudf_benchmark_fragments.hpp>
 #include <nvbench/nvbench.cuh>
+
+#include <optional>
 
 template <typename TypeLhs, typename TypeRhs, typename TypeOut>
 void BM_compiled_binaryop(nvbench::state& state, cudf::binary_operator binop)
@@ -109,20 +111,7 @@ BINARYOP_BENCHMARK_DEFINE(timestamp_D,  timestamp_s,  NULL_MIN,             time
 template <typename TypeLhs, typename TypeRhs, typename TypeOut>
 void BM_jit_binaryop(nvbench::state& state, cudf::binary_operator binop)
 {
-  constexpr auto const jit_mul_cuda = R"***(
-__device__ void transform(float* out, float a, float b) {
-  *out = a * b;
-}
-)***";
-
-  constexpr auto const jit_add_cuda = R"***(
-__device__ void transform(float* out, float a, float b) {
-  *out = a + b;
-}
-)***";
-
   auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const use_lto  = state.get_string("use_lto") == "true";
   static_assert(std::is_same_v<TypeLhs, TypeRhs> && std::is_same_v<TypeRhs, TypeOut>);
   static_assert(std::is_same_v<TypeLhs, float>);
 
@@ -132,18 +121,10 @@ __device__ void transform(float* out, float a, float b) {
   auto lhs = cudf::column_view(source_table->get_column(0));
   auto rhs = cudf::column_view(source_table->get_column(1));
 
-  size_t fragment_id = 0;
-  char const* cuda   = nullptr;
-
+  char const* symbol = nullptr;
   switch (binop) {
-    case cudf::binary_operator::ADD: {
-      fragment_id = cudf_benchmark_fragments::add_f32;
-      cuda        = jit_add_cuda;
-    } break;
-    case cudf::binary_operator::MUL: {
-      fragment_id = cudf_benchmark_fragments::mul_f32;
-      cuda        = jit_mul_cuda;
-    } break;
+    case cudf::binary_operator::ADD: symbol = "add_f32"; break;
+    case cudf::binary_operator::MUL: symbol = "mul_f32"; break;
     default: throw std::runtime_error("Unsupported binary operator for JIT benchmark");
   }
 
@@ -152,25 +133,8 @@ __device__ void transform(float* out, float a, float b) {
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_to_id<TypeOut>()}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_benchmark_fragments::file_ranges[fragment_id];
-  std::span<uint8_t const> udf{cudf_benchmark_fragments::files.subspan(range[0], range[1])};
-
-  auto result = use_lto ? cudf::transform_lto(udf,
-                                              cudf::lto_binary_type::FATBIN,
-                                              cudf::null_aware::NO,
-                                              std::nullopt,
-                                              inputs,
-                                              outputs,
-                                              {},
-                                              std::nullopt)
-                        : cudf::transform(cuda,
-                                          cudf::udf_source_type::CUDA,
-                                          cudf::null_aware::NO,
-                                          std::nullopt,
-                                          inputs,
-                                          outputs,
-                                          {},
-                                          std::nullopt);
+  auto const transform_udf = get_benchmark_udf(symbol);
+  auto result              = cudf::transform(transform_udf, inputs, outputs, {}, std::nullopt);
 
   // use number of bytes read and written to global memory
   state.add_global_memory_reads<TypeLhs>(num_rows);
@@ -180,37 +144,22 @@ __device__ void transform(float* out, float a, float b) {
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    [[maybe_unused]] auto result = use_lto ? cudf::transform_lto(udf,
-                                                                 cudf::lto_binary_type::FATBIN,
-                                                                 cudf::null_aware::NO,
-                                                                 std::nullopt,
-                                                                 inputs,
-                                                                 outputs,
-                                                                 {},
-                                                                 std::nullopt)
-                                           : cudf::transform(cuda,
-                                                             cudf::udf_source_type::CUDA,
-                                                             cudf::null_aware::NO,
-                                                             std::nullopt,
-                                                             inputs,
-                                                             outputs,
-                                                             {},
-                                                             std::nullopt);
+    [[maybe_unused]] auto result =
+      cudf::transform(transform_udf, inputs, outputs, {}, std::nullopt);
   });
 
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
-#define BM_JIT_BINARYOP_BENCHMARK_DEFINE(name, lhs, rhs, bop, tout)                    \
-  static void name(::nvbench::state& st)                                               \
-  {                                                                                    \
-    ::BM_jit_binaryop<lhs, rhs, tout>(st, ::cudf::binary_operator::bop);               \
-  }                                                                                    \
-  NVBENCH_BENCH(name)                                                                  \
-    .set_name("jit_binary_op_" BM_STRINGIFY(name))                                     \
-    .add_int64_axis("num_rows", {10'000, 100'000, 1'000'000, 10'000'000, 100'000'000}) \
-    .add_string_axis("use_lto", {"true", "false"})
+#define BM_JIT_BINARYOP_BENCHMARK_DEFINE(name, lhs, rhs, bop, tout)      \
+  static void name(::nvbench::state& st)                                 \
+  {                                                                      \
+    ::BM_jit_binaryop<lhs, rhs, tout>(st, ::cudf::binary_operator::bop); \
+  }                                                                      \
+  NVBENCH_BENCH(name)                                                    \
+    .set_name("jit_binary_op_" BM_STRINGIFY(name))                       \
+    .add_int64_axis("num_rows", {10'000, 100'000, 1'000'000, 10'000'000, 100'000'000})
 
 #define build_name_jit(a, b, c, d) a##_##b##_##c##_##d##_jit
 

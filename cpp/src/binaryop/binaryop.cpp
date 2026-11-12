@@ -356,43 +356,22 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
 
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
-                                         std::string const& ptx,
+                                         transform_udf const& udf,
                                          data_type output_type,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr)
 {
-  // Check for datatype
-  auto is_type_supported_ptx = [](data_type type) -> bool {
-    return is_fixed_width(type) and not is_fixed_point(type) and
-           type.id() != type_id::INT8;  // Numba PTX doesn't support int8
-  };
-
-  CUDF_EXPECTS(is_type_supported_ptx(lhs.type()), "Invalid/Unsupported lhs datatype");
-  CUDF_EXPECTS(is_type_supported_ptx(rhs.type()), "Invalid/Unsupported rhs datatype");
-  CUDF_EXPECTS(is_type_supported_ptx(output_type), "Invalid/Unsupported output datatype");
-
-  CUDF_EXPECTS((lhs.size() == rhs.size()), "Column sizes don't match");
-
-  if (lhs.is_empty()) { return make_empty_column(output_type); }
-
+  CUDF_EXPECTS(
+    is_fixed_width(lhs.type()) && is_fixed_width(rhs.type()) && is_fixed_width(output_type),
+    "Binary UDFs require fixed-width types",
+    std::invalid_argument);
   std::array<transform_input, 2> inputs{lhs, rhs};
   std::array<transform_output, 1> outputs{transform_output{.type = output_type}};
-
   auto result =
-    cudf::transform_lto(std::span{reinterpret_cast<uint8_t const*>(ptx.data()), ptx.size()},
-                        lto_binary_type::PTX,
-                        null_aware::NO,
-                        std::nullopt,
-                        inputs,
-                        outputs,
-                        {},
-                        std::nullopt,
-                        stream,
-                        mr.get_output_mr());
-
-  auto columns = result->release();
-  return std::move(columns.front());
+    cudf::transform(udf, inputs, outputs, {}, std::nullopt, stream, mr.get_output_mr())->release();
+  return std::move(result.front());
 }
+
 }  // namespace detail
 
 int32_t binary_operation_fixed_point_scale(binary_operator op,
@@ -490,13 +469,13 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
 
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
-                                         std::string const& ptx,
+                                         transform_udf const& udf,
                                          data_type output_type,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::binary_operation(lhs, rhs, ptx, output_type, stream, mr);
+  return detail::binary_operation(lhs, rhs, udf, output_type, stream, mr);
 }
 
 }  // namespace cudf

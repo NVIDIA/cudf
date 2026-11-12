@@ -412,8 +412,7 @@ ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp ast/transform
 # ##################################################################################################
 # * LTO Fragments ----------------------------------------------------------------------------
 rtcx_add_embed(cudf_benchmark_fragments)
-add_fragment(cudf_benchmark_fragments FRAGMENT add_f32 SOURCE binaryop/fragments/add_f32.cu)
-add_fragment(cudf_benchmark_fragments FRAGMENT mul_f32 SOURCE binaryop/fragments/mul_f32.cu)
+add_fragment(cudf_benchmark_fragments FRAGMENT benchmark_udfs SOURCE udfs.cu)
 rtcx_embed(
   cudf_benchmark_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
 )
@@ -553,3 +552,11 @@ add_custom_target(
   DEPENDS CUDF_BENCHMARKS
   COMMENT "Custom command for running cudf benchmarks."
 )
+
+foreach(benchmark FILTER_NVBENCH JOIN_NVBENCH NDSH_Q09_NVBENCH)
+  target_sources(
+    ${benchmark} PRIVATE ${cudf_benchmark_fragments_SOURCE_DIR}/cudf_benchmark_fragments.s
+  )
+  target_include_directories(${benchmark} PRIVATE ${cudf_benchmark_fragments_SOURCE_DIR})
+  add_dependencies(${benchmark} cudf_benchmark_fragments)
+endforeach()

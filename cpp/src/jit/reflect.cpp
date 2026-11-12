@@ -19,7 +19,6 @@
 #include <iterator>
 #include <numeric>
 #include <stdexcept>
-#include <type_traits>
 #include <utility>
 
 namespace cudf::jit {
@@ -139,14 +138,21 @@ std::string reflect_output_value_type(transform_output_spec const& spec, bool us
   return type_dispatcher(data_type{spec.type}, reflect_output_value_fn{}, spec, use_physical_type);
 }
 
+transform_input_spec make_input_spec(column_view const& column)
+{
+  return cudf::jit::make_input_spec(column, false);
+}
+
+transform_input_spec make_input_spec(scalar_column_view const& scalar)
+{
+  return cudf::jit::make_input_spec(scalar.as_column_view(), true);
+}
+
+transform_input_spec make_input_spec(user_data const&) { return {.is_user_data = true}; }
+
 transform_input_spec make_input_spec(transform_input const& input)
 {
-  return std::visit(
-    [](auto& value) {
-      return cudf::jit::make_input_spec(
-        as_column_view(value), std::is_same_v<std::decay_t<decltype(value)>, scalar_column_view>);
-    },
-    input);
+  return std::visit([](auto& value) { return make_input_spec(value); }, input);
 }
 
 transform_output_spec make_output_spec(fixed_width_column const& output)
@@ -171,11 +177,13 @@ transform_output_spec make_output_spec(mutable_strings_column const& output)
 
 std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type)
 {
+  if (spec.is_user_data) { return "cudf::user_data"; }
   return type_dispatcher(data_type{spec.type}, reflect_input_element_fn{}, spec, use_physical_type);
 }
 
 std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type)
 {
+  if (spec.is_user_data) { return "void*"; }
   return type_dispatcher(data_type{spec.type}, reflect_input_value_fn{}, spec, use_physical_type);
 }
 
@@ -184,7 +192,7 @@ transform_input_spec make_input_spec(column_view const& column, bool is_scalar)
   CUDF_EXPECTS(is_fixed_width(column.type()) || is_dictionary(column.type()) ||
                  column.type().id() == type_id::STRING,
                "Column type must be fixed-width, dictionary, or string",
-               std::runtime_error);
+               std::invalid_argument);
 
   transform_input_spec result{.type = column.type().id(), .is_scalar = is_scalar};
   if (is_dictionary(column.type())) {
@@ -199,7 +207,7 @@ transform_input_spec make_input_spec(column_view const& column, bool is_scalar)
   return result;
 }
 
-transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
+transform_reflection reflect(bool use_physical_types,
                              std::span<transform_input_spec const> inputs,
                              std::span<transform_output_spec const> outputs,
                              std::span<int32_t const> input_table_sources,
@@ -221,8 +229,6 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
                std::runtime_error);
 
   std::vector<std::string> in_types;
-  bool use_physical_types = std::holds_alternative<lto_binary_type>(source_type) ||
-                            std::get<udf_source_type>(source_type) == udf_source_type::PTX;
   for (int32_t i = 0; i < std::ssize(inputs); i++) {
     auto& in       = inputs[i];
     auto element   = reflect_input_element(in, use_physical_types);
@@ -301,7 +307,7 @@ std::vector<transform_output_spec> make_output_specs(
   return result;
 }
 
-transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> source_type,
+transform_reflection reflect(bool use_physical_types,
                              std::span<transform_input const> inputs,
                              std::span<output_column const> outputs,
                              std::span<int32_t const> input_table_sources,
@@ -311,7 +317,7 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
 {
   auto input_specs  = make_input_specs(inputs);
   auto output_specs = make_output_specs(outputs);
-  return reflect(source_type,
+  return reflect(use_physical_types,
                  input_specs,
                  output_specs,
                  input_table_sources,
@@ -320,17 +326,19 @@ transform_reflection reflect(std::variant<udf_source_type, lto_binary_type> sour
                  output_table_indices);
 }
 
-std::string reflect_udf_signature(bool is_null_aware,
-                                  bool has_user_data,
-                                  std::span<transform_input_spec const> inputs,
-                                  std::span<transform_output_spec const> outputs,
-                                  bool use_physical_types)
+std::vector<std::string> reflect_udf_parameter_types(bool is_null_aware,
+                                                     std::span<transform_input_spec const> inputs,
+                                                     std::span<transform_output_spec const> outputs,
+                                                     bool use_physical_types,
+                                                     int32_t index_count)
 {
   std::vector<std::string> in_types;
 
   for (auto const& input : inputs) {
     auto element = reflect_input_value_type(input, use_physical_types);
-    in_types.push_back(is_null_aware ? std::format("cuda::std::optional<{}>", element) : element);
+    in_types.push_back(is_null_aware && !input.is_user_data
+                         ? std::format("cuda::std::optional<{}>", element)
+                         : element);
   }
 
   std::vector<std::string> out_types;
@@ -341,14 +349,20 @@ std::string reflect_udf_signature(bool is_null_aware,
                                       : std::format("{} *", element));
   }
 
-  std::vector<std::string> params;
-  if (has_user_data) {
-    params.emplace_back("void*");
-    params.emplace_back("cudf::size_type");
-  }
-  params.insert(params.end(), out_types.begin(), out_types.end());
+  auto params = std::move(out_types);
+  params.insert(params.begin(), index_count, "cudf::size_type");
   params.insert(params.end(), in_types.begin(), in_types.end());
+  return params;
+}
 
+std::string reflect_udf_signature(bool is_null_aware,
+                                  std::span<transform_input_spec const> inputs,
+                                  std::span<transform_output_spec const> outputs,
+                                  bool use_physical_types,
+                                  int32_t index_count)
+{
+  auto params =
+    reflect_udf_parameter_types(is_null_aware, inputs, outputs, use_physical_types, index_count);
   auto joined =
     params.empty()
       ? ""
@@ -357,19 +371,19 @@ std::string reflect_udf_signature(bool is_null_aware,
             return std::format("{}, {}", a, b);
           });
 
-  return std::format("int({})", joined);
+  return std::format("cudf::errc({})", joined);
 }
 
 std::string reflect_udf_signature(bool is_null_aware,
-                                  bool has_user_data,
                                   std::span<transform_input const> inputs,
                                   std::span<output_column const> outputs,
-                                  bool use_physical_types)
+                                  bool use_physical_types,
+                                  int32_t index_count)
 {
   auto input_specs  = make_input_specs(inputs);
   auto output_specs = make_output_specs(outputs);
   return reflect_udf_signature(
-    is_null_aware, has_user_data, input_specs, output_specs, use_physical_types);
+    is_null_aware, input_specs, output_specs, use_physical_types, index_count);
 }
 
 }  // namespace cudf::jit

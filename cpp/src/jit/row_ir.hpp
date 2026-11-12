@@ -93,9 +93,7 @@ struct [[nodiscard]] transform_args {
   std::vector<std::optional<int32_t>> input_table_sources  = {};
   std::vector<std::optional<int32_t>> input_column_indices = {};
   std::string udf                                          = {};
-  udf_source_type source_type                              = cudf::udf_source_type::CUDA;
   null_aware is_null_aware                                 = null_aware::NO;
-  std::optional<void*> user_data                           = std::nullopt;
   std::vector<transform_input> inputs                      = {};
   std::vector<transform_output> outputs                    = {};
   std::vector<std::unique_ptr<column>> string_offsets      = {};

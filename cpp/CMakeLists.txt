@@ -508,7 +508,7 @@ function(precompile_fixed_width_kernel_fragments)
     )
     set(VARIANT_NAME transform_kernel_${FILE_INDEX})
     set(INSTANCE
-        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
+        "cudf::detail::transform_kernel<false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
     )
     add_fragment(
       cudf_fragments
@@ -519,9 +519,7 @@ function(precompile_fixed_width_kernel_fragments)
       KERNEL_INSTANCE
       ${INSTANCE}
       UDF_TYPE
-      "int(${TYPE} *, ${TYPE})"
-      DEFINITIONS
-      CUDF_LTO_MODE
+      "cudf::errc(${TYPE} *, ${TYPE})"
       ARRAY_IDS
       ${FRAGMENT_NAME}_FILE_INDEX
       ${FRAGMENT_NAME}_INSTANCE
@@ -543,7 +541,7 @@ function(precompile_fixed_width_kernel_fragments)
       )
       set(VARIANT_NAME transform_kernel_${FILE_INDEX})
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
+          "cudf::detail::transform_kernel<false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
       )
       add_fragment(
         cudf_fragments
@@ -554,9 +552,7 @@ function(precompile_fixed_width_kernel_fragments)
         KERNEL_INSTANCE
         ${INSTANCE}
         UDF_TYPE
-        "int(${TYPE} *, ${TYPE}, ${TYPE})"
-        DEFINITIONS
-        CUDF_LTO_MODE
+        "cudf::errc(${TYPE} *, ${TYPE}, ${TYPE})"
         ARRAY_IDS
         ${FRAGMENT_NAME}_FILE_INDEX
         ${FRAGMENT_NAME}_INSTANCE
@@ -598,7 +594,7 @@ function(precompile_string_kernel_fragments)
       list(JOIN OUTPUT_ACCESSORS " ," OUTPUT_ACCESSORS_STR)
       list(JOIN OUTPUT_POINTERS " ," OUTPUT_POINTERS_STR)
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
+          "cudf::detail::transform_kernel<false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
       )
       add_fragment(
         cudf_fragments
@@ -609,9 +605,7 @@ function(precompile_string_kernel_fragments)
         KERNEL_INSTANCE
         ${INSTANCE}
         UDF_TYPE
-        "int(${OUTPUT_POINTERS_STR}, cudf::string_view)"
-        DEFINITIONS
-        CUDF_LTO_MODE
+        "cudf::errc(${OUTPUT_POINTERS_STR}, cudf::string_view)"
         ARRAY_IDS
         ${FRAGMENT_NAME}_FILE_INDEX
         ${FRAGMENT_NAME}_INSTANCE
@@ -892,7 +886,6 @@ add_library(
   src/io/utilities/trie.cu
   src/jit/cache.cpp
   src/jit/helpers.cpp
-  src/jit/parser.cpp
   src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp

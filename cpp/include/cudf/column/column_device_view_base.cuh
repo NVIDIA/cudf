@@ -413,6 +413,16 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
   column_device_view_core& operator=(column_device_view_core&&) = default;
 
   /**
+   * @brief Stores an opaque user data pointer
+   *
+   * @param data Opaque user data pointer
+   */
+  CUDF_HOST_DEVICE explicit column_device_view_core(user_data data) noexcept
+    : column_device_view_base(data_type{}, 0, data.data, 0, nullptr, 0, nullptr, 0)
+  {
+  }
+
+  /**
    * @brief Creates an instance of this class using the specified host memory
    * pointer (h_ptr) to store child objects and the device memory pointer
    * (d_ptr) as a base for any child object pointers.
@@ -568,6 +578,19 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
   }
 
   /**
+   * @brief Returns the opaque user-data pointer
+   *
+   * @tparam T The `cudf::user_data` element tag
+   * @param element_index Ignored; user data are independent of the row.
+   * @return The borrowed pointer, including nullptr
+   */
+  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
+  [[nodiscard]] __device__ void* element([[maybe_unused]] size_type element_index) const noexcept
+  {
+    return const_cast<void*>(_data);
+  }
+
+  /**
    * @brief Returns a nullable element at the specified index. If the element is null, returns
    * `nullopt`.
    *
@@ -575,12 +598,26 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @return `optional` containing the decoded value returned by `element<T>()`, or `nullopt`
    * if the element is null. For dictionary tags, the optional contains the decoded key type.
    */
-  template <typename T>
+  template <typename T, CUDF_ENABLE_IF(!cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
   [[nodiscard]] __device__ auto nullable_element(size_type element_index) const noexcept
   {
     using value_type = cuda::std::remove_cvref_t<decltype(element<T>(element_index))>;
     if (is_null(element_index)) { return cuda::std::optional<value_type>{}; }
     return cuda::std::optional<value_type>{element<T>(element_index)};
+  }
+
+  /**
+   * @brief Returns the opaque user-data pointer.
+   *
+   * @tparam T The `cudf::user_data` element tag
+   * @param element_index Ignored; user data are independent of the row.
+   * @return The opaque user-data pointer.
+   */
+  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
+  [[nodiscard]] __device__ void* nullable_element(
+    [[maybe_unused]] size_type element_index) const noexcept
+  {
+    return element<T>(element_index);
   }
 
   /**
@@ -808,6 +845,19 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
   }
 
   /**
+   * @brief Returns the opaque user-data pointer.
+   *
+   * @tparam T The `cudf::user_data` element tag
+   * @param element_index Ignored; user data are independent of the row.
+   * @return The opaque user-data pointer, including nullptr
+   */
+  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
+  [[nodiscard]] __device__ void* element([[maybe_unused]] size_type element_index) const noexcept
+  {
+    return const_cast<void*>(_data);
+  }
+
+  /**
    * @brief Returns a nullable element at the specified index. If the element is null, returns
    * `nullopt`.
    *
@@ -815,12 +865,26 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @return `optional` containing the decoded value returned by `element<T>()`, or `nullopt`
    * if the element is null. For dictionary tags, the optional contains the decoded key type.
    */
-  template <typename T>
+  template <typename T, CUDF_ENABLE_IF(!cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
   [[nodiscard]] __device__ auto nullable_element(size_type element_index) const noexcept
   {
     using value_type = cuda::std::remove_cvref_t<decltype(element<T>(element_index))>;
     if (is_null(element_index)) { return cuda::std::optional<value_type>{}; }
     return cuda::std::optional<value_type>{element<T>(element_index)};
+  }
+
+  /**
+   * @brief Returns the opaque user-data pointer.
+   *
+   * @tparam T The `cudf::user_data` element tag
+   * @param element_index Ignored; user data are independent of the row.
+   * @return The opaque user-data pointer.
+   */
+  template <typename T, CUDF_ENABLE_IF(cuda::std::is_same_v<cuda::std::remove_cv_t<T>, user_data>)>
+  [[nodiscard]] __device__ void* nullable_element(
+    [[maybe_unused]] size_type element_index) const noexcept
+  {
+    return element<T>(element_index);
   }
 
   /**

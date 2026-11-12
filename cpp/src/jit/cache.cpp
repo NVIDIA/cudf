@@ -11,6 +11,7 @@
 
 #include <cudf_cuda_embed.hpp>
 #include <jit/cache.hpp>
+#include <jit/reflect.hpp>
 #include <rtcx/rtcx.hpp>
 #include <runtime/context.hpp>
 
@@ -24,8 +25,10 @@
 #include <future>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 
@@ -212,89 +215,6 @@ constexpr int32_t MIN_NVRTC_VERSION_MINIMAL =
 constexpr int32_t LTO_ARCHITECTURE =
   CUDF_LTO_ARCHITECTURE;  // target architecture for LTO IR compilation
 
-std::tuple<rtcx::library, rtcx::blob> compile_library(
-  char const* name,
-  char const* cuda_code,
-  std::span<char const* const> extra_header_include_names,
-  std::span<char const* const> extra_headers,
-  std::span<char const* const> name_expressions)
-{
-  CUDF_FUNC_RANGE();
-
-  auto& ctx               = cudf::get_context();
-  auto& cfg               = ctx.config();
-  auto& bundle            = ctx.jit_bundle();
-  auto& device_properties = ctx.get_device_properties();
-  auto sm                 = device_properties.compute_capability;
-  auto nvrtc_version      = ctx.nvrtc_version().value();
-
-  auto include_dirs = bundle.get_include_directories();
-  auto use_pch      = nvrtc_version >= MIN_NVRTC_VERSION_PCH;
-  auto use_minimal  = nvrtc_version >= MIN_NVRTC_VERSION_MINIMAL;
-
-  std::vector<std::string> options;
-
-  for (auto const& include_dir : include_dirs) {
-    options.emplace_back(std::format("-I{}", include_dir));
-  }
-
-  options.emplace_back(std::format("--gpu-architecture=sm_{}", sm));
-
-  options.emplace_back("--diag-suppress=47");
-  options.emplace_back("--device-int128");
-
-  if (sm >= 100) { options.emplace_back("--device-float128"); }
-
-  options.emplace_back("-std=c++20");
-  options.emplace_back("--device-as-default-execution-space");
-  options.emplace_back("--generate-line-info");
-  options.emplace_back("--dopt=on");
-
-  if (use_minimal) { options.emplace_back("--minimal"); }
-
-  // suppress warnings if not in verbose mode
-  if (!cfg.jit_verbose) { options.emplace_back("--disable-warnings"); }
-
-  if (use_pch) {
-    options.emplace_back("--pch");
-
-    if (cfg.jit_verbose) {
-      options.emplace_back("--pch-verbose=true");
-      options.emplace_back("--pch-messages=true");
-    } else {
-      options.emplace_back("--pch-verbose=false");
-      options.emplace_back("--pch-messages=false");
-    }
-  }
-
-  if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }
-
-  if (cfg.dump_jit_trace) { options.emplace_back("--time=-"); }
-
-  if (cfg.dump_jit_time_profile) {
-    options.emplace_back(std::format("--fdevice-time-trace=cudf_kernel_{}_trace", name));
-  }
-
-  std::vector<char const*> options_cstr;
-  for (auto const& option : options) {
-    options_cstr.emplace_back(option.c_str());
-  }
-
-  auto params = rtcx::compile_params{.name                 = name,
-                                     .source               = cuda_code,
-                                     .header_include_names = extra_header_include_names,
-                                     .headers              = extra_headers,
-                                     .options              = options_cstr,
-                                     .name_expressions     = name_expressions,
-                                     .target_type          = rtcx::binary_type::CUBIN};
-
-  auto cubin   = rtcx::compile(params);
-  auto library = rtcx::load_library(cubin);
-  auto blob    = rtcx::blob_t::from_buffer(std::move(cubin));
-
-  return std::make_tuple(library, std::make_shared<rtcx::blob_t>(std::move(blob)));
-}
-
 std::vector<std::string> make_lto_compile_options(char const* name,
                                                   std::span<char const* const> include_paths,
                                                   bool use_pch)
@@ -474,15 +394,55 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          std::span<char const* const> include_names,
                                          std::span<char const* const> includes,
                                          std::span<char const* const> include_paths,
-                                         bool use_pch)
+                                         bool use_pch,
+                                         std::string_view pch_key)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(include_names.size() == includes.size(),
                "Header names and contents must have the same size",
                std::invalid_argument);
 
+  auto const source_name = std::format("{}.cu", pch_key);
   return compiled_fragment(get_user_fragment(
-    "cudf_user_fragment.cu", source_code, include_names, includes, include_paths, use_pch));
+    source_name.c_str(), source_code, include_names, includes, include_paths, use_pch));
+}
+
+std::optional<compiled_fragment> get_udf_adapter(std::string_view symbol,
+                                                 std::string_view target_symbol,
+                                                 bool is_null_aware,
+                                                 std::span<transform_input_spec const> inputs,
+                                                 std::span<transform_output_spec const> outputs,
+                                                 bool use_physical_types,
+                                                 int32_t index_count)
+{
+  // A UDF exporting the target symbol already provides the entry point; generating a forwarding
+  // adapter would redefine it. This is also an optimization to avoid generating unnecessary code.
+  if (symbol == target_symbol) { return std::nullopt; }
+
+  auto parameters = jit::reflect_udf_parameter_types(
+    is_null_aware, inputs, outputs, use_physical_types, index_count);
+  auto append = [&](std::string& target, size_t i, bool with_type) {
+    if (!target.empty()) { target += ", "; }
+    if (with_type) { target += parameters[i] + " "; }
+    target += std::format("arg_{}", i);
+  };
+  std::string declarations;
+  std::string arguments;
+  for (size_t i = 0; i < parameters.size(); ++i) {
+    append(declarations, i, true);
+    append(arguments, i, false);
+  }
+  auto source = std::format(R"CUDA(
+#include <cudf/udf_includes.hpp>
+#pragma nv_hdrstop
+extern "C" __device__ cudf::errc {0}({1});
+extern "C" __device__ cudf::errc {3}({1}) {{ return ::{0}({2}); }}
+)CUDA",
+                            symbol,
+                            declarations,
+                            arguments,
+                            target_symbol);
+  return compile_cuda_to_lto_ir(source.c_str(), {}, {}, {}, true, "cudf_udf_adapter");
 }
 
 rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
@@ -496,67 +456,6 @@ rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
         std::format("Unrecognized LTO binary type {} for LTO transform", static_cast<int>(type)),
         std::invalid_argument);
   }
-}
-
-kernel get_kernel(std::string const& name,
-                  std::string const& source_file_id,
-                  std::span<char const* const> header_include_names,
-                  std::span<char const* const> headers,
-                  std::string const& kernel_instance)
-{
-  CUDF_FUNC_RANGE();
-
-  auto& ctx               = cudf::get_context();
-  auto& cache             = ctx.rtcx_cache();
-  auto& bundle            = ctx.jit_bundle();
-  auto& device_properties = ctx.get_device_properties();
-  auto sm                 = device_properties.compute_capability;
-  auto runtime            = device_properties.runtime_version;
-  auto driver             = device_properties.driver_version;
-  auto bundle_hash        = bundle.get_hash();
-
-  auto source_file = std::format("{}/{}", bundle.get_directory(), source_file_id);
-
-  auto spec = std::format(R"***(cuLibrary
-name={}
-binary_type=CUBIN
-cuda_runtime={}
-cuda_driver={}
-arch={}
-bundle={}
-source_file={}
-kernel_instance={}
-)***",
-                          name,
-                          runtime,
-                          driver,
-                          sm,
-                          bundle_hash,
-                          source_file,
-                          kernel_instance);
-
-  XXH3_state_t state;
-  XXH3_INITSTATE(&state);
-  XXH3_128bits_reset(&state);
-  hash(&state, spec);
-  hash(&state, "header_include_names: ");
-  hash(&state, header_include_names);
-  hash(&state, "headers: ");
-  hash(&state, headers);
-
-  auto digest = XXH3_128bits_digest(&state);
-  auto key    = rtcx::hash128{digest.high64, digest.low64};
-
-  auto compile = [&] {
-    auto bundle_dir = cudf::get_context().jit_bundle().get_directory();
-    auto source     = read_file_string(source_file.c_str());
-    return compile_library(name.c_str(), source.c_str(), header_include_names, headers, {});
-  };
-
-  auto fut = cache.get_or_add_library(key, rtcx::library_compile_func::from_functor(compile));
-
-  auto lib = fut.get();
-  return kernel{lib, lib->get_kernel("cudf_kernel_entry")};
 }
 
 rtcx::blob get_kernel_fragment(std::string const& name,
@@ -647,10 +546,24 @@ std::tuple<rtcx::library, rtcx::blob> link_library_uncached(
     options_cstr.emplace_back(option.c_str());
   }
 
+  // Keep copies of unterminated PTX alive until linking finishes. Binary modules and
+  // already-terminated PTX retain their original storage.
+  std::vector<rtcx::memory_fragment> link_fragments(memory_fragments.begin(),
+                                                    memory_fragments.end());
+  std::vector<std::vector<uint8_t>> ptx_buffers;
+  for (auto& fragment : link_fragments) {
+    if (fragment.type == rtcx::binary_type::PTX &&
+        (fragment.data.empty() || fragment.data.back() != 0)) {
+      auto& ptx = ptx_buffers.emplace_back(fragment.data.begin(), fragment.data.end());
+      ptx.push_back(0);
+      fragment.data = ptx;
+    }
+  }
+
   auto params = rtcx::link_params{.name             = name,
                                   .output_type      = rtcx::binary_type::CUBIN,
                                   .file_fragments   = file_fragments,
-                                  .memory_fragments = memory_fragments,
+                                  .memory_fragments = link_fragments,
                                   .link_options     = options_cstr};
 
   auto cubin   = rtcx::link_library(params);

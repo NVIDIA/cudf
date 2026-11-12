@@ -1064,8 +1064,9 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
   }();
 
   code_sink sink;
+  sink.emit("#include <cudf/detail/row_ir/includes.hpp>\n");
   declare_udfs(output_irs_, sink);
-  sink.emit(std::format("__device__ cudf::errc {}(", function_name));
+  sink.emit(std::format("extern \"C\" __device__ cudf::errc {}(", function_name));
   sink.emit(args_decl);
   sink.emit(")\n{\n");
   for (auto& ir : output_irs_) {
@@ -1076,7 +1077,7 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
     sink.get_code(), generate_null_aware_udf ? null_aware::YES : null_aware::NO, null_policies};
 }
 
-std::variant<column_view, scalar_column_view> get_column_view(scalar_input const& in)
+transform_input get_column_view(scalar_input const& in)
 {
   if (auto* s = std::get_if<std::unique_ptr<column>>(&in)) {
     return scalar_column_view{**s};
@@ -1085,10 +1086,7 @@ std::variant<column_view, scalar_column_view> get_column_view(scalar_input const
   }
 }
 
-std::variant<column_view, scalar_column_view> get_column_view(column_input const& in)
-{
-  return column_view{in.column};
-}
+transform_input get_column_view(column_input const& in) { return column_view{in.column}; }
 
 // Due to the AST expression tree structure, we can't generate the IR without the target
 // tables
@@ -1143,9 +1141,7 @@ transform_args ast_converter::compute_table(
                                  .input_table_sources  = std::move(table_sources),
                                  .input_column_indices = std::move(column_indices),
                                  .udf                  = std::move(code),
-                                 .source_type          = cudf::udf_source_type::CUDA,
                                  .is_null_aware        = is_null_aware,
-                                 .user_data            = std::nullopt,
                                  .inputs               = inputs,
                                  .outputs              = std::move(outputs),
                                  .string_offsets{},

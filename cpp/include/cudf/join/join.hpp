@@ -7,6 +7,7 @@
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -23,6 +24,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -475,11 +477,11 @@ filter_join_indices_output_size(
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief JIT-based filtering of join result indices using string predicate.
+ * @brief Filters join result indices using a user-defined-function.
  *
- * This function provides a JIT-compiled alternative to filter_join_indices(),
- * taking a string-based predicate that gets compiled to optimized GPU code.
- * The input-map contract is the same as `filter_join_indices`.
+ * This function provides a JIT-compiled alternative to filter_join_indices(), taking a predicate
+ * UDF that gets compiled to optimized GPU code. The input-map contract is the same as
+ * `filter_join_indices`.
  *
  * The behavior depends on the join type (same as filter_join_indices):
  * - INNER_JOIN: Only pairs that satisfy the predicate and have valid indices are kept.
@@ -497,48 +499,51 @@ filter_join_indices_output_size(
  * auto hash_joiner = cudf::hash_join(right_equality_table, null_equality::EQUAL);
  * auto [left_indices, right_indices] = hash_joiner.inner_join(left_equality_table);
  *
- * // Step 2: Apply JIT-compiled conditional filter
- * std::string predicate_code = R"(
- *   __device__ void predicate(bool* output, double left_val, double right_val) {
+ * auto compiled = cudf::compile_cuda_to_lto_ir(R"CUDA(
+ *   #include <cudf/udf_includes.hpp>
+ *   extern "C" __device__ cudf::errc predicate(
+ *     uint8_t* output, double left_val, double right_val)
+ *   {
  *     *output = left_val > right_val;
+ *     return cudf::errc::SUCCESS;
  *   }
- * )";
+ * )CUDA");
+ * auto fragment = compiled.view();
+ * auto predicate = cudf::transform_udf{"predicate", {&fragment, 1}};
+ *
+ * // Step 2: Apply JIT-compiled conditional filter
  * auto [filtered_left, filtered_right] = cudf::filter_join_indices_jit(
  *   left_conditional_table,   // Table with columns referenced by predicate
  *   right_conditional_table,  // Table with columns referenced by predicate
  *   *left_indices,           // Indices from hash join
  *   *right_indices,          // Indices from hash join
- *   predicate_code,          // JIT-compiled predicate function
+ *   predicate,          // JIT-compiled predicate function
  *   cudf::join_kind::INNER_JOIN);
  * @endcode
  *
  * ## Predicate Function Requirements
  *
- * The predicate_code must define a device function with signature:
- * ```cpp
- * __device__ void predicate(bool* output, T1 left_col0, T2 left_col1, ..., T1 right_col0, T2
- * right_col1, ...)
- * ```
- * The first parameter is a pointer to a bool that the function must set to `true` or `false`.
- * For both null-aware and non-null-aware predicates, the output value is uninitialized and must
- * be set on every execution path.
- * The remaining parameters correspond to columns in the left table followed by the right table.
- * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors.
- * PTX modules functions must return `cudf::errc` as a 32-bit integer status.
+ * See @ref transform_udf for the CUDF UDF ABI, including argument order, indexing, null-aware
+ * parameter types, and error reporting. The predicate produces one Boolean output.
+ * Inputs are passed in order: all left-table columns, all right-table columns, then `extra_inputs`.
+ * When `predicate.is_null_aware` is `null_aware::NO`, a candidate with any null input is a nonmatch
+ * and its predicate is not called.
  *
+ * Extra inputs are indexed after the left and right table columns in the predicate argument list.
+ * They do not contribute rows or columns to either table for join semantics.
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw std::invalid_argument if left_indices and right_indices have different sizes.
- * @throw cudf::jit_compilation_error if predicate_code fails to compile.
+ * @throw std::runtime_error if JIT compilation or linking fails.
  * @throw cudf::evaluation_error if the predicate reports an evaluation error.
  *
  * @param left The left table for predicate evaluation (conditional columns only).
  * @param right The right table for predicate evaluation (conditional columns only).
  * @param left_indices Device span of row indices in the left table from hash join.
  * @param right_indices Device span of row indices in the right table from hash join.
- * @param predicate_code String containing CUDA device code for predicate function.
+ * @param predicate The user-defined function predicate to call.
  * @param join_kind The type of join operation. Must be INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
- * @param is_ptx Whether predicate_code contains PTX assembly instead of CUDA C++.
+ * @param extra_inputs Additional columns, scalars, and user data
  * @param stream CUDA stream used for kernel launches and memory operations.
  * @param mr Device memory resource used to allocate output indices.
  *
@@ -547,14 +552,14 @@ filter_join_indices_output_size(
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(cudf::table_view const& left,
-                        cudf::table_view const& right,
-                        cudf::device_span<size_type const> left_indices,
-                        cudf::device_span<size_type const> right_indices,
-                        std::string const& predicate_code,
-                        cudf::join_kind join_kind,
-                        bool is_ptx               = false,
-                        cuda::stream_ref stream   = cudf::get_default_stream(),
+filter_join_indices_jit(table_view const& left,
+                        table_view const& right,
+                        device_span<size_type const> left_indices,
+                        device_span<size_type const> right_indices,
+                        transform_udf const& predicate,
+                        join_kind join_kind,
+                        std::span<transform_input const> extra_inputs = {},
+                        cuda::stream_ref stream                       = cudf::get_default_stream(),
                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**

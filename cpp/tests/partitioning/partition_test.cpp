@@ -593,9 +593,9 @@ TEST_F(PartitionTestNotTyped, LargeBinaryStringRanks)
 {
   constexpr cudf::size_type rows = 4'000'001;
   constexpr cudf::size_type skip = 7;
-  std::vector<std::string> const samples{"", "x", "é", std::string(129, 'z')};
+  std::vector<std::string> const samples{"", "x", "é", std::string(31, 'm'), std::string(129, 'z')};
   auto const value = [&](cudf::size_type i) -> std::string const& {
-    return samples[i % 4096 == 0 ? 3 : i % 3];
+    return samples[i % 4096 == 0 ? 4 : (i % 257 == 0 ? 3 : i % 3)];
   };
   auto const values = cudf::detail::make_counting_transform_iterator(0, value);
   auto const empty  = cuda::make_constant_iterator("");

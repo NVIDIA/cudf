@@ -557,8 +557,16 @@ class NumericalColumn(NumericalBaseColumn):
                     f"{other_cudf_dtype.type.__name__}"
                 )
             if self.dtype.kind == "b" and other_cudf_dtype.kind == "b":
+                # Retain nullable Boolean dtype regardless of operand order.
+                bool_dtype = self.dtype
+                if (
+                    op in {"__and__", "__or__"}
+                    and not is_pandas_nullable_extension_dtype(self.dtype)
+                    and is_pandas_nullable_extension_dtype(other_cudf_dtype)
+                ):
+                    bool_dtype = other_cudf_dtype
                 out_dtype = get_dtype_of_same_kind(
-                    self.dtype, np.dtype(np.bool_)
+                    bool_dtype, np.dtype(np.bool_)
                 )
             elif self.dtype.kind == "b" or other_cudf_dtype.kind == "b":
                 out_dtype = get_dtype_of_same_kind(

@@ -29,6 +29,23 @@ def test_nullable_boolean_kleene_scalar(op, scalar, reflected):
     assert_eq(expected, actual)
 
 
+@pytest.mark.parametrize("op", [operator.and_, operator.or_])
+@pytest.mark.parametrize("nullable_on_left", [False, True])
+def test_nullable_boolean_kleene_mixed_dtypes(op, nullable_on_left):
+    ordinary = pd.Series([True, False, True, False], dtype="bool")
+    nullable = pd.Series([None, None, True, False], dtype="boolean")
+    left, right = (
+        (nullable, ordinary)
+        if nullable_on_left
+        else (ordinary, nullable)
+    )
+
+    expected = op(left, right)
+    actual = op(cudf.from_pandas(left), cudf.from_pandas(right))
+
+    assert_eq(expected, actual)
+
+
 @pytest.mark.parametrize("op", [operator.or_, operator.and_])
 def test_nullable_boolean_kleene_columns(op):
     left = pd.Series([None, True, False, None], dtype="boolean")
@@ -92,3 +109,4 @@ def test_mixed_nullable_integer_boolean_bitwise_and():
     result = left & right
 
     assert result.to_pandas().tolist() == [False, True, False]
+    assert result.dtype == right.dtype

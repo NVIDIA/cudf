@@ -45,6 +45,19 @@ TEST_F(StringsFindMultipleTest, FindMultiple)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
+TEST_F(StringsFindMultipleTest, EmptyTargets)
+{
+  cudf::test::strings_column_wrapper strings({"Héllo", "", ""}, {true, true, false});
+  // a targets column of only empty strings has no character data
+  cudf::test::strings_column_wrapper targets({"", ""});
+  auto results = cudf::strings::find_multiple(cudf::strings_column_view(strings),
+                                              cudf::strings_column_view(targets));
+
+  using LCW = cudf::test::lists_column_wrapper<int32_t>;
+  LCW expected({{0, 0}, {0, 0}, {-1, -1}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
 TEST_F(StringsFindMultipleTest, ZeroSizeStringsColumn)
 {
   auto const zero_size_strings_column = cudf::make_empty_column(cudf::type_id::STRING)->view();

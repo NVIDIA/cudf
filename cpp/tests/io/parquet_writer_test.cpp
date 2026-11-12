@@ -278,6 +278,40 @@ TEST_F(ParquetWriterTest, ManyFragments)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *expected);
 }
 
+TEST_F(ParquetWriterTest, MoreColumnsThanMaxGridY)
+{
+  // More columns than the CUDA grid y-dimension limit (65535)
+  constexpr cudf::size_type num_cols = 70'000;
+  constexpr cudf::size_type num_rows = 16;
+
+  auto const float_iter =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i * 0.5f; });
+  auto const str_iter = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return "s" + std::to_string(i % 4); });
+  auto const floats =
+    cudf::test::fixed_width_column_wrapper<float>(float_iter, float_iter + num_rows).release();
+  auto const strings = cudf::test::strings_column_wrapper(str_iter, str_iter + num_rows).release();
+
+  std::vector<cudf::column_view> cols;
+  cols.reserve(num_cols);
+  for (cudf::size_type i = 0; i < num_cols; ++i) {
+    cols.push_back(i % 2 == 0 ? floats->view() : strings->view());
+  }
+  auto const expected = cudf::table_view{cols};
+
+  std::vector<char> out_buffer;
+  cudf::io::chunked_parquet_writer_options const out_opts =
+    cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{&out_buffer});
+  cudf::io::chunked_parquet_writer(out_opts).write(expected).close();
+
+  cudf::io::parquet_reader_options const in_opts = cudf::io::parquet_reader_options::builder(
+    cudf::io::source_info{cudf::host_span<std::byte const>(
+      reinterpret_cast<std::byte const*>(out_buffer.data()), out_buffer.size())});
+  auto const result = cudf::io::read_parquet(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result.tbl->view());
+}
+
 TEST_F(ParquetWriterTest, NonNullable)
 {
   srand(31337);

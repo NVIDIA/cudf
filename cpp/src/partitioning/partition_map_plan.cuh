@@ -124,6 +124,42 @@ CUDF_KERNEL void scatter_saved(MapType const* map,
   }
 }
 
+template <typename Sink>
+__device__ void emit_reordered(int const (&keys)[4],
+                               int const (&rank)[4],
+                               int (&hist)[warps][bins],
+                               int const* base,
+                               int next,
+                               int p,
+                               int n,
+                               int start,
+                               Sink sink)
+{
+  __shared__ typename cub::BlockScan<int, threads>::TempStorage scan_temp;
+  __shared__ int bucket_begin[bins], source_rows[tile_rows], destinations[tile_rows];
+  int count = threadIdx.x < p ? next - base[threadIdx.x] : 0, prefix = 0;
+  cub::BlockScan<int, threads>(scan_temp).ExclusiveSum(count, prefix);
+  bucket_begin[threadIdx.x] = prefix;
+  __syncthreads();
+#pragma unroll
+  for (int j = 0; j < 4; ++j) {
+    int row = start + (threadIdx.x / 32) * 128 + j * 32 + threadIdx.x % 32;
+    if (row < n) {
+      int q = keys[j], local = hist[threadIdx.x / 32][q] + rank[j],
+          position           = bucket_begin[q] + local;
+      source_rows[position]  = row;
+      destinations[position] = base[q] + local;
+    }
+  }
+  __syncthreads();
+#pragma unroll
+  for (int j = 0; j < 4; ++j) {
+    int position = threadIdx.x + j * threads;
+    if (position < min(tile_rows, n - start)) sink(source_rows[position], destinations[position]);
+  }
+  // The caller synchronizes before reusing the shared storage.
+}
+
 template <int Tiles, bool Reorder = false, typename Sink, typename MapType, typename Offsets>
 CUDF_KERNEL void scatter_recompute(MapType const* map, Offsets offsets, int n, int p, Sink sink)
 {
@@ -146,8 +182,9 @@ CUDF_KERNEL void scatter_recompute(MapType const* map, Offsets offsets, int n, i
       next = base[q] + sum;
     }
     __syncthreads();
-    static_assert(!Reorder, "Reordered sinks are not enabled yet");
-    {
+    if constexpr (Reorder)
+      emit_reordered(keys, rank, hist, base, next, p, n, start, sink);
+    else {
 #pragma unroll
       for (int j = 0; j < 4; ++j) {
         int i = start + (threadIdx.x / 32) * 128 + j * 32 + threadIdx.x % 32;
@@ -274,14 +311,21 @@ std::vector<size_type> run(MapType const* map,
                            bool reorder,
                            cuda::stream_ref stream)
 {
-  CUDF_EXPECTS(n > 0 && p > 0 && p <= bins && !reorder, "Invalid block partition dimensions");
+  CUDF_EXPECTS(n > 0 && p > 0 && p <= bins, "Invalid block partition dimensions");
   if (method == algorithm::binary) {
     CUDF_EXPECTS(p == 2, "Binary plan requires two partitions");
     return binary(map, n, sink, stream);
   }
   int const blocks = (n - 1) / tile_rows + 1;
   rmm::device_uvector<int32_t> offsets(p + 1, stream);
-  if (method == algorithm::saved) {
+  if (reorder) {
+    if (method == algorithm::recompute)
+      recompute<1, true>(map, n, p, sink, offsets.data(), stream);
+    else if (method == algorithm::super2)
+      recompute<2, true>(map, n, p, sink, offsets.data(), stream);
+    else
+      CUDF_FAIL("Unsupported reordered partition plan");
+  } else if (method == algorithm::saved) {
     rmm::device_uvector<uint16_t> ranks(n, stream);
     rmm::device_uvector<int32_t> counts(size_t(p) * blocks, stream);
     count_tiles<1, true>

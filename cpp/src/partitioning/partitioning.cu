@@ -922,14 +922,14 @@ struct dispatch_map_type {
     }
 
     auto plan = cudf::detail::partition_policy::select_partition_plan(t, num_partitions);
-    if (plan && plan->direct && !plan->reordered) {
+    if (plan && plan->direct) {
       auto launch = [&](auto sink) {
         return cudf::detail::partition_map_plan::run(partition_map.begin<MapType>(),
                                                      t.num_rows(),
                                                      num_partitions,
                                                      plan->method,
                                                      sink,
-                                                     false,
+                                                     plan->reordered,
                                                      stream);
       };
       return cudf::detail::partition_fixed::partition(t, launch, stream, mr);

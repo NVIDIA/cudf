@@ -622,9 +622,10 @@ TEST_F(ExperimentalPackUnpackTest, StagingIsBoundedByStagingBudget)
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 1000; });
   cudf::test::fixed_width_column_wrapper<int32_t> numbers(
     values, values + rows, cudf::test::iterators::null_at(5));
+  cudf::test::fixed_width_column_wrapper<int64_t> wide(values, values + rows);
   // From row 1, the INT32 data starts 4 bytes past an 8-byte boundary and the validity bits need a
   // shift, so both regions are staged, over several windows.
-  auto const input = cudf::slice(cudf::table_view{{numbers}}, {1, rows}).front();
+  auto const input = cudf::slice(cudf::table_view{{numbers, wide}}, {1, rows}).front();
 
   // A small budget spreads the blocks over several windows; the default fits them in one.
   for (auto const staging_buffer_bytes :
@@ -648,7 +649,18 @@ TEST_F(ExperimentalPackUnpackTest, StagingIsBoundedByStagingBudget)
         cudf::test::memory_resource_test_harness pack_harness;
         auto const packed = pack_to(plan, kind, &pack_harness);
         EXPECT_LE(pack_harness.temporary_mr().get_bytes_counter().peak, plan.sizes().scratch_bytes);
-        expect_materializes_to(input, packed.view(), &harness);
+        cudf::test::memory_resource_test_harness materialize_harness;
+        expect_materializes_to(input, packed.view(), &materialize_harness);
+        EXPECT_LE(materialize_harness.temporary_mr().get_bytes_counter().peak,
+                  cx::materialize_scratch_bytes(packed.view()));
+        // A column selection stages only the bytes of the selected columns.
+        std::vector<cudf::size_type> const selection{1};
+        cudf::test::memory_resource_test_harness subset_harness;
+        std::ignore = without_current_resource(subset_harness, [&](cudf::memory_resources mr) {
+          return cx::materialize(packed.view(), selection, cudf::get_default_stream(), mr);
+        });
+        EXPECT_LE(subset_harness.temporary_mr().get_bytes_counter().peak,
+                  cx::materialize_scratch_bytes(packed.view(), selection));
       }
     }
   }

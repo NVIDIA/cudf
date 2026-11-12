@@ -4,6 +4,7 @@
  */
 
 #include "io/comp/compression.hpp"
+#include "io/comp/decompression.hpp"
 #include "io/comp/nvcomp_adapter.hpp"
 
 #include <cudf/column/column_device_view.cuh>
@@ -2709,6 +2710,20 @@ void copy_blocks(device_span<device_span<uint8_t const> const> inputs,
   cudf::detail::batched_memcpy_async(sources, destinations, sizes, inputs.size(), stream, mr);
 }
 
+/// CUB temporary storage that `batched_memcpy_async` allocates to copy `num_buffers` buffers.
+[[nodiscard]] std::size_t batched_copy_temp_bytes(std::size_t num_buffers, cuda::stream_ref stream)
+{
+  std::size_t temp_bytes = 0;
+  CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(nullptr,
+                                           temp_bytes,
+                                           static_cast<uint8_t const**>(nullptr),
+                                           static_cast<uint8_t**>(nullptr),
+                                           static_cast<std::size_t*>(nullptr),
+                                           num_buffers,
+                                           stream.get()));
+  return temp_bytes;
+}
+
 struct buffer_copy {
   uint8_t const* source;
   uint8_t* destination;
@@ -2786,6 +2801,10 @@ constexpr std::size_t compression_block_bytes = 64 * 1024;
 constexpr std::size_t automatic_min_region_bytes = 4 * 1024;
 // `automatic` stores a block raw unless compressing it saves at least this many bytes.
 constexpr std::size_t automatic_min_savings_bytes = 256;
+// Block descriptors, results and sort storage that codec calls allocate beyond the codec's
+// reported scratch, per block and once per call.
+constexpr std::size_t codec_scratch_bytes_per_block = 256;
+constexpr std::size_t codec_scratch_bytes_per_call  = 64 * 1024;
 
 // Leads with a version, like legacy packed metadata, so the first field identifies the format.
 struct compression_metadata_header {
@@ -3118,25 +3137,14 @@ class byte_range_loader {
     }
   }
 
+  /// Size of the device staging buffer that `load()` allocates for the requested ranges.
+  [[nodiscard]] std::size_t staging_bytes() const { return merged_ranges().second; }
+
   void load(cuda::stream_ref stream, cudf::memory_resources mr)
   {
     if (_ranges.empty()) { return; }
-    std::ranges::sort(_ranges, {}, &range::begin);
-    std::vector<range> merged{_ranges.front()};
-    for (auto const& next : _ranges) {
-      // Ranges separated by alignment padding, such as consecutive blocks, merge into one copy.
-      if (next.begin <= merged.back().end + split_align) {
-        merged.back().end = std::max(merged.back().end, next.end);
-      } else {
-        merged.push_back(next);
-      }
-    }
-    std::size_t staged_bytes = 0;
-    for (auto& item : merged) {
-      item.staged_offset = staged_bytes;
-      staged_bytes = cudf::detail::round_up_safe(staged_bytes + item.end - item.begin, split_align);
-    }
-    _staged = rmm::device_buffer(staged_bytes, stream, mr.get_temporary_mr());
+    auto [merged, staged_bytes] = merged_ranges();
+    _staged                     = rmm::device_buffer(staged_bytes, stream, mr.get_temporary_mr());
     std::vector<void*> destinations;
     std::vector<void const*> sources;
     std::vector<std::size_t> sizes;
@@ -3176,6 +3184,29 @@ class byte_range_loader {
     std::size_t end;
     std::size_t staged_offset;
   };
+
+  /// Merges the requested ranges and assigns their staging offsets, returning the staged size.
+  [[nodiscard]] std::pair<std::vector<range>, std::size_t> merged_ranges() const
+  {
+    if (_ranges.empty()) { return {}; }
+    auto sorted = _ranges;
+    std::ranges::sort(sorted, {}, &range::begin);
+    std::vector<range> merged{sorted.front()};
+    for (auto const& next : sorted) {
+      // Ranges separated by alignment padding, such as consecutive blocks, merge into one copy.
+      if (next.begin <= merged.back().end + split_align) {
+        merged.back().end = std::max(merged.back().end, next.end);
+      } else {
+        merged.push_back(next);
+      }
+    }
+    std::size_t staged_bytes = 0;
+    for (auto& item : merged) {
+      item.staged_offset = staged_bytes;
+      staged_bytes = cudf::detail::round_up_safe(staged_bytes + item.end - item.begin, split_align);
+    }
+    return {std::move(merged), staged_bytes};
+  }
 
   std::span<uint8_t const> _payload;
   cudaMemoryType _memory_type;
@@ -3799,11 +3830,6 @@ class pack_plan::impl {
   /// needs the compaction buffer.
   [[nodiscard]] std::size_t compressed_scratch_bytes() const
   {
-    // Block descriptors, results and sort storage that codec calls allocate beyond the codec's
-    // reported scratch, per block and once per call.
-    constexpr std::size_t codec_bytes_per_block = 256;
-    constexpr std::size_t codec_bytes_per_call  = 64 * 1024;
-
     auto const stream = input.state->get_stream();
     auto const staging =
       max_window_bytes + max_window_output_bytes + max_window_blocks * split_align;
@@ -3832,21 +3858,15 @@ class pack_plan::impl {
                                                        batch.max_block_bytes,
                                                        total_bytes,
                                                        stream);
-        window_bytes = std::max(
-          window_bytes, codec_scratch + num_blocks * codec_bytes_per_block + codec_bytes_per_call);
+        window_bytes = std::max(window_bytes,
+                                codec_scratch + num_blocks * codec_scratch_bytes_per_block +
+                                  codec_scratch_bytes_per_call);
       }
       auto const num_blocks = window.end_item - window.first_item;
-      std::size_t copy_temp = 0;
-      CUDF_CUDA_TRY(cub::DeviceMemcpy::Batched(nullptr,
-                                               copy_temp,
-                                               static_cast<uint8_t const**>(nullptr),
-                                               static_cast<uint8_t**>(nullptr),
-                                               static_cast<std::size_t*>(nullptr),
-                                               num_blocks,
-                                               stream.get()));
-      window_bytes = std::max(
-        window_bytes,
-        num_blocks * (sizeof(uint8_t const*) + sizeof(uint8_t*) + sizeof(std::size_t)) + copy_temp);
+      window_bytes =
+        std::max(window_bytes,
+                 num_blocks * (sizeof(uint8_t const*) + sizeof(uint8_t*) + sizeof(std::size_t)) +
+                   batched_copy_temp_bytes(num_blocks, stream));
     }
     return staging + block_spans + window_bytes;
   }
@@ -4010,30 +4030,19 @@ table_view unpack_view(packed_data_view input)
 
 namespace {
 
-std::unique_ptr<table> materialize_selection(packed_data_view input,
-                                             std::optional<std::span<size_type const>> selection,
-                                             cuda::stream_ref stream,
-                                             cudf::memory_resources mr)
+/// Reads the compression metadata of `input` and validates its region directory.
+[[nodiscard]] compression_metadata read_compressed_input(packed_data_view input)
 {
-  byte_range_loader loader{input.payload};
-  if (!selection.has_value()) { loader.request(input.payload); }
-  if (!has_compression_metadata(input.metadata)) {
-    return materialize_uncompressed(input, selection, loader, stream, mr);
-  }
-
   // Blocks are aligned relative to the payload start, as decoders require.
   CUDF_EXPECTS(reinterpret_cast<std::uintptr_t>(input.payload.data()) % split_align == 0,
                "The compressed payload is not aligned to the packed payload alignment",
                std::invalid_argument);
-  auto const parsed = read_compression_metadata(input.metadata);
+  auto parsed = read_compression_metadata(input.metadata);
   CUDF_EXPECTS(!parsed.entries.empty(), "Compressed payload has no region directory");
   auto const num_blocks = parsed.block_offsets.size();
   CUDF_EXPECTS(num_blocks <= input.payload.size() / sizeof(uint64_t),
                "Compressed payload is truncated relative to its block table");
 
-  auto const payload_contains = [&](uint64_t offset, uint64_t bytes) {
-    return offset <= input.payload.size() && bytes <= input.payload.size() - offset;
-  };
   std::size_t uncompressed_end = 0;
   for (auto const& entry : parsed.entries) {
     CUDF_EXPECTS(entry.uncompressed_bytes > 0, "Compressed region has an empty extent");
@@ -4054,7 +4063,25 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
   }
   CUDF_EXPECTS(uncompressed_end == parsed.uncompressed_payload_bytes,
                "Compressed regions do not cover the complete output");
+  return parsed;
+}
 
+std::unique_ptr<table> materialize_selection(packed_data_view input,
+                                             std::optional<std::span<size_type const>> selection,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
+{
+  byte_range_loader loader{input.payload};
+  if (!selection.has_value()) { loader.request(input.payload); }
+  if (!has_compression_metadata(input.metadata)) {
+    return materialize_uncompressed(input, selection, loader, stream, mr);
+  }
+
+  auto const parsed           = read_compressed_input(input);
+  auto const num_blocks       = parsed.block_offsets.size();
+  auto const payload_contains = [&](uint64_t offset, uint64_t bytes) {
+    return offset <= input.payload.size() && bytes <= input.payload.size() - offset;
+  };
   auto const* const block_table = reinterpret_cast<uint64_t const*>(input.payload.data());
   // Host payloads are read in place once the stream has written them.
   if (loader.is_host_accessible()) { stream.sync(); }
@@ -4198,6 +4225,97 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
   return std::make_unique<table>(std::move(columns), metadata.num_rows());
 }
 
+/// Bounds the temporary allocations of `materialize_selection()` without reading the payload.
+std::size_t materialize_scratch(packed_data_view input,
+                                std::optional<std::span<size_type const>> selection,
+                                cuda::stream_ref stream)
+{
+  byte_range_loader loader{input.payload};
+  if (!selection.has_value()) { loader.request(input.payload); }
+  auto const parsed = has_compression_metadata(input.metadata)
+                        ? std::optional{read_compressed_input(input)}
+                        : std::nullopt;
+  auto const legacy = parsed.has_value() ? parsed->legacy_metadata : input.metadata;
+  if (legacy.empty()) { return 0; }
+  auto const metadata = packed_metadata_view{legacy};
+
+  // The buffers of each selected column, which materialization fills one by one.
+  std::vector<int64_t> selected;
+  auto const count =
+    selection.has_value() ? selection->size() : static_cast<std::size_t>(metadata.num_columns());
+  for (std::size_t i = 0; i < count; ++i) {
+    collect_buffer_offsets(
+      metadata.column(selection.has_value() ? (*selection)[i] : static_cast<size_type>(i)),
+      selected);
+  }
+  // Requests a superset of the bytes that materialization stages from a pageable payload.
+  auto const request = [&](std::size_t begin, std::size_t end) {
+    begin = std::min(begin, input.payload.size());
+    end   = std::clamp(end, begin, input.payload.size());
+    loader.request(input.payload.subspan(begin, end - begin));
+  };
+
+  if (!parsed.has_value()) {
+    std::vector<int64_t> offsets;
+    for (size_type i = 0; i < metadata.num_columns(); ++i) {
+      collect_buffer_offsets(metadata.column(i), offsets);
+    }
+    std::ranges::sort(offsets);
+    for (auto const offset : selected) {
+      auto const next = std::ranges::upper_bound(offsets, offset);
+      request(offset, next == offsets.end() ? input.payload.size() : *next);
+    }
+    return loader.staging_bytes() + selected.size() * sizeof(buffer_copy) +
+           batched_copy_temp_bytes(selected.size(), stream);
+  }
+
+  // Blocks of each codec that the selected buffers decompress. Any block may be stored raw, and
+  // each block extends at most to the next one.
+  struct codec_blocks {
+    std::size_t count       = 0;
+    std::size_t max_bytes   = 0;
+    std::size_t total_bytes = 0;
+  };
+  std::map<pack_compression, codec_blocks> codecs;
+  std::size_t num_blocks    = 0;
+  auto const& block_offsets = parsed->block_offsets;
+  for (auto const offset : selected) {
+    auto const entry = std::ranges::lower_bound(parsed->entries,
+                                                static_cast<uint64_t>(offset),
+                                                {},
+                                                &compression_metadata_entry::uncompressed_offset);
+    if (entry == parsed->entries.end() || std::cmp_not_equal(entry->uncompressed_offset, offset)) {
+      continue;
+    }
+    auto& blocks = codecs[static_cast<pack_compression>(entry->compression)];
+    blocks.count += entry->num_blocks;
+    blocks.max_bytes = std::max<std::size_t>(blocks.max_bytes, entry->block_bytes);
+    blocks.total_bytes += entry->data_bytes;
+    num_blocks += entry->num_blocks;
+    for (auto block = entry->block_begin; block < entry->block_begin + entry->num_blocks; ++block) {
+      request(block_offsets[block],
+              block + 1 < block_offsets.size() ? block_offsets[block + 1] : input.payload.size());
+    }
+  }
+
+  // Codec calls run one after another, and raw blocks are copied in one call.
+  auto call_bytes = batched_copy_temp_bytes(num_blocks, stream);
+  for (auto const& [codec, blocks] : codecs) {
+    if (codec == pack_compression::none) { continue; }
+    auto const codec_scratch =
+      codec == pack_compression::cascaded
+        ? 0
+        : io::detail::get_decompression_scratch_size(
+            {to_io_compression(codec), blocks.count, blocks.max_bytes, blocks.total_bytes}, stream);
+    call_bytes = std::max(
+      call_bytes,
+      codec_scratch + blocks.count * codec_scratch_bytes_per_block + codec_scratch_bytes_per_call);
+  }
+  auto const block_spans = num_blocks * (sizeof(device_span<uint8_t const>) +
+                                         sizeof(device_span<uint8_t>) + sizeof(codec_exec_result));
+  return loader.staging_bytes() + block_spans + call_bytes;
+}
+
 }  // namespace
 
 std::unique_ptr<table> materialize(packed_data_view input,
@@ -4215,6 +4333,20 @@ std::unique_ptr<table> materialize(packed_data_view input,
 {
   CUDF_FUNC_RANGE();
   return materialize_selection(input, column_indices, stream, mr);
+}
+
+std::size_t materialize_scratch_bytes(packed_data_view input, cuda::stream_ref stream)
+{
+  CUDF_FUNC_RANGE();
+  return materialize_scratch(input, std::nullopt, stream);
+}
+
+std::size_t materialize_scratch_bytes(packed_data_view input,
+                                      std::span<size_type const> column_indices,
+                                      cuda::stream_ref stream)
+{
+  CUDF_FUNC_RANGE();
+  return materialize_scratch(input, column_indices, stream);
 }
 
 std::vector<pack_region_info> get_packed_region_info(std::span<uint8_t const> metadata)

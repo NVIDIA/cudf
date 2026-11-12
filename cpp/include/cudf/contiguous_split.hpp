@@ -669,6 +669,45 @@ std::unique_ptr<table> materialize(
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Upper bound on the device memory `materialize(input)` allocates from the temporary
+ * resource.
+ *
+ * Computed from `input.metadata`, the size of `input.payload` and its memory kind; the payload
+ * bytes are not read, so the bound can be computed before the payload is filled.
+ *
+ * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
+ * `payload_alignment` it was packed with
+ * @throw cudf::logic_error if `input.metadata` is truncated or malformed
+ *
+ * @param input Packed metadata and payload
+ * @param stream Stream that `materialize()` will run on
+ * @return Number of bytes
+ */
+std::size_t materialize_scratch_bytes(packed_data_view input,
+                                      cuda::stream_ref stream = cudf::get_default_stream());
+
+/**
+ * @brief Upper bound on the device memory `materialize(input, column_indices)` allocates from the
+ * temporary resource.
+ *
+ * Computed from `input.metadata`, the size of `input.payload` and its memory kind; the payload
+ * bytes are not read, so the bound can be computed before the payload is filled.
+ *
+ * @throw std::out_of_range if an index is not in `[0, num_columns)`
+ * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
+ * `payload_alignment` it was packed with
+ * @throw cudf::logic_error if `input.metadata` is truncated or malformed
+ *
+ * @param input Packed metadata and payload
+ * @param column_indices Indices of the top-level columns to materialize
+ * @param stream Stream that `materialize()` will run on
+ * @return Number of bytes
+ */
+std::size_t materialize_scratch_bytes(packed_data_view input,
+                                      std::span<size_type const> column_indices,
+                                      cuda::stream_ref stream = cudf::get_default_stream());
+
+/**
  * @brief Describe the physical regions of a packed table from its host metadata alone.
  *
  * Accepts metadata from `pack_into()`, `cudf::pack()` and `chunked_pack`. Regions are listed in

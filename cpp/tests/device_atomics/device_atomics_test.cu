@@ -13,6 +13,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -46,17 +47,14 @@ constexpr inline bool is_timestamp_sum()
   return cudf::is_timestamp<T>() && std::is_same_v<BinaryOp, cudf::DeviceSum>;
 }
 // Disable SUM of TIMESTAMP types
-template <typename T,
-          typename BinaryOp,
-          std::enable_if_t<is_timestamp_sum<T, BinaryOp>()>* = nullptr>
+template <typename T, typename BinaryOp>
+  requires(is_timestamp_sum<T, BinaryOp>())
 __device__ T atomic_op(T* addr, T const& value, BinaryOp op)
 {
   return {};
 }
 
-template <typename T,
-          typename BinaryOp,
-          std::enable_if_t<!is_timestamp_sum<T, BinaryOp>()>* = nullptr>
+template <typename T, typename BinaryOp>
 __device__ T atomic_op(T* addr, T const& value, BinaryOp op)
 {
   T old_value = *addr;
@@ -89,13 +87,13 @@ CUDF_KERNEL void gpu_atomicCAS_test(T* result, T* data, size_t size)
 }
 
 template <typename T>
-std::enable_if_t<!cudf::is_timestamp<T>(), T> accumulate(cudf::host_span<T const> xs)
+T accumulate(cudf::host_span<T const> xs)
 {
   return std::accumulate(xs.begin(), xs.end(), T{0});
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), T> accumulate(cudf::host_span<T const> xs)
+template <cudf::concepts::timestamp T>
+T accumulate(cudf::host_span<T const> xs)
 {
   auto ys = std::vector<typename T::rep>(xs.size());
   std::transform(

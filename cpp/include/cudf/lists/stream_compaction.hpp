@@ -29,9 +29,8 @@ namespace lists {
  *
  * Given an input `LIST` column and a list-of-bools column, the function produces
  * a new `LIST` column of the same type as `input`, where each element is copied
- * from the input row *only* if the corresponding `retention_mask` is `true`.
- * Elements with null mask elements are dropped unless `null_policy::INCLUDE`
- * is specified.
+ * from the input row *only* if the corresponding `retention_mask` is valid and
+ * `true`, or null when `null_policy::INCLUDE` is specified.
  *
  * E.g.
  * @code{.pseudo}
@@ -99,9 +98,8 @@ std::unique_ptr<column> apply_retention_mask(
  *
  * Given an input `LIST` column and a list-of-bools column, the function produces
  * a new `LIST` column of the same type as `input`, where each element is deleted
- * from the input row if the corresponding `deletion_mask` is `true`.
- * Elements with null mask elements are dropped unless `null_policy::INCLUDE`
- * is specified.
+ * from the input row if the corresponding `deletion_mask` is `true`, or null
+ * unless `null_policy::INCLUDE` is specified.
  *
  * E.g.
  * @code{.pseudo}

@@ -623,6 +623,8 @@ TEST_F(PartitionTestNotTyped, LargeBinaryStringRanks)
     cudf::slice(cudf::table_view{{strings, empty_strings}}, {skip, rows + skip})[0];
   auto const sliced_map = cudf::slice(cudf::column_view{map}, {skip, rows + skip})[0];
   run_partition_test(input, sliced_map, 2, cudf::table_view{{expected, expected_empty}}, offsets);
+  run_partition_test(
+    cudf::table_view{{input.column(0)}}, sliced_map, 2, cudf::table_view{{expected}}, offsets);
 }
 
 TEST_F(PartitionTestNotTyped, BinaryStringSmallSchemas)

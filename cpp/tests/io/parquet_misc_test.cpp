@@ -8,12 +8,22 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/scalar/scalar.hpp>
 
 #include <cuda/iterator>
 
+#include <src/io/parquet/compact_protocol_writer.hpp>
+
 #include <algorithm>
 #include <array>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+#include <numeric>
+#include <optional>
+#include <string>
 #include <vector>
 
 ////////////////////////////////
@@ -232,5 +242,89 @@ TYPED_TEST(ParquetWriterComparableTypeTest, ThreeColumnSorted)
   for (std::size_t i = 0; i < columns.size(); i++) {
     auto const ci = read_column_index(source, columns[i]);
     EXPECT_EQ(ci.boundary_order, expected_orders[i]);
+  }
+}
+
+/////////////////////////////////////////////
+// unsupported logical/physical type handling
+
+namespace {
+
+// Writes an INT64 column [0, 100) with statistics, then rewrites the footer with the given logical
+// type on the column and bogus [0, 0] min/max statistics. Returns the path of the patched file.
+std::string write_patched_int64_file(std::string const& name,
+                                     std::optional<cudf::io::parquet::LogicalType> logical_type)
+{
+  namespace pq = cudf::io::parquet;
+  std::vector<int64_t> values(100);
+  std::iota(values.begin(), values.end(), int64_t{0});
+  cudf::test::fixed_width_column_wrapper<int64_t> col(values.begin(), values.end());
+  auto const filepath = temp_env->get_temp_filepath(name + "_orig.parquet");
+  cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath},
+                                                                    cudf::table_view{{col}})
+                            .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN));
+
+  pq::FileMetaData fmd;
+  read_footer(cudf::io::datasource::create(filepath), &fmd);
+
+  // Make the statistics claim every value is 0, so a reader that trusts them prunes `a > 50`
+  std::vector<uint8_t> zero(sizeof(int64_t), 0);
+  auto& stats = fmd.row_groups[0].columns[0].meta_data.statistics;
+  stats.min = stats.max = stats.min_value = stats.max_value = zero;
+  if (logical_type.has_value()) { fmd.schema[1].logical_type = *logical_type; }
+
+  std::vector<uint8_t> footer;
+  pq::detail::CompactProtocolWriter{&footer}.write(fmd);
+
+  std::ifstream in(filepath, std::ios::binary);
+  std::vector<char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  uint32_t old_len;
+  std::memcpy(&old_len, bytes.data() + bytes.size() - 8, sizeof(old_len));
+  bytes.resize(bytes.size() - 8 - old_len);
+  bytes.insert(bytes.end(), footer.begin(), footer.end());
+  auto const new_len = static_cast<uint32_t>(footer.size());
+  bytes.insert(bytes.end(),
+               reinterpret_cast<char const*>(&new_len),
+               reinterpret_cast<char const*>(&new_len) + sizeof(new_len));
+  bytes.insert(bytes.end(), {'P', 'A', 'R', '1'});
+
+  auto const patched = temp_env->get_temp_filepath(name + ".parquet");
+  std::ofstream(patched, std::ios::binary).write(bytes.data(), bytes.size());
+  return patched;
+}
+
+cudf::io::table_with_metadata read_with_filter(std::string const& path)
+{
+  auto literal     = cudf::numeric_scalar<int64_t>(50);
+  auto literal_ref = cudf::ast::literal(literal);
+  auto col_ref     = cudf::ast::column_reference(0);
+  auto filter      = cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref, literal_ref);
+  return cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{path}).filter(filter));
+}
+
+}  // namespace
+
+// Unsupported logical/physical combinations drop the annotation and ignore the statistics, so the
+// column is read as plain INT64 and the bogus statistics don't prune. The control (no annotation)
+// shows the statistics are otherwise honored.
+TEST_F(ParquetReaderTest, UnsupportedLogicalPhysicalCombinationIgnoresAnnotationAndStats)
+{
+  using cudf::io::parquet::IntType;
+  using cudf::io::parquet::LogicalType;
+  struct test_case {
+    std::string name;
+    std::optional<LogicalType> logical_type;
+    cudf::size_type expected_rows;
+  };
+  std::vector<test_case> const cases{{"Control", std::nullopt, 0},
+                                     {"IntegerOnInt64", LogicalType{IntType{32, true}}, 49},
+                                     {"DateOnInt64", LogicalType{LogicalType::DATE}, 49}};
+
+  for (auto const& tc : cases) {
+    auto const path     = write_patched_int64_file(tc.name, tc.logical_type);
+    auto const filtered = read_with_filter(path);
+    EXPECT_EQ(filtered.tbl->view().column(0).type().id(), cudf::type_id::INT64) << tc.name;
+    EXPECT_EQ(filtered.tbl->num_rows(), tc.expected_rows) << tc.name;
   }
 }

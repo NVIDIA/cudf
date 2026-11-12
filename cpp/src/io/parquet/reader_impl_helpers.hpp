@@ -214,11 +214,25 @@ struct metadata : public FileMetaData {
    */
   [[nodiscard]] bool is_page_index_setup() const { return is_page_index_setup_; }
 
+  /**
+   * @brief Returns whether min/max statistics of a leaf schema element must be ignored
+   *
+   * True for columns whose logical type annotation was dropped because it, or its combination
+   * with the physical type, is unrecognized. Their statistics can't be interpreted reliably.
+   *
+   * @param schema_idx Index of the schema element
+   */
+  [[nodiscard]] bool stats_ignored(int schema_idx) const
+  {
+    return stats_ignored_schema_idx_.contains(schema_idx);
+  }
+
  protected:
   void sanitize_schema();
 
  private:
   bool is_page_index_setup_ = false;
+  std::unordered_set<int> stats_ignored_schema_idx_;
 };
 
 /**

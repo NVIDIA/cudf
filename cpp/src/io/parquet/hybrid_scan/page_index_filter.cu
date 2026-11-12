@@ -152,8 +152,14 @@ struct page_stats_caster : public stats_caster_base {
               }
 
               // Translate binary data to Type then to <T>
-              min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
-              max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              if (per_file_metadata[src_idx].stats_ignored(mapped_schema_idx)) {
+                // The logical type was dropped as unsupported, so min/max can't be interpreted
+                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+              } else {
+                min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
+                max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              }
               has_nan.set_value(column_page_idx,
                                 parquet::detail::has_nans(
                                   column_index.nan_counts.has_value()

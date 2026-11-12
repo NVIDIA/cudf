@@ -424,6 +424,55 @@ type_id to_type_id(SchemaElement const& schema,
   return type_id::EMPTY;
 }
 
+namespace {
+
+/**
+ * @brief Checks whether a leaf column's logical type annotation is recognized and valid for its
+ * physical type, per the Parquet LogicalTypes spec
+ *
+ * Unrecognized logical types (parsed as `LogicalType::UNDEFINED`) and unrecognized logical/physical
+ * combinations (e.g. DECIMAL on BOOLEAN) are reported as unsupported.
+ */
+[[nodiscard]] bool is_supported_logical_physical_combination(SchemaElement const& elem)
+{
+  auto const& lt = elem.logical_type;
+  if (not lt.has_value()) { return true; }
+
+  auto const physical = elem.type;
+  auto const is_int   = physical == Type::INT32 or physical == Type::INT64;
+  switch (lt->type) {
+    case LogicalType::STRING:
+    case LogicalType::ENUM:
+    case LogicalType::JSON:
+    case LogicalType::BSON:
+    case LogicalType::GEOMETRY:
+    case LogicalType::GEOGRAPHY:
+    case LogicalType::FILE: return physical == Type::BYTE_ARRAY;
+    case LogicalType::UUID: return physical == Type::FIXED_LEN_BYTE_ARRAY;
+    case LogicalType::FLOAT16: return physical == Type::FIXED_LEN_BYTE_ARRAY;
+    case LogicalType::DATE: return physical == Type::INT32;
+    case LogicalType::TIME:
+      if (lt->is_time_millis()) { return physical == Type::INT32; }
+      return (lt->is_time_micros() or lt->is_time_nanos()) and physical == Type::INT64;
+    case LogicalType::TIMESTAMP:
+      return physical == Type::INT64 and
+             (lt->is_timestamp_millis() or lt->is_timestamp_micros() or lt->is_timestamp_nanos());
+    case LogicalType::INTEGER: {
+      auto const bw = lt->bit_width();
+      if (bw == 8 or bw == 16 or bw == 32) { return physical == Type::INT32; }
+      return bw == 64 and physical == Type::INT64;
+    }
+    case LogicalType::DECIMAL:
+      return is_int or physical == Type::FIXED_LEN_BYTE_ARRAY or physical == Type::BYTE_ARRAY;
+    // Null type may annotate any physical type
+    case LogicalType::UNKNOWN: return true;
+    // Nested annotations are not valid on leaf columns, and UNDEFINED is an unrecognized type
+    default: return false;
+  }
+}
+
+}  // namespace
+
 void metadata::sanitize_schema()
 {
   // Parquet isn't very strict about incoming metadata. Lots of things can and should be inferred.
@@ -499,6 +548,18 @@ void metadata::sanitize_schema()
     if (schema[schema_idx].converted_type.has_value() and
         not schema[schema_idx].logical_type.has_value()) {
       schema[schema_idx].logical_type = converted_to_logical_type(schema[schema_idx]);
+    }
+
+    // Unrecognized logical types and logical/physical combinations: ignore the annotation and the
+    // column statistics, and read the column using its physical type only.
+    // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#unsupported-logical-types
+    if (auto& elem = schema[schema_idx]; elem.type != Type::UNDEFINED and
+                                         elem.logical_type.has_value() and
+                                         not is_supported_logical_physical_combination(elem)) {
+      elem.logical_type         = cuda::std::nullopt;
+      elem.converted_type       = std::nullopt;
+      elem.logical_type_payload = {};
+      stats_ignored_schema_idx_.insert(static_cast<int>(schema_idx));
     }
 
     // Recursive `process` may append to `schema`; index into it each iteration

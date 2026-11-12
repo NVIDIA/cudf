@@ -127,8 +127,14 @@ struct row_group_stats_caster : public stats_caster_base {
               if (not max_value->has_value()) { max_value = &stats.max; }
             }
             // translate binary data to Type then to <T>
-            min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
-            max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
+            if (source_metadata.stats_ignored(mapped_schema_idx)) {
+              // The logical type was dropped as unsupported, so min/max can't be interpreted
+              min.set_index(stats_idx, std::nullopt, {});
+              max.set_index(stats_idx, std::nullopt, {});
+            } else {
+              min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
+              max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
+            }
             // Check the nullability and NaN presence of this column chunk
             if (with_null_and_nan_stats) {
               has_nan->set_value(stats_idx, has_nans(stats.nan_count));

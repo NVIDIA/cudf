@@ -742,3 +742,32 @@ TEST_F(PartitionTestNotTyped, LargeFixedWidthRoutes)
                        offsets);
   }
 }
+
+template <typename T>
+class GenericPartitionMapTypes : public cudf::test::BaseFixture {};
+TYPED_TEST_SUITE(GenericPartitionMapTypes, cudf::test::IntegralTypesNotBool);
+TYPED_TEST(GenericPartitionMapTypes, NullableStringPartialTiles)
+{
+  constexpr int rows = 2049;
+  std::vector<std::string> text(rows), expected;
+  std::vector<TypeParam> bins(rows);
+  std::vector<bool> valid(rows), expected_valid;
+  for (int i = 0; i < rows; ++i) {
+    text[i]  = std::to_string(i);
+    bins[i]  = i % 3;
+    valid[i] = i % 11 != 0;
+  }
+  std::vector<cudf::size_type> offsets{0};
+  for (int part = 0; part < 3; ++part) {
+    for (int i = part; i < rows; i += 3) {
+      expected.push_back(text[i]);
+      expected_valid.push_back(valid[i]);
+    }
+    offsets.push_back(expected.size());
+  }
+  strings_column_wrapper input(text.begin(), text.end(), valid.begin());
+  strings_column_wrapper output(expected.begin(), expected.end(), expected_valid.begin());
+  fixed_width_column_wrapper<TypeParam> map(bins.begin(), bins.end());
+  run_partition_test(
+    cudf::table_view{{input, input}}, map, 3, cudf::table_view{{output, output}}, offsets);
+}

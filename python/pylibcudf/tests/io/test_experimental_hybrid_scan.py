@@ -5,6 +5,7 @@ import io
 import struct
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 from utils import (
@@ -125,6 +126,22 @@ def simple_hybrid_scan_reader(
     """
     footer_mv = extract_parquet_footer(simple_parquet_bytes)
     return HybridScanReader(footer_mv, simple_parquet_options)
+
+
+def _row_mask_with_exclusions(
+    col0: pa.Array, filter_threshold: int
+) -> tuple[pa.Array, pa.Array]:
+    """Row mask excluding every third (false) and fifth (null) row, and the
+    expected surviving rows for `col0 >= filter_threshold`.
+    """
+    row_mask = pa.array(
+        [None if i % 5 == 0 else i % 3 != 0 for i in range(len(col0))],
+        type=pa.bool_(),
+    )
+    keep = pc.and_(
+        pc.greater_equal(col0, filter_threshold), pc.fill_null(row_mask, False)
+    )
+    return row_mask, keep
 
 
 def test_hybrid_scan_reader_basic(
@@ -358,6 +375,7 @@ def test_hybrid_scan_materialize_columns(
     simple_parquet_bytes: bytes,
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    simple_parquet_table: pa.Table,
     num_rows: int,
     stream: Stream | None,
     use_data_page_mask: UseDataPageMask,
@@ -391,7 +409,10 @@ def test_hybrid_scan_materialize_columns(
     total_rows = simple_hybrid_scan_reader.total_rows_in_row_groups(
         filtered_row_groups
     )
-    row_mask_array = pa.array([True] * total_rows, type=pa.bool_())
+    assert total_rows == num_rows
+    row_mask_array, keep = _row_mask_with_exclusions(
+        simple_parquet_table["col0"].combine_chunks(), filter_threshold
+    )
     row_mask = plc.Column.from_arrow(row_mask_array)
 
     # Get filter column data
@@ -424,8 +445,11 @@ def test_hybrid_scan_materialize_columns(
 
     synchronize_stream(stream)
 
-    # Filter column should have 1 column, with rows passing the filter
-    expected_result_rows = num_rows - filter_threshold
+    # Filter column should have 1 column, with rows passing the filter and
+    # the input row mask, and the row mask is updated to exactly those rows
+    expected_result_rows = pc.sum(keep).as_py()
+    assert row_mask.null_count() == 0
+    assert row_mask.to_arrow().equals(keep)
     assert filter_result.tbl.num_columns() == 1
     assert filter_result.tbl.num_rows() == expected_result_rows
 
@@ -471,7 +495,6 @@ def test_hybrid_scan_materialize_columns(
     comparison_options = plc.io.parquet.ParquetReaderOptions.builder(
         comparison_source
     ).build()
-    comparison_options.set_filter(filter_expression)
     expected_result = plc.io.parquet.read_parquet(comparison_options, stream)
 
     synchronize_stream(stream)
@@ -481,7 +504,7 @@ def test_hybrid_scan_materialize_columns(
     hybrid_table = plc.Table(hybrid_columns)
 
     # Compare just the table data (metadata structures are complex)
-    expected_arrow = expected_result.tbl.to_arrow()
+    expected_arrow = expected_result.tbl.to_arrow().filter(keep)
     hybrid_arrow = hybrid_table.to_arrow()
 
     assert expected_arrow.equals(hybrid_arrow)
@@ -773,6 +796,7 @@ def test_hybrid_scan_chunked_reading(
     simple_parquet_bytes: bytes,
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    simple_parquet_table: pa.Table,
     num_rows: int,
     stream: Stream | None,
 ) -> None:
@@ -803,8 +827,17 @@ def test_hybrid_scan_chunked_reading(
     total_rows = simple_hybrid_scan_reader.total_rows_in_row_groups(
         filtered_row_groups
     )
-    row_mask_array = pa.array([True] * total_rows, type=pa.bool_())
-    row_mask = plc.Column.from_arrow(row_mask_array)
+    assert total_rows == num_rows
+    col0 = simple_parquet_table["col0"].combine_chunks()
+    row_mask_array, keep = _row_mask_with_exclusions(col0, filter_threshold)
+    # Slice the row mask so that it has a non-zero offset
+    offset = 3
+    row_mask = plc.copying.slice(
+        plc.Column.from_arrow(
+            pa.concat_arrays([pa.nulls(offset, pa.bool_()), row_mask_array])
+        ),
+        [offset, offset + total_rows],
+    )[0]
 
     # Get column data
     filter_ranges = simple_hybrid_scan_reader.filter_column_chunks_byte_ranges(
@@ -840,7 +873,7 @@ def test_hybrid_scan_chunked_reading(
     )
 
     # Read chunks
-    chunks_read = 0
+    chunks = []
     while simple_hybrid_scan_reader.has_next_table_chunk():
         chunk_result = (
             simple_hybrid_scan_reader.materialize_filter_columns_chunk(
@@ -848,13 +881,20 @@ def test_hybrid_scan_chunked_reading(
             )
         )
         assert isinstance(chunk_result, plc.io.types.TableWithMetadata)
-        chunks_read += 1
+        chunks.append(chunk_result.tbl.to_arrow())
         # Limit iterations to avoid infinite loop if something goes wrong
-        if chunks_read > 100:
+        if len(chunks) > 100:
             break
 
-    # We should have read at least one chunk
-    assert chunks_read > 0
+    # The chunk read limit is small enough to split the output
+    assert len(chunks) > 1
+
+    # Chunks hold rows passing the filter and the input row mask, and the row
+    # mask is updated to exactly those rows
+    result = pa.concat_tables(chunks).column(0)
+    assert result.to_pylist() == col0.filter(keep).to_pylist()
+    assert row_mask.null_count() == 0
+    assert row_mask.to_arrow().equals(keep)
 
 
 def test_hybrid_scan_construct_row_group_passes(

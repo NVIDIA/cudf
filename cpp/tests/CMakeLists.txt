@@ -738,6 +738,8 @@ add_fragment(
 
 add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
 
+add_fragment(cudf_test_fragments FRAGMENT copy_string SOURCE transform/fragments/strings.cu)
+
 add_fragment(
   cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
 )

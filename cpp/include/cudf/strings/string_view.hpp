@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -34,6 +34,13 @@ using char_utf8 = uint32_t;  ///< UTF-8 characters are 1-4 bytes
  */
 class string_view {
  public:
+  /**
+   * @brief The string length is initialized to this value as a place-holder
+   *
+   * The number of characters in a string is computed on-demand.
+   */
+  static inline cudf::size_type const UNKNOWN_STRING_LENGTH{-1};
+
   /**
    * @brief Return the number of bytes in this string
    *
@@ -363,13 +370,6 @@ class string_view {
   char const* _data{};          ///< Pointer to device memory contain char array for this string
   size_type _bytes{};           ///< Number of bytes in _data for this string
   mutable size_type _length{};  ///< Number of characters in this string (computed)
-
-  /**
-   * @brief The string length is initialized to this value as a place-holder
-   *
-   * The number of characters in a string is computed on-demand.
-   */
-  static inline cudf::size_type const UNKNOWN_STRING_LENGTH{-1};
 
   /**
    * @brief Return the character position of the given byte offset.

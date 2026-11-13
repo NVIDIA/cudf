@@ -7,13 +7,13 @@
 #include <cudf/column/column_child_offsets.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/strings/mutable_string_view.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/std/optional>
-#include <cuda/std/span>
 #include <cuda/std/type_traits>
 
 /**
@@ -776,12 +776,12 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    *
    * The column offset is applied. The element must be valid, and mutations must stay
    * within the existing string's byte range.
-   * @tparam T `cuda::std::span<char>`
+   * @tparam T `mutable_string_view`
    * @param element_index Position of the desired string element
    * @return A mutable view of the string's preallocated character storage
    */
   template <typename T,
-            CUDF_ENABLE_IF(cuda::std::same_as<cuda::std::remove_cv_t<T>, cuda::std::span<char>>)>
+            CUDF_ENABLE_IF(cuda::std::same_as<cuda::std::remove_cv_t<T>, mutable_string_view>)>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     auto const index   = element_index + offset();
@@ -789,7 +789,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
     auto const itr     = detail::input_offsetalator(offsets.head(), offsets.type());
     auto const begin   = itr[index];
     auto const end     = itr[index + 1];
-    return T{head<char>() + begin, static_cast<size_t>(end - begin)};
+    return T{head<char>() + begin, static_cast<size_type>(end - begin)};
   }
 
   /**
@@ -861,7 +861,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param value The value to assign
    */
   template <typename T,
-            CUDF_ENABLE_IF(cuda::std::same_as<cuda::std::remove_cv_t<T>, cuda::std::span<char>>)>
+            CUDF_ENABLE_IF(cuda::std::same_as<cuda::std::remove_cv_t<T>, mutable_string_view>)>
   __device__ void assign(size_type element_index, T value) const noexcept
   {
     // no-op for mutable string elements

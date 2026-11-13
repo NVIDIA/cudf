@@ -10,7 +10,7 @@
 #include <cudf/types.hpp>
 
 #include <cuda/atomic>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm>  // UDFs may use any algorithm without including it
 #include <cuda/std/cstddef>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>

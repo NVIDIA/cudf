@@ -333,6 +333,17 @@ def test_ordered_join_strategy_matches_exact_ordering_width(spmd_engine):
     assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
 
 
+def test_ordered_join_requires_flat_input_partitioning(spmd_engine):
+    left = pl.LazyFrame({"k": [1], "x": [2]})
+    right = pl.LazyFrame({"k": [1], "y": [3]})
+    join_ir = _join_ir(left.join(right, on="k", how="inner"))
+    flat = _order_partitioning(spmd_engine, (0,))
+    rank_only = NormalizedPartitioning(flat.inter_rank_scheme, None)
+
+    assert _make_ordered_strategy(join_ir, rank_only, flat) is None
+    assert _make_ordered_strategy(join_ir, flat, rank_only) is None
+
+
 def test_ordered_join_strategy_checks_order_key_semantics(spmd_engine):
     left = pl.LazyFrame({"k0": [1], "x": [2]})
     right = pl.LazyFrame({"k0": [1], "y": [3]})

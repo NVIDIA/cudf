@@ -17,6 +17,7 @@
 #include <cudf/quantiles.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -39,7 +40,7 @@ struct percentile_approx_dispatch {
                                            int delta,
                                            std::vector<double> const& percentages,
                                            [[maybe_unused]] cudf::size_type ulps)
-    requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     // gpu implementation.
     auto agg_result = op(values, delta);
@@ -58,7 +59,6 @@ struct percentile_approx_dispatch {
                                            int delta,
                                            std::vector<double> const& percentages,
                                            cudf::size_type ulps)
-    requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
   {
     CUDF_FAIL("Invalid input type for percentile_approx test");
   }

@@ -16,6 +16,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/wrappers/durations.hpp>
@@ -45,7 +46,7 @@ struct compare_chrono_elements_to_primitive_representation {
   {
   }
 
-  template <typename T = ChronoT, std::enable_if_t<cudf::is_timestamp<T>()>* = nullptr>
+  template <cudf::concepts::timestamp T = ChronoT>
   __host__ __device__ bool operator()(int32_t const element_index)
   {
     using Primitive = typename ChronoT::rep;
@@ -54,7 +55,7 @@ struct compare_chrono_elements_to_primitive_representation {
     return primitive == timestamp.time_since_epoch().count();
   }
 
-  template <typename T = ChronoT, std::enable_if_t<cudf::is_duration<T>()>* = nullptr>
+  template <cudf::concepts::duration T = ChronoT>
   __host__ __device__ bool operator()(int32_t const element_index)
   {
     using Primitive = typename ChronoT::rep;

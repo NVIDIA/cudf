@@ -12,8 +12,9 @@ from cudf_polars.streaming.actor_graph.collectives import slice_exchange
 from cudf_polars.streaming.actor_graph.collectives.slice_exchange import SparseExchange
 
 
+@pytest.mark.parametrize("start_early", [False, True])
 def test_sparse_exchange_close_survives_cancellation(
-    monkeypatch, timeout_seconds: int
+    monkeypatch, timeout_seconds: int, *, start_early: bool
 ) -> None:
     """Finish before releasing the exchange despite repeated cancellation."""
 
@@ -37,6 +38,8 @@ def test_sparse_exchange_close_survives_cancellation(
             Mock(), Mock(rank=0, nranks=2), 0, sources=(1,), destinations=()
         )
 
+        if start_early:
+            exchange.start_finish()
         task = asyncio.create_task(exchange.aclose())
         try:
             await asyncio.wait_for(started.wait(), timeout=timeout_seconds)

@@ -67,7 +67,6 @@ static_assert(alignof(cuda::std::optional<{0}>) ==
   EXPECT_NO_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(source.c_str(), {}, {}, {})));
 
   // optional privately inherits its storage. Expose that storage only in this compilation.
-  
   constexpr char optional_offsets[] = R"CUDA(
 #include <cuda/std/cstddef>
 #define private public
@@ -77,12 +76,12 @@ static_assert(alignof(cuda::std::optional<{0}>) ==
 using uint128_t = unsigned __int128;
 using actual_optional = cuda::std::optional<uint128_t>;
 using forwarding_optional = cudf_udf_abi::cuda::std::optional<uint128_t>;
-static_assert(offsetof(actual_optional, __storage_.__val_) == 0);
-static_assert(offsetof(actual_optional, __engaged_) == sizeof(uint128_t));
-static_assert(offsetof(actual_optional, __storage_.__val_) ==
-              offsetof(forwarding_optional, value));
-static_assert(offsetof(actual_optional, __engaged_) ==
-              offsetof(forwarding_optional, engaged));
+static_assert(__builtin_offsetof(actual_optional, __storage_.__val_) == 0);
+static_assert(__builtin_offsetof(actual_optional, __engaged_) == sizeof(uint128_t));
+static_assert(__builtin_offsetof(actual_optional, __storage_.__val_) ==
+              __builtin_offsetof(forwarding_optional, value));
+static_assert(__builtin_offsetof(actual_optional, __engaged_) ==
+              __builtin_offsetof(forwarding_optional, engaged));
 )CUDA";
   EXPECT_NO_THROW(static_cast<void>(
     cudf::compile_cuda_to_lto_ir(optional_offsets, {}, {}, {}, false)));

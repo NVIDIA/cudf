@@ -63,6 +63,9 @@ namespace {
 
 /// The low bits of a slot hold a global right row and the high bits a hash fingerprint.
 using slot_type = cuda::std::uint32_t;
+static_assert(cuda::std::numeric_limits<size_type>::digits <
+                cuda::std::numeric_limits<slot_type>::digits,
+              "a slot must hold every right row and still leave the all-ones value unused");
 
 constexpr thread_index_type block_size      = 256;
 constexpr thread_index_type warps_per_block = block_size / cudf::detail::warp_size;

@@ -66,7 +66,7 @@ git grep -n '<operation or symbol>' upstream/main -- cpp/src cpp/include cpp/ben
 ```
 
 - A copy or near-copy of existing logic stays only when the existing code cannot give the required semantics, or with a measured performance, build-time, or binary-size gain from an A/B of the branch with and without it (run it as the `perf-compare-cudf` skill does). A fast path added for speed needs the same measurement.
-- If the existing code is private to another file, move it to a shared header or module and call it from both places.
+- If the existing code is private to another file, share it when its responsibilities and dependencies fit both callers. Otherwise report the duplication to the author before widening the change.
 - Two blocks in your own diff that differ by a constant, type, or flag become one helper or one parameter. Derive each value once.
 
 ## 3. Add only the tests that are missing

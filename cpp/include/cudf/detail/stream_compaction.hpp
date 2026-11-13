@@ -19,23 +19,23 @@ namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::drop_nulls(table_view const&, std::vector<size_type> const&,
- *                           cudf::size_type, cuda::stream_ref, rmm::device_async_resource_ref)
+ *                           cudf::size_type, cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<table> drop_nulls(table_view const& input,
                                   std::vector<size_type> const& keys,
                                   cudf::size_type keep_threshold,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr);
+                                  cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::drop_nans(table_view const&, std::vector<size_type> const&,
- *                          cudf::size_type, cuda::stream_ref, rmm::device_async_resource_ref)
+ *                          cudf::size_type, cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<table> drop_nans(table_view const& input,
                                  std::vector<size_type> const& keys,
                                  cudf::size_type keep_threshold,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cudf::memory_resources mr);
 
 /**
  * @brief Specifies how the boolean mask should be interpreted by `apply_mask` API.
@@ -54,6 +54,7 @@ enum class mask_type : bool {
  * @param input The input table to filter
  * @param boolean_mask A nullable BOOL8 column used to filter @p input
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
+ * @param null_handling Whether to keep or drop rows with null mask elements
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned table
  * @return A table containing the rows of @p input selected by @p boolean_mask and @p mask_kind
@@ -61,6 +62,7 @@ enum class mask_type : bool {
 std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,
                                   mask_type mask_kind,
+                                  null_policy null_handling,
                                   cuda::stream_ref stream,
                                   cudf::memory_resources mr);
 
@@ -72,7 +74,7 @@ std::unique_ptr<table> unique(table_view const& input,
                               duplicate_keep_option keep,
                               null_equality nulls_equal,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::distinct
@@ -83,7 +85,7 @@ std::unique_ptr<table> distinct(table_view const& input,
                                 null_equality nulls_equal,
                                 nan_equality nans_equal,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr);
+                                cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::stable_distinct
@@ -94,7 +96,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::distinct_indices
@@ -106,7 +108,7 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                                 null_equality nulls_equal,
                                                 nan_equality nans_equal,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

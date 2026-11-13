@@ -49,7 +49,7 @@ std::unique_ptr<column> fill(strings_column_view const& input,
                              size_type end,
                              string_scalar const& value,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   auto const strings_count = input.size();
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }

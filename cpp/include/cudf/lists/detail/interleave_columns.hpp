@@ -36,7 +36,7 @@ namespace lists::detail {
 std::unique_ptr<column> interleave_columns(table_view const& input,
                                            bool has_null_mask,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cudf::memory_resources mr);
 
 }  // namespace lists::detail
 }  // namespace cudf

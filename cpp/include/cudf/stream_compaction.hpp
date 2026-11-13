@@ -67,8 +67,8 @@ std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters a table to remove null elements.
@@ -100,8 +100,8 @@ std::unique_ptr<table> drop_nulls(
 std::unique_ptr<table> drop_nulls(
   table_view const& input,
   std::vector<size_type> const& keys,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters a table to remove NANs with threshold count.
@@ -145,8 +145,8 @@ std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
   cudf::size_type keep_threshold,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters a table to remove NANs.
@@ -179,15 +179,16 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> drop_nans(
   table_view const& input,
   std::vector<size_type> const& keys,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters `input` using `retention_mask` of boolean values as a mask.
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied to the corresponding output column
- * if the corresponding element `i` in the mask is non-null and `true`.
+ * if the corresponding element `i` in the mask is valid and `true`, or null when
+ * `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p retention_mask is empty, or @p input has zero rows, an empty table is returned.
@@ -211,6 +212,19 @@ std::unique_ptr<table> apply_retention_mask(
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @copydoc apply_retention_mask(table_view const&, column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
+ *
+ * @param[in] null_handling Whether to keep or drop rows with null mask elements
+ */
+std::unique_ptr<table> apply_retention_mask(
+  table_view const& input,
+  column_view const& retention_mask,
+  null_policy null_handling,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
  * @brief Filters `input` using `boolean_mask` of boolean values as a mask.
  *
  * @deprecated in release 26.10. Use `apply_retention_mask` instead.
@@ -226,15 +240,16 @@ std::unique_ptr<table> apply_retention_mask(
 [[deprecated("Use apply_retention_mask() instead")]] std::unique_ptr<table> apply_boolean_mask(
   table_view const& input,
   column_view const& boolean_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters `input` using `deletion_mask` of boolean values as a mask.
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied from the corresponding output column
- * if the corresponding element `i` in the mask is non-null and `false`.
+ * if the corresponding element `i` in the mask is valid and `false`, or null when
+ * `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p deletion_mask is empty, a copy of @p input is returned. If @p input has zero rows,
@@ -255,6 +270,19 @@ std::unique_ptr<table> apply_retention_mask(
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,
   column_view const& deletion_mask,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @copydoc apply_deletion_mask(table_view const&, column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
+ *
+ * @param[in] null_handling Whether to keep or drop rows with null mask elements
+ */
+std::unique_ptr<table> apply_deletion_mask(
+  table_view const& input,
+  column_view const& deletion_mask,
+  null_policy null_handling,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
@@ -299,13 +327,12 @@ enum class duplicate_keep_option {
  *
  * @return Table with unique rows from each sequence of equivalent rows as specified by `keep`
  */
-std::unique_ptr<table> unique(
-  table_view const& input,
-  std::vector<size_type> const& keys,
-  duplicate_keep_option keep,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> unique(table_view const& input,
+                              std::vector<size_type> const& keys,
+                              duplicate_keep_option keep,
+                              null_equality nulls_equal = null_equality::EQUAL,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a new table without duplicate rows.
@@ -334,11 +361,11 @@ std::unique_ptr<table> unique(
 std::unique_ptr<table> distinct(
   table_view const& input,
   std::vector<size_type> const& keys,
-  duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  duplicate_keep_option keep = duplicate_keep_option::KEEP_ANY,
+  null_equality nulls_equal  = null_equality::EQUAL,
+  nan_equality nans_equal    = nan_equality::ALL_EQUAL,
+  cuda::stream_ref stream    = cudf::get_default_stream(),
+  cudf::memory_resources mr  = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a column of indices of all distinct rows in the input table.
@@ -360,11 +387,11 @@ std::unique_ptr<table> distinct(
  */
 std::unique_ptr<column> distinct_indices(
   table_view const& input,
-  duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  duplicate_keep_option keep = duplicate_keep_option::KEEP_ANY,
+  null_equality nulls_equal  = null_equality::EQUAL,
+  nan_equality nans_equal    = nan_equality::ALL_EQUAL,
+  cuda::stream_ref stream    = cudf::get_default_stream(),
+  cudf::memory_resources mr  = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a new table without duplicate rows, preserving input order.
@@ -396,11 +423,11 @@ std::unique_ptr<column> distinct_indices(
 std::unique_ptr<table> stable_distinct(
   table_view const& input,
   std::vector<size_type> const& keys,
-  duplicate_keep_option keep        = duplicate_keep_option::KEEP_ANY,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  duplicate_keep_option keep = duplicate_keep_option::KEEP_ANY,
+  null_equality nulls_equal  = null_equality::EQUAL,
+  nan_equality nans_equal    = nan_equality::ALL_EQUAL,
+  cuda::stream_ref stream    = cudf::get_default_stream(),
+  cudf::memory_resources mr  = cudf::get_current_device_resource_ref());
 
 /** @} */
 }  // namespace CUDF_EXPORT cudf

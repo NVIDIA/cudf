@@ -115,15 +115,11 @@ __device__ bool probe_key(BloomFilter const& filter,
 
   // INT96 is the nanoseconds since midnight (8 bytes) followed by the Julian day (4 bytes)
   else if constexpr (physical_type == Type::INT96) {
-    using namespace cuda::std::chrono;
-    auto const nanos            = nanoseconds{literal.value<Rep>()};
-    auto const days_since_epoch = floor<days>(nanos);
-    int64_t const time_of_day   = (nanos - days_since_epoch).count();
-    uint32_t const julian_day   = days_since_epoch.count() + julian_day_unix_epoch;
-    char bytes[12];
+    auto const [time_of_day, julian_day] = duration_to_int96(duration_ns{literal.value<Rep>()});
+    char bytes[int96_size];
     cuda::std::memcpy(bytes, &time_of_day, sizeof(time_of_day));
     cuda::std::memcpy(bytes + sizeof(time_of_day), &julian_day, sizeof(julian_day));
-    return filter.contains(cudf::string_view{bytes, 12});
+    return filter.contains(cudf::string_view{bytes, int96_size});
   }
 
   // Decimals are big-endian two's complement, sign-extended to the column's `type_length`,
@@ -452,7 +448,7 @@ aggregate_reader_metadata::read_bloom_filters(
   std::span<int const> column_schemas,
   size_type total_row_groups,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   // Descriptors for all the chunks that make up the selected columns
   auto const num_input_columns = column_schemas.size();

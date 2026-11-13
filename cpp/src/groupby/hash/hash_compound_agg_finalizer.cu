@@ -72,17 +72,16 @@ std::unique_ptr<column> gather_argminmax(hash_compound_agg_finalizer const& fina
   return std::move(result->release()[0]);
 }
 
-// Helper for MIN/MAX finalization - shared logic for compound types (e.g., strings)
+// Helper for MIN/MAX finalization. A MIN/MAX result missing from the cache was computed through
+// ARGMIN/ARGMAX (e.g. for strings), so gather it from that result.
 template <typename MakeArgAggFn>
 void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& finalizer,
                                         aggregation const& agg,
                                         MakeArgAggFn make_arg_agg)
 {
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
-  if (finalizer.input_type.id() == type_id::STRING || cudf::is_nested(finalizer.input_type)) {
-    auto transformed_agg = make_arg_agg();
-    finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
-  }  // else: no-op, since this is only relevant for compound aggregations
+  auto transformed_agg = make_arg_agg();
+  finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
 }
 
 // Specialization for MIN aggregation
@@ -143,24 +142,6 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
   cache->add_result(col, agg, std::move(result));
 }
 
-// Specialization for M2 aggregation
-template <>
-void hash_compound_agg_finalizer::operator()<aggregation::M2>(aggregation const& agg) const
-{
-  if (cache->has_result(col, agg)) { return; }
-
-  auto const sum_sqr_agg    = make_sum_of_squares_aggregation();
-  auto const sum_agg        = make_sum_aggregation();
-  auto const count_agg      = make_count_aggregation();
-  auto const sum_sqr_result = cache->get_result(col, *sum_sqr_agg);
-  auto const sum_result     = cache->get_result(col, *sum_agg);
-  auto const count_result   = cache->get_result(col, *count_agg);
-
-  auto output =
-    compute_m2(input_type, sum_sqr_result, sum_result, count_result, stream, mr.get_output_mr());
-  cache->add_result(col, agg, std::move(output));
-}
-
 // Helper for VARIANCE/STD finalization - shared logic for M2-based computations
 template <typename ComputeFn>
 void finalize_var_std(hash_compound_agg_finalizer const& finalizer,
@@ -171,8 +152,7 @@ void finalize_var_std(hash_compound_agg_finalizer const& finalizer,
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
 
   auto const m2_agg = make_m2_aggregation();
-  // Since M2 is a compound aggregation, we need to "finalize" it using aggregation finalizer.
-  cudf::detail::aggregation_dispatcher(m2_agg->kind, finalizer, *m2_agg);
+  // The producer has already cached M2 and its matching valid count.
   auto const count_agg    = make_count_aggregation();
   auto const m2_result    = finalizer.cache->get_result(finalizer.col, *m2_agg);
   auto const count_result = finalizer.cache->get_result(finalizer.col, *count_agg);

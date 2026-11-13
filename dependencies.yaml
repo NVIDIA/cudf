@@ -19,6 +19,7 @@ files:
       - depends_on_cupy
       - depends_on_cuda_bindings
       - depends_on_cuda_bindings_build
+      - depends_on_cuda_core
       - depends_on_dask_cuda
       - depends_on_kvikio
       - depends_on_libkvikio
@@ -26,7 +27,6 @@ files:
       - depends_on_libnvcomp
       - depends_on_librapidsmpf
       - depends_on_libucxx
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
       - depends_on_rapids_logger
       - depends_on_rapidsmpf
@@ -98,7 +98,6 @@ files:
       - depends_on_cudf
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
   test_cuml:
     output: none
@@ -114,7 +113,7 @@ files:
       - test_python_pylibcudf
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
   test_python_other:
     output: none
     includes:
@@ -130,7 +129,7 @@ files:
       - depends_on_dask_cuda
       - depends_on_pylibcudf
       - depends_on_libcudf
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - depends_on_dask_cudf
       - depends_on_cudf_kafka
       - depends_on_custreamz
@@ -238,7 +237,7 @@ files:
     includes:
       - build_base
       - build_python_common
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - depends_on_pylibcudf
       - depends_on_libcudf
       - depends_on_librmm
@@ -259,7 +258,6 @@ files:
       - depends_on_cuda_bindings
       - depends_on_cupy
       - depends_on_libcudf
-      - depends_on_numba_cuda
       - depends_on_numba_cuda_mlir
       - depends_on_pylibcudf_pyarrow
       - depends_on_rmm
@@ -274,6 +272,10 @@ files:
       key: test
     includes:
       - cuda_version
+      # cudf[test] doesn't directly use cuda-core, but we include
+      # it to get a compatible cuda-bindings/cuda-core.
+      # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
+      - depends_on_cuda_core
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
@@ -392,8 +394,12 @@ files:
       table: project.optional-dependencies
       key: test
     includes:
+      # pylibcudf[test] doesn't directly use cuda-core, but we include
+      # it to get a compatible cuda-bindings/cuda-core.
+      # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
+      - depends_on_cuda_core
       - depends_on_cupy
-      - depends_on_numba_cuda
+      - depends_on_numba_cuda_mlir
       - pyarrow_run
       - test_python_common
       - test_python_cudf_common
@@ -441,6 +447,7 @@ files:
     includes:
       - run_cudf_polars
       - depends_on_cuda_bindings
+      - depends_on_cuda_core
       - depends_on_rapidsmpf
       - depends_on_cudf_streaming
       - depends_on_kvikio
@@ -740,6 +747,10 @@ files:
       polars_compat_version: ["2.0", "2.1"]
     includes:
       - test_cudf_polars_compat
+  test_cudf_polars_quent:
+    output: none
+    includes:
+      - depends_on_cudf_polars_quent
 channels:
   - rapidsai-nightly
   - rapidsai
@@ -1127,6 +1138,22 @@ dependencies:
           - matrix:
             packages:
               - cuda-bindings>=13.0.2,<13.5
+  depends_on_cuda_core:
+    common:
+      - output_types: [conda, constraints]
+        packages:
+          - cuda-core>=1.0,<2
+    specific:
+      - output_types: [requirements, pyproject]
+        matrices:
+          - matrix:
+              cuda: "12.*"
+            packages:
+              - cuda-core[cu12]>=1.0,<2
+          # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
+          - matrix:
+            packages:
+              - cuda-core[cu13]>=1.0,<2
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1199,7 +1226,6 @@ dependencies:
             packages:
               - numba==0.60.0
               - *pandas
-              - numba-cuda==0.30.2
           - matrix: {dependencies: "latest"}
             packages:
               - *pandas
@@ -1391,33 +1417,6 @@ dependencies:
           - matrix:
               cuda_suffixed: "false"
             packages: [*libcudf_unsuffixed]
-  depends_on_numba_cuda:
-    common:
-      - output_types: [conda, requirements, constraints, pyproject]
-        packages:
-          # TODO: Remove after https://github.com/rapidsai/build-planning/issues/301 is resolved.
-          - numba>=0.60.0,<0.65.0
-      - output_types: [conda]
-        packages:
-          - &numba_cuda numba-cuda>=0.22.2,<0.31.0
-    specific:
-      - output_types: [requirements, constraints, pyproject]
-        matrices:
-          - matrix:
-              cuda: "12.*"
-              cuda_suffixed: "true"
-            packages:
-              - numba-cuda[cu12]>=0.22.2,<0.31.0
-          - matrix:
-              cuda: "13.*"
-              cuda_suffixed: "true"
-            packages:
-              - numba-cuda[cu13]>=0.22.2,<0.31.0
-          # fallback to numba-cuda with no extra CUDA packages if 'cuda_suffixed' isn't true
-          - matrix:
-              cuda_suffixed: "false"
-            packages:
-              - *numba_cuda
   depends_on_numba_cuda_mlir:
     common:
       - output_types: [conda, requirements, pyproject]
@@ -1919,6 +1918,11 @@ dependencies:
       - output_types: conda
         packages:
           - cudf-polars==26.12.*,>=0.0.0a0
+  depends_on_cudf_polars_quent:
+    common:
+      - output_types: conda
+        packages:
+          - cudf-polars-quent==26.12.*,>=0.0.0a0
   depends_on_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

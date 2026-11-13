@@ -132,8 +132,14 @@ TEST_F(ApplyRetentionMask, NullBooleanMask)
   cudf::table_view expected{{col1_expected, col2_expected, col3_expected}};
 
   auto got = cudf::apply_retention_mask(input, boolean_mask);
-
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, got->view());
+
+  cudf::test::fixed_width_column_wrapper<int16_t> col1_with_nulls{{true, true, true}, {1, 0, 1}};
+  cudf::test::fixed_width_column_wrapper<int32_t> col2_with_nulls{{10, 70, 2}, {1, 0, 1}};
+  cudf::test::fixed_width_column_wrapper<double> col3_with_nulls{{10, 70, 2}, {1, 0, 1}};
+  cudf::table_view expected_with_nulls{{col1_with_nulls, col2_with_nulls, col3_with_nulls}};
+  got = cudf::apply_retention_mask(input, boolean_mask, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_with_nulls, got->view());
 }
 
 TEST_F(ApplyRetentionMask, EmptyMask)
@@ -468,8 +474,15 @@ TEST_F(ApplyDeletionMask, NullDeletionMask)
   cudf::table_view expected{{col1_expected, col2_expected, col3_expected}};
 
   auto got = cudf::apply_deletion_mask(input, deletion_mask);
-
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, got->view());
+
+  cudf::test::fixed_width_column_wrapper<int16_t> col1_with_nulls{{true, false, false, false},
+                                                                  {1, 1, 1, 0}};
+  cudf::test::fixed_width_column_wrapper<int32_t> col2_with_nulls{{10, 40, 5, 10}, {1, 1, 1, 0}};
+  cudf::test::fixed_width_column_wrapper<double> col3_with_nulls{{10, 40, 5, 10}, {1, 1, 1, 0}};
+  cudf::table_view expected_with_nulls{{col1_with_nulls, col2_with_nulls, col3_with_nulls}};
+  got = cudf::apply_deletion_mask(input, deletion_mask, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_with_nulls, got->view());
 }
 
 TEST_F(ApplyDeletionMask, EmptyMask)

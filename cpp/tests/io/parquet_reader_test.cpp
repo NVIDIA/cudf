@@ -14,12 +14,15 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table.hpp>
@@ -57,6 +60,105 @@ auto page_boundary_slices(cudf::size_type const num_rows)
 }
 
 }  // namespace
+
+TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
+{
+  auto constexpr num_rows = 10'000;
+  auto const sequence     = cuda::counting_iterator<int32_t>{0};
+  auto const valids       = cuda::transform_iterator(sequence, [](auto i) { return i % 7 != 0; });
+  auto const strings =
+    cuda::transform_iterator(sequence, [](auto i) { return "value_" + std::to_string(i % 100); });
+  auto const offsets = cuda::transform_iterator(sequence, [](auto i) { return 2 * i; });
+
+  // Nullable INT32, STRING, DECIMAL32 and LIST<DECIMAL32> columns
+  cudf::test::fixed_width_column_wrapper<int32_t> ints(sequence, sequence + num_rows, valids);
+  cudf::test::strings_column_wrapper strs(strings, strings + num_rows, valids);
+  cudf::test::fixed_point_column_wrapper<int32_t> decimals(
+    sequence, sequence + num_rows, valids, numeric::scale_type{-2});
+  cudf::test::fixed_width_column_wrapper<int32_t> list_offsets(offsets, offsets + num_rows + 1);
+  cudf::test::fixed_point_column_wrapper<int32_t> list_decimals(
+    sequence, sequence + 2 * num_rows, numeric::scale_type{-2});
+  auto const lists =
+    cudf::make_lists_column(num_rows,
+                            list_offsets.release(),
+                            list_decimals.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+
+  auto const filepath = temp_env->get_temp_filepath("ReadUsesMemoryResources.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath},
+                                              cudf::table_view{{ints, strs, decimals, *lists}})
+      .compression(cudf::io::compression_type::SNAPPY)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .row_group_size_rows(num_rows / 4)
+      .max_page_size_rows(num_rows / 16)
+      .build());
+
+  // Reads with distinct output and temporary resources. The output resource must allocate the
+  // returned table and nothing else.
+  auto const expect_read_uses_memory_resources =
+    [](cudf::io::parquet_reader_options const& options) {
+      auto const stream   = cudf::test::get_default_stream();
+      auto const expected = cudf::io::read_parquet(options, stream);
+
+      cudf::test::memory_resource_test_harness harness;
+      {
+        auto const result = cudf::io::read_parquet(options, stream, harness.resources());
+        harness.expect_resource_usage(result.tbl->alloc_size(),
+                                      {cudf::test::output_allocation_expectation::EXACT,
+                                       cudf::test::temporary_allocation_expectation::SOME},
+                                      stream);
+        CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), result.tbl->view());
+      }
+      harness.expect_no_live_allocations(stream);
+    };
+
+  auto literal_value = cudf::numeric_scalar<int32_t>(num_rows / 3);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(0);
+  auto filter        = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+
+  auto const builder = [&] {
+    return cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  };
+  {
+    SCOPED_TRACE("plain");
+    expect_read_uses_memory_resources(builder().build());
+  }
+  {
+    SCOPED_TRACE("decimal cast, dictionary output and synthetic columns");
+    expect_read_uses_memory_resources(builder()
+                                        .decimal_width(cudf::type_id::DECIMAL128)
+                                        .output_dict_columns(true)
+                                        .prepend_row_index_column(true)
+                                        .prepend_source_index_column(true)
+                                        .build());
+  }
+  {
+    // The STRING column is read as binary, which is not dictionary encoded
+    SCOPED_TRACE("dictionary output with binary");
+    std::vector<cudf::io::reader_column_schema> schema(4);
+    schema[1].set_convert_binary_to_strings(false);
+    schema[3] = cudf::io::reader_column_schema(1);
+    expect_read_uses_memory_resources(
+      builder().output_dict_columns(true).set_column_schema(schema).build());
+  }
+  {
+    SCOPED_TRACE("filter");
+    expect_read_uses_memory_resources(builder().filter(filter).build());
+  }
+  {
+    SCOPED_TRACE("filter with decimal cast, dictionary output and synthetic columns");
+    expect_read_uses_memory_resources(builder()
+                                        .filter(filter)
+                                        .decimal_width(cudf::type_id::DECIMAL128)
+                                        .output_dict_columns(true)
+                                        .prepend_row_index_column(true)
+                                        .prepend_source_index_column(true)
+                                        .build());
+  }
+}
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
@@ -3941,6 +4043,7 @@ TEST_F(ParquetReaderTest, DeltaSkipRowsWithNulls)
 
   auto const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, tbl)
+      .metadata(input_metadata)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .compression(cudf::io::compression_type::NONE)
       .dictionary_policy(cudf::io::dictionary_policy::NEVER)
@@ -3982,6 +4085,7 @@ TEST_F(ParquetReaderTest, DeltaSkipRowsWithNulls)
     cudf::io::parquet_writer_options out_opts2 =
       cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&out_buffer},
                                                 result.tbl->view())
+        .metadata(input_metadata)
         .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
         .compression(cudf::io::compression_type::NONE)
         .dictionary_policy(cudf::io::dictionary_policy::NEVER)
@@ -6584,7 +6688,50 @@ struct ParquetStatsDecoder : cudf::io::parquet::detail::stats_caster_base {
   {
     return convert<T>(bytes.begin(), bytes.size(), type);
   }
+
+  template <typename T>
+  static T decode_int96(int64_t nanos, int32_t julian_days)
+  {
+    auto const bytes = to_int96_bytes({nanos, julian_days});
+    return convert<T>(bytes.data(), bytes.size(), cudf::io::parquet::Type::INT96);
+  }
 };
+
+TEST_F(ParquetReaderTest, DecodeInt96Stats)
+{
+  // 1969-12-31T23:59:58.999999999, flooring to each output unit
+  auto constexpr nanos       = int64_t{86'398'999'999'999};
+  auto constexpr julian_days = int32_t{2'440'587};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(nanos, julian_days),
+            cudf::timestamp_ns{cudf::duration_ns{-1'000'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_us>(nanos, julian_days),
+            cudf::timestamp_us{cudf::duration_us{-1'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ms>(nanos, julian_days),
+            cudf::timestamp_ms{cudf::duration_ms{-1'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_s>(nanos, julian_days),
+            cudf::timestamp_s{cudf::duration_s{-2}});
+
+  // The `timestamp_ns` limits, whose midnight overflows at the minimum, and their neighbors
+  using cudf::io::parquet::detail::int96_fits_duration;
+  auto constexpr min_nanos = int64_t{763'145'224'192};
+  auto constexpr min_days  = int32_t{2'333'836};
+  auto constexpr max_nanos = int64_t{85'636'854'775'807};
+  auto constexpr max_days  = int32_t{2'547'339};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(min_nanos, min_days),
+            cudf::timestamp_ns::min());
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(max_nanos, max_days),
+            cudf::timestamp_ns::max());
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(min_nanos, min_days));
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(max_nanos, max_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(min_nanos - 1, min_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(max_nanos + 1, max_days));
+  // Coarser units have a wider range
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_us>(min_nanos - 1, min_days));
+
+  EXPECT_THROW(
+    ParquetStatsDecoder::decode<cudf::timestamp_ns>({0x00}, cudf::io::parquet::Type::INT96),
+    cudf::logic_error);
+}
 
 TEST_F(ParquetReaderTest, DecodeVariableWidthDecimalStats)
 {

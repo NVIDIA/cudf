@@ -366,7 +366,9 @@ __device__ inline size_type string_view::find_impl(char const* str,
                                                    size_type pos,
                                                    size_type count) const
 {
-  if (!str || pos < 0) { return npos; }
+  // An empty target may have a null data pointer, for example when it comes from
+  // a strings column with no character data; it is still found at pos.
+  if ((!str && bytes > 0) || pos < 0) { return npos; }
   if (pos > 0 && pos > length()) { return npos; }
 
   // use iterator to help reduce character/byte counting

@@ -5,6 +5,7 @@
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/udf.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -86,15 +87,8 @@ void BM_filter_min_max(nvbench::state& state)
                  std::back_inserter(filter_column_views),
                  [](auto const& col) { return col->view(); });
 
-  std::string type_name = cudf::type_to_name(cudf::data_type{cudf::type_to_id<key_type>()});
-
-  auto udf = std::format(
-    R"***(
-    __device__ void transform(bool * out, {0} c0, {0} min, {0} max) {{
-    *out = (c0 >= min && c0 <= max);
-    }}
-    )***",
-    type_name);
+  auto const symbol =
+    std::format("minmax_{}", cudf::type_to_name(cudf::data_type{cudf::type_to_id<key_type>()}));
 
   auto tree              = cudf::ast::tree{};
   auto min_scalar        = cudf::numeric_scalar<key_type>{filter_min};
@@ -139,10 +133,7 @@ void BM_filter_min_max(nvbench::state& state)
           cudf::scalar_column_view(min_scalar_column->view()),
           cudf::scalar_column_view(max_scalar_column->view())};
         auto predicate =
-          cudf::transform(udf,
-                          cudf::udf_source_type::CUDA,
-                          cudf::null_aware::NO,
-                          std::nullopt,
+          cudf::transform(get_benchmark_udf(symbol),
                           std::span{predicate_inputs},
                           std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
                                                             cudf::output_nullability::PRESERVE}},

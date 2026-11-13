@@ -4,6 +4,7 @@
 import math
 
 import pyarrow as pa
+import pytest
 from utils import assert_column_eq, assert_table_eq
 
 import pylibcudf as plc
@@ -129,22 +130,44 @@ _TRANSFORM_UDF_PTX = """\
 
 
 def test_transform_udf():
-    ptx = _TRANSFORM_UDF_PTX
+    cuda = pytest.importorskip("numba.cuda")
 
+    @cuda.jit(device=True, lto=True)
+    def op(a, b, c):
+        return (a + b) * c
+
+    @cuda.jit(device=True)
+    def op_ptx(a, b, c):
+        return (a + b) * c
+
+    for udf in (op, op_ptx):
+        _check_transform_udf(udf)
+
+
+def test_transform_precompiled_ptx():
+    udf = plc.udf.TransformUDF(
+        symbol="transform_udf_op",
+        fragments=(_TRANSFORM_UDF_PTX.encode(),),
+        binary_type=plc.udf.LTOBinaryType.PTX,
+    )
+    _check_transform_udf(udf)
+
+
+def _check_transform_udf(udf):
     A = 5.0
     B = 20.0
     C = 0.5
 
     expect = pa.array([(A + B) * C] * 100)
+    inputs = [
+        plc.Column.from_arrow(pa.array([A] * 100)),
+        plc.Column.from_arrow(pa.array([B] * 100)),
+        plc.Column.from_arrow(pa.array([C])),
+    ]
     got = plc.transform.transform(
-        [
-            plc.Column.from_arrow(pa.array([A] * 100)),
-            plc.Column.from_arrow(pa.array([B] * 100)),
-            plc.Column.from_arrow(pa.array([C])),
-        ],
-        transform_udf=ptx,
+        inputs,
+        transform_udf=udf,
         output_type=plc.DataType(plc.TypeId.FLOAT64),
-        is_ptx=True,
         is_null_aware=plc.types.NullAware.NO,
         null_policy=plc.types.OutputNullability.PRESERVE,
     )

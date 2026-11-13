@@ -10,6 +10,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -17,6 +18,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -41,12 +43,20 @@ std::string make_udf(cudf::size_type expression_depth)
 {
   std::string expression = "in + in";
   for (cudf::size_type level = 1; level < expression_depth; ++level) {
-    expression = "(" + expression + ") + in";
+    expression = std::format("({}) + in", expression);
   }
-  return "__device__ void transform(int32_t* out, int32_t in) { *out = " + expression + "; }";
+  return std::format(R"CUDA(
+#include <cudf/udf_includes.hpp>
+extern "C" __device__ cudf::errc transform(int32_t* out, int32_t in)
+{{
+  *out = {};
+  return cudf::errc::SUCCESS;
+}}
+)CUDA",
+                     expression);
 }
 
-// Measures warm dispatch overhead for equivalent CUDA UDF and AST expressions through both the
+// Measures warm dispatch overhead for equivalent LTO UDF and AST expressions through both the
 // one-shot APIs and a reusable transform_program. Program construction and initial JIT compilation
 // happen before the timed region; varying row count separates host-side dispatch costs from kernel
 // execution, while expression depth exposes repeated AST lowering and kernel-lookup costs.
@@ -62,7 +72,14 @@ void BM_transform_dispatch(nvbench::state& state)
   std::array<cudf::transform_input, 1> inputs{source_table->get_column(0).view()};
   std::array outputs{cudf::transform_output{cudf::data_type{cudf::type_id::INT32},
                                             cudf::output_nullability::ALL_VALID}};
-  auto const udf = make_udf(expression_depth);
+  auto const source = make_udf(expression_depth);
+  std::optional<cudf::compiled_fragment> compiled;
+  cudf::lto_fragment module;
+  if (api == transform_api::TRANSFORM || api == transform_api::TRANSFORM_PROGRAM) {
+    (void)compiled.emplace(cudf::compile_cuda_to_lto_ir(source.c_str()));
+    module = compiled->view();
+  }
+  cudf::transform_udf udf{"transform", {&module, 1}};
 
   cudf::ast::tree tree;
   tree.push(cudf::ast::column_reference{0});
@@ -74,25 +91,10 @@ void BM_transform_dispatch(nvbench::state& state)
 
   std::unique_ptr<cudf::transform_program> program;
   switch (api) {
-    case transform_api::TRANSFORM:
-      cudf::transform(udf,
-                      cudf::udf_source_type::CUDA,
-                      cudf::null_aware::NO,
-                      std::nullopt,
-                      inputs,
-                      outputs,
-                      {},
-                      std::nullopt);
-      break;
+    case transform_api::TRANSFORM: cudf::transform(udf, inputs, outputs, {}, std::nullopt); break;
     case transform_api::TRANSFORM_PROGRAM:
-      program =
-        std::make_unique<cudf::transform_program>(udf,
-                                                  cudf::udf_source_type::CUDA,
-                                                  cudf::null_aware::NO,
-                                                  std::nullopt,
-                                                  inputs,
-                                                  outputs,
-                                                  std::span<std::unique_ptr<cudf::column> const>{});
+      program = std::make_unique<cudf::transform_program>(
+        udf, inputs, outputs, std::span<std::unique_ptr<cudf::column> const>{});
       break;
     case transform_api::AST: cudf::compute_column_jit(table, expression); break;
     case transform_api::AST_TRANSFORM_PROGRAM: {
@@ -110,15 +112,7 @@ void BM_transform_dispatch(nvbench::state& state)
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     switch (api) {
       case transform_api::TRANSFORM:
-        cudf::transform(udf,
-                        cudf::udf_source_type::CUDA,
-                        cudf::null_aware::NO,
-                        std::nullopt,
-                        inputs,
-                        outputs,
-                        {},
-                        std::nullopt,
-                        launch.get_stream().get_stream());
+        cudf::transform(udf, inputs, outputs, {}, std::nullopt, launch.get_stream().get_stream());
         break;
       case transform_api::TRANSFORM_PROGRAM:
         program->run(inputs, outputs, {}, std::nullopt, launch.get_stream().get_stream());

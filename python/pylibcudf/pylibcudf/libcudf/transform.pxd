@@ -5,7 +5,8 @@ from libcpp.memory cimport unique_ptr
 from libcpp.optional cimport optional
 from libcpp.pair cimport pair
 from libcpp.span cimport span
-from libcpp.string cimport string
+from libcpp.string_view cimport string_view
+from libc.stdint cimport uint8_t
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
@@ -19,7 +20,6 @@ from pylibcudf.libcudf.types cimport (
     null_aware,
     output_nullability,
     size_type,
-    udf_source_type,
 )
 
 from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
@@ -27,9 +27,24 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
+ctypedef const uint8_t const_uint8_t
+
+
 cdef extern from "cudf/udf.hpp" namespace "cudf" nogil:
+    cdef enum class lto_binary_type(uint8_t):
+        LTO_IR
+        FATBIN
+        PTX
+
     cdef cppclass lto_fragment:
-        pass
+        lto_binary_type type
+        span[const_uint8_t] data
+
+    cdef cppclass transform_udf:
+        string_view symbol
+        span[const lto_fragment] fragments
+        null_aware is_null_aware
+        bool indexed
 
 ctypedef const lto_fragment const_lto_fragment
 
@@ -40,12 +55,19 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
             const column_view& input
         ) except +libcudf_exception_handler
 
+    cdef cppclass user_data:
+        user_data() noexcept
+        void* data
+
     cdef cppclass transform_input:
         transform_input(
             const column_view& input
         ) except +libcudf_exception_handler
         transform_input(
             const scalar_column_view& input
+        ) except +libcudf_exception_handler
+        transform_input(
+            const user_data& input
         ) except +libcudf_exception_handler
 
     ctypedef const transform_input const_transform_input
@@ -77,10 +99,7 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[table] transform(
-        const string& udf,
-        udf_source_type source_type,
-        null_aware is_null_aware,
-        optional[void*] user_data,
+        const transform_udf& udf,
         span[const_transform_input] inputs,
         span[const_transform_output] outputs,
         vector[unique_ptr[column]]&& string_offsets,

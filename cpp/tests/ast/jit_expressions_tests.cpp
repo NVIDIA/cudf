@@ -71,13 +71,6 @@ TEST_F(JITExpressionTest, Coalesce)
 
 namespace {
 
-// Device functions compiled ahead of time to LTO-IR (transform/fragments/ast_udf_callees.cu).
-std::span<uint8_t const> ast_udf_callees()
-{
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
-  return cudf_test_fragments::files.subspan(range[0], range[1]);
-}
-
 auto const int32_type = cudf::data_type{cudf::type_id::INT32};
 
 cudf::ast::jit::udf callee(char const* symbol,
@@ -90,8 +83,8 @@ cudf::ast::jit::udf callee(char const* symbol,
 
 cudf::lto_fragments modules()
 {
-  static auto const fragments =
-    std::array{cudf::lto_fragment{cudf::lto_binary_type::FATBIN, ast_udf_callees()}};
+  static cudf::lto_fragment fragments[]{cudf::lto_binary_type::FATBIN,
+                                        cudf_test_fragments::get(cudf_test_fragments::ast_udfs)};
   return fragments;
 }
 
@@ -387,14 +380,15 @@ TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
     return cudf::errc::SUCCESS;
   };
 
-  EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED), 0}), cudf::errc::USER_RESERVED);
+  EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED_BEGIN), 0}),
+            cudf::errc::USER_RESERVED_BEGIN);
   EXPECT_EQ(
     error_of({code(static_cast<cudf::errc>(0x20000)), 0, code(static_cast<cudf::errc>(0x10005))}),
     static_cast<cudf::errc>(0x20000));
   EXPECT_EQ(error_of({code(cudf::errc::DIVISION_BY_ZERO),
-                      code(cudf::errc::USER_RESERVED),
+                      code(cudf::errc::USER_RESERVED_BEGIN),
                       code(cudf::errc::ARITHMETIC_OVERFLOW)}),
-            cudf::errc::USER_RESERVED);
+            cudf::errc::USER_RESERVED_BEGIN);
   EXPECT_STREQ(cudf::to_string(static_cast<cudf::errc>(0x10011)), "Unknown Error");
 }
 

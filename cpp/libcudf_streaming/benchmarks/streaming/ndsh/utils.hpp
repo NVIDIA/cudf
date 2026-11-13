@@ -7,6 +7,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
@@ -35,6 +36,14 @@
 #include <vector>
 
 namespace rapidsmpf::ndsh {
+
+/**
+ * @brief Returns a named UDF from the shared embedded NDSH module.
+ *
+ * The fragment has static storage.
+ */
+cudf::transform_udf get_transform_udf(std::string_view symbol);
+
 namespace detail {
 
 /**

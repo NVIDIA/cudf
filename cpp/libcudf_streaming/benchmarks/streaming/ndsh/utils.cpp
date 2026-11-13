@@ -26,6 +26,7 @@
 #include <rapidsmpf/memory/pinned_memory_resource.hpp>
 #include <rapidsmpf/rmm_resource_adaptor.hpp>
 #include <rapidsmpf/streaming/core/context.hpp>
+#include <streaming_ndsh_fragments.hpp>
 
 #include <array>
 #include <cstdlib>
@@ -51,6 +52,15 @@
 #endif
 
 namespace rapidsmpf::ndsh {
+
+cudf::transform_udf get_transform_udf(std::string_view symbol)
+{
+  static cudf::lto_fragment const fragment{
+    cudf::lto_binary_type::FATBIN,
+    streaming_ndsh_fragments::get(streaming_ndsh_fragments::ndsh_udfs)};
+  return {symbol, {&fragment, 1}};
+}
+
 namespace detail {
 std::vector<std::string> list_parquet_files(std::string const root_path)
 {

@@ -12,12 +12,7 @@
 #include <cuda/cmath>
 #include <cuda/numeric>
 #include <cuda/std/algorithm.min.h>
-#include <cuda/std/cassert>
-#include <cuda/std/cmath>
-#include <cuda/std/functional>
-#include <cuda/std/limits>
 #include <cuda/std/type_traits>
-#include <cuda/std/utility>
 
 #ifndef __CUDACC_RTC__
 #include <algorithm>

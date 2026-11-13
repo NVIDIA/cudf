@@ -4,94 +4,25 @@
  */
 
 #include <cudf/column/column_device_view_base.cuh>
-#include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/errc.hpp>
-#include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
-#include <cudf/wrappers/durations.hpp>
-#include <cudf/wrappers/timestamps.hpp>
 
-#include <cuda/std/algorithm>  // UDFs may use any algorithm without including it
-#include <cuda/std/cstddef>
-#include <cuda/std/tuple>
-#include <cuda/std/type_traits>
-#include <cuda/std/utility>
-
-#include <jit/transform_kernel.cuh>
+#include <jit/column_accessor.cuh>
+#include <jit/type_list.cuh>
+#include <transform/jit/transform_kernel.cuh>
 
 #pragma nv_hdrstop  // The above headers are used by the kernel below and need to be included before
                     // it. Each UDF will have a different operation_udf.cuh generated for it, so we
                     // need to put this pragma before including it to avoid PCH mismatch.
 
 // clang-format off
-// This header is an inlined header that defines the GENERIC_TRANSFORM_OP function. It is placed here
-// so the symbols in the headers above can be used by it.
+// These headers select the kernel instance and declare the UDF signature.
 #include <cudf/detail/kernel_instance.cuh>
 #include <cudf/detail/operation_udf.cuh>
 // clang-format on
 
-#ifndef CUDF_LTO_MODE
-#define CUDF_UDF_TYPE int()
-#endif
-
-// Use LTO-dispatch for transform operators if we're in LTO mode. This allows the operator to be
-// defined in a separate translation unit and compiled with LTO, which can result in better
-// performance due to more optimization opportunities
-#ifdef CUDF_LTO_MODE
-#define GENERIC_TRANSFORM_OP(...) ::cudf::jit::lto::transform(__VA_ARGS__)
-#endif
-
-namespace cudf {
-namespace jit {
-namespace lto {
-
 using transform_type = CUDF_UDF_TYPE;
-
-extern "C" __device__ transform_type transform;
-
-}  // namespace lto
-
-template <typename... Args>
-  requires requires(Args... args) { GENERIC_TRANSFORM_OP(args...); }
-__device__ errc invoke_transform(Args... args)
-{
-  if constexpr (!cuda::std::is_void_v<decltype(GENERIC_TRANSFORM_OP(args...))>) {
-    return static_cast<errc>(GENERIC_TRANSFORM_OP(args...));
-  } else {
-    (void)GENERIC_TRANSFORM_OP(args...);
-    return errc::SUCCESS;
-  }
-}
-
-template <bool has_user_data, typename... Args>
-__device__ errc invoke_transform_op(void* user_data, size_type row, Args... args)
-{
-  if constexpr (has_user_data) {
-    return invoke_transform(user_data, row, args...);
-  } else {
-    return invoke_transform(args...);
-  }
-}
-
-/// @brief The generic transform kernel. Supports all types and nullability combinations.
-template <bool is_null_aware, bool has_user_data, typename InputAccessors, typename OutputAccessors>
-__device__ void transform_kernel(size_type row_size,
-                                 bitmask_type const* __restrict__ stencil,
-                                 void* __restrict__ user_data,
-                                 column_device_view_core const* __restrict__ input_cols,
-                                 mutable_column_device_view_core const* __restrict__ output_cols,
-                                 int32_t* __restrict__ max_error)
-{
-  auto operation = [&](size_type row, auto... args) {
-    return invoke_transform_op<has_user_data>(user_data, row, args...);
-  };
-
-  detail::transform_kernel<is_null_aware, InputAccessors, OutputAccessors>(
-    row_size, stencil, input_cols, output_cols, max_error, operation);
-}
-
-}  // namespace jit
-}  // namespace cudf
+extern "C" __device__ transform_type cudf_transform_udf;
 
 // The entry point for the JIT compiled kernel. This is the C-ABI function that will be used to
 // retrieve the `CuFunction` for the kernel from the compiled module. This is because we don't want
@@ -105,10 +36,20 @@ __device__ void transform_kernel(size_type row_size,
 extern "C" __global__ void cudf_kernel_entry(
   cudf::size_type row_size,
   cudf::bitmask_type const* __restrict__ stencil,
-  void* __restrict__ user_data,
   cudf::column_device_view_core const* __restrict__ input_cols,
   cudf::mutable_column_device_view_core const* __restrict__ output_cols,
   int32_t* __restrict__ max_error)
 {
-  CUDF_KERNEL_INSTANCE(row_size, stencil, user_data, input_cols, output_cols, max_error);
+  CUDF_KERNEL_INSTANCE(row_size,
+                       stencil,
+                       input_cols,
+                       output_cols,
+                       max_error,
+                       [](cudf::size_type row_index, auto... args) {
+#if CUDF_UDF_INDEXED
+                         return cudf_transform_udf(row_index, args...);
+#else
+      return cudf_transform_udf(args...);
+#endif
+                       });
 }

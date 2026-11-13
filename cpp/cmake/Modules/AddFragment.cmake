@@ -10,11 +10,14 @@ include_guard(GLOBAL)
 # This macro is used to create object libraries for JIT compilation fragments, and embed them as
 # fatbins in the final library. It compiles the specified source file with the appropriate flags to
 # generate a fatbin containing the specified kernel instance, and then embeds that fatbin in the
-# final library with metadata that allows it to be looked up at runtime.
+# final library with metadata that allows it to be looked up at runtime. The `PTX` option stores
+# virtual-architecture PTX in the fatbin instead of device LTO IR. `LINK_LIBRARIES` can supply
+# dependencies for standalone consumers instead of libcudf's internal dependencies.
 macro(add_fragment)
   set(TARGET ${ARGV0})
+  set(OPTIONS PTX)
   set(ONE_VALUE_ARGS FRAGMENT SOURCE KERNEL_ONLY KERNEL_INSTANCE UDF_TYPE)
-  set(MULTI_VALUE_ARGS DEFINITIONS ARRAY_IDS ARRAY_VALUES)
+  set(MULTI_VALUE_ARGS DEFINITIONS ARRAY_IDS ARRAY_VALUES LINK_LIBRARIES)
   cmake_parse_arguments(ARG "${OPTIONS}" "${ONE_VALUE_ARGS}" "${MULTI_VALUE_ARGS}" ${ARGN})
 
   if(NOT ARG_FRAGMENT)
@@ -23,6 +26,14 @@ macro(add_fragment)
 
   if(NOT ARG_SOURCE)
     message(FATAL_ERROR "add_fragment requires SOURCE argument")
+  endif()
+
+  if(ARG_PTX)
+    set(FRAGMENT_ARCHITECTURES ${CUDF_LTO_ARCHITECTURE}-virtual)
+    set(FRAGMENT_IPO OFF)
+  else()
+    set(FRAGMENT_ARCHITECTURES ${CUDF_LTO_ARCHITECTURE}-real)
+    set(FRAGMENT_IPO ON)
   endif()
 
   set(OBJECT_ID ${TARGET}_${ARG_FRAGMENT})
@@ -49,7 +60,7 @@ macro(add_fragment)
     file(
       GENERATE
       OUTPUT "${INSTANTIATION_DIR}/cudf/detail/operation_udf.cuh"
-      CONTENT "#pragma once\n#define CUDF_UDF_TYPE ${ARG_UDF_TYPE}"
+      CONTENT "#pragma once\n#define CUDF_UDF_TYPE ${ARG_UDF_TYPE}\n#define CUDF_UDF_INDEXED 0"
     )
   endif()
 
@@ -59,7 +70,7 @@ macro(add_fragment)
     PROPERTIES CUDA_SEPARABLE_COMPILATION ON
                CUDA_FATBIN_COMPILATION ON
                POSITION_INDEPENDENT_CODE ON
-               INTERPROCEDURAL_OPTIMIZATION ON
+               INTERPROCEDURAL_OPTIMIZATION ${FRAGMENT_IPO}
                CXX_STANDARD 20
                CXX_STANDARD_REQUIRED ON
                CXX_EXTENSIONS ON
@@ -67,18 +78,23 @@ macro(add_fragment)
                CUDA_STANDARD 20
                CUDA_STANDARD_REQUIRED ON
                CUDA_VISIBILITY_PRESET hidden
-               CUDA_ARCHITECTURES ${CUDF_LTO_ARCHITECTURE}-real
+               CUDA_ARCHITECTURES ${FRAGMENT_ARCHITECTURES}
   )
-  target_link_libraries(
-    ${OBJECT_ID}
-    PUBLIC CCCL::CCCL rapids_logger::rapids_logger rmm::rmm $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
-    PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp> $<BUILD_LOCAL_INTERFACE:cuco::cuco>
-            ZLIB::ZLIB nvcomp::nvcomp kvikio::kvikio nanoarrow::nanoarrow zstd
-  )
-  target_include_directories(
-    ${OBJECT_ID} PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/include>"
-                         "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
-  )
+  if(ARG_LINK_LIBRARIES)
+    target_link_libraries(${OBJECT_ID} PRIVATE ${ARG_LINK_LIBRARIES})
+  else()
+    target_link_libraries(
+      ${OBJECT_ID}
+      PUBLIC CCCL::CCCL rapids_logger::rapids_logger rmm::rmm
+             $<BUILD_LOCAL_INTERFACE:BS::thread_pool>
+      PRIVATE $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp> $<BUILD_LOCAL_INTERFACE:cuco::cuco>
+              ZLIB::ZLIB nvcomp::nvcomp kvikio::kvikio nanoarrow::nanoarrow zstd
+    )
+    target_include_directories(
+      ${OBJECT_ID} PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/include>"
+                           "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
+    )
+  endif()
   target_compile_options(${OBJECT_ID} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>")
   if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0.0)
     # CUDF_LTO_ARCHITECTURE defaults to 70 (Volta) prior to CUDA 13 so that LTO fragments still link

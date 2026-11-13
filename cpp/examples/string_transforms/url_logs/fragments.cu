@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <cudf/strings/string_view.cuh>
-#include <cudf/types.hpp>
+#include <cudf/udf_includes.hpp>
 
-#include <cuda/std/cstdint>
-#include <cuda/std/span>
+#include <cstdint>
 
 struct range32 {
   int32_t begin{};
@@ -153,13 +151,13 @@ __device__ bool parse_url(cudf::string_view input, url_ranges* out)
 }
 
 // Computes exact output byte counts for the six URL component columns.
-__device__ int compute_url_component_sizes(int32_t* protocol_size,
-                                           int32_t* host_size,
-                                           int32_t* port_size,
-                                           int32_t* path_size,
-                                           int32_t* query_size,
-                                           int32_t* fragment_size,
-                                           cudf::string_view input)
+extern "C" __device__ cudf::errc compute_url_component_sizes(int32_t* protocol_size,
+                                                             int32_t* host_size,
+                                                             int32_t* port_size,
+                                                             int32_t* path_size,
+                                                             int32_t* query_size,
+                                                             int32_t* fragment_size,
+                                                             cudf::string_view input)
 {
   *protocol_size = 0;
   *host_size     = 0;
@@ -168,27 +166,27 @@ __device__ int compute_url_component_sizes(int32_t* protocol_size,
   *query_size    = 0;
   *fragment_size = 0;
   url_ranges ranges;
-  if (!parse_url(input, &ranges)) { return 0; }
+  if (!parse_url(input, &ranges)) { return cudf::errc::SUCCESS; }
   *protocol_size = ranges.protocol.end - ranges.protocol.begin;
   *host_size     = ranges.host.end - ranges.host.begin;
   *port_size     = ranges.port.end - ranges.port.begin;
   *path_size     = ranges.path.end - ranges.path.begin;
   *query_size    = ranges.query.end - ranges.query.begin;
   *fragment_size = ranges.fragment.end - ranges.fragment.begin;
-  return 0;
+  return cudf::errc::SUCCESS;
 }
 
 // Copies the six parsed URL components into their preallocated string buffers.
-__device__ int write_url_components(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
-                                    cudf::string_view input)
+extern "C" __device__ cudf::errc write_url_components(cuda::std::span<char>* protocol,
+                                                      cuda::std::span<char>* host,
+                                                      cuda::std::span<char>* port,
+                                                      cuda::std::span<char>* path,
+                                                      cuda::std::span<char>* query,
+                                                      cuda::std::span<char>* fragment,
+                                                      cudf::string_view input)
 {
   url_ranges ranges;
-  if (!parse_url(input, &ranges)) { return 0; }
+  if (!parse_url(input, &ranges)) { return cudf::errc::SUCCESS; }
   cuda::std::span<char>* outputs[] = {protocol, host, port, path, query, fragment};
   range32 components[]             = {
     ranges.protocol, ranges.host, ranges.port, ranges.path, ranges.query, ranges.fragment};
@@ -197,36 +195,5 @@ __device__ int write_url_components(cuda::std::span<char>* protocol,
     auto size  = range.end - range.begin;
     if (size > 0) { memcpy(outputs[component]->data(), input.data() + range.begin, size); }
   }
-  return 0;
+  return cudf::errc::SUCCESS;
 }
-
-#ifdef UDF_COMPUTE_SIZES
-// Exposes the sizing pass through the transform LTO ABI.
-extern "C" __device__ int transform(int32_t* protocol_size,
-                                    int32_t* host_size,
-                                    int32_t* port_size,
-                                    int32_t* path_size,
-                                    int32_t* query_size,
-                                    int32_t* fragment_size,
-                                    cudf::string_view input)
-{
-  return compute_url_component_sizes(
-    protocol_size, host_size, port_size, path_size, query_size, fragment_size, input);
-}
-#else
-#ifdef UDF_WRITE_OUTPUT
-// Exposes the component-writing pass through the transform LTO ABI.
-extern "C" __device__ int transform(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
-                                    cudf::string_view input)
-{
-  return write_url_components(protocol, host, port, path, query, fragment, input);
-}
-#else
-#error "Must define either UDF_COMPUTE_SIZES or UDF_WRITE_OUTPUT"
-#endif
-#endif

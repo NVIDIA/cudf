@@ -1120,10 +1120,18 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * processing and how the data is laid out.  This also only works on fixed
    * length types.
    * @param udf This function will be applied to every element in the vector
-   * @param isPtx is the code of the function ptx? true or C/C++ false.
    */
-  public final ColumnVector transform(String udf, boolean isPtx) {
-    return new ColumnVector(transform(getNativeView(), udf, isPtx));
+  public final ColumnVector transform(TransformUDF udf) {
+    Objects.requireNonNull(udf, "udf");
+    LtoFragment[] fragments = udf.getFragments();
+    byte[][] modules = new byte[fragments.length][];
+    int[] binaryTypes = new int[fragments.length];
+    for (int i = 0; i < fragments.length; ++i) {
+      modules[i] = fragments[i].getData();
+      binaryTypes[i] = fragments[i].getBinaryType().getNativeId();
+    }
+    return new ColumnVector(transform(getNativeView(), udf.getSymbol(), modules, binaryTypes,
+        udf.isNullAware(), udf.isIndexed()));
   }
 
   /**
@@ -5178,7 +5186,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   private static native long containsVector(long valuesHandle, long searchSpaceHandle) throws CudfException;
 
-  private static native long transform(long viewHandle, String udf, boolean isPtx);
+  private static native long transform(long viewHandle, String symbol, byte[][] modules,
+                                       int[] binaryTypes, boolean nullAware, boolean indexed);
 
   private static native long clamper(long nativeView, long loScalarHandle, long loScalarReplaceHandle,
                                      long hiScalarHandle, long hiScalarReplaceHandle);

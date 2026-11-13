@@ -7,6 +7,7 @@
 #include "join_common.hpp"
 
 #include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/udf.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -67,17 +68,13 @@ void filter_join_indices_benchmark(nvbench::state& state,
         probe_table->view(), build_table->view(), left_span, right_span, predicate, join_kind);
     });
   } else {
-    std::string predicate_code = R"(
-      __device__ void predicate(bool* output,
-                                int32_t left_col0, int32_t left_col1, int32_t left_col2,
-                                int32_t right_col0, int32_t right_col1, int32_t right_col2) {
-        *output = left_col1 > right_col1;
-      }
-    )";
-
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      auto result = cudf::filter_join_indices_jit(
-        probe_table->view(), build_table->view(), left_span, right_span, predicate_code, join_kind);
+      auto result = cudf::filter_join_indices_jit(probe_table->view(),
+                                                  build_table->view(),
+                                                  left_span,
+                                                  right_span,
+                                                  get_benchmark_udf("join_predicate_greater"),
+                                                  join_kind);
     });
   }
 

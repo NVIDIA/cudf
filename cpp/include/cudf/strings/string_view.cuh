@@ -20,7 +20,6 @@
 #endif
 
 #include <cuda/std/algorithm.max.h>
-#include <cuda/std/functional>
 #include <cuda/std/utility>
 
 // This file should only include device code logic.

@@ -13,33 +13,42 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/udf.hpp>
+
+#include <cudf_test_fragments.hpp>
 
 #include <array>
 #include <span>
+#include <string>
+#include <string_view>
+
+namespace {
+cudf::transform_udf get_filter_udf(std::string_view symbol,
+                                   cudf::null_aware is_null_aware = cudf::null_aware::NO)
+{
+  static cudf::lto_fragment const fragment{
+    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::filter_udfs)};
+  return {symbol, {&fragment, 1}, is_null_aware};
+}
+}  // namespace
 
 namespace filters {
-
 struct FilterTestFixture : public cudf::test::BaseFixture {
  protected:
-  static constexpr char const* udf =
-    R"***(
-    template<typename T>
-    __device__ void is_equal(bool * out, T a, T b) { *out = (a == b); }
-    )***";
+  static std::string equality_symbol(cudf::data_type type)
+  {
+    auto const name = cudf::type_to_name(type);
+    return "is_equal_" + name.substr(name.find_last_of(':') + 1);
+  }
 };
 
 std::vector<std::unique_ptr<cudf::column>> transform_and_apply_retention_mask(
   std::span<cudf::transform_input const> predicate_inputs,
-  std::string const& predicate_udf,
-  cudf::table_view const& filter_table,
-  cudf::udf_source_type source_type,
-  cudf::null_aware is_null_aware = cudf::null_aware::NO)
+  cudf::transform_udf predicate_udf,
+  cudf::table_view const& filter_table)
 {
   auto predicate =
     cudf::transform(predicate_udf,
-                    source_type,
-                    is_null_aware,
-                    std::nullopt,
                     predicate_inputs,
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
                                                       cudf::output_nullability::PRESERVE}},
@@ -69,11 +78,11 @@ TYPED_TEST(FilterNumericTest, NoAssertions)
 
   std::vector<std::unique_ptr<cudf::column>> results;
 
+  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
 
-  EXPECT_NO_THROW(
-    results = transform_and_apply_retention_mask(
-      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
+  EXPECT_NO_THROW(results = transform_and_apply_retention_mask(
+                    std::span{inputs}, get_filter_udf(symbol), cudf::table_view{{a}}));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
 
@@ -95,10 +104,10 @@ TYPED_TEST(FilterChronoTest, NoAssertions)
     cudf::test::fixed_width_column_wrapper<T>{{T{}, T{}, T{}, T{}, T{}, T{}}, {1, 1, 1, 1, 1, 1}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
+  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
-  ASSERT_NO_THROW(
-    results = transform_and_apply_retention_mask(
-      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
+  ASSERT_NO_THROW(results = transform_and_apply_retention_mask(
+                    std::span{inputs}, get_filter_udf(symbol), cudf::table_view{{a}}));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
 
@@ -120,11 +129,11 @@ TYPED_TEST(FilterFixedPointTest, NoAssertions)
     {2, 3, 5, 6, 7}, {1, 1, 1, 1, 1}, numeric::scale_type{0}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
+  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
 
-  EXPECT_NO_THROW(
-    results = transform_and_apply_retention_mask(
-      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
+  EXPECT_NO_THROW(results = transform_and_apply_retention_mask(
+                    std::span{inputs}, get_filter_udf(symbol), cudf::table_view{{a}}));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
@@ -139,10 +148,10 @@ TEST_F(FilterTestFixture, StringNoAssertions)
   auto expected = cudf::test::strings_column_wrapper{{"2", "3", "5", "6", "7"}, {1, 1, 1, 1, 1}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
+  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
-  EXPECT_NO_THROW(
-    results = transform_and_apply_retention_mask(
-      std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
+  EXPECT_NO_THROW(results = transform_and_apply_retention_mask(
+                    std::span{inputs}, get_filter_udf(symbol), cudf::table_view{{a}}));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
 }
 
@@ -154,27 +163,19 @@ TEST_F(FilterTest, Basic)
 {
   auto a = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
                                                            {1, 1, 1, 1, 1, 1, 1, 0, 0, 0});
-  std::string cuda = R"***(
-__device__ void is_even(bool* out, int32_t a) { *out = (a % 2 == 0); }
-  )***";
 
   cudf::transform_input inputs[] = {a};
 
   auto result = transform_and_apply_retention_mask(
-    std::span{inputs}, cuda, cudf::table_view{{a}}, cudf::udf_source_type::CUDA);
+    std::span{inputs}, get_filter_udf("is_even"), cudf::table_view{{a}});
   auto expected = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6}, {1, 1, 1}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result[0]->view());
 
-  std::string null_cuda = R"***(
-__device__ void is_even(cuda::std::optional<bool>* out, cuda::std::optional<int32_t> a) { *out = a.has_value() && (*a % 2 == 0); }
-  )***";
-
-  auto null_result   = transform_and_apply_retention_mask(std::span{inputs},
-                                                        null_cuda,
-                                                        cudf::table_view{{a}},
-                                                        cudf::udf_source_type::CUDA,
-                                                        cudf::null_aware::YES);
+  auto null_result =
+    transform_and_apply_retention_mask(std::span{inputs},
+                                       get_filter_udf("nullable_is_even", cudf::null_aware::YES),
+                                       cudf::table_view{{a}});
   auto null_expected = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6}, {1, 1, 1}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(null_expected, null_result[0]->view());
@@ -182,17 +183,15 @@ __device__ void is_even(cuda::std::optional<bool>* out, cuda::std::optional<int3
 
 TEST_F(FilterTest, ScalarFilter)
 {
-  auto a           = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-  auto b           = cudf::test::fixed_width_column_wrapper<int32_t>{2};
-  std::string cuda = R"***(
-__device__ void is_divisible(bool* out, int32_t a, int32_t b) { *out = ((a % b) == 0); }
-  )***";
-  auto expected    = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6, 8, 10}};
+  auto a = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  auto b = cudf::test::fixed_width_column_wrapper<int32_t>{2};
+
+  auto expected = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6, 8, 10}};
 
   cudf::transform_input inputs[] = {a, cudf::scalar_column_view(b)};
 
   auto result = transform_and_apply_retention_mask(
-    std::span{inputs}, cuda, cudf::table_view{{a}}, cudf::udf_source_type::CUDA);
+    std::span{inputs}, get_filter_udf("is_divisible"), cudf::table_view{{a}});
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result[0]->view());
 }
@@ -205,24 +204,6 @@ TEST_F(FilterTest, MixedTypes)
   auto average_humidity = cudf::test::fixed_width_column_wrapper<float>{0, 0, 0, 0, 1, 1, 1, 1, 1};
   auto timezones        = cudf::test::strings_column_wrapper{
     "EST", "EST", "CST", "BRT", "ART", "CET", "CET", "CET", "CET"};
-
-  std::string cuda = R"***(
-__device__ void filter(bool* out,
-                       [[maybe_unused]] cudf::string_view country,
-                       cudf::string_view tz,
-                       float tmp,
-                       float hum,
-                       float min_tmp,
-                       float max_tmp,
-                       float min_hum,
-                       float max_hum,
-                       cudf::string_view tz1,
-                       cudf::string_view tz2)
-{
-  *out = (tmp >= min_tmp && tmp <= max_tmp) && (hum >= min_hum && hum <= max_hum) &&
-         (tz == tz1 || tz == tz2);
-}
-  )***";
 
   auto min_tmp   = cudf::test::fixed_width_column_wrapper<float>{0.5};
   auto max_tmp   = cudf::test::fixed_width_column_wrapper<float>{1};
@@ -243,7 +224,7 @@ __device__ void filter(bool* out,
                                     cudf::scalar_column_view(timezone2)};
 
   auto result = transform_and_apply_retention_mask(
-    std::span{inputs}, cuda, cudf::table_view{{countries, timezones}}, cudf::udf_source_type::CUDA);
+    std::span{inputs}, get_filter_udf("filter_climate"), cudf::table_view{{countries, timezones}});
 
   EXPECT_EQ(result.size(), 2);
 
@@ -266,24 +247,6 @@ TEST_F(FilterTest, NullableMixedTypes)
   auto timezones        = cudf::test::strings_column_wrapper{
     "EST", "EST", "CST", "BRT", "ART", "CET", "CET", "CET", "CET"};
 
-  std::string cuda = R"***(
-__device__ void filter(bool* out,
-                       [[maybe_unused]] cudf::string_view country,
-                       cudf::string_view tz,
-                       float tmp,
-                       float hum,
-                       float min_tmp,
-                       float max_tmp,
-                       float min_hum,
-                       float max_hum,
-                       cudf::string_view tz1,
-                       cudf::string_view tz2)
-{
-  *out = (tmp >= min_tmp && tmp <= max_tmp) && (hum >= min_hum && hum <= max_hum) &&
-         (tz == tz1 || tz == tz2);
-}
-)***";
-
   auto min_tmp   = cudf::test::fixed_width_column_wrapper<float>{0.5};
   auto max_tmp   = cudf::test::fixed_width_column_wrapper<float>{1};
   auto min_hum   = cudf::test::fixed_width_column_wrapper<float>{0.5};
@@ -303,7 +266,7 @@ __device__ void filter(bool* out,
                                     cudf::scalar_column_view(timezone2)};
 
   auto result = transform_and_apply_retention_mask(
-    std::span{inputs}, cuda, cudf::table_view{{countries, timezones}}, cudf::udf_source_type::CUDA);
+    std::span{inputs}, get_filter_udf("filter_climate"), cudf::table_view{{countries, timezones}});
 
   auto expected_countries = cudf::test::strings_column_wrapper({"Germany", "Spain"}, {true, true});
 

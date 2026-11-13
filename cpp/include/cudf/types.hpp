@@ -78,6 +78,7 @@ using bitmask_type      = uint32_t;  ///< Bitmask type stored as 32-bit unsigned
 using valid_type        = uint8_t;   ///< Valid type in host memory
 using thread_index_type = int64_t;   ///< Thread index type in kernels
 using char_utf8         = uint32_t;  ///< UTF-8 characters are 1-4 bytes
+using voidptr_t         = void*;     ///< Opaque pointer passed to user-defined functions
 
 /**
  * @brief Similar to `std::distance` but returns `cudf::size_type` and performs `static_cast`
@@ -217,6 +218,13 @@ enum class type_id : int32_t {
 };
 
 /**
+ * @brief Opaque user-defined data.
+ */
+struct user_data {
+  voidptr_t data = nullptr;  ///< Opaque user pointer
+};
+
+/**
  * @brief A function is null-aware if its output value uses the input validity.
  *
  * For example, ADD is not null-aware, but IS_NULL and NULL_LOGICAL_AND are null-aware.
@@ -260,14 +268,6 @@ enum class output_nullability : uint8_t {
 enum class error_policy : uint8_t {
   PROPAGATE = 0,  ///< The function propagates errors
   NULLIFY   = 1   ///< The function nullifies its output on error
-};
-
-/**
- * @brief Indicates the source language of a user defined function (UDF) to be used in JIT APIs.
- */
-enum class udf_source_type : uint8_t {
-  CUDA = 0,  ///< The UDF is a CUDA function
-  PTX  = 1   ///< The UDF is a PTX function
 };
 
 /**

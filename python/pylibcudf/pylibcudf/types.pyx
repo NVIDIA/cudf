@@ -14,6 +14,7 @@ from pylibcudf.libcudf.utilities.type_dispatcher cimport type_to_id
 
 from pylibcudf.libcudf.types import type_id as TypeId  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import nan_policy as NanPolicy  # no-cython-lint, isort:skip
+from pylibcudf.libcudf.types import nan_semantics as NanSemantics  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import null_policy as NullPolicy  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import interpolation as Interpolation  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import mask_state as MaskState  # no-cython-lint, isort:skip
@@ -84,6 +85,7 @@ __all__ = [
     "MaskState",
     "NanEquality",
     "NanPolicy",
+    "NanSemantics",
     "NullEquality",
     "NullOrder",
     "NullAware",
@@ -377,6 +379,7 @@ NullPolicy.__str__ = NullPolicy.__repr__
 Interpolation.__str__ = Interpolation.__repr__
 MaskState.__str__ = MaskState.__repr__
 NanEquality.__str__ = NanEquality.__repr__
+NanSemantics.__str__ = NanSemantics.__repr__
 NullEquality.__str__ = NullEquality.__repr__
 NullAware.__str__ = NullAware.__repr__
 OutputNullability.__str__ = OutputNullability.__repr__

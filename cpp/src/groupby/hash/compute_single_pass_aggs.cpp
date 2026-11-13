@@ -96,6 +96,7 @@ bool is_single_pass_agg_supported(data_type values_type, aggregation::Kind kind)
 std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   table_view const& values,
   host_span<aggregation::Kind const> agg_kinds,
+  host_span<nan_semantics const> agg_semantics,
   std::span<int8_t const> is_agg_intermediate,
   grouped_rows const& grouped,
   cuda::stream_ref stream,
@@ -105,6 +106,8 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
                "The number of values columns and aggregation kinds must be the same.");
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(is_agg_intermediate.size()),
                "The number of values columns and intermediate flags must be the same.");
+  CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(agg_semantics.size()),
+               "The number of values columns and NaN semantics must be the same.");
 
   auto const num_groups = static_cast<size_type>(grouped.offsets.size() - 1);
   auto const num_aggs   = agg_kinds.size();
@@ -156,8 +159,14 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
     return end;
   };
 
+  // The fused MIN/MAX/SUM reducer uses the IEEE 754 minimum, so a TOTALLY_ORDERED MIN is computed
+  // separately.
+  auto const is_totally_ordered_min = [&](std::size_t i) {
+    return agg_kinds[i] == aggregation::MIN && agg_semantics[i] == nan_semantics::TOTALLY_ORDERED;
+  };
+
   auto const minmax_sum_end = [&](std::size_t begin, data_type values_type) {
-    if (!is_fusable_minmax_sum(agg_kinds[begin]) ||
+    if (!is_fusable_minmax_sum(agg_kinds[begin]) || is_totally_ordered_min(begin) ||
         !is_single_pass_agg_supported(values_type, aggregation::SUM) ||
         !is_single_pass_agg_supported(values_type, aggregation::MIN) ||
         !is_single_pass_agg_supported(values_type, aggregation::MAX)) {
@@ -165,6 +174,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
     }
     auto end = begin + 1;
     while (end < num_aggs && !results[end] && is_fusable_minmax_sum(agg_kinds[end]) &&
+           !is_totally_ordered_min(end) &&
            cudf::detail::is_shallow_equivalent(values.column(begin), values.column(end)) &&
            std::find(agg_kinds.begin() + begin, agg_kinds.begin() + end, agg_kinds[end]) ==
              agg_kinds.begin() + end) {
@@ -196,7 +206,8 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       return begin + 1;
     }
     auto end = begin + 1;
-    while (end < num_aggs && !results[end] && agg_kinds[end] == kind) {
+    while (end < num_aggs && !results[end] && agg_kinds[end] == kind &&
+           agg_semantics[end] == agg_semantics[begin]) {
       auto const& col = values.column(end);
       auto const type =
         is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
@@ -222,7 +233,8 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
     // Counts are never null, and intermediate results skip the null mask to avoid the extra work.
     auto const nullable = !is_agg_intermediate[i] && kind != aggregation::COUNT_VALID &&
                           kind != aggregation::COUNT_ALL && col.has_nulls();
-    auto const ctx = reduction_context{col, *d_col, values_type, grouped, num_groups, nullable};
+    auto const ctx =
+      reduction_context{col, *d_col, values_type, grouped, num_groups, nullable, agg_semantics[i]};
 
     auto const sums_end    = fused_end(i, values_type);
     auto const extrema_end = minmax_sum_end(i, values_type);
@@ -246,8 +258,13 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       for (auto j = i + 1; j < end; ++j) {
         auto const& next = values.column(j);
         device_views.push_back(column_device_view::create(next, stream, mr.get_temporary_mr()));
-        contexts.push_back(
-          {next, *device_views.back(), values_type, grouped, num_groups, nullable});
+        contexts.push_back({next,
+                            *device_views.back(),
+                            values_type,
+                            grouped,
+                            num_groups,
+                            nullable,
+                            agg_semantics[j]});
       }
       auto batch = cudf::detail::aggregation_dispatcher(
         kind, compute_reductions_fn{contexts, is_agg_intermediate.subspan(i, end - i)}, stream, mr);

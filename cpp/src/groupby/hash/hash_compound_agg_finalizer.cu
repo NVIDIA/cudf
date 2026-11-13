@@ -89,14 +89,14 @@ void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& final
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MIN>(aggregation const& agg) const
 {
-  finalize_minmax_for_compound_types(*this, agg, make_argmin_aggregation<>);
+  finalize_minmax_for_compound_types(*this, agg, [] { return make_argmin_aggregation(); });
 }
 
 // Specialization for MAX aggregation
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MAX>(aggregation const& agg) const
 {
-  finalize_minmax_for_compound_types(*this, agg, make_argmax_aggregation<>);
+  finalize_minmax_for_compound_types(*this, agg, [] { return make_argmax_aggregation(); });
 }
 
 // Specialization for MEAN aggregation
@@ -123,7 +123,7 @@ void hash_compound_agg_finalizer::operator()<aggregation::MEAN>(aggregation cons
   if (result->size() > 0) {
     auto out = result->mutable_view();
     cudf::binops::compiled::apply_binary_op<cudf::binops::compiled::ops::Div>(
-      out, sum_without_nulls, count_result, false, false, stream);
+      out, sum_without_nulls, count_result, false, false, nan_semantics::UNORDERED, stream);
   }
   // SUM result only has nulls if it is an input aggregation, not intermediate-only aggregation.
   if (sum_result.has_nulls()) {

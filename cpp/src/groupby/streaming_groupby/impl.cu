@@ -20,6 +20,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/null_mask.hpp>
@@ -36,13 +37,16 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
+#include <thrust/fill.h>
 #include <thrust/for_each.h>
 #include <thrust/tabulate.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -246,6 +250,10 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
       agg_requests, stream, detail::hash::aggregation_mode::STREAMING_ATOMIC);
 
   _agg_kinds.assign(agg_kinds_hv.begin(), agg_kinds_hv.end());
+  _agg_semantics.reserve(agg_objects.size());
+  std::ranges::transform(agg_objects, std::back_inserter(_agg_semantics), [](auto const& agg) {
+    return cudf::detail::get_nan_semantics(*agg);
+  });
   _agg_objects         = std::move(agg_objects);
   _is_agg_intermediate = std::move(is_intermediate);
   _has_compound_aggs   = has_compound;
@@ -287,6 +295,8 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
 
   _d_agg_kinds = std::make_unique<cuda::device_buffer<aggregation::Kind>>(
     cudf::detail::make_device_buffer_async(_agg_kinds, stream, mr));
+  _d_agg_semantics = std::make_unique<cuda::device_buffer<nan_semantics>>(
+    cudf::detail::make_device_buffer_async(_agg_semantics, stream, mr));
 
   // Map each column in `values_view` back to its index in `data`.
   _value_col_indices.reserve(values_view.num_columns());
@@ -304,7 +314,8 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   }
 
   // For each user streaming request, locate the offset in the dedup'd `_agg_kinds`
-  // where its first decomposed simple agg lives (matched by kind + column identity).
+  // where its first decomposed simple agg lives (matched by kind, NaN semantics, and column
+  // identity).
   _request_first_agg_offset.reserve(_requests_clone.size());
   for (auto const& req : _requests_clone) {
     auto const& target_col = data.column(req.column_index);
@@ -312,9 +323,10 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
       detail::hash::get_simple_aggregations(
         *req.aggregation, target_col.type(), detail::hash::aggregation_mode::STREAMING_ATOMIC)
         .front();
-    bool found = false;
+    auto const semantics = cudf::detail::get_nan_semantics(*req.aggregation);
+    bool found           = false;
     for (size_type k = 0; k < static_cast<size_type>(_agg_kinds.size()); ++k) {
-      if (_agg_kinds[k] == first_kind &&
+      if (_agg_kinds[k] == first_kind && _agg_semantics[k] == semantics &&
           cudf::detail::is_shallow_equivalent(values_view.column(k), target_col)) {
         _request_first_agg_offset.push_back(k);
         found = true;
@@ -351,6 +363,27 @@ std::unique_ptr<table> streaming_groupby::impl::make_aggregate_results(
   auto const schema = table{std::move(schema_columns)};
   auto results      = detail::hash::create_results_table(
     capacity, schema.view(), kinds, intermediates, stream, mr.get_output_mr());
+  // A TOTALLY_ORDERED MIN starts from NaN, its identity, instead of the +infinity identity that
+  // create_results_table uses. Only the values are written, so the null mask is unchanged.
+  auto const semantics =
+    std::span<nan_semantics const>{_agg_semantics}.subspan(first_column, num_columns);
+  for (size_type i = 0; i < results->num_columns(); ++i) {
+    if (kinds[i] != aggregation::MIN || semantics[i] != nan_semantics::TOTALLY_ORDERED) {
+      continue;
+    }
+    auto result = results->get_column(i).mutable_view();
+    if (result.type().id() == type_id::FLOAT32) {
+      thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                     result.begin<float>(),
+                     result.size(),
+                     cudf::DeviceMinTotallyOrdered::identity<float>());
+    } else if (result.type().id() == type_id::FLOAT64) {
+      thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                     result.begin<double>(),
+                     result.size(),
+                     cudf::DeviceMinTotallyOrdered::identity<double>());
+    }
+  }
   // Future batches may introduce all-null groups even when the first values were valid.
   for (size_type i = 0; i < results->num_columns(); ++i) {
     auto& result = results->get_column(i);
@@ -412,6 +445,7 @@ void streaming_groupby::impl::ensure_aggregate_capacity(size_type required,
                                                old_groups,
                                                _partials_per_group,
                                                _d_agg_kinds->data() + i,
+                                               _d_agg_semantics->data() + i,
                                                *source,
                                                *target});
     }
@@ -457,18 +491,25 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(cuda::stream_
     auto result = make_aggregate_results(size, 0, _agg_kinds.size(), stream, mr);
     if (size == 0) { return result; }
     auto const kinds = cudf::detail::make_device_buffer(_agg_kinds, stream, mr.as_temporary());
+    auto const semantics =
+      cudf::detail::make_device_buffer(_agg_semantics, stream, mr.as_temporary());
     for (size_type i = 0; i < static_cast<size_type>(_growing_agg_columns.size()); ++i) {
       auto const source = table_device_view::create(
         table_view{{_growing_agg_columns[i]->view()}}, stream, mr.get_temporary_mr());
       auto const target = mutable_table_device_view::create(
         mutable_table_view{{result->get_column(i).mutable_view()}}, stream, mr.get_temporary_mr());
       auto const partials = i < _num_grown_agg_columns ? 1 : _partials_per_group;
-      thrust::for_each_n(
-        rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-        cuda::counting_iterator<int64_t>{0},
-        static_cast<int64_t>(size) * partials,
-        merge_partial_aggs_fn{
-          nullptr, _aggregate_capacity, size, partials, kinds.data() + i, *source, *target});
+      thrust::for_each_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                         cuda::counting_iterator<int64_t>{0},
+                         static_cast<int64_t>(size) * partials,
+                         merge_partial_aggs_fn{nullptr,
+                                               _aggregate_capacity,
+                                               size,
+                                               partials,
+                                               kinds.data() + i,
+                                               semantics.data() + i,
+                                               *source,
+                                               *target});
     }
     return result;
   }
@@ -487,12 +528,19 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(cuda::stream_
   // Own this kernel's kinds on the snapshot stream so its lifetime follows the queued read.
   // Finish the host copy as well: destructive finalization also retires the host vector.
   auto const kinds = cudf::detail::make_device_buffer(_agg_kinds, stream, mr.as_temporary());
-  thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-    cuda::counting_iterator<int64_t>{0},
-    static_cast<int64_t>(size) * _partials_per_group * _agg_kinds.size(),
-    merge_partial_aggs_fn{
-      nullptr, _aggregate_capacity, size, _partials_per_group, kinds.data(), *source, *target});
+  auto const semantics =
+    cudf::detail::make_device_buffer(_agg_semantics, stream, mr.as_temporary());
+  thrust::for_each_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                     cuda::counting_iterator<int64_t>{0},
+                     static_cast<int64_t>(size) * _partials_per_group * _agg_kinds.size(),
+                     merge_partial_aggs_fn{nullptr,
+                                           _aggregate_capacity,
+                                           size,
+                                           _partials_per_group,
+                                           kinds.data(),
+                                           semantics.data(),
+                                           *source,
+                                           *target});
   return result;
 }
 

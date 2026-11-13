@@ -87,6 +87,7 @@ void scan_result_functor::operator()<aggregation::MIN>(aggregation const& agg)
                    detail::min_scan(get_grouped_values(),
                                     helper.num_groups(stream, mr),
                                     helper.group_labels(stream, mr),
+                                    cudf::detail::get_nan_semantics(agg),
                                     stream,
                                     mr.get_output_mr()));
 }

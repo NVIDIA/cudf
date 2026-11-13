@@ -222,15 +222,32 @@ std::unique_ptr<Base> make_sum_overflow_aggregation();
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_product_aggregation();
 
-/// Factory to create a MIN aggregation
-/// @return A MIN aggregation object
+/**
+ * @brief Factory to create a MIN aggregation
+ *
+ * @param semantics How floating-point NaN values are ordered. With `nan_semantics::UNORDERED`
+ *        (the default), the result follows the IEEE 754-2019 `minimum` operation: a NaN input
+ *        makes the result NaN. With `nan_semantics::TOTALLY_ORDERED`, NaN is greater than every
+ *        other value, so the result is NaN only when every input is NaN. In both cases the result
+ *        is -0.0 when the inputs include both -0.0 and +0.0. Ignored for non-floating-point
+ *        inputs.
+ * @return A MIN aggregation object
+ */
 template <typename Base = aggregation>
-std::unique_ptr<Base> make_min_aggregation();
+std::unique_ptr<Base> make_min_aggregation(nan_semantics semantics = nan_semantics::DEFAULT);
 
-/// Factory to create a MAX aggregation
-/// @return A MAX aggregation object
+/**
+ * @brief Factory to create a MAX aggregation
+ *
+ * @param semantics How floating-point NaN values are ordered. A NaN input makes the result NaN
+ *        with both `nan_semantics::UNORDERED` (the default), which follows the IEEE 754-2019
+ *        `maximum` operation, and `nan_semantics::TOTALLY_ORDERED`, which orders NaN greater than
+ *        every other value. In both cases the result is +0.0 when the inputs include both -0.0
+ *        and +0.0. Ignored for non-floating-point inputs.
+ * @return A MAX aggregation object
+ */
 template <typename Base = aggregation>
-std::unique_ptr<Base> make_max_aggregation();
+std::unique_ptr<Base> make_max_aggregation(nan_semantics semantics = nan_semantics::DEFAULT);
 
 /**
  * @brief Factory to create a COUNT aggregation
@@ -324,20 +341,29 @@ std::unique_ptr<Base> make_quantile_aggregation(std::vector<double> const& quant
 /**
  * @brief Factory to create an ARGMAX aggregation
  *
- * ARGMAX returns the index of the maximum element.
+ * ARGMAX returns the index of the maximum element. Equal values select the smallest index.
+ *
+ * @param semantics How floating-point NaN values are ordered. The index of the first NaN is
+ *        returned with both `nan_semantics::UNORDERED` (the default) and
+ *        `nan_semantics::TOTALLY_ORDERED`. Ignored for non-floating-point inputs.
  * @return A ARGMAX aggregation object
  */
 template <typename Base = aggregation>
-std::unique_ptr<Base> make_argmax_aggregation();
+std::unique_ptr<Base> make_argmax_aggregation(nan_semantics semantics = nan_semantics::DEFAULT);
 
 /**
  * @brief Factory to create an ARGMIN aggregation
  *
- * `argmin` returns the index of the minimum element.
+ * `argmin` returns the index of the minimum element. Equal values select the smallest index.
+ *
+ * @param semantics How floating-point NaN values are ordered. With `nan_semantics::UNORDERED`
+ *        (the default), the index of the first NaN is returned. With
+ *        `nan_semantics::TOTALLY_ORDERED`, NaN is greater than every other value, so a NaN index
+ *        is returned only when every input is NaN. Ignored for non-floating-point inputs.
  * @return A ARGMIN aggregation object
  */
 template <typename Base = aggregation>
-std::unique_ptr<Base> make_argmin_aggregation();
+std::unique_ptr<Base> make_argmin_aggregation(nan_semantics semantics = nan_semantics::DEFAULT);
 
 /**
  * @brief Factory to create a NUNIQUE aggregation

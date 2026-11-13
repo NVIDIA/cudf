@@ -27,6 +27,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     empty_table_chunk,
     recv_metadata,
+    reservation_context,
     send_metadata,
 )
 from cudf_polars.streaming.repartition import Repartition
@@ -154,7 +155,15 @@ async def concatenate_node(
 
             stream = context.br().stream_pool.get_stream()
             seq_num = 0
-            allgather = AllGatherManager(context, comm, collective_id)
+            allgather = AllGatherManager(
+                context,
+                comm,
+                collective_id,
+                reservation_context=reservation_context(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    "repartition.allgather",
+                ),
+            )
             with allgather.inserting() as inserter:
                 while (msg := await ch_in.recv(context)) is not None:
                     await inserter.insert(
@@ -210,6 +219,10 @@ async def concatenate_node(
                         chunks,
                         reserve_extra=sum(chunk.data_alloc_size() for chunk in chunks),
                         net_memory_delta=0,
+                        reservation_context=reservation_context(
+                            ir_context.actor_bound_quent_ir_execution_state,
+                            "repartition.concatenate",
+                        ),
                     )
                     with opaque_memory_usage(extra):
                         df = _concat(

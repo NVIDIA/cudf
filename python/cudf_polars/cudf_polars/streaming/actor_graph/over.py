@@ -89,6 +89,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     process_children,
     recv_metadata,
     replay_buffered_channel,
+    reservation_context,
     send_metadata,
     shutdown_on_error,
 )
@@ -99,6 +100,7 @@ from cudf_polars.utils.cuda_stream import stream_ordered_after
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
+    from rapidsmpf.memory.reservation_events import ReservationContext
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
     from rmm.pylibrmm.stream import Stream
@@ -213,6 +215,9 @@ async def _evaluate_broadcast_chunk(
         chunk,
         reserve_extra=global_agg_per_row_size * chunk.shape[0],
         net_memory_delta=0,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state, "over.broadcast.evaluate"
+        ),
     )
     with opaque_memory_usage(extra):
         return await ir_context.to_thread(
@@ -391,6 +396,10 @@ async def _allgather_and_broadcast(
             chunk,
             reserve_extra=chunk.data_alloc_size(),
             net_memory_delta=0,
+            reservation_context=reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                "over.allgather.aggregate",
+            ),
         )
         with opaque_memory_usage(extra):
             partial = await ir_context.to_thread(
@@ -462,6 +471,8 @@ async def _choose_modulus(
     collective_id: int,
     target_partition_size: int,
     sample_chunk_count: int,
+    *,
+    reservation_context: ReservationContext,
 ) -> tuple[TableSizeStats, int]:
     """
     Sample input, AllGather size estimates, and derive the forward-shuffle modulus.
@@ -478,7 +489,12 @@ async def _choose_modulus(
     )
     if comm.nranks > 1 and not metadata_in.duplicated:
         total_bytes, total_count = await allgather_reduce(
-            context, comm, collective_id, sample.total_size, sample.total_chunks
+            context,
+            comm,
+            collective_id,
+            sample.total_size,
+            sample.total_chunks,
+            reservation_context=reservation_context,
         )
     else:
         total_bytes, total_count = sample.total_size, sample.total_chunks
@@ -519,6 +535,10 @@ async def _distribute_by_group(
                 chunk,
                 reserve_extra=stamp_bytes,
                 net_memory_delta=stamp_bytes,
+                reservation_context=reservation_context(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    "over.shuffle.prepare",
+                ),
             )
             sequence_numbers.append(msg.sequence_number)
             if not skip_insert:
@@ -675,6 +695,10 @@ async def _shuffle_and_reassemble(
         size_collective_id,
         target_partition_size,
         sample_chunk_count,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            "over.sample.statistics",
+        ),
     )
 
     forward_shuffle = ShuffleManager(
@@ -682,6 +706,9 @@ async def _shuffle_and_reassemble(
         comm,
         forward_modulus,
         forward_shuffle_collective_id,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state, "over.shuffle.forward"
+        ),
     )
     return_shuffle = ShuffleManager(
         context,
@@ -689,6 +716,9 @@ async def _shuffle_and_reassemble(
         comm.nranks,
         return_shuffle_collective_id,
         partition_assignment=PartitionAssignment.CONTIGUOUS,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state, "over.shuffle.return"
+        ),
     )
 
     ch_replay = context.create_channel()

@@ -452,6 +452,25 @@ def test_is_quarter_end(dtype):
     assert_eq(expect, got)
 
 
+@pytest.mark.parametrize("attr", ["is_quarter_start", "is_quarter_end"])
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_quarter_boundaries_null_propagation(attr, dtype):
+    data = [None, "2024-01-01", "2024-02-01", "2024-03-31", None]
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.dt, attr)
+    actual = getattr(gs.dt, attr)
+
+    assert_eq(expected, actual)
+    expected_mask = (
+        [True, False, False, False, True]
+        if isinstance(dtype, pd.ArrowDtype)
+        else [False] * len(data)
+    )
+    assert actual.to_pandas().isna().tolist() == expected_mask
+
+
 @pytest.mark.parametrize(
     "dtype",
     ["datetime64[s]", pd.ArrowDtype(pa.timestamp("s"))],

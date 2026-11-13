@@ -333,12 +333,18 @@ class DatetimeColumn(TemporalBaseColumn):
     @functools.cached_property
     def is_quarter_end(self) -> ColumnBase:
         last_month = self.month.isin([3, 6, 9, 12])
-        return self._maybe_fillna_false(self.is_month_end & last_month)
+        result = (self.is_month_end & last_month).set_mask(
+            self.mask, self.null_count
+        )
+        return self._maybe_fillna_false(result)
 
     @functools.cached_property
     def is_quarter_start(self) -> ColumnBase:
         first_month = self.month.isin([1, 4, 7, 10])
-        return self._maybe_fillna_false(self.is_month_start & first_month)
+        result = (self.is_month_start & first_month).set_mask(
+            self.mask, self.null_count
+        )
+        return self._maybe_fillna_false(result)
 
     @functools.cached_property
     def is_year_end(self) -> ColumnBase:

@@ -9,6 +9,7 @@
 
 #include <cooperative_groups/reduce.h>
 #include <cooperative_groups/scan.h>
+#include <cuda/std/limits>
 
 #include <climits>
 
@@ -148,10 +149,42 @@ struct delta_binary_decoder {
     if (current_value_idx < num_encoded_values(is_decode)) {
       auto d_start  = block_start;
       cur_min_delta = get_zz128(d_start, block_end);
+      // The bit-width array is read by index below, so it must fit in the stream.
+      if (mini_block_count > static_cast<uleb128_t>(block_end - d_start)) {
+        set_error_state();
+        return;
+      }
       cur_bitwidths = d_start;
 
       d_start += mini_block_count;
       cur_mb_start = d_start;
+      check_mini_block();
+    }
+  }
+
+  // Puts the decoder in the error state for a malformed stream: no values left to decode, and every
+  // data pointer at the end of the stream. The decode loops stop because `value_count` is 0.
+  inline __device__ void set_error_state()
+  {
+    error         = true;
+    value_count   = 0;
+    values_per_mb = 1;
+    block_start   = block_end;
+    cur_mb        = 0;
+    cur_mb_start  = block_end;
+    cur_bitwidths = block_end;
+  }
+
+  // Checks the mini-block the decoder is about to read: its bit width must be at most 64, the
+  // widest a delta can be, and its packed values must end within the stream. Called only for
+  // mini-blocks that hold values, because the spec lets unused trailing ones carry any bit width.
+  inline __device__ void check_mini_block()
+  {
+    constexpr uint32_t max_bit_width = 64;
+    uint32_t const bits              = cur_bitwidths[cur_mb];
+    if (bits > max_bit_width or
+        packed_bytes(bits, values_per_mb) > static_cast<uint64_t>(block_end - cur_mb_start)) {
+      set_error_state();
     }
   }
 
@@ -176,15 +209,16 @@ struct delta_binary_decoder {
     // Validate the header against the DELTA_BINARY_PACKED spec: the mini-block count must evenly
     // divide the block size, and each mini-block must hold a multiple of 32 values. The decoders
     // rely on the latter to advance from one mini-block to the next.
-    if (mini_block_count == 0 or block_size == 0 or (block_size % mini_block_count) != 0 or
+    //
+    // `block_size` and `value_count` are checked against `max_count` because the decoder steps
+    // `current_value_idx` (32 bits) by `values_per_mb` until it reaches `value_count`. With both at
+    // most INT32_MAX that sum cannot wrap, so `find_end_of_block` always finishes. Parquet stores a
+    // page's value count as int32, so a valid page never exceeds it.
+    constexpr uleb128_t max_count = cuda::std::numeric_limits<int32_t>::max();
+    if (mini_block_count == 0 or block_size == 0 or block_size > max_count or
+        value_count > max_count or (block_size % mini_block_count) != 0 or
         ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
-      error         = true;
-      value_count   = 0;
-      values_per_mb = 1;
-      block_start   = d_end;
-      cur_mb        = 0;
-      cur_mb_start  = d_end;
-      cur_bitwidths = d_end;
+      set_error_state();
       return;
     }
 
@@ -195,6 +229,13 @@ struct delta_binary_decoder {
 
     // only call init if there are actually encoded values
     if (value_count > 1) { init_mini_block(false); }
+  }
+
+  // Bytes taken by `num_values` values packed at `bits` each. Computed in 64 bits because a 64-bit
+  // width times up to INT32_MAX values overflows 32.
+  [[nodiscard]] static inline __device__ uint64_t packed_bytes(uint32_t bits, uint32_t num_values)
+  {
+    return static_cast<uint64_t>(bits) * num_values / CHAR_BIT;
   }
 
   // skip to the start of the next mini-block. should only be called on thread 0.
@@ -209,12 +250,13 @@ struct delta_binary_decoder {
 
     // just set pointer to start of next mini_block
     if (cur_mb < mini_block_count - 1) {
-      cur_mb_start += cur_bitwidths[cur_mb] * values_per_mb / CHAR_BIT;
+      cur_mb_start += packed_bytes(cur_bitwidths[cur_mb], values_per_mb);
       cur_mb++;
+      if (current_value_idx < num_encoded_values(is_decode)) { check_mini_block(); }
     }
     // out of mini-blocks, start a new block
     else {
-      block_start = cur_mb_start + cur_bitwidths[cur_mb] * values_per_mb / CHAR_BIT;
+      block_start = cur_mb_start + packed_bytes(cur_bitwidths[cur_mb], values_per_mb);
       init_mini_block(is_decode);
     }
   }
@@ -234,6 +276,8 @@ struct delta_binary_decoder {
     while (current_value_idx < num_encoded_values(false)) {
       setup_next_mini_block(false);
     }
+    // Return without the re-init below, which would clear the error for the caller to check.
+    if (error) { return block_end; }
     // calculate the correct end of the block
     auto const* const new_end = cur_mb == 0 ? block_start : cur_mb_start;
     // re-init block with correct end
@@ -271,7 +315,7 @@ struct delta_binary_decoder {
     uint32_t const mb_bits = cur_bitwidths[cur_mb];
 
     // position at the end of this pass's values since the following calculates negative indexes
-    auto const d_start = cur_mb_start + (pass + 1) * (warp_size * mb_bits / CHAR_BIT);
+    auto const d_start = cur_mb_start + packed_bytes(mb_bits, (pass + 1) * warp_size);
 
     // unpack deltas. modified from version in decode_dictionary_indices(), but
     // that one only unpacks up to bitwidths of 24. simplified some since this

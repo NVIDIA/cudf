@@ -19,6 +19,7 @@ import pylibcudf as plc
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal
+from cudf_polars.utils.sorting import nulls_at_start
 
 if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
@@ -229,6 +230,7 @@ class Agg(Expr):
         elif name in {
             "sum",
             "product",
+            "n_unique",
             "first",
             "last",
             "item",
@@ -360,6 +362,32 @@ class Agg(Expr):
             )
         return self._reduce(column, request=plc.aggregation.product(), stream=stream)
 
+    def _n_unique(self, column: Column, stream: Stream) -> Column:
+        drop_nulls = bool(self.options)
+        if column.null_count == column.size:
+            value = int(column.size > 0 and not drop_nulls)
+        elif column.is_sorted == plc.types.Sorted.YES:
+            value = plc.reduce.unique_count(
+                column.obj,
+                plc.types.NullPolicy.EXCLUDE
+                if drop_nulls
+                else plc.types.NullPolicy.INCLUDE,
+                plc.types.NanPolicy.NAN_IS_VALID,
+                stream=stream,
+            )
+        else:
+            assert self.request is not None
+            return self._reduce(column, request=self.request, stream=stream)
+        return Column(
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(value, self.dtype.plc_type, stream=stream),
+                1,
+                stream=stream,
+            ),
+            name=column.name,
+            dtype=self.dtype,
+        )
+
     def _min(self, column: Column, *, propagate_nans: bool, stream: Stream) -> Column:
         nan_count = column.nan_count(stream=stream)
         if propagate_nans and nan_count > 0:
@@ -376,6 +404,10 @@ class Agg(Expr):
             )
         if nan_count > 0:
             column = column.mask_nans(stream=stream)
+        if column.is_sorted == plc.types.Sorted.YES and column.null_count < column.size:
+            return self._sorted_non_null_end(
+                column, first=column.order == plc.types.Order.ASCENDING, stream=stream
+            )
         return self._reduce(column, request=plc.aggregation.min(), stream=stream)
 
     def _max(self, column: Column, *, propagate_nans: bool, stream: Stream) -> Column:
@@ -394,7 +426,24 @@ class Agg(Expr):
             )
         if nan_count > 0:
             column = column.mask_nans(stream=stream)
+        if column.is_sorted == plc.types.Sorted.YES and column.null_count < column.size:
+            return self._sorted_non_null_end(
+                column, first=column.order == plc.types.Order.DESCENDING, stream=stream
+            )
         return self._reduce(column, request=plc.aggregation.max(), stream=stream)
+
+    def _sorted_non_null_end(
+        self, column: Column, *, first: bool, stream: Stream
+    ) -> Column:
+        start = column.null_count if nulls_at_start(column) else 0
+        index = start if first else start + column.size - column.null_count - 1
+        return Column(
+            plc.copying.slice(column.obj, [index, index + 1], stream=stream)[0].copy(
+                stream=stream
+            ),
+            name=column.name,
+            dtype=self.dtype,
+        )
 
     def _first(self, column: Column, stream: Stream) -> Column:
         if column.size == 0:

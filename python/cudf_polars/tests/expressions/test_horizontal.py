@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +13,9 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @pytest.fixture
@@ -43,18 +47,35 @@ def test_max_horizontal_all_null_row(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("fn", [pl.max_horizontal, pl.min_horizontal])
+def test_minmax_horizontal_skips_nan(fn, engine: pl.GPUEngine) -> None:
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "a": [1.0, nan, nan, None, None, 1.0, 3.0],
+            "b": [nan, 2.0, nan, nan, None, None, 0.5],
+            "c": [0.0, 5.0, nan, None, None, nan, nan],
+        }
+    )
+    q = df.select(fn("a", "b", "c"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_max_horizontal_string(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame(
         {
-            "a": ["x", None, None, "b"],
-            "b": ["y", "z", None, "a"],
-            "c": ["w", "q", None, None],
+            "a": ["x", None, None, "b", "m"],
+            "b": ["y", "z", None, None, "c"],
+            "c": ["w", "q", None, "a", "ü"],
         }
     )
-    q = df.select(
-        pl.max_horizontal("a", "b", "c"),
-        pl.max_horizontal(pl.col("a"), pl.lit("UTC")).alias("lit"),
-    )
+    q = df.select(pl.max_horizontal("a", "b", "c"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_max_horizontal_string_literal(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": ["x", None, "z"]})
+    q = df.select(pl.max_horizontal(pl.col("a"), pl.lit("UTC")))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -122,16 +143,28 @@ def test_min_horizontal_all_null_row(engine: pl.GPUEngine) -> None:
 def test_min_horizontal_string(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame(
         {
-            "a": ["x", None, None, "b"],
-            "b": ["y", "z", None, "a"],
-            "c": ["w", "q", None, None],
+            "a": ["x", None, None, "b", "m"],
+            "b": ["y", "z", None, None, "c"],
+            "c": ["w", "q", None, "a", "ü"],
         }
     )
-    q = df.select(
-        pl.min_horizontal("a", "b", "c"),
-        pl.min_horizontal(pl.col("a"), pl.lit("UTC")).alias("lit"),
-    )
+    q = df.select(pl.min_horizontal("a", "b", "c"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_min_horizontal_string_literal(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"a": ["x", None, "z"]})
+    q = df.select(pl.min_horizontal(pl.col("a"), pl.lit("UTC")))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("fn", [pl.min_horizontal, pl.max_horizontal])
+def test_min_max_horizontal_unsupported_dtype(
+    engine: pl.GPUEngine, fn: Callable[..., pl.Expr]
+) -> None:
+    df = pl.LazyFrame({"a": [[1], [2]], "b": [[3], [4]]})
+    q = df.select(fn("a", "b"))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("ignore_nulls", [True, False])

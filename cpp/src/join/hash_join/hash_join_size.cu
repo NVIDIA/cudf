@@ -9,6 +9,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/std/cstdint>
 
@@ -22,6 +23,7 @@ template <join_kind Join>
 std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                          cuda::stream_ref stream) const
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   static_assert(Join == join_kind::INNER_JOIN || Join == join_kind::LEFT_JOIN);
 
   CUDF_FUNC_RANGE();
@@ -33,8 +35,8 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
     if (_is_empty) { return left.num_rows(); }
   }
 
-  auto total_matches = cudf::detail::device_scalar<cuda::std::uint64_t>(
-    0, stream, cudf::get_current_device_resource_ref());
+  auto total_matches =
+    cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_temporary_mr());
   probe(Join, left, {}, {}, total_matches.data(), {}, nullptr, stream);
   return static_cast<std::size_t>(total_matches.value(stream));
 }
@@ -43,7 +45,7 @@ template <typename Hasher>
 template <join_kind Join>
 std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
                                          cuda::stream_ref stream,
-                                         [[maybe_unused]] rmm::device_async_resource_ref mr) const
+                                         cudf::memory_resources mr) const
 {
   static_assert(Join == join_kind::FULL_JOIN);
 
@@ -51,11 +53,12 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
   validate_hash_join_probe(_right, left, _has_nulls);
   if (_is_empty) { return left.num_rows(); }
 
-  auto const temp_mr  = cudf::get_current_device_resource_ref();
-  auto total_matches  = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
+  auto total_matches =
+    cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_output_mr());
   auto matched_groups = cudf::detail::make_zeroed_device_buffer_async<cuda::std::uint32_t>(
-    _right.num_rows(), stream, temp_mr);
-  auto matched_build_rows = cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, temp_mr);
+    _right.num_rows(), stream, mr.get_output_mr());
+  auto matched_build_rows =
+    cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_output_mr());
   probe(join_kind::FULL_JOIN,
         left,
         {},
@@ -80,6 +83,6 @@ template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::INNER_JOI
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::LEFT_JOIN>(
   cudf::table_view const&, cuda::stream_ref) const;
 template std::size_t hash_join<hash_join_hasher>::join_size<join_kind::FULL_JOIN>(
-  cudf::table_view const&, cuda::stream_ref, rmm::device_async_resource_ref) const;
+  cudf::table_view const&, cuda::stream_ref, cudf::memory_resources) const;
 
 }  // namespace cudf::detail

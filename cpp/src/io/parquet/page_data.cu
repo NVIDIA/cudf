@@ -10,11 +10,11 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
-
-#include <rmm/exec_policy.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 
 namespace cudf::io::parquet::detail {
 
@@ -502,13 +502,15 @@ struct mask_tform {
 uint32_t get_aggregated_decode_kernel_mask(cudf::detail::hostdevice_span<PageInfo const> pages,
                                            cuda::stream_ref stream)
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // determine which kernels to invoke
   return cudf::detail::transform_reduce(pages.device_begin(),
                                         pages.device_end(),
                                         mask_tform{},
                                         uint32_t{0},
                                         cuda::std::bit_or<uint32_t>{},
-                                        stream);
+                                        stream,
+                                        mr.as_temporary());
 }
 
 /**
@@ -589,8 +591,12 @@ void write_final_offsets(host_span<size_type const> offsets,
   auto size_iter = cuda::make_constant_iterator(sizeof(size_type));
 
   // Copy offsets to buffers in batched manner.
-  cudf::detail::batched_memcpy_async(
-    src_iter, d_dst_addrs.begin(), size_iter, offsets.size(), stream);
+  cudf::detail::batched_memcpy_async(src_iter,
+                                     d_dst_addrs.begin(),
+                                     size_iter,
+                                     offsets.size(),
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
 }
 
 }  // namespace cudf::io::parquet::detail

@@ -44,6 +44,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/functional>
@@ -286,7 +287,8 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
                                          cuda::counting_iterator{vocabulary->size()},
                                          sub_map_indices.begin(),
                                          copy_pieces_fn{*d_vocabulary},
-                                         stream);
+                                         stream,
+                                         mr.as_temporary());
   auto const num_pieces = cuda::std::distance(sub_map_indices.begin(), end);
 
   // build a 2nd map with just the ## prefixed items
@@ -779,13 +781,13 @@ tokenized_words tokenize_words(WordsFn words,
     auto const is_deferred = [d_counts] __device__(cudf::size_type idx) -> bool {
       return d_counts[idx] == 0;
     };
-    auto const begin = cuda::counting_iterator<cudf::size_type>{0};
-    auto const end   = cuda::counting_iterator<cudf::size_type>{num_words};
-    auto const num_deferred =
-      static_cast<cudf::size_type>(cudf::detail::count_if(begin, end, is_deferred, stream));
+    auto const begin        = cuda::counting_iterator<cudf::size_type>{0};
+    auto const end          = cuda::counting_iterator<cudf::size_type>{num_words};
+    auto const num_deferred = static_cast<cudf::size_type>(
+      cudf::detail::count_if(begin, end, is_deferred, stream, mr.as_temporary()));
     auto d_deferred = cuda::device_buffer<cudf::size_type>{
       stream, temp_mr, static_cast<std::size_t>(num_deferred), cuda::no_init};
-    cudf::detail::copy_if(begin, end, d_deferred.begin(), is_deferred, stream);
+    cudf::detail::copy_if(begin, end, d_deferred.begin(), is_deferred, stream, mr.as_temporary());
 
     // the initial overflow size is a guess and is increased if needed
     auto overflow_capacity = static_cast<int64_t>(num_deferred) * 3;
@@ -819,12 +821,16 @@ tokenized_words tokenize_words(WordsFn words,
       // overflow is increased by overflow_size and reserved from the old capacity.
       auto const remaining_begin = d_deferred.begin();
       auto const remaining_end   = d_deferred.end();
-      auto const num_remaining   = static_cast<cudf::size_type>(
-        cudf::detail::count_if(remaining_begin, remaining_end, is_deferred, stream));
-      auto d_remaining = cuda::device_buffer<cudf::size_type>{
+      auto const num_remaining   = static_cast<cudf::size_type>(cudf::detail::count_if(
+        remaining_begin, remaining_end, is_deferred, stream, mr.as_temporary()));
+      auto d_remaining           = cuda::device_buffer<cudf::size_type>{
         stream, temp_mr, static_cast<std::size_t>(num_remaining), cuda::no_init};
-      cudf::detail::copy_if(
-        remaining_begin, remaining_end, d_remaining.begin(), is_deferred, stream);
+      cudf::detail::copy_if(remaining_begin,
+                            remaining_end,
+                            d_remaining.begin(),
+                            is_deferred,
+                            stream,
+                            mr.as_temporary());
       d_deferred = std::move(d_remaining);
 
       CUDF_EXPECTS(overflow_capacity + overflow_size < std::numeric_limits<cudf::size_type>::max(),
@@ -1013,16 +1019,17 @@ tokenized_words compute_all_tokens(
     return (d_input_chars[idx] != ' ') &&
            (is_row_start(d_row_starts, idx) || (d_input_chars[idx - 1] == ' '));
   };
-  auto const begin     = cuda::counting_iterator<int64_t>{0};
-  auto const end       = cuda::counting_iterator<int64_t>{chars_size};
-  auto const num_words = cudf::detail::count_if(begin, end, is_word_start, stream);
+  auto const begin = cuda::counting_iterator<int64_t>{0};
+  auto const end   = cuda::counting_iterator<int64_t>{chars_size};
+  auto const num_words =
+    cudf::detail::count_if(begin, end, is_word_start, stream, mr.as_temporary());
   CUDF_EXPECTS(num_words < static_cast<std::size_t>(std::numeric_limits<cudf::size_type>::max()),
                "words exceed internal limit",
                std::overflow_error);
 
   auto d_starts = cuda::device_buffer<int64_t>{
     stream, temp_mr, static_cast<std::size_t>(num_words), cuda::no_init};
-  cudf::detail::copy_if(begin, end, d_starts.begin(), is_word_start, stream);
+  cudf::detail::copy_if(begin, end, d_starts.begin(), is_word_start, stream, mr.as_temporary());
 
   return tokenize_words(
     all_words_fn{d_input_chars, chars_size, d_starts.data(), d_row_starts.data()},

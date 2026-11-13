@@ -18,6 +18,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -49,7 +50,7 @@ class recurrence_functor {
 template <typename T>
 struct ewma_functor_base {
   T beta;
-  pair_type<T> const IDENTITY{1.0, 0.0};
+  pair_type<T> const IDENTITY{T{1}, T{0}};
 };
 
 template <typename T, bool is_numerator>
@@ -64,7 +65,7 @@ struct ewma_adjust_nulls_functor : public ewma_functor_base<T> {
     // The value is non-null, but nulls preceding it
     // must adjust the second element of the pair
     T const beta = this->beta;
-    return {beta * ((exp != 0) ? pow(beta, exp) : 1), input};
+    return {beta * ((exp != 0) ? cuda::std::pow(beta, static_cast<T>(exp)) : T{1}), input};
   }
 };
 
@@ -76,7 +77,7 @@ struct ewma_adjust_no_nulls_functor : public ewma_functor_base<T> {
     if constexpr (is_numerator) {
       return {beta, data};
     } else {
-      return {beta, 1.0};
+      return {beta, T{1}};
     }
   }
 };
@@ -105,10 +106,11 @@ struct ewma_noadjust_nulls_functor : public ewma_functor_base<T> {
     } else {
       if (!valid) { return this->IDENTITY; }
       // preceding value is valid, return normal pair
-      if (nullcnt == 0) { return {beta, (1.0 - beta) * input}; }
+      if (nullcnt == 0) { return {beta, (T{1} - beta) * input}; }
       // one or more preceding values is null, adjust by how many
-      T const factor = (1.0 - beta) + pow(beta, nullcnt + 1);
-      return {(beta * (pow(beta, nullcnt)) / factor), ((1.0 - beta) * input) / factor};
+      T const factor = (T{1} - beta) + cuda::std::pow(beta, static_cast<T>(nullcnt + 1));
+      return {(beta * cuda::std::pow(beta, static_cast<T>(nullcnt))) / factor,
+              ((T{1} - beta) * input) / factor};
     }
   }
 };
@@ -122,7 +124,7 @@ struct ewma_noadjust_no_nulls_functor : public ewma_functor_base<T> {
     if (index == 0) {
       return {beta, input};
     } else {
-      return {beta, (1.0 - beta) * input};
+      return {beta, (T{1} - beta) * input};
     }
   }
 };
@@ -133,10 +135,12 @@ struct ewma_noadjust_no_nulls_functor : public ewma_functor_base<T> {
 * Example: {1, NULL, 3, 4, NULL, NULL, 7}
         -> {0, 0     1, 0, 0,    1,    2}
 */
-cuda::device_buffer<cudf::size_type> null_roll_up(column_view const& input, cuda::stream_ref stream)
+cuda::device_buffer<cudf::size_type> null_roll_up(column_view const& input,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   cuda::device_buffer<cudf::size_type> output(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_output_mr(), input.size(), cuda::no_init);
 
   auto device_view = column_device_view::create(input, stream);
   auto invalid_it  = cuda::transform_iterator(
@@ -144,12 +148,11 @@ cuda::device_buffer<cudf::size_type> null_roll_up(column_view const& input, cuda
     cuda::proclaim_return_type<int>([] __device__(int valid) -> int { return 1 - valid; }));
 
   // valid mask {1, 0, 1, 0, 0, 1} leads to output array {0, 0, 1, 0, 1, 2}
-  thrust::inclusive_scan_by_key(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    invalid_it,
-    invalid_it + input.size() - 1,
-    invalid_it,
-    std::next(output.begin()));
+  thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                invalid_it,
+                                invalid_it + input.size() - 1,
+                                invalid_it,
+                                std::next(output.begin()));
   return output;
 }
 
@@ -157,16 +160,17 @@ template <typename T>
 rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
                                            T const beta,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
   cuda::device_buffer<pair_type<T>> pairs(
     stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
   if (input.has_nulls()) {
-    cuda::device_buffer<cudf::size_type> nullcnt = null_roll_up(input, stream);
-    auto device_view                             = column_device_view::create(input, stream);
-    auto valid_it = cudf::detail::make_validity_iterator(*device_view);
+    cuda::device_buffer<cudf::size_type> nullcnt =
+      null_roll_up(input, stream, cudf::get_current_device_resource_ref());
+    auto device_view = column_device_view::create(input, stream);
+    auto valid_it    = cudf::detail::make_validity_iterator(*device_view);
     auto data =
       cuda::make_zip_iterator(cuda::std::make_tuple(valid_it, nullcnt.begin(), input.begin<T>()));
 
@@ -230,7 +234,7 @@ template <typename T>
 rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
                                              T const beta,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   rmm::device_uvector<T> output(input.size(), stream);
   cuda::device_buffer<pair_type<T>> pairs(
@@ -238,7 +242,7 @@ rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
   cuda::device_buffer<cudf::size_type> nullcnt =
     [&input, stream]() -> cuda::device_buffer<cudf::size_type> {
     if (input.has_nulls()) {
-      return null_roll_up(input, stream);
+      return null_roll_up(input, stream, cudf::get_current_device_resource_ref());
     } else {
       return cuda::device_buffer<cudf::size_type>(
         stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
@@ -288,7 +292,7 @@ struct ewma_functor {
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     CUDF_FAIL("Unsupported type for EWMA.");
   }
@@ -297,7 +301,7 @@ struct ewma_functor {
   std::unique_ptr<column> operator()(scan_aggregation const& agg,
                                      column_view const& input,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto const ewma_agg       = dynamic_cast<ewma_aggregation const*>(&agg);
     auto const history        = ewma_agg->history;
@@ -325,7 +329,7 @@ struct ewma_functor {
 std::unique_ptr<column> exponentially_weighted_moving_average(column_view const& input,
                                                               scan_aggregation const& agg,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr)
+                                                              cudf::memory_resources mr)
 {
   return type_dispatcher(input.type(), ewma_functor{}, agg, input, stream, mr);
 }

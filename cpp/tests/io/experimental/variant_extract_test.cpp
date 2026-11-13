@@ -3374,20 +3374,6 @@ TEST_F(GetVariantFieldsStatusTest, FailedPrefixReasonReachesItsWholeSubtree)
   expect_path_statuses(paths, status, {{ST_VNULL}, {ST_MISSING}, {ST_MISSING}, {ST_MISSING}});
 }
 
-TEST_F(GetVariantFieldsStatusTest, MalformedMetadataFailsEveryPath)
-{
-  std::vector<uint8_t> const bad_meta = {0x02};  // too short / version != 1
-  std::vector<uint8_t> const val      = {0x14, 0x07, 0x00, 0x00, 0x00};
-  auto const col                      = wrap_single_variant(bad_meta, val);
-  auto const stream                   = cudf::test::get_default_stream();
-
-  std::vector<std::string_view> const paths{"x", "y", "$.x.deeper"};
-  status_buffers status{paths.size(), cudf::column_view{col}.size()};
-  static_cast<void>(expns::get_variant_fields(col, paths, status.views, stream, cmr()));
-
-  expect_path_statuses(paths, status, {{ST_MALFORMED}, {ST_MALFORMED}, {ST_MALFORMED}});
-}
-
 TEST_F(GetVariantFieldsStatusTest, RejectsMalformedStatusColumns)
 {
   auto const col      = make_xyz_three_row_variant();

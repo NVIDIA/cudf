@@ -1297,7 +1297,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             if columns is not None:
                 # Only selected columns contribute to index inference and
                 # value-length validation. Missing columns are added below.
-                # Match full labels, including NaNs, without changing dict keys.
+                # Match pandas' key-index inference, including missing and tuple
+                # labels, without changing dict keys.
                 selected = pd.Index(list(data), tupleize_cols=False).isin(
                     columns
                 )

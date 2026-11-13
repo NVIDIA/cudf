@@ -1099,6 +1099,49 @@ TEST_F(JoinTest, SortMergeInnerJoinMatchContextMemoryResource)
   EXPECT_EQ(match_context->output_size(), 6);
 }
 
+TEST_F(JoinTest, SortMergeJoinMemoryResources)
+{
+  column_wrapper<int32_t> left_key{{3, 1, 2, 0, 2}, {true, true, true, true, false}};
+  column_wrapper<int32_t> right_key{{2, 2, 0, 4, 3}, {true, true, false, true, true}};
+  auto left   = cudf::table_view{{left_key}};
+  auto right  = cudf::table_view{{right_key}};
+  auto stream = cudf::get_default_stream();
+
+  auto output_mr    = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto temporary_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  cudf::sort_merge_join obj(right,
+                            cudf::sorted::NO,
+                            cudf::null_equality::UNEQUAL,
+                            stream,
+                            cudf::memory_resources{output_mr, temporary_mr});
+  EXPECT_GT(output_mr.get_bytes_counter().value, 0);
+  EXPECT_GT(temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(temporary_mr.get_bytes_counter().value, 0);
+
+  // The preprocessed left table is kept in the returned context, so it comes from the output
+  // resource.
+  auto context_output_mr =
+    rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto context_temporary_mr =
+    rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto match_context = obj.inner_join_match_context(
+    left, stream, cudf::memory_resources{context_output_mr, context_temporary_mr});
+  EXPECT_GT(context_output_mr.get_bytes_counter().value, 0);
+  EXPECT_EQ(context_temporary_mr.get_bytes_counter().value, 0);
+  expect_match_counts_equal(match_context->match_counts(), {1, 0, 2, 0, 0}, stream);
+
+  auto size_output_mr =
+    rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto size_temporary_mr =
+    rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  EXPECT_EQ(
+    match_context->output_size(stream, cudf::memory_resources{size_output_mr, size_temporary_mr}),
+    3);
+  EXPECT_EQ(size_output_mr.get_bytes_counter().peak, 0);
+  EXPECT_GT(size_temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(size_temporary_mr.get_bytes_counter().value, 0);
+}
+
 TEST_F(JoinTest, SortMergeInnerJoinSizePerRowWithNulls)
 {
   column_wrapper<int32_t> col0_0{{3, 1, 2, 0, 2}};
@@ -2532,6 +2575,40 @@ TEST_F(JoinTest, HashJoinMemoryResource)
   column_wrapper<int32_t> col_gold_1{{4, 0, 1, 2, 0, 1}};
   auto const [sorted_gold, sorted_result] = gather_maps_as_tables(col_gold_0, col_gold_1, result);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_gold, *sorted_result);
+}
+
+TEST_F(JoinTest, HashJoinMemoryResources)
+{
+  column_wrapper<int32_t> right_0{{2, 2, 0, 4, 3}, {true, true, false, true, true}};
+  column_wrapper<int32_t> right_1{{1, 1, 1, 1, 1}, {true, false, true, true, true}};
+  column_wrapper<int32_t> left_0{{3, 1, 2, 0, 2}};
+  column_wrapper<int32_t> left_1{{1, 1, 1, 1, 1}};
+  auto const right  = cudf::table_view{{right_0, right_1}};
+  auto const left   = cudf::table_view{{left_0, left_1}};
+  auto const stream = cudf::get_default_stream();
+
+  auto output_mr    = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto temporary_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  cudf::hash_join hash_join(right,
+                            cudf::nullable_join::YES,
+                            cudf::null_equality::UNEQUAL,
+                            0.5,
+                            stream,
+                            cudf::memory_resources{output_mr, temporary_mr});
+  EXPECT_GT(output_mr.get_bytes_counter().value, 0);
+  EXPECT_GT(temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(temporary_mr.get_bytes_counter().value, 0);
+
+  auto size_output_mr =
+    rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto size_temporary_mr =
+    rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto const size_mr = cudf::memory_resources{size_output_mr, size_temporary_mr};
+  EXPECT_EQ(hash_join.inner_join_size(left, stream, size_mr), 3);
+  EXPECT_EQ(hash_join.left_join_size(left, stream, size_mr), 5);
+  EXPECT_EQ(size_output_mr.get_bytes_counter().peak, 0);
+  EXPECT_GT(size_temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(size_temporary_mr.get_bytes_counter().value, 0);
 }
 
 TEST_F(JoinTest, HashJoinInnerMatchContext)

@@ -767,6 +767,24 @@ TEST_F(KeyRemappingTest, MemoryResource)
   EXPECT_NE(ids[1], ids[3]);
 }
 
+TEST_F(KeyRemappingTest, MemoryResources)
+{
+  column_wrapper<int32_t> right_col{1, 2, 2, 3};
+  auto right_table = cudf::table_view{{right_col}};
+
+  auto output_mr    = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto temporary_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  cudf::key_remapping remap{right_table,
+                            cudf::null_equality::EQUAL,
+                            cudf::compute_metrics::YES,
+                            cudf::get_default_stream(),
+                            cudf::memory_resources{output_mr, temporary_mr}};
+  EXPECT_GT(output_mr.get_bytes_counter().value, 0);
+  EXPECT_GT(temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(temporary_mr.get_bytes_counter().value, 0);
+  EXPECT_EQ(remap.get_distinct_count(), 3);
+}
+
 TEST_F(KeyRemappingTest, MetricsEnabled)
 {
   column_wrapper<int32_t> right_col{1, 2, 2, 3, 3, 3};

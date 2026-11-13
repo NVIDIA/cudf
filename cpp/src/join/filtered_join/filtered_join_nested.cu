@@ -38,7 +38,7 @@ void filtered_join::insert_right_table_nested(cuda::stream_ref stream)
                                               _right.num_rows(),
                                               hashing::detail::DEFAULT_ALGORITHM_HASH_SEED,
                                               stream,
-                                              cudf::get_current_device_resource_ref());
+                                              _mr.as_temporary());
   auto const hasher = precomputed_hash{hashes->view().data<hash_value_type>()};
   auto const iter   = cudf::detail::make_counting_transform_iterator(
     size_type{0}, key_pair_fn<lhs_index_type, decltype(hasher)>{hasher});

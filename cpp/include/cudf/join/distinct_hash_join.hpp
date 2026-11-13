@@ -69,14 +69,16 @@ class distinct_hash_join {
    * in range (0,1]. For example, 0.5 indicates a target of 50% occupancy. Note that the actual
    * occupancy achieved may be slightly lower than the specified value.
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the internal hash table
+   * @param mr Memory resources used by the join object. The output resource backs allocations that
+   * live as long as the join object, such as the hash table; the temporary resource backs scratch
+   * used during construction. Both are non-owning references, so the resources they refer to must
+   * outlive the join object.
    */
   distinct_hash_join(cudf::table_view const& right,
                      null_equality compare_nulls = null_equality::EQUAL,
                      double load_factor          = 0.5,
                      cuda::stream_ref stream     = cudf::get_default_stream(),
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                       cudf::get_current_device_resource_ref());
+                     cudf::memory_resources mr   = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the row indices that can be used to construct the result of performing

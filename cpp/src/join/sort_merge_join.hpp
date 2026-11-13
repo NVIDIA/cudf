@@ -52,11 +52,14 @@ class sort_merge_join {
    * @param is_right_sorted Enum to indicate if right table is pre-sorted
    * @param compare_nulls Controls whether null join-key values should match or not
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources: the output resource backs the preprocessed right table, which
+   * lives as long as this object; the temporary resource backs construction scratch
    */
   sort_merge_join(table_view const& right,
                   sorted is_right_sorted,
                   null_equality compare_nulls,
-                  cuda::stream_ref stream);
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr);
 
   /**
    * @brief Returns the row indices for an inner join.
@@ -137,41 +140,47 @@ class sort_merge_join {
      * @param compare_nulls Controls whether null join-key values should match or not
      * @param is_sorted Enum to indicate if the table is pre-sorted
      * @param stream CUDA stream used for device memory operations and kernel launches
+     * @param mr Memory resources: the output resource backs the state kept in this table
      * @return A preprocessed_table ready for join operations
      */
     static preprocessed_table create(table_view const& table,
                                      null_equality compare_nulls,
                                      sorted is_sorted,
-                                     cuda::stream_ref stream);
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr);
 
     /**
      * @brief Mark rows in unprocessed table with nulls at root or child levels by populating the
      * _validity_mask
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
+     * @param mr Memory resources: the output resource backs the state kept in this table
      */
-    void populate_nonnull_filter(cuda::stream_ref stream);
+    void populate_nonnull_filter(cuda::stream_ref stream, cudf::memory_resources mr);
 
     /**
      * @brief Apply _validity_mask to the _table_view to create a null-free table
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
+     * @param mr Memory resources: the output resource backs the state kept in this table
      */
-    void apply_nonnull_filter(cuda::stream_ref stream);
+    void apply_nonnull_filter(cuda::stream_ref stream, cudf::memory_resources mr);
 
     /**
      * @brief Pre-process the unprocessed table when null equality is set to unequal
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
+     * @param mr Memory resources: the output resource backs the state kept in this table
      */
-    void preprocess_unprocessed_table(cuda::stream_ref stream);
+    void preprocess_unprocessed_table(cuda::stream_ref stream, cudf::memory_resources mr);
 
     /**
      * @brief Compute sorted ordering of the processed table
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
+     * @param mr Memory resources: the output resource backs the state kept in this table
      */
-    void compute_sorted_order(cuda::stream_ref stream);
+    void compute_sorted_order(cuda::stream_ref stream, cudf::memory_resources mr);
 
     /**
      * @brief Create mapping from processed table indices to unprocessed table indices

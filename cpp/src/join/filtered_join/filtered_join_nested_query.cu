@@ -53,7 +53,7 @@ void filtered_join::query_right_table_nested(
   auto const iter   = cudf::detail::make_counting_transform_iterator(
     size_type{0}, key_pair_fn<rhs_index_type, decltype(hasher)>{hasher});
   query_right_table<nested_probing_scheme::cg_size>(
-    left, iter, set_ref.rebind_operators(cuco::op::contains), contains_map, stream);
+    left, iter, set_ref.rebind_operators(cuco::op::contains), contains_map, stream, mr);
 }
 
 }  // namespace cudf::detail

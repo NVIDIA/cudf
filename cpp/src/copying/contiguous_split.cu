@@ -2792,8 +2792,7 @@ struct decompression_task {
 };
 
 // A compressed payload starts with one uint64_t per block: the compressed size, or the raw size
-// with raw_block_flag set for a block stored uncompressed. Zero marks a block that failed to
-// compress.
+// with raw_block_flag set for a block stored uncompressed.
 constexpr uint64_t raw_block_flag             = uint64_t{1} << 63;
 constexpr std::size_t max_raw_block_bytes     = 1024 * 1024;
 constexpr std::size_t compression_block_bytes = 64 * 1024;
@@ -3637,7 +3636,6 @@ class pack_plan::impl {
     }
   }
 
-  /// Resolves the codec and block size of each region, staging the input when needed.
   /// Resolves the codec of each region, selecting a concrete codec for `automatic`.
   [[nodiscard]] static std::vector<pack_compression> resolve_codecs(
     std::span<compression_region_layout const> layouts,

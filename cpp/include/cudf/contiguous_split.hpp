@@ -538,8 +538,9 @@ pack_plan_builder make_pack_plan_builder(
  * in blocks. For compressed plans, `sizes().payload_bytes` is an upper bound; `pack_into()`
  * reports the actual size.
  *
- * Payloads are compressed with `pack_compression::automatic` by default. Only
- * `pack_compression::none` produces the exact uncompressed layout that `unpack_view()` accepts.
+ * Payloads are compressed with `pack_compression::automatic` by default. When no region ends up
+ * compressed, as with `pack_compression::none` or when `automatic` keeps every region
+ * uncompressed, the plan produces the exact uncompressed layout that `unpack_view()` accepts.
  *
  * @throw std::invalid_argument if `options.staging_buffer_bytes` is less than 1 MiB
  * @throw std::invalid_argument if `options.compression` is not a `pack_compression` value
@@ -595,7 +596,7 @@ pack_result pack_into(pack_plan const& plan,
                       cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
- * @brief Non-owning view of packed host metadata and device-accessible payload bytes.
+ * @brief Non-owning view of packed host metadata and device, pinned or pageable payload bytes.
  *
  * The metadata identifies whether the payload is compressed and which codec each region uses.
  */
@@ -629,7 +630,8 @@ table_view unpack_view(packed_data_view input);
  *
  * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
  * `payload_alignment` it was packed with
- * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed
+ * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed.
+ * Corrupt compressed blocks are not reliably detected and may produce incorrect data instead.
  *
  * @param input Packed metadata and payload
  * @param stream Stream used for the deep copy
@@ -654,7 +656,8 @@ std::unique_ptr<table> materialize(
  * @throw std::out_of_range if an index is not in `[0, num_columns)`
  * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
  * `payload_alignment` it was packed with
- * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed
+ * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed.
+ * Corrupt compressed blocks are not reliably detected and may produce incorrect data instead.
  *
  * @param input Packed metadata and payload
  * @param column_indices Indices of the top-level columns to materialize, in output order

@@ -651,7 +651,10 @@ void infer_column_types(parse_options const& parse_opts,
                                 ? data_type(cudf::type_id::TIMESTAMP_NANOSECONDS)
                                 : timestamp_type;
     } else if (stats.bool_count > 0L) {
-      column_types[col_idx] = data_type(cudf::type_id::BOOL8);
+      auto const has_numbers = stats.float_count + stats.negative_small_int_count +
+                                 stats.positive_small_int_count + stats.big_int_count >
+                               0;
+      column_types[col_idx] = data_type(has_numbers ? cudf::type_id::STRING : cudf::type_id::BOOL8);
     } else if (stats.float_count > 0L) {
       column_types[col_idx] = data_type(cudf::type_id::FLOAT64);
     } else if (stats.big_int_count == 0) {

@@ -73,6 +73,7 @@ jobs:
           repo: ${{ github.repository }}
           target-branch: ${{ fromJSON(steps.get-pr-info.outputs.pr-info).base.ref }}
           max-days-without-success: 14
+          ignore-failures-until: 2026-11-17
   changed-files:
     permissions:
       actions: read
@@ -333,7 +334,7 @@ jobs:
       build_type: pull-request
       node_type: cpu16
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.12-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: "ci/test_cmake.sh"
   cudf-polars-quent:
     needs: [build-details, checks, changed-files]
@@ -570,7 +571,7 @@ jobs:
       build_type: pull-request
       node_type: cpu8
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.12-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: "ci/test_python_imports.sh"
   conda-python-cudf-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
@@ -790,7 +791,7 @@ jobs:
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       arch: ${{ matrix.ARCH }}
       node_type: cpu16
-      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      container_image: "rapidsai/ci-wheel:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/build_java.sh"
       file_to_upload: output_jars
       artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
@@ -812,7 +813,7 @@ jobs:
       build_type: pull-request
       arch: ${{ matrix.ARCH }}
       node_type: ${{ matrix.ARCH == 'amd64' && 'gpu-rtxpro6000-latest-1' || 'gpu-l4-latest-1' }}
-      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      container_image: "rapidsai/ci-wheel:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/test_packaged_java.sh"
   conda-notebook-tests:
     needs: [conda-python-build, conda-python-build-noarch, changed-files]
@@ -829,7 +830,7 @@ jobs:
       build_type: pull-request
       node_type: "gpu-rtxpro6000-latest-1"
       arch: "amd64"
-      container_image: "rapidsai/ci-conda:26.12-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: "ci/test_notebooks.sh"
   docs-build-matrix:
     permissions:
@@ -857,7 +858,7 @@ jobs:
       build_type: pull-request
       node_type: "gpu-${{ matrix.GPU }}-${{ matrix.DRIVER }}-1"
       arch: "${{ matrix.arch }}"
-      container_image: "rapidsai/ci-conda:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      container_image: "rapidsai/ci-conda:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/build_docs.sh"
   publish-api-docs:
     needs: [docs-build]
@@ -1011,7 +1012,7 @@ jobs:
       sha: ${{ inputs.sha }}
       arch: amd64
       node_type: gpu-rtxpro6000-latest-1
-      container_image: rapidsai/citestwheel:26.12-latest
+      container_image: rapidsai/citestwheel:27.02-latest
       container-options: "--cap-add CAP_SYS_PTRACE"
       script: >-
         env CUDF_POLARS_GPU_RUN_LIST=ci/cudf_polars/gpu_test_run_list.json
@@ -1034,7 +1035,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       node_type: cpu8
-      container_image: rapidsai/citestwheel:26.12-latest
+      container_image: rapidsai/citestwheel:27.02-latest
       # Diagnostics must not replace the upstream jobs' pass/fail signal.
       continue-on-error: true
       script: ci/run_cudf_polars_fallback_diagnostics.sh
@@ -1129,7 +1130,7 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
-      container_image: "rapidsai/ci-conda:26.12-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: |
         ci/cudf_pandas_scripts/third-party-integration/test.sh python/cudf/cudf_pandas_tests/third_party_integration_tests/dependencies.yaml
   cuml-compat-tests:
@@ -1155,7 +1156,7 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
       continue-on-error: true
-      container_image: "rapidsai/ci-conda:26.12-latest"
+      container_image: "rapidsai/ci-conda:27.02-latest"
       script: "ci/test_cuml_compat.sh"
   pandas-tests-shards:
     # Single source of truth for the shard count: both the matrix below and the
@@ -1200,7 +1201,7 @@ jobs:
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
       node_type: "gpu-rtxpro6000-latest-1"
-      container_image: "rapidsai/citestwheel:26.12-latest"
+      container_image: "rapidsai/citestwheel:27.02-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/run.sh pr ${{ matrix.shard_id }} ${{ needs.pandas-tests-shards.outputs.num_shards }}"
       file_to_upload: ./pr-results.json
       artifact-name: "pandas-test-pr-results-${{ matrix.shard_id }}"
@@ -1226,7 +1227,7 @@ jobs:
       sha: ${{ inputs.sha }}
       node_type: "cpu8"
       continue-on-error: true
-      container_image: "rapidsai/citestwheel:26.12-latest"
+      container_image: "rapidsai/citestwheel:27.02-latest"
       script: "ci/cudf_pandas_scripts/pandas-tests/summary.sh ${{ needs.pandas-tests-shards.outputs.num_shards }}"
   cudf-spark-jni:
     needs: changed-files

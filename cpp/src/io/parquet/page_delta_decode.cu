@@ -11,7 +11,16 @@
 
 #include <cudf/detail/utilities/cuda.cuh>
 
+#include <cooperative_groups.h>
+#include <cub/warp/warp_exchange.cuh>
+#include <cuda/annotated_ptr>
+#include <cuda/pipeline>
 #include <cuda/std/algorithm.lower_bound.h>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
+#include <cuda/std/bit>
+
+#include <algorithm>
 
 namespace cudf::io::parquet::detail {
 
@@ -28,8 +37,8 @@ constexpr int decode_delta_binary_block_size = 96;
 // warp_size; anything smaller lets the level decoder wrap onto entries the consumer is reading.
 constexpr int delta_nz_buf_size = 4 * delta_max_batch_size;
 
-// One producer warp and one writer warp
-constexpr int decode_delta_binary_with_nz_map_block_size = 64;
+// One warp decodes and writes each mapped page.
+constexpr int32_t decode_delta_binary_with_nz_map_block_size = cudf::detail::warp_size;
 
 // DELTA_BYTE_ARRAY encoding (incremental encoding or front compression), is used for BYTE_ARRAY
 // columns. For each element in a sequence of strings, a prefix length from the preceding string
@@ -546,32 +555,786 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
   return num_rows - (nz_count - prefix_valid_count);
 }
 
-// Decodes flat DELTA_BINARY_PACKED pages, like `decode_delta_binary_kernel`, but places values
-// using the nz map's rank map instead of decoding definition levels itself.
-CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
-  decode_delta_binary_kernel_with_nz_map(PageInfo* pages,
-                                         device_span<ColumnChunkDesc const> chunks,
-                                         size_t min_row,
-                                         size_t num_rows,
-                                         cudf::device_span<bool const> page_mask,
-                                         kernel_error::pointer error_code)
+/**
+ * @brief Warp-wide, register-resident DELTA_BINARY_PACKED decoder used by
+ * `decode_delta_binary_kernel_with_nz_map`.
+ *
+ * One warp decodes one page in tiles of 128 values, four adjacent values per lane. Every lane runs
+ * the same warp-uniform walk over blocks, mini-blocks and 32-value passes in registers, so the tile
+ * descriptors need no shared memory, no single-lane parsing and no warp syncs, and the running sum
+ * stays in a register. Each lane loads the packed bits of its four values with aligned 8-byte
+ * loads, one tile ahead of decoding. An aligned word holding at least one in-bounds byte cannot
+ * leave the allocation, and bytes past the end of the page read as zero, matching the bounded byte
+ * loads of `delta_binary_decoder`. Page data is prefetched into L2 ahead of the read position.
+ */
+namespace nz_register_delta {
+
+using warp_tile = cg::thread_block_tile<cudf::detail::warp_size>;
+
+constexpr uint32_t warp_lanes     = cudf::detail::warp_size;
+constexpr uint32_t items_per_lane = 4;
+constexpr uint32_t tile_size      = items_per_lane * warp_lanes;
+// Lanes sharing one 32-value pass of a tile
+constexpr uint32_t lanes_per_pass = warp_lanes / items_per_lane;
+constexpr uint32_t byte_bits      = 8;
+// Bytes of packed data in one 32-value pass per bit of width
+constexpr uint32_t pass_bytes_per_bit = warp_lanes / byte_bits;
+constexpr uint32_t word_bytes         = sizeof(uint64_t);
+constexpr uint32_t word_bits          = word_bytes * byte_bits;
+// Aligned words covering one lane's values: a start offset below one word plus four values of at
+// most one word each
+constexpr uint32_t words_per_lane = items_per_lane + 1;
+// A zigzag ULEB128 encoding of a 64-bit value takes at most 10 bytes
+constexpr uint32_t max_varint_bytes = 10;
+// Block header bytes decoded from the staged words: the minimum delta and the bit widths
+constexpr uint32_t header_bytes = 2 * word_bytes;
+// Aligned words covering `header_bytes` from any start address
+constexpr uint32_t header_words = header_bytes / word_bytes + 1;
+// Bit widths that fit in one word
+constexpr uint32_t max_packed_widths = word_bytes;
+constexpr uint32_t cache_line_bytes  = 128;
+// Bytes prefetched into L2 per burst; the next burst is issued once the read position is within
+// half a window of the prefetched end
+constexpr uint32_t prefetch_window = 4'096;
+static_assert(prefetch_window % (cache_line_bytes * warp_lanes) == 0,
+              "Each lane prefetches the same number of cache lines per burst");
+
+using exchange_type = cub::WarpExchange<uint64_t, items_per_lane, warp_lanes>;
+
+/**
+ * @brief Shared memory used by `decode_page`
+ */
+struct shared_storage {
+  typename exchange_type::TempStorage exchange;
+  alignas(word_bytes) uint64_t header[header_words];
+};
+
+/**
+ * @brief Returns `w[i]` for an index known to be below `K`.
+ *
+ * Selecting through a chain of conditional moves keeps `w` in registers; a dynamic index would
+ * place it in local memory.
+ */
+template <uint32_t K, uint32_t N>
+__device__ __forceinline__ uint64_t select_word(uint64_t const (&w)[N], uint32_t i)
 {
-  __shared__ __align__(16) delta_binary_decoder db_state;
+  static_assert(K >= 1 && K <= N, "The index bound must lie within the array");
+  uint64_t result = w[0];
+#pragma unroll
+  for (uint32_t k = 1; k < K; ++k) {
+    result = i == k ? w[k] : result;
+  }
+  return result;
+}
+
+/**
+ * @brief Returns the 64 bits starting at bit `shift` (< 64) of the 128-bit value `hi:lo`.
+ */
+__device__ __forceinline__ uint64_t extract64(uint64_t lo, uint64_t hi, uint32_t shift)
+{
+  bool const upper = shift >= 32;
+  uint32_t const a = upper ? static_cast<uint32_t>(lo >> 32) : static_cast<uint32_t>(lo);
+  uint32_t const b = upper ? static_cast<uint32_t>(hi) : static_cast<uint32_t>(lo >> 32);
+  uint32_t const c = upper ? static_cast<uint32_t>(hi >> 32) : static_cast<uint32_t>(hi);
+  return (static_cast<uint64_t>(__funnelshift_r(b, c, shift)) << 32) | __funnelshift_r(a, b, shift);
+}
+
+/**
+ * @brief Returns the number of bytes up to and including the lowest byte of `stop` whose top bit is
+ * set.
+ *
+ * `stop` must be nonzero and have only the top bit of each byte set. The lowest set bit, 8k+7 for
+ * byte k, has a bit width of 8(k+1).
+ */
+__device__ __forceinline__ uint32_t stop_byte_count(uint64_t stop)
+{
+  return static_cast<uint32_t>(cuda::std::bit_width(stop & (0 - stop))) / byte_bits;
+}
+
+/**
+ * @brief Returns the aligned word address containing `p`.
+ */
+__device__ __forceinline__ uintptr_t aligned_word(uint8_t const* p)
+{
+  return reinterpret_cast<uintptr_t>(p) & ~uintptr_t{word_bytes - 1};
+}
+
+/**
+ * @brief Returns `w` with the bytes at or past `end` cleared, for the word at address `word`.
+ */
+__device__ __forceinline__ uint64_t clear_past_end(uint64_t w, uintptr_t word, uintptr_t end)
+{
+  if (word >= end) { return 0; }
+  if (word + word_bytes > end) { w &= (uint64_t{1} << (byte_bits * (end - word))) - 1; }
+  return w;
+}
+
+/**
+ * @brief Warp-uniform walker over the blocks, mini-blocks and 32-value passes of a page.
+ *
+ * Block headers are staged one block ahead: on entering block k the walker computes where block
+ * k+1 starts and copies the words holding its header into shared memory asynchronously. Entering
+ * block k+1 then decodes the minimum delta and the bit widths from those words in registers, which
+ * keeps the chain of dependent byte loads through each header off the critical path. Headers that
+ * do not fit the staged words (a minimum delta longer than 10 bytes, more than 8 mini-blocks) are
+ * parsed from global memory instead.
+ */
+struct walker {
+  uint8_t const* end;
+  uint64_t* staged;  ///< `header_words` words of shared memory
+  uint32_t mini_block_count;
+  uint32_t passes_per_mb;
+  uint8_t const* mb_start  = nullptr;  ///< Packed data of the current mini-block
+  uint8_t const* widths    = nullptr;  ///< Bit widths of the current block, when not `packed`
+  uint8_t const* staged_at = nullptr;  ///< Block start described by the staged header words
+  cuda::pipeline<cuda::thread_scope_thread> pipe = cuda::make_pipeline();
+  zigzag128_t min_delta                          = 0;
+  uint64_t packed_widths = 0;  ///< Bit widths of the current block, one byte each, when `packed`
+  uint32_t mb            = 0;
+  uint32_t pass          = 0;
+  uint32_t bits          = 0;
+  bool packed            = false;
+  bool error             = false;
+
+  [[nodiscard]] __device__ __forceinline__ uint32_t width(uint32_t m) const
+  {
+    if (packed) { return static_cast<uint32_t>(packed_widths >> (byte_bits * m)) & 0xffu; }
+    return widths + m < end ? widths[m] : 0u;
+  }
+
+  __device__ __forceinline__ void set_bits(uint32_t m)
+  {
+    bits = width(m);
+    if (bits > word_bits) {
+      error = true;
+      bits  = 0;
+    }
+  }
+
+  /**
+   * @brief Waits for the staged header copy, if any, to land in shared memory.
+   */
+  __device__ __forceinline__ void wait_staged() { cuda::pipeline_consumer_wait_prior<0>(pipe); }
+
+  /**
+   * @brief Starts copying the aligned words covering [at, at + header_bytes) into `staged`.
+   *
+   * Words wholly past the end of the page are not copied; `enter_block` reads them as zero.
+   */
+  __device__ __forceinline__ void stage_header(uint8_t const* at, warp_tile const& warp)
+  {
+    wait_staged();  // no copy may still target `staged`
+    warp.sync();    // every lane has read the previous header
+    staged_at       = at;
+    auto const lane = warp.thread_rank();
+    auto const word = aligned_word(at) + word_bytes * lane;
+    pipe.producer_acquire();
+    if (lane < header_words && word < reinterpret_cast<uintptr_t>(end)) {
+      // Lets `memcpy_async` select the global-to-shared copy at compile time instead of checking
+      // both address spaces at run time.
+      __builtin_assume(__isShared(staged + lane));
+      __builtin_assume(__isGlobal(reinterpret_cast<void const*>(word)));
+      cuda::memcpy_async(staged + lane,
+                         reinterpret_cast<uint64_t const*>(word),
+                         cuda::aligned_size_t<word_bytes>{word_bytes},
+                         pipe);
+    }
+    pipe.producer_commit();
+  }
+
+  /**
+   * @brief Parses the header of the block starting at `p` and stages the next block's header.
+   */
+  __device__ __forceinline__ void enter_block(uint8_t const* p, warp_tile const& warp)
+  {
+    bool const from_staged = staged_at == p;
+    uint32_t len           = 0;
+    uint64_t lo            = 0;
+    uint64_t hi            = 0;
+    if (from_staged) {
+      wait_staged();
+      warp.sync();
+      auto const aligned  = aligned_word(p);
+      auto const page_end = reinterpret_cast<uintptr_t>(end);
+      uint64_t w[header_words];
+#pragma unroll
+      for (uint32_t i = 0; i < header_words; ++i) {
+        auto const word = aligned + word_bytes * i;
+        w[i]            = word < page_end ? clear_past_end(staged[i], word, page_end) : 0;
+      }
+      // The `header_bytes` bytes starting at p; bytes past the end of the page read as zero, like
+      // the bounded byte loads of the fallback.
+      auto const shift =
+        static_cast<uint32_t>(reinterpret_cast<uintptr_t>(p) - aligned) * byte_bits;
+      lo = extract64(w[0], w[1], shift);
+      hi = extract64(w[1], w[2], shift);
+      // The varint ends at the first byte without the continuation bit.
+      constexpr uint64_t continuation_bits = 0x8080'8080'8080'8080ull;
+      uint64_t const stop_lo               = ~lo & continuation_bits;
+      uint64_t const stop_hi               = ~hi & continuation_bits;
+      len                                  = stop_lo != 0
+                                               ? stop_byte_count(stop_lo)
+                                               : (stop_hi != 0 ? word_bytes + stop_byte_count(stop_hi) : header_bytes + 1);
+    }
+    bool const fits = from_staged && mini_block_count <= max_packed_widths &&
+                      len <= max_varint_bytes && len + mini_block_count <= header_bytes;
+    if (fits) {
+      uint64_t v = 0;
+#pragma unroll
+      for (uint32_t i = 0; i < max_varint_bytes; ++i) {
+        uint64_t const byte =
+          (i < word_bytes ? lo >> (byte_bits * i) : hi >> (byte_bits * (i - word_bytes))) & 0x7f;
+        if (i < len) { v |= byte << (7 * i); }
+      }
+      min_delta = static_cast<zigzag128_t>((v >> 1u) ^ -static_cast<zigzag128_t>(v & 1));
+      // The bit widths are the bytes following the varint; 1 <= len <= 10.
+      uint64_t const widths_lo = len < word_bytes ? lo >> (byte_bits * len) : 0;
+      uint64_t const widths_hi = len < word_bytes ? hi << (word_bits - byte_bits * len)
+                                                  : hi >> (byte_bits * (len - word_bytes));
+      packed_widths            = widths_lo | widths_hi;
+      if (mini_block_count < max_packed_widths) {
+        packed_widths &= (uint64_t{1} << (byte_bits * mini_block_count)) - 1;
+      }
+      packed   = true;
+      mb_start = p + len + mini_block_count;
+    } else {
+      min_delta = get_zz128(p, end);
+      widths    = p;
+      packed    = false;
+      mb_start  = p + mini_block_count;
+    }
+    mb   = 0;
+    pass = 0;
+    set_bits(0);
+
+    // Stage the header of the following block.
+    uint32_t width_sum = 0;
+    if (packed) {
+      // Byte-wise sums of the two halves of the packed widths
+      width_sum = __dp4a(static_cast<uint32_t>(packed_widths), 0x0101'0101u, 0u);
+      width_sum = __dp4a(static_cast<uint32_t>(packed_widths >> 32), 0x0101'0101u, width_sum);
+    } else {
+      for (uint32_t m = 0; m < mini_block_count; ++m) {
+        width_sum += width(m);
+      }
+    }
+    auto const* next =
+      mb_start + static_cast<size_t>(width_sum) * passes_per_mb * pass_bytes_per_bit;
+    if (next >= mb_start && next < end) {
+      stage_header(next, warp);
+    } else {
+      staged_at = nullptr;
+    }
+  }
+
+  /**
+   * @brief Moves to the next 32-value pass.
+   */
+  __device__ __forceinline__ void advance(warp_tile const& warp)
+  {
+    if (++pass == passes_per_mb) {
+      pass = 0;
+      mb_start += static_cast<size_t>(bits) * passes_per_mb * pass_bytes_per_bit;
+      if (++mb == mini_block_count) {
+        enter_block(mb_start, warp);
+      } else {
+        set_bits(mb);
+      }
+    }
+  }
+
+  /**
+   * @brief Returns the packed data of the current pass.
+   */
+  [[nodiscard]] __device__ __forceinline__ uint8_t const* pass_start() const
+  {
+    return mb_start + pass * bits * pass_bytes_per_bit;
+  }
+};
+
+/**
+ * @brief Packed input of one lane for one tile.
+ */
+struct tile_input {
+  uint64_t words[words_per_lane];  ///< Aligned words covering this lane's bits
+  zigzag128_t min_delta;
+  uint32_t bits;
+  uint32_t shift;  ///< Bit offset of the lane's first value within `words[0]`
+};
+
+/**
+ * @brief Walks the (up to) four passes of the tile at the walker's position and loads this lane's
+ * packed input.
+ *
+ * Leaves the walker at the first pass of the following tile when there is one.
+ */
+__device__ __forceinline__ tile_input load_tile(walker& wk,
+                                                uint32_t remaining,
+                                                warp_tile const& warp)
+{
+  uint32_t const lane    = warp.thread_rank();
+  uint32_t const my_pass = lane / lanes_per_pass;
+  uint8_t const* start   = wk.pass_start();
+  uint32_t bits          = wk.bits;
+  zigzag128_t min_delta  = wk.min_delta;
+#pragma unroll
+  for (uint32_t i = 1; i < items_per_lane; ++i) {
+    if (remaining > i * warp_lanes) {
+      wk.advance(warp);
+      if (my_pass == i) {
+        start     = wk.pass_start();
+        bits      = wk.bits;
+        min_delta = wk.min_delta;
+      }
+    }
+  }
+  if (remaining > tile_size) { wk.advance(warp); }
+
+  tile_input result{};
+  if (remaining > my_pass * warp_lanes) {
+    result.min_delta         = min_delta;
+    result.bits              = bits;
+    uint32_t const first_bit = (lane % lanes_per_pass) * items_per_lane * bits;
+    auto const* const first  = start + first_bit / byte_bits;
+    auto const aligned       = aligned_word(first);
+    result.shift = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(first) - aligned) * byte_bits +
+                   first_bit % byte_bits;
+    uint32_t const used_bits = result.shift + items_per_lane * bits;
+    auto const page_end      = reinterpret_cast<uintptr_t>(wk.end);
+    auto const* const src    = reinterpret_cast<uint64_t const*>(aligned);
+#pragma unroll
+    for (uint32_t i = 0; i < words_per_lane; ++i) {
+      bool const needed =
+        bits != 0 && i * word_bits < used_bits && aligned + word_bytes * i < page_end;
+      result.words[i] = needed ? src[i] : 0;
+    }
+    if (aligned + word_bytes * words_per_lane > page_end) {
+#pragma unroll
+      for (uint32_t i = 0; i < words_per_lane; ++i) {
+        result.words[i] = clear_past_end(result.words[i], aligned + word_bytes * i, page_end);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * @brief Unpacks the `Item`-th value of a lane from its tile input.
+ */
+template <uint32_t Item>
+__device__ __forceinline__ uint64_t unpack(tile_input const& in)
+{
+  // shift < 64 and bits <= 64, so item k starts in word k or earlier.
+  uint32_t const bit = in.shift + Item * in.bits;
+  uint32_t const idx = bit / word_bits;
+  uint64_t const lo  = select_word<Item + 1>(in.words, idx);
+  uint64_t hi;
+  if constexpr (Item == 0) {
+    hi = in.words[1];
+  } else {
+    uint64_t const upper[words_per_lane - 1] = {in.words[1], in.words[2], in.words[3], in.words[4]};
+    hi                                       = select_word<Item + 1>(upper, idx);
+  }
+  uint64_t const mask = in.bits < word_bits ? (uint64_t{1} << in.bits) - 1 : ~uint64_t{0};
+  return extract64(lo, hi, bit % word_bits) & mask;
+}
+
+/**
+ * @brief Decodes the values of one DELTA_BINARY_PACKED page.
+ *
+ * Called by every lane of one warp. The values go to `consumer`, whose members are also called by
+ * every lane together, so they may use warp collectives. `value_limit` below is the header's value
+ * count capped at `nz_count`; ordinal 0 is the page's first value, and the remaining ordinals
+ * arrive in tiles of `tile_size` starting at ordinal 1.
+ *
+ * - `place_first(uint64_t value, uint32_t value_limit)`: ordinal 0, when `value_limit > 0`
+ * - `prefetch(uint32_t tile_start, uint32_t value_limit)`: the tile after the one about to be
+ *   placed, called while that tile's packed input is loaded
+ * - `next_tile()`: the most recently prefetched tile becomes the one to place
+ * - `place(uint32_t tile_start, uint64_t const (&values)[items_per_lane], uint32_t value_limit)`:
+ *   `values[item]` holds ordinal `tile_start + item * 32 + lane`, valid below `value_limit`
+ *
+ * @tparam Consumer Type of `consumer`
+ *
+ * @param warp The decoding warp
+ * @param data Start of the DELTA_BINARY_PACKED stream
+ * @param end End of the page data
+ * @param nz_count Number of values to decode
+ * @param storage Shared memory for this warp
+ * @param consumer Receives the decoded values
+ * @return 0, `DELTA_PARAMS_UNSUPPORTED` if the page header or a mini-block bit width is invalid,
+ * or `DATA_STREAM_OVERRUN` if the page holds fewer than `nz_count` values
+ */
+template <typename Consumer>
+__device__ kernel_error::value_type decode_page(warp_tile const& warp,
+                                                uint8_t const* data,
+                                                uint8_t const* end,
+                                                uint32_t nz_count,
+                                                shared_storage& storage,
+                                                Consumer& consumer)
+{
+  uint32_t const lane = warp.thread_rank();
+
+  auto const* p                 = data;
+  auto const block_size         = get_uleb128(p, end);
+  auto const mini_block_count   = get_uleb128(p, end);
+  auto const value_count        = get_uleb128(p, end);
+  zigzag128_t const first_value = get_zz128(p, end);
+  if (mini_block_count == 0 or block_size == 0 or (block_size % mini_block_count) != 0 or
+      ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
+    return static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED);
+  }
+  walker wk{end,
+            storage.header,
+            static_cast<uint32_t>(mini_block_count),
+            static_cast<uint32_t>((block_size / mini_block_count) / warp_lanes)};
+  uint32_t const value_limit = cuda::std::min(nz_count, static_cast<uint32_t>(value_count));
+  consumer.place_first(static_cast<uint64_t>(first_value), value_limit);
+  uint32_t position = cuda::std::min(value_limit, uint32_t{1});
+  uint64_t carry    = static_cast<uint64_t>(first_value);
+
+  // Prefetch the page into L2 in bursts ahead of the read position.
+  uintptr_t prefetched = reinterpret_cast<uintptr_t>(p) & ~uintptr_t{cache_line_bytes - 1};
+  auto const page_end  = reinterpret_cast<uintptr_t>(end);
+  auto prefetch_burst  = [&]() {
+#pragma unroll
+    for (uint32_t k = 0; k < prefetch_window / (cache_line_bytes * warp_lanes); ++k) {
+      auto const line = prefetched + (k * warp_lanes + lane) * cache_line_bytes;
+      if (line < page_end) {
+        // Page data is in global memory; this drops the run-time address space check.
+        __builtin_assume(__isGlobal(reinterpret_cast<void const*>(line)));
+        cuda::apply_access_property(
+          reinterpret_cast<void const*>(line), cache_line_bytes, cuda::access_property::normal{});
+      }
+    }
+    prefetched += prefetch_window;
+  };
+
+  tile_input current{};
+  if (position < value_limit) {
+    prefetch_burst();
+    wk.stage_header(p, warp);
+    wk.enter_block(p, warp);
+    current = load_tile(wk, value_limit - position, warp);
+    consumer.prefetch(position, value_limit);
+  }
+  while (position < value_limit) {
+    if (reinterpret_cast<uintptr_t>(wk.mb_start) + prefetch_window / 2 > prefetched &&
+        prefetched < page_end) {
+      prefetch_burst();
+    }
+    uint32_t const remaining     = value_limit - position;
+    uint32_t const next_position = position + cuda::std::min(uint32_t{tile_size}, remaining);
+    consumer.next_tile();
+    tile_input next{};
+    if (next_position < value_limit) {
+      next = load_tile(wk, value_limit - next_position, warp);
+      consumer.prefetch(next_position, value_limit);
+    }
+
+    uint64_t values[items_per_lane];
+    values[0] = unpack<0>(current);
+    values[1] = unpack<1>(current);
+    values[2] = unpack<2>(current);
+    values[3] = unpack<3>(current);
+#pragma unroll
+    for (uint32_t item = 0; item < items_per_lane; ++item) {
+      // Inactive entries must be zero, including their minimum-delta contribution.
+      values[item] = lane * items_per_lane + item < remaining
+                       ? values[item] + static_cast<uint64_t>(current.min_delta)
+                       : uint64_t{0};
+    }
+#pragma unroll
+    for (uint32_t item = 1; item < items_per_lane; ++item) {
+      values[item] += values[item - 1];
+    }
+    uint64_t const lane_total = values[items_per_lane - 1];
+    uint64_t const prefix     = cg::inclusive_scan(warp, lane_total, cg::plus<uint64_t>{});
+    uint64_t const tile_total = warp.shfl(prefix, warp_lanes - 1);
+    uint64_t const offset     = carry + prefix - lane_total;
+    carry += tile_total;
+#pragma unroll
+    for (uint32_t item = 0; item < items_per_lane; ++item) {
+      values[item] += offset;
+    }
+    // The values are blocked; transpose them once for coalesced output stores.
+    exchange_type(storage.exchange).BlockedToStriped(values, values);
+    consumer.place(position, values, value_limit);
+    // The next tile's exchange reuses the storage.
+    warp.sync();
+    position = next_position;
+    current  = next;
+  }
+  // An in-flight header copy must land before the block's shared memory is released.
+  wk.wait_staged();
+  if (wk.error) {
+    return static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED);
+  }
+  if (position < nz_count) {
+    return static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
+  }
+  return 0;
+}
+
+/**
+ * @brief `decode_page` consumer that writes ordinal `i` to `output[i - skip]`.
+ */
+struct direct_output {
+  int64_t* output;  ///< Output of ordinal `skip`
+  uint32_t skip;    ///< Leading ordinals to drop
+  uint32_t lane;
+
+  __device__ __forceinline__ void place_first(uint64_t value, uint32_t value_limit) const
+  {
+    if (lane == 0 && value_limit > 0 && skip == 0) { output[0] = static_cast<int64_t>(value); }
+  }
+
+  __device__ __forceinline__ void prefetch(uint32_t, uint32_t) const {}
+
+  __device__ __forceinline__ void next_tile() const {}
+
+  __device__ __forceinline__ void place(uint32_t tile_start,
+                                        uint64_t const (&values)[items_per_lane],
+                                        uint32_t value_limit) const
+  {
+#pragma unroll
+    for (uint32_t item = 0; item < items_per_lane; ++item) {
+      uint32_t const ordinal = tile_start + item * warp_lanes + lane;
+      if (ordinal < value_limit && ordinal >= skip) {
+        output[ordinal - skip] = static_cast<int64_t>(values[item]);
+      }
+    }
+  }
+};
+
+/**
+ * @brief Stores the low `Width` bytes of `value` at `dst`; a `Width` of 0 takes the width from
+ * `dtype_len` at run time.
+ */
+template <uint32_t Width>
+__device__ __forceinline__ void store_value(uint8_t* dst, uint32_t dtype_len, uint64_t value)
+{
+  switch (Width != 0 ? Width : dtype_len) {
+    case 1: *reinterpret_cast<int8_t*>(dst) = static_cast<int8_t>(value); break;
+    case 2: *reinterpret_cast<int16_t*>(dst) = static_cast<int16_t>(value); break;
+    case 4: *reinterpret_cast<int32_t*>(dst) = static_cast<int32_t>(value); break;
+    case 8: *reinterpret_cast<int64_t*>(dst) = static_cast<int64_t>(value); break;
+    default: break;
+  }
+}
+
+/**
+ * @brief `decode_page` consumer that places ordinals through the nz map's rank map and, when
+ * `fill_nulls` is set, zero-fills the null rows between them.
+ *
+ * The rank map entries of a tile are loaded one tile ahead, while the decoder loads that tile's
+ * packed input, so the stores do not wait on them. The first row of the null gap before an
+ * ordinal follows the previous ordinal's row, which a neighboring lane already holds.
+ *
+ * @tparam Width Output width in bytes, or 0 to switch on `dtype_len` at run time
+ */
+template <uint32_t Width>
+struct rank_map_output {
+  warp_tile warp;
+  uint8_t* data_out;       ///< Output of row `first_row`
+  uint32_t const* nz_idx;  ///< Rank map, or null when each ordinal is its own row
+  uint32_t dtype_len;
+  int32_t first_row;  ///< First row the page outputs
+  int32_t row_end;    ///< One past the last row the page outputs
+  bool fill_nulls;
+  int32_t rows[items_per_lane]{};       ///< Rows of the tile being placed, striped like the values
+  int32_t next_rows[items_per_lane]{};  ///< Rows of the prefetched tile
+  int32_t last_row{};                   ///< Row of the ordinal before the tile being placed
+
+  [[nodiscard]] __device__ __forceinline__ int32_t row_of(uint32_t ordinal) const
+  {
+    return nz_idx != nullptr ? static_cast<int32_t>(nz_idx[ordinal])
+                             : static_cast<int32_t>(ordinal);
+  }
+
+  __device__ __forceinline__ void store(int32_t row, uint64_t value) const
+  {
+    store_value<Width>(
+      data_out + static_cast<int64_t>(row - first_row) * (Width != 0 ? Width : dtype_len),
+      dtype_len,
+      value);
+  }
+
+  /**
+   * @brief Places one ordinal per active lane and, when `fill_nulls` is set, fills the null rows
+   * between the previous value and it.
+   *
+   * Short gaps are filled by the lane that owns the ordinal, long ones by the whole warp.
+   */
+  __device__ __forceinline__ void place_one(uint64_t value,
+                                            bool active,
+                                            int32_t row,
+                                            int32_t gap_lo) const
+  {
+    if (active && row >= first_row) { store(row, value); }
+    if (!fill_nulls) { return; }
+    constexpr int32_t short_gap = 8;
+    // The gap's rows that this page outputs
+    int32_t lo = active ? cuda::std::max(gap_lo, first_row) : 0;
+    int32_t hi = active ? cuda::std::min(row, row_end) : 0;
+    if (hi - lo <= short_gap) {
+      for (auto r = lo; r < hi; ++r) {
+        store(r, 0);
+      }
+      lo = hi;
+    }
+    auto const lane = static_cast<int32_t>(warp.thread_rank());
+    for (uint32_t pending = warp.ballot(hi > lo); pending != 0; pending &= pending - 1) {
+      auto const owner     = static_cast<uint32_t>(cuda::std::countr_zero(pending));
+      auto const gap_start = warp.shfl(lo, owner);
+      auto const gap_end   = warp.shfl(hi, owner);
+      for (auto r = gap_start + lane; r < gap_end; r += warp_tile::num_threads()) {
+        store(r, 0);
+      }
+    }
+  }
+
+  __device__ __forceinline__ void place_first(uint64_t value, uint32_t value_limit)
+  {
+    last_row = value_limit > 0 ? row_of(0) : 0;
+    place_one(value, warp.thread_rank() == 0 && value_limit > 0, last_row, 0);
+  }
+
+  __device__ __forceinline__ void prefetch(uint32_t tile_start, uint32_t value_limit)
+  {
+#pragma unroll
+    for (uint32_t item = 0; item < items_per_lane; ++item) {
+      uint32_t const ordinal = tile_start + item * warp_lanes + warp.thread_rank();
+      next_rows[item]        = ordinal < value_limit ? row_of(ordinal) : 0;
+    }
+  }
+
+  __device__ __forceinline__ void next_tile()
+  {
+#pragma unroll
+    for (uint32_t item = 0; item < items_per_lane; ++item) {
+      rows[item] = next_rows[item];
+    }
+  }
+
+  __device__ __forceinline__ void place(uint32_t tile_start,
+                                        uint64_t const (&values)[items_per_lane],
+                                        uint32_t value_limit)
+  {
+    uint32_t const lane = warp.thread_rank();
+    // Row of each ordinal's predecessor: the same item on the previous lane, the previous item on
+    // the last lane, or, for the tile's first ordinal, the last row of the previous (full) tile.
+    // Only the null fill reads them.
+    int32_t previous[items_per_lane]{};
+    if (fill_nulls) {
+#pragma unroll
+      for (uint32_t item = 0; item < items_per_lane; ++item) {
+        auto const from_lane_below = warp.shfl_up(rows[item], 1);
+        auto const from_last_lane =
+          item == 0 ? last_row : warp.shfl(rows[item - 1], warp_lanes - 1);
+        previous[item] = lane == 0 ? from_last_lane : from_lane_below;
+      }
+      last_row = warp.shfl(rows[items_per_lane - 1], warp_lanes - 1);
+    }
+#pragma unroll
+    for (uint32_t item = 0; item < items_per_lane; ++item) {
+      uint32_t const ordinal = tile_start + item * warp_lanes + lane;
+      place_one(values[item], ordinal < value_limit, rows[item], previous[item] + 1);
+    }
+  }
+
+  /**
+   * @brief When `fill_nulls` is set, zero-fills the null rows after the page's last value.
+   *
+   * @param nz_count Number of valid values in the page, all of them placed
+   */
+  __device__ __forceinline__ void fill_tail(uint32_t nz_count) const
+  {
+    if (!fill_nulls) { return; }
+    auto const start =
+      nz_count > 0 ? cuda::std::max(row_of(nz_count - 1) + 1, first_row) : first_row;
+    for (auto row = start + static_cast<int32_t>(warp.thread_rank()); row < row_end;
+         row += warp_tile::num_threads()) {
+      store(row, 0);
+    }
+  }
+};
+
+}  // namespace nz_register_delta
+
+/**
+ * @brief Returns whether a mapped page is decoded by the no-null path: required, flat INT64
+ * columns, whose rank map is the identity and whose output is eight bytes wide.
+ *
+ * Optional columns and all other physical types take the general path.
+ */
+CUDF_HOST_DEVICE inline bool takes_no_null_path(PageInfo const& page, ColumnChunkDesc const& chunk)
+{
+  return BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0 &&
+         chunk.physical_type == Type::INT64 && chunk.max_level[level_type::DEFINITION] == 0 &&
+         chunk.max_level[level_type::REPETITION] == 0 && chunk.max_nesting_depth == 1;
+}
+
+/**
+ * @brief Decodes a page `takes_no_null_path` accepts, writing its values straight to the output.
+ */
+__device__ __forceinline__ void decode_required_page(nz_register_delta::warp_tile const& warp,
+                                                     PageInfo& page,
+                                                     ColumnChunkDesc const& chunk,
+                                                     size_t min_row,
+                                                     size_t num_rows,
+                                                     nz_register_delta::shared_storage& storage,
+                                                     kernel_error::pointer error_code)
+{
+  cg::invoke_one(warp, [&] {
+    page.nesting_decode[0].null_count  = 0;
+    page.nesting_decode[0].valid_count = 0;
+    page.nesting_decode[0].value_count = 0;
+  });
+  if (!page_has_rows_to_process(page, chunk.start_row, min_row, num_rows, false)) { return; }
+  size_t const page_start = chunk.start_row + page.chunk_row;
+  auto const skip         = static_cast<uint32_t>(page_start < min_row ? min_row - page_start : 0);
+  auto* const output      = static_cast<int64_t*>(chunk.column_data_base[0]) +
+                       (page_start >= min_row ? page_start - min_row : 0);
+  auto const nz_count       = page.nz_map->nz_count;
+  int64_t const level_bytes = (page.flags & PAGEINFO_FLAGS_V2)
+                                ? static_cast<int64_t>(page.lvl_bytes[level_type::DEFINITION]) +
+                                    page.lvl_bytes[level_type::REPETITION]
+                                : 0;
+  auto error = static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
+  if (nz_count >= 0 && nz_count <= page.num_input_values && level_bytes >= 0 &&
+      level_bytes <= page.uncompressed_page_size) {
+    nz_register_delta::direct_output consumer{output, skip, warp.thread_rank()};
+    error = nz_register_delta::decode_page(warp,
+                                           page.page_data + level_bytes,
+                                           page.page_data + page.uncompressed_page_size,
+                                           static_cast<uint32_t>(nz_count),
+                                           storage,
+                                           consumer);
+  }
+  if (error != 0) {
+    cg::invoke_one(warp, [&] { set_error(error, error_code); });
+  }
+}
+
+/**
+ * @brief Decodes a mapped page through its rank map.
+ */
+__device__ __forceinline__ void decode_mapped_page(nz_register_delta::warp_tile const& warp,
+                                                   PageInfo* page,
+                                                   device_span<ColumnChunkDesc const> chunks,
+                                                   size_t min_row,
+                                                   size_t num_rows,
+                                                   nz_register_delta::shared_storage& storage,
+                                                   kernel_error::pointer error_code)
+{
   __shared__ __align__(16) full_page_decode_state state_g;
+  auto* const s    = &state_g;
+  auto const block = cg::this_thread_block();
 
-  auto* const s      = &state_g;
-  int const page_idx = cg::this_grid().block_rank();
-  auto const block   = cg::this_thread_block();
-  auto const warp    = cg::tiled_partition<cudf::detail::warp_size>(block);
-  auto* const db     = &db_state;
-
-  if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
-  // Pages with a map are decoded here; the level-decoding kernel takes the rest.
-  if (not pages[page_idx].has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
-
-  [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
+  [[maybe_unused]] null_count_back_copier _{s, static_cast<int32_t>(block.thread_rank())};
   if (!setup_local_page_info(s,
-                             &pages[page_idx],
+                             page,
                              chunks,
                              min_row,
                              num_rows,
@@ -581,126 +1344,91 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
   }
 
   bool const process_nulls = should_process_nulls(s);
-  auto* const pp           = &pages[page_idx];
-  auto const* const nz_idx = pp->nz_map->nz_idx;
-  int const nz_count_in    = pp->nz_map->nz_count;
+  auto const* const nz_idx = page->nz_map->nz_idx;
+  auto const nz_count      = page->nz_map->nz_count;
 
   auto& ni = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
   cg::invoke_one(block, [&] {
-    ni.null_count =
-      process_nulls ? nz_map_null_count(nz_idx, nz_count_in, s->setup.first_row, s->setup.num_rows)
-                    : 0;
-    s->progress.nz_count = nz_count_in;
+    ni.null_count = process_nulls
+                      ? nz_map_null_count(nz_idx, nz_count, s->setup.first_row, s->setup.num_rows)
+                      : 0;
   });
   block.sync();
 
-  cg::invoke_one(block, [&] { db->init_binary_block(s->stream.data_start, s->stream.data_end); });
-  block.sync();
-  if (db->error) {
-    cg::invoke_one(block, [&] {
-      set_error(static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED),
-                error_code);
-    });
-    return;
-  }
-
-  // Reject the page if it needs more values than the stream declares. The decoder's cursor moves a
-  // mini-block at a time and can pass the end of a short stream, so the writer below would read
-  // buffer slots this page never wrote. `nz_count` counts from the start of the page, so it is the
-  // number of values the read needs.
-  if (static_cast<uleb128_t>(nz_count_in) > db->value_count) {
-    cg::invoke_one(block, [&] {
-      set_error(static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN),
-                error_code);
-    });
-    return;
-  }
-
-  // `setup_local_page_info` zeroes `skipped_leaf_values` for a page without repetition, and the
-  // classifier selects only such pages, so there is no resume to handle here. The decode index is
-  // the rank itself: `nz_count` counts from page position 0, so it already spans any prefix below
-  // `first_row`.
-  uint32_t const batch_size = min(db->values_per_mb, static_cast<uint32_t>(delta_max_batch_size));
-  uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
-
-  // This is a two-warp version of delta binary decoding using a delta producer warp and a value
-  // writer warp. The writer trails the producer by one batch to allow the two to run concurrently
-  // in a single phase. `next_pass_start_idx()` is the first stream index the producer has not
-  // decoded yet. Every index below it is decoded, and is still resident because
-  // `delta_rolling_buf_size` holds two batches, the one in flight plus the one trailing. Reading
-  // `next_pass_start_idx()` only at the barrier keeps the concurrent region free of any access to
-  // the decoder's mutable scalars. `value_at()` touches `value[]` and `first_value`, and the
-  // producer writes neither below that index.
-  //
-  // `data_out`, `dtype_len` and `first_row` are read into locals once, before the loop, rather than
-  // from `ni`, `s->output_cvt` and `s->setup` inside it. The compiler cannot rule out the store
-  // through `data_out` aliasing that shared state, so it would otherwise reload all three for every
-  // value.
-  auto* const data_out = ni.data_out;
-  auto const dtype_len = s->output_cvt.dtype_len;
-  auto const first_row = s->setup.first_row;
-  uint32_t produced    = db->next_pass_start_idx();
-  while (s->setup.error == 0 && s->progress.src_pos < s->progress.nz_count) {
-    uint32_t const src_pos = s->progress.src_pos;
-    // Capped at one batch past `src_pos`: the rolling buffer holds two batches, so a writer more
-    // than one batch behind would read slots the producer has overwritten.
-    uint32_t const target_pos =
-      min(static_cast<uint32_t>(s->progress.nz_count), min(produced, src_pos + batch_size));
-    block.sync();
-
-    if (warp.meta_group_rank() == 0) {
-      for (uint32_t i = 0; i < passes_per_batch; ++i) {
-        if (i > 0) { warp.sync(); }
-        db->decode_next_pass(warp);
-      }
-    } else if (warp.meta_group_rank() == 1 && src_pos < target_pos) {
-      for (uint32_t sp = src_pos + warp.thread_rank(); sp < target_pos; sp += warp.size()) {
-        auto dst_pos = process_nulls ? static_cast<int32_t>(nz_idx[sp]) : static_cast<int32_t>(sp);
-        dst_pos -= first_row;
-        if (dst_pos >= 0) {
-          void* const dst = data_out + dst_pos * dtype_len;
-          auto const val  = db->value_at(sp);
-          switch (dtype_len) {
-            case 1: *static_cast<int8_t*>(dst) = val; break;
-            case 2: *static_cast<int16_t*>(dst) = val; break;
-            case 4: *static_cast<int32_t*>(dst) = val; break;
-            case 8: *static_cast<int64_t*>(dst) = val; break;
-          }
-        }
-      }
-      if (warp.thread_rank() == 0) { s->progress.src_pos = target_pos; }
+  auto error = static_cast<kernel_error::value_type>(s->setup.error);
+  if (error == 0) {
+    auto const dtype_len = static_cast<uint32_t>(s->output_cvt.dtype_len);
+    auto const first_row = s->setup.first_row;
+    // Zero the null slots as the values are placed, like the fixed-width decoder does after
+    // decoding. Writing every row of the range turns the partial-sector stores of a sparse rank
+    // map into full-sector ones. On mostly-null pages the extra zero stores cost more than they
+    // save, so those leave the null slots untouched.
+    bool const fill_nulls = process_nulls && 4 * static_cast<int64_t>(nz_count) >= page->num_rows;
+    // Resolve the common output widths at compile time.
+    auto decode = [&]<uint32_t Width>() {
+      nz_register_delta::rank_map_output<Width> consumer{warp,
+                                                         ni.data_out,
+                                                         process_nulls ? nz_idx : nullptr,
+                                                         dtype_len,
+                                                         first_row,
+                                                         first_row + s->setup.num_rows,
+                                                         fill_nulls};
+      auto const result = nz_register_delta::decode_page(warp,
+                                                         s->stream.data_start,
+                                                         s->stream.data_end,
+                                                         static_cast<uint32_t>(nz_count),
+                                                         storage,
+                                                         consumer);
+      if (result == 0) { consumer.fill_tail(static_cast<uint32_t>(nz_count)); }
+      return result;
+    };
+    switch (dtype_len) {
+      case 8: error = decode.template operator()<8>(); break;
+      case 4: error = decode.template operator()<4>(); break;
+      default: error = decode.template operator()<0>(); break;
     }
-    block.sync();
-
-    // Stop once neither warp advances: a malformed page whose delta stream is shorter than its
-    // definition levels imply never reaches `nz_count`.
-    //
-    // Both halves are needed: the producer finishes first and the writer still has a batch to
-    // drain, and on the first iteration the writer has not run at all.
-    uint32_t const prev_produced = produced;
-    produced                     = db->next_pass_start_idx();
-    if (produced == prev_produced && s->progress.src_pos <= src_pos) { break; }
   }
+  if (error != 0) {
+    cg::invoke_one(warp, [&] { set_error(error, error_code); });
+  }
+}
 
-  // The loop's barrier is inside its body, so a straggler may still be evaluating the loop
-  // condition -- which reads s->progress.nz_count -- when a later write lands on that field.
-  block.sync();
+/**
+ * @brief Decodes flat DELTA_BINARY_PACKED pages, like `decode_delta_binary_kernel`, but places
+ * values using the nz map's rank map instead of decoding definition levels itself.
+ *
+ * One warp decodes each page with `nz_register_delta::decode_page`. The launch bounds ask for
+ * only one resident block per SM, so the compiler does not limit registers to raise occupancy.
+ *
+ * @tparam NoNulls Whether to decode the pages `takes_no_null_path` accepts, or the remaining mapped
+ * pages
+ */
+template <bool NoNulls>
+CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1)
+  decode_delta_binary_kernel_with_nz_map(PageInfo* pages,
+                                         device_span<ColumnChunkDesc const> chunks,
+                                         size_t min_row,
+                                         size_t num_rows,
+                                         cudf::device_span<bool const> page_mask,
+                                         kernel_error::pointer error_code)
+{
+  __shared__ nz_register_delta::shared_storage decode_storage;
 
-  // Report DELTA_PARAMS_UNSUPPORTED if `check_mini_block` rejected a mini-block mid-decode.
-  // Otherwise, values still outstanding means the loop stopped above rather than finishing: the
-  // delta stream held fewer values than the definition levels call for. Those rows are already
-  // marked valid, so without an error the read would return whatever their output slots happened
-  // to contain.
-  cg::invoke_one(block, [&] {
-    if (s->setup.error == 0 and db->error) {
-      s->setup.error |=
-        static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED);
-    } else if (s->setup.error == 0 and s->progress.src_pos < s->progress.nz_count) {
-      s->setup.error |= static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
-    }
-  });
+  auto const warp     = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
+  auto const page_idx = cg::this_grid().block_rank();
 
-  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
+  if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
+  auto& page = pages[page_idx];
+  // Pages with a map are decoded here; the level-decoding kernel takes the rest.
+  if (!page.has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
+  auto const& chunk = chunks[page.chunk_idx];
+  if (takes_no_null_path(page, chunk) != NoNulls) { return; }
+
+  if constexpr (NoNulls) {
+    decode_required_page(warp, page, chunk, min_row, num_rows, decode_storage, error_code);
+  } else {
+    decode_mapped_page(warp, &page, chunks, min_row, num_rows, decode_storage, error_code);
+  }
 }
 
 // Decode page data that is DELTA_BYTE_ARRAY packed. This encoding consists of a DELTA_BINARY_PACKED
@@ -1267,9 +1995,12 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   uint32_t const passes_per_batch = batch_size / cudf::detail::warp_size;
 
   {
-    // The same producer/writer pipeline as `decode_delta_binary_kernel_with_nz_map`: warp 0 decodes
-    // a batch of lengths into the decoder's rolling buffer while warp 1 writes the batch before it.
-    // The other warps only join the barriers here; they take part in the copy below.
+    // A producer/writer pipeline: warp 0 decodes a batch of lengths into the decoder's rolling
+    // buffer while warp 1 writes the batch before it. `next_pass_start_idx()` is the first index
+    // the producer has not decoded yet; every index below it is still resident because the rolling
+    // buffer holds two batches, the one in flight and the one trailing. Reading it only at the
+    // barrier keeps the concurrent region free of the decoder's mutable scalars. The other warps
+    // only join the barriers here; they take part in the copy below.
     //
     // `offptr` and `first_row` are read into locals once, before the loop, rather than from `ni`
     // and `s->setup` inside it. The compiler cannot rule out the store through `offptr` aliasing
@@ -1375,19 +2106,24 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
   dim3 dim_block(decode_delta_binary_block_size, 1);
   dim3 dim_grid(pages.size(), 1);  // 1 threadblock per page
   dim3 dim_block_nz_map(decode_delta_binary_with_nz_map_block_size, 1);
-  static_assert(decode_delta_binary_with_nz_map_block_size == 2 * cudf::detail::warp_size,
-                "The nz map consumer runs one producer warp and one writer warp");
 
   // `consumer_stream` is ordered after the producer by the caller. The level-decoding kernel below
   // needs no such ordering because it reads only fields set on the host.
   if (has_flat_nz_map) {
-    // Not templated on `level_t`: this kernel never reads levels.
-    decode_delta_binary_kernel_with_nz_map<<<dim_grid,
-                                             dim_block_nz_map,
-                                             0,
-                                             consumer_stream.get()>>>(
-      pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
-    CUDF_CUDA_TRY(cudaGetLastError());
+    auto const has_mapped_page = [&](bool no_null_path) {
+      return std::any_of(pages.host_begin(), pages.host_end(), [&](PageInfo const& page) {
+        return page.has_nz_map(nz_map_kind::DELTA_FLAT) &&
+               takes_no_null_path(page, chunks[page.chunk_idx]) == no_null_path;
+      });
+    };
+    auto launch = [&]<bool NoNulls>() {
+      decode_delta_binary_kernel_with_nz_map<NoNulls>
+        <<<dim_grid, dim_block_nz_map, 0, consumer_stream.get()>>>(
+          pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+      CUDF_CUDA_TRY(cudaGetLastError());
+    };
+    if (has_mapped_page(true)) { launch.template operator()<true>(); }
+    if (has_mapped_page(false)) { launch.template operator()<false>(); }
   }
 
   // Skip the launch when every DELTA_BINARY page has a map, since every block would just return.

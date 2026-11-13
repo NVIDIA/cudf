@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,28 +10,20 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
 
 namespace {
-template <typename T, typename T2 = void>
+template <typename T>
 struct rep_type_impl {
   using type = void;
 };
 
 template <typename T>
-struct rep_type_impl<T, std::enable_if_t<cudf::is_timestamp<T>()>> {
-  using type = typename T::duration::rep;
-};
-
-template <typename T>
-struct rep_type_impl<T, std::enable_if_t<cudf::is_duration<T>()>> {
-  using type = typename T::rep;
-};
-
-template <typename T>
-struct rep_type_impl<T, std::enable_if_t<cudf::is_fixed_point<T>()>> {
+  requires(cudf::concepts::chrono<T> or cudf::concepts::fixed_point<T>)
+struct rep_type_impl<T> {
   using type = typename T::rep;
 };
 

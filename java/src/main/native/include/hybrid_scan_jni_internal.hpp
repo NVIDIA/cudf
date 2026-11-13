@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace cudf {
@@ -48,11 +49,19 @@ struct hybrid_scan_reader_wrapper {
   // nullptr outside of an active chunked-filter session.
   std::unique_ptr<cudf::column> chunked_filter_row_mask;
 
-  hybrid_scan_reader_wrapper(cudf::host_span<uint8_t const> footer_bytes,
+  hybrid_scan_reader_wrapper(std::span<uint8_t const> footer_bytes,
                              cudf::io::parquet_reader_options opts)
     : options(opts),
       base_options(std::move(opts)),
       reader(std::make_unique<exp_pq::hybrid_scan_reader>(footer_bytes, options))
+  {
+  }
+
+  hybrid_scan_reader_wrapper(exp_pq::hybrid_scan_metadata const& metadata,
+                             cudf::io::parquet_reader_options opts)
+    : options(opts),
+      base_options(std::move(opts)),
+      reader(std::make_unique<exp_pq::hybrid_scan_reader>(metadata))
   {
   }
 };
@@ -74,7 +83,6 @@ struct row_group_span_holder {
  */
 cudf::io::parquet_reader_options build_options(JNIEnv* env,
                                                jobjectArray j_column_names,
-                                               jbooleanArray j_read_binary_as_string,
                                                jint time_unit_type_id);
 
 row_group_span_holder make_row_group_span(JNIEnv* env, jintArray j_row_groups);
@@ -84,6 +92,14 @@ row_group_span_holder make_row_group_span(JNIEnv* env, jintArray j_row_groups);
  *        [off0, len0, off1, len1, ...].
  */
 jlongArray ranges_to_jlong_array(JNIEnv* env, std::vector<byte_range_info> const& ranges);
+
+/**
+ * @brief Convert a vector<dictionary_byte_range> into a packed jlongArray laid out as
+ *        [off0, len0, extent0, off1, len1, extent1, ...], where each extent is a
+ *        DictionaryByteRange.Extent ordinal.
+ */
+jlongArray ranges_to_jlong_array(JNIEnv* env,
+                                 std::vector<exp_pq::dictionary_byte_range> const& ranges);
 
 jintArray sizes_to_jint_array(JNIEnv* env, std::vector<cudf::size_type> const& vals);
 

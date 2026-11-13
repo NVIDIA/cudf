@@ -12,12 +12,14 @@
 #include <cudf/copying.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <thrust/transform.h>
@@ -62,18 +64,14 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
     using InputType  = double;
     using OutputType = int64_t;
 
-    template <typename T,
-              typename U,
-              typename... Args,
-              CUDF_ENABLE_IF(!std::is_same_v<InputType, T> || !std::is_same_v<OutputType, U>)>
+    template <typename T, typename U, typename... Args>
+      requires(not cuda::std::same_as<InputType, T> or not cuda::std::same_as<OutputType, U>)
     std::unique_ptr<cudf::scalar> operator()(Args...) const
     {
       CUDF_FAIL("Unsupported input/output type.");
     }
 
-    template <typename T,
-              typename U,
-              CUDF_ENABLE_IF(std::is_same_v<InputType, T>&& std::is_same_v<OutputType, U>)>
+    template <cuda::std::same_as<InputType> T, cuda::std::same_as<OutputType> U>
     [[nodiscard]] std::unique_ptr<cudf::scalar> operator()(
       cudf::column_view const& input,
       cudf::data_type output_dtype,
@@ -205,18 +203,14 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
     using InputType  = double;
     using OutputType = int64_t;
 
-    template <typename T,
-              typename U,
-              typename... Args,
-              CUDF_ENABLE_IF(!std::is_same_v<InputType, T> || !std::is_same_v<OutputType, U>)>
+    template <typename T, typename U, typename... Args>
+      requires(not cuda::std::same_as<InputType, T> or not cuda::std::same_as<OutputType, U>)
     std::unique_ptr<cudf::column> operator()(Args...) const
     {
       CUDF_FAIL("Unsupported input/output type.");
     }
 
-    template <typename T,
-              typename U,
-              CUDF_ENABLE_IF(std::is_same_v<InputType, T>&& std::is_same_v<OutputType, U>)>
+    template <cuda::std::same_as<InputType> T, cuda::std::same_as<OutputType> U>
     std::unique_ptr<cudf::column> operator()(
       cudf::column_view const& input,
       cudf::device_span<cudf::size_type const> offsets,
@@ -252,7 +246,8 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
         output_dtype, num_segments, cudf::mask_state::UNALLOCATED, stream);
 
       // Store row index if it is valid, otherwise store a negative value denoting a null row.
-      rmm::device_uvector<cudf::size_type> valid_idx(num_segments, stream);
+      cuda::device_buffer<cudf::size_type> valid_idx(
+        stream, cudf::get_current_device_resource_ref(), num_segments, cuda::no_init);
 
       thrust::transform(
         rmm::exec_policy_nosync(stream),
@@ -261,8 +256,8 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
         cuda::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),
         transform_fn{*input_dv_ptr, offsets, static_cast<OutputType>(init_value), null_handling});
 
-      auto const valid_idx_cv = cudf::column_view{
-        cudf::data_type{cudf::type_id::INT32}, num_segments, valid_idx.begin(), nullptr, 0};
+      auto const valid_idx_cv =
+        cudf::column_view{cudf::device_span<cudf::size_type const>{valid_idx}};
       return std::move(cudf::gather(cudf::table_view{{output->view()}},
                                     valid_idx_cv,
                                     cudf::out_of_bounds_policy::NULLIFY,

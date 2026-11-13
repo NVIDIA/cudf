@@ -74,6 +74,20 @@ TYPED_TEST(TypedUniqueCount, TableNoNull)
 
 struct UniqueCount : public cudf::test::BaseFixture {};
 
+TEST_F(UniqueCount, AllNull)
+{
+  auto const input_col =
+    cudf::test::strings_column_wrapper({"", "", ""}, cudf::test::iterators::all_nulls());
+
+  EXPECT_EQ(1, cudf::unique_count(input_col, null_policy::INCLUDE, nan_policy::NAN_IS_VALID));
+  EXPECT_EQ(0, cudf::unique_count(input_col, null_policy::EXCLUDE, nan_policy::NAN_IS_VALID));
+
+  auto const single_null =
+    cudf::test::strings_column_wrapper({""}, cudf::test::iterators::all_nulls());
+  EXPECT_EQ(1, cudf::unique_count(single_null, null_policy::INCLUDE, nan_policy::NAN_IS_VALID));
+  EXPECT_EQ(0, cudf::unique_count(single_null, null_policy::EXCLUDE, nan_policy::NAN_IS_VALID));
+}
+
 TEST_F(UniqueCount, WithNull)
 {
   using T = int32_t;
@@ -224,6 +238,7 @@ TEST_F(UniqueCount, EmptyColumn)
 
   constexpr auto expected = 0;
   EXPECT_EQ(expected, cudf::unique_count(input_col, null_policy::EXCLUDE, nan_policy::NAN_IS_NULL));
+  EXPECT_EQ(expected, cudf::unique_count(input_col, null_policy::INCLUDE, nan_policy::NAN_IS_NULL));
 }
 
 TEST_F(UniqueCount, NullableLists)

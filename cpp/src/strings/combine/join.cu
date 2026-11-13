@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/is_element_valid.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -21,12 +22,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
 #include <cuda/stream>
-#include <thrust/for_each.h>
 
 namespace cudf {
 namespace strings {
@@ -124,7 +123,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
@@ -152,6 +151,14 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
     return std::move(*chars_data);
   }();
 
+  // Null rows are skipped when no narep is specified but a separator is still
+  // written after the last valid row if it is followed by only null rows.
+  // Remove this trailing separator by shrinking the output.
+  if (!narep.is_valid(stream) && input.has_nulls() && input.null_count() < input.size() &&
+      !cudf::detail::is_element_valid_sync(input.parent(), input.size() - 1, stream)) {
+    chars.resize(chars.size() - separator.size(), stream);
+  }
+
   // API returns a single output row which cannot exceed row limit(max of size_type).
   CUDF_EXPECTS(chars.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "The output exceeds the row size limit",
@@ -167,7 +174,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
     static_cast<size_type>(input.null_count() == input.size() && !narep.is_valid(stream));
   auto null_mask = null_count
                      ? cudf::detail::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr)
-                     : rmm::device_buffer{0, stream, mr};
+                     : cudf::detail::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
 
   // perhaps this return a string_scalar instead of a single-row column
   return make_strings_column(
@@ -182,7 +189,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& strings,
                                      string_scalar const& separator,
                                      string_scalar const& narep,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::join_strings(strings, separator, narep, stream, mr);

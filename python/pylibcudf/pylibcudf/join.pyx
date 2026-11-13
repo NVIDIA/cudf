@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pylibcudf.libcudf.types cimport bitmask_type
 from cython.operator import dereference
 
 from libc.stddef cimport size_t
@@ -8,12 +9,13 @@ from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.optional cimport optional
 from libcpp.utility cimport move
 from pylibcudf.libcudf cimport join as cpp_join
+from pylibcudf.libcudf cimport null_mask as cpp_null_mask
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
-from pylibcudf.libcudf.types cimport null_equality
+from pylibcudf.libcudf.types cimport mask_state, null_equality
+from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 
-from rmm.librmm.device_buffer cimport device_buffer
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -53,11 +55,19 @@ cdef Column _column_from_gather_map(
 ):
     # helper to convert a gather map to a Column
     cdef Stream _stream = _get_stream(stream)
+    cdef unique_ptr[device_buffer[bitmask_type]] mask = (
+        cpp_null_mask.create_null_mask_unique_ptr(
+            0,
+            mask_state.UNALLOCATED,
+            _stream.view().get(),
+            mr.get_mr(),
+        )
+    )
     return Column.from_libcudf(
         move(
             make_unique[column](
                 move(dereference(gather_map.get())),
-                device_buffer(),
+                move(dereference(mask)),
                 0
             )
         ), _stream, mr

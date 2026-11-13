@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/strings/detail/convert/int_to_string.cuh>
 
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/functional>
 
 namespace cudf::strings::detail {

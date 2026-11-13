@@ -10,6 +10,7 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <iterator>
@@ -58,13 +59,13 @@ auto hex(InItT it)
   return cuda::transform_iterator(it, ToTaggedType<tagged_t>{});
 }
 
-template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>&& std::is_signed_v<T>)>
+template <cuda::std::signed_integral T>
 CUDF_HOST_DEVICE void print_value(int32_t width, T arg)
 {
   printf("%*d", width, arg);
 }
 
-template <typename T, CUDF_ENABLE_IF(std::is_integral_v<T>&& std::is_unsigned_v<T>)>
+template <cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE void print_value(int32_t width, T arg)
 {
   printf("%*d", width, arg);

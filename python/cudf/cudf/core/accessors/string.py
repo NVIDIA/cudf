@@ -573,6 +573,14 @@ class StringMethods(BaseAccessor):
                 f"found {type(sep)}"
             )
 
+        if not isinstance(self._column.dtype, ListDtype):
+            # An empty string tokenizes to an empty list, which joins to
+            # null. Map those back to "", then restore the input's nulls,
+            # which were filled with "" before tokenizing.
+            data = data.fillna("")
+            if self._column.has_nulls():
+                data = data.set_mask(*self._column.notnull().as_mask())
+
         return self._return_or_inplace(data)
 
     def extract(
@@ -656,7 +664,7 @@ class StringMethods(BaseAccessor):
             for name, position in compiled.groupindex.items()
         }
         if group_names:
-            pat = re.sub(r"\(\?P<([A-Za-z_][A-Za-z0-9_]*)>", "(", pat)
+            pat = self._remove_named_capture_groups(pat)
         data = self._column.extract(pat, flags)
         if len(data) == 1 and not expand:
             return self._return_or_inplace(
@@ -672,14 +680,45 @@ class StringMethods(BaseAccessor):
 
     def _remove_named_capture_groups(self, pat: str) -> str:
         r"""
-        Removes any named capture groups from the given regex pattern.
-        Named capture groups are expected in the format "(?P<name>)" only.
-        These are unnecessary (and unexpected) by the pylibcudf for non-extract regex calls.
+        Remove named capture declarations while preserving regex literals.
+
+        libcudf expects unnamed groups and does not support named backreferences.
         """
-        to_remove = "|".join(re.compile(pat).groupindex.keys())
-        if to_remove:
-            pat = re.sub(rf"\(\?P<(?:{to_remove})>", "(", pat)
-        return pat
+        if not re.compile(pat).groupindex:
+            return pat
+
+        result = []
+        class_start = -1
+        position = 0
+        while position < len(pat):
+            char = pat[position]
+            if char == "\\":
+                result.append(pat[position : position + 2])
+                position += 2
+                continue
+            if class_start >= 0:
+                result.append(char)
+                # A closing bracket is literal first in a class, after an
+                # optional negation marker.
+                if char == "]" and position > class_start:
+                    class_start = -1
+            elif char == "[":
+                result.append(char)
+                class_start = (
+                    position + 1 + (pat[position + 1 : position + 2] == "^")
+                )
+            elif pat.startswith("(?P=", position):
+                raise NotImplementedError(
+                    "Named backreferences are not supported"
+                )
+            elif pat.startswith("(?P<", position):
+                result.append("(")
+                position = pat.index(">", position + 4) + 1
+                continue
+            else:
+                result.append(char)
+            position += 1
+        return "".join(result)
 
     def contains(
         self,
@@ -813,6 +852,10 @@ class StringMethods(BaseAccessor):
                 f"na must be None, pd.NA, np.nan, True, or False;got {na!r}"
             )
         if regex and isinstance(pat, re.Pattern):
+            if flags:
+                raise ValueError(
+                    "cannot process flags argument with a compiled pattern"
+                )
             flags = pat.flags & ~re.U
             pat = pat.pattern
         if not _is_supported_regex_flags(flags):

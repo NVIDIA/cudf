@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import re
-from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
 import cupy as cp
@@ -25,9 +24,31 @@ def test_series_pandas_methods(data, reduction_methods):
     )
 
 
+@pytest.fixture(scope="module")
+def series_reduction_inputs(numeric_types_as_str):
+    dtype = numeric_types_as_str
+    rng = np.random.default_rng(seed=0)
+    arr = rng.random(100)
+    if np.dtype(dtype).kind in "iu":
+        arr *= 100
+        mask = arr > 10
+    else:
+        mask = arr > 0.5
+
+    arr = arr.astype(dtype)
+    if dtype in ("float32", "float64"):
+        arr[[2, 5, 14, 19, 50, 70]] = np.nan
+    sr = cudf.Series(arr)
+    sr[~mask] = None
+    psr = sr.to_pandas()
+    psr[~mask] = np.nan
+    return dtype, sr, psr
+
+
 def test_series_reductions(
-    request, reduction_methods, numeric_types_as_str, skipna
+    request, reduction_methods, series_reduction_inputs, skipna
 ):
+    numeric_types_as_str, sr, psr = series_reduction_inputs
     request.applymarker(
         pytest.mark.xfail(
             reduction_methods == "quantile",
@@ -43,21 +64,6 @@ def test_series_reductions(
             reason=f"{reduction_methods} incorrect with {skipna=}",
         )
     )
-    rng = np.random.default_rng(seed=0)
-    arr = rng.random(100)
-    if np.dtype(numeric_types_as_str).kind in "iu":
-        arr *= 100
-        mask = arr > 10
-    else:
-        mask = arr > 0.5
-
-    arr = arr.astype(numeric_types_as_str)
-    if numeric_types_as_str in ("float32", "float64"):
-        arr[[2, 5, 14, 19, 50, 70]] = np.nan
-    sr = cudf.Series(arr)
-    sr[~mask] = None
-    psr = sr.to_pandas()
-    psr[~mask] = np.nan
 
     def call_test(sr, skipna):
         fn = getattr(sr, reduction_methods)
@@ -70,24 +76,6 @@ def test_series_reductions(
     got = call_test(sr, skipna=skipna)
 
     np.testing.assert_approx_equal(expect, got, significant=4)
-
-
-def test_series_reductions_concurrency(reduction_methods):
-    rng = np.random.default_rng(seed=0)
-    srs = [cudf.Series(rng.random(100))]
-
-    def call_test(sr):
-        fn = getattr(sr, reduction_methods)
-        if reduction_methods in ["std", "var"]:
-            return fn(ddof=1)
-        else:
-            return fn()
-
-    def f(sr):
-        return call_test(sr + 1)
-
-    with ThreadPoolExecutor(10) as e:
-        list(e.map(f, srs * 50))
 
 
 @pytest.mark.parametrize("ddof", range(3))

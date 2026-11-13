@@ -9,6 +9,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
 from pylibcudf.column cimport Column
+from pylibcudf.expressions cimport Expression
 from pylibcudf.io.parquet cimport ParquetReaderOptions
 from pylibcudf.io.parquet_metadata cimport FileMetaData as c_FileMetaData
 from pylibcudf.io.types cimport TableWithMetadata
@@ -33,4 +34,5 @@ cdef class HybridScanReader:
     cdef Stream _stream
     cdef DeviceMemoryResource mr
     cdef object _filter_chunk_data
+    cdef Expression _filter
     cdef object _payload_chunk_data

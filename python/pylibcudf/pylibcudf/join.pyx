@@ -3,6 +3,7 @@
 
 from pylibcudf.libcudf.types cimport bitmask_type
 from cython.operator import dereference
+from threading import current_thread
 
 from libc.stddef cimport size_t
 from libcpp.memory cimport make_unique, unique_ptr
@@ -18,8 +19,10 @@ from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport mask_state, null_equality
 from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 from pylibcudf.experimental._join_streams cimport join_streams
+from rmm.librmm.cuda_stream_ref cimport stream_ref
 
 from rmm.pylibrmm.stream cimport Stream
+from rmm.pylibrmm.stream import PER_THREAD_DEFAULT_STREAM
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -61,7 +64,10 @@ cdef class AsofJoin:
     The right keys must be sorted ascending by ``(right_by..., right_on)``
     with nulls first. This precondition is not checked. Left rows may be
     unordered. Only backward matching with exact matches is supported.
-    The right input is retained and must not be modified while in use.
+    The right input is retained and must not be modified while in use. When
+    constructed on the per-thread default stream, this object must be probed
+    and destroyed on the constructing thread. Use an explicit stream to share
+    it across threads.
     """
 
     def __cinit__(
@@ -71,13 +77,32 @@ cdef class AsofJoin:
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ) -> None:
+        """Prepare the right-side keys.
+
+        Parameters
+        ----------
+        right_by : Table
+            Equality keys. An empty table selects an ungrouped join.
+        right_on : Column
+            Ordered key.
+        stream : Stream, optional
+            Construction stream. Defaults to the configured default stream.
+        mr : DeviceMemoryResource, optional
+            Memory resource for preprocessing. Defaults to the current resource.
+        """
         self._right_by = right_by
         self._right_on = right_on
         self._stream = _get_stream(stream)
         self._mr = _get_memory_resource(mr)
+        cdef Stream ptds = PER_THREAD_DEFAULT_STREAM
+        self._ptds_thread = (
+            current_thread()
+            if self._stream.view().get() == ptds.view().get()
+            else None
+        )
         cdef table_view c_right_by = right_by.view()
         cdef column_view c_right_on = right_on.view()
-        cdef cudaStream_t _cs = self._stream.view().get()
+        cdef stream_ref _cs = self._stream.view()
         with nogil:
             self.c_obj.reset(
                 new cpp_asof_join.asof_join(
@@ -99,9 +124,30 @@ cdef class AsofJoin:
 
         Unmatched rows contain ``JoinNoMatch`` and must be gathered with
         ``OutOfBoundsPolicy.NULLIFY``.
+
+        Parameters
+        ----------
+        left_by : Table
+            Equality keys. An empty table selects an ungrouped join.
+        left_on : Column
+            Ordered key.
+        stream : Stream, optional
+            Probe stream. Defaults to the construction stream.
+        mr : DeviceMemoryResource, optional
+            Memory resource for the result. Defaults to the current resource.
+
+        Returns
+        -------
+        Column
+            Right-row indices in left-row order.
         """
+        if self._ptds_thread is not None and current_thread() is not self._ptds_thread:
+            raise RuntimeError(
+                "AsofJoin using the per-thread default stream must be probed "
+                "on its construction thread"
+            )
         cdef Stream _stream = self._stream if stream is None else _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().get()
+        cdef stream_ref _cs = _stream.view()
         mr = _get_memory_resource(mr)
         cdef table_view c_left_by = left_by.view()
         cdef column_view c_left_on = left_on.view()

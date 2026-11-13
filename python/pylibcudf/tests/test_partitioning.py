@@ -49,6 +49,77 @@ def test_hash_partition(partitioning_data, use_key_table):
     assert offsets == [0, 3]
 
 
+def _hash_partition_indices_groups(keys, num_partitions, order):
+    gather_map, offsets = plc.partitioning.hash_partition_indices(
+        keys, num_partitions, order
+    )
+    assert gather_map.type().id() == plc.TypeId.INT32
+    assert len(offsets) == num_partitions + 1
+    assert offsets[0] == 0
+    assert offsets[-1] == keys.num_rows()
+    indices = gather_map.to_arrow().to_pylist()
+    return [
+        indices[offsets[i] : offsets[i + 1]] for i in range(num_partitions)
+    ]
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        plc.partitioning.PartitionOrder.UNSTABLE,
+        plc.partitioning.PartitionOrder.STABLE,
+    ],
+)
+@pytest.mark.parametrize("num_partitions", [1, 3, 7])
+def test_hash_partition_indices(order, num_partitions):
+    pa_keys = pa.table(
+        {"a": list(range(100)), "b": [i % 7 for i in range(100)]}
+    )
+    keys = plc.Table.from_arrow(pa_keys)
+    groups = _hash_partition_indices_groups(keys, num_partitions, order)
+    assert sorted(i for g in groups for i in g) == list(range(100))
+    if order == plc.partitioning.PartitionOrder.STABLE:
+        assert all(g == sorted(g) for g in groups)
+
+    expect, expect_offsets = plc.partitioning.hash_partition(
+        keys, keys, num_partitions
+    )
+    assert [len(g) for g in groups] == [
+        expect_offsets[i + 1] - expect_offsets[i]
+        for i in range(num_partitions)
+    ]
+    expect_rows = list(
+        zip(*(c.to_pylist() for c in expect.to_arrow().columns), strict=True)
+    )
+    for i, g in enumerate(groups):
+        got = pa_keys.take(pa.array(g, pa.int32()))
+        got_rows = list(
+            zip(*(c.to_pylist() for c in got.columns), strict=True)
+        )
+        expect_part = expect_rows[expect_offsets[i] : expect_offsets[i + 1]]
+        assert sorted(got_rows) == sorted(expect_part)
+
+
+def test_hash_partition_indices_empty_input():
+    keys = plc.Table.from_arrow(pa.table({"a": pa.array([], pa.int64())}))
+    gather_map, offsets = plc.partitioning.hash_partition_indices(
+        keys, 3, plc.partitioning.PartitionOrder.STABLE
+    )
+    assert gather_map.type().id() == plc.TypeId.INT32
+    assert gather_map.size() == 0
+    assert offsets == [0, 0, 0, 0]
+
+
+def test_hash_partition_indices_zero_partitions(partitioning_data):
+    _, plc_table = partitioning_data
+    gather_map, offsets = plc.partitioning.hash_partition_indices(
+        plc_table, 0, plc.partitioning.PartitionOrder.UNSTABLE
+    )
+    assert gather_map.type().id() == plc.TypeId.INT32
+    assert gather_map.size() == 0
+    assert offsets == [0]
+
+
 def test_round_robin_partition(partitioning_data):
     raw_data, plc_table = partitioning_data
     got, offsets = plc.partitioning.round_robin_partition(plc_table, 1, 0)

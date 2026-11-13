@@ -4697,6 +4697,62 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testHashPartitionIndices() {
+    final int count = 1024 * 1024;
+    final int numParts = 5;
+    try (ColumnVector aIn = ColumnVector.build(DType.INT64, count, Range.appendLongs(count));
+         ColumnVector bIn = ColumnVector.build(DType.INT32, count, (b) -> {
+           for (int i = 0; i < count; i++) {
+             b.append(i / 2);
+           }
+         });
+         Table input = new Table(aIn, bIn)) {
+      for (boolean stable : new boolean[]{true, false}) {
+        try (HashPartitionIndices indices = input.onColumns(1).hashPartitionIndices(numParts, stable);
+             PartitionedTable expected = input.onColumns(1).hashPartition(numParts);
+             Table gathered = input.gather(indices.getGatherMap());
+             HostColumnVector mapHost = indices.getGatherMap().copyToHost();
+             HostColumnVector gatheredA = gathered.getColumn(0).copyToHost();
+             HostColumnVector expectedA = expected.getColumn(0).copyToHost()) {
+          int[] offsets = indices.getPartitionOffsets();
+          assertEquals(numParts + 1, offsets.length);
+          assertEquals(0, offsets[0]);
+          assertEquals(count, offsets[numParts]);
+          assertEquals(DType.INT32, indices.getGatherMap().getType());
+          assertEquals(count, indices.getGatherMap().getRowCount());
+          assertArrayEquals(expected.getPartitions(), offsets);
+          for (int p = 0; p < numParts; p++) {
+            HashSet<Long> expectedRows = new HashSet<>();
+            HashSet<Long> actualRows = new HashSet<>();
+            for (int i = offsets[p]; i < offsets[p + 1]; i++) {
+              expectedRows.add(expectedA.getLong(i));
+              actualRows.add(gatheredA.getLong(i));
+              if (stable && i > offsets[p]) {
+                assertTrue(mapHost.getInt(i - 1) < mapHost.getInt(i));
+              }
+            }
+            assertEquals(expectedRows, actualRows, "partition " + p);
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testHashPartitionIndicesStableSeed() {
+    try (Table input = new Table.TestBuilder()
+             .column(5, 3, 5, 1, 3, 5, null, 1, null)
+             .build();
+         HashPartitionIndices indices =
+             input.onColumns(0).hashPartitionIndices(HashType.MURMUR3, 3, true, 42);
+         PartitionedTable expected = input.onColumns(0).hashPartition(HashType.MURMUR3, 3, 42);
+         Table gathered = input.gather(indices.getGatherMap())) {
+      assertArrayEquals(expected.getPartitions(), indices.getPartitionOffsets());
+      assertTablesAreEqual(expected.getTable(), gathered);
+    }
+  }
+
+  @Test
   void testSerializationRoundTripEmpty() throws IOException {
     DataType listStringsType = new ListType(true, new BasicType(true, DType.STRING));
     DataType mapType = new ListType(true,

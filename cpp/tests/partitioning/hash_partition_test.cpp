@@ -11,10 +11,12 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/partitioning.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -23,7 +25,10 @@
 #include <cuda/devices>
 #include <cuda/iterator>
 
+#include <algorithm>
 #include <numeric>
+#include <tuple>
+#include <vector>
 
 using cudf::test::fixed_width_column_wrapper;
 using cudf::test::strings_column_wrapper;
@@ -560,6 +565,173 @@ TEST_F(HashPartition, StructofStructWithNulls)
   // Expect same result for the hashed columns
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(first_result->get_column(0).view(),
                                  second_result->get_column(0).view());
+}
+
+// Tests for hash_partition_indices
+class HashPartitionIndices : public cudf::test::BaseFixture {};
+
+namespace {
+/**
+ * @brief Checks that `gather_map` and `offsets` group every row of `keys` by the partition that
+ * `cudf::hash_partition` assigns, and that each partition's indices increase when `stable`.
+ */
+void expect_valid_partition_indices(cudf::table_view const& keys,
+                                    cudf::column_view const& gather_map,
+                                    std::vector<cudf::size_type> const& offsets,
+                                    int num_partitions,
+                                    bool stable,
+                                    cudf::hash_id hash_function = cudf::hash_id::HASH_MURMUR3)
+{
+  auto const num_rows = keys.num_rows();
+  ASSERT_EQ(offsets.size(), static_cast<std::size_t>(num_partitions + 1));
+  ASSERT_EQ(offsets.front(), 0);
+  ASSERT_EQ(offsets.back(), num_rows);
+  ASSERT_EQ(gather_map.size(), num_rows);
+  ASSERT_EQ(gather_map.type(), cudf::data_type{cudf::type_to_id<cudf::size_type>()});
+
+  // Partition each row's index alongside the keys to recover the partition of every row
+  auto row_ids = cudf::sequence(num_rows, cudf::numeric_scalar<cudf::size_type>(0));
+  std::vector<cudf::column_view> cols(keys.begin(), keys.end());
+  cols.push_back(row_ids->view());
+  auto key_idx = std::vector<cudf::size_type>(keys.num_columns());
+  std::iota(key_idx.begin(), key_idx.end(), 0);
+  auto [expected, expected_offsets] =
+    cudf::hash_partition(cudf::table_view(cols), key_idx, num_partitions, hash_function);
+  EXPECT_EQ(expected_offsets, offsets);
+
+  auto const h_expected =
+    cudf::test::to_host<cudf::size_type>(expected->get_column(keys.num_columns()).view()).first;
+  auto const h_map = cudf::test::to_host<cudf::size_type>(gather_map).first;
+  for (int p = 0; p < num_partitions; ++p) {
+    auto actual_part =
+      std::vector<cudf::size_type>(h_map.begin() + offsets[p], h_map.begin() + offsets[p + 1]);
+    auto expected_part = std::vector<cudf::size_type>(h_expected.begin() + offsets[p],
+                                                      h_expected.begin() + offsets[p + 1]);
+    if (stable) {
+      EXPECT_TRUE(std::is_sorted(actual_part.begin(), actual_part.end())) << "partition " << p;
+    }
+    std::sort(actual_part.begin(), actual_part.end());
+    std::sort(expected_part.begin(), expected_part.end());
+    EXPECT_EQ(actual_part, expected_part) << "partition " << p;
+  }
+}
+
+std::unique_ptr<cudf::column> make_int64_keys(cudf::size_type num_rows, int64_t cardinality)
+{
+  auto iter = cudf::detail::make_counting_transform_iterator(
+    0, [cardinality](auto i) { return static_cast<int64_t>((i * 2654435761LL) % cardinality); });
+  return fixed_width_column_wrapper<int64_t>(iter, iter + num_rows).release();
+}
+}  // namespace
+
+TEST_F(HashPartitionIndices, NegativePartitions)
+{
+  fixed_width_column_wrapper<int32_t> col({1, 2, 3});
+  EXPECT_THROW(
+    cudf::hash_partition_indices(cudf::table_view({col}), -1, cudf::partition_order::STABLE),
+    std::invalid_argument);
+}
+
+TEST_F(HashPartitionIndices, ZeroPartitions)
+{
+  fixed_width_column_wrapper<int32_t> col({1, 2, 3});
+  auto [map, offsets] =
+    cudf::hash_partition_indices(cudf::table_view({col}), 0, cudf::partition_order::STABLE);
+  EXPECT_EQ(map->size(), 0);
+  EXPECT_EQ(offsets, std::vector<cudf::size_type>({0}));
+}
+
+TEST_F(HashPartitionIndices, ZeroRows)
+{
+  fixed_width_column_wrapper<int32_t> col({});
+  auto [map, offsets] =
+    cudf::hash_partition_indices(cudf::table_view({col}), 3, cudf::partition_order::UNSTABLE);
+  EXPECT_EQ(map->size(), 0);
+  EXPECT_EQ(offsets, std::vector<cudf::size_type>(4, 0));
+}
+
+TEST_F(HashPartitionIndices, SinglePartition)
+{
+  fixed_width_column_wrapper<int32_t> col({5, 3, 8, 1});
+  auto [map, offsets] =
+    cudf::hash_partition_indices(cudf::table_view({col}), 1, cudf::partition_order::STABLE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(map->view(), fixed_width_column_wrapper<int32_t>({0, 1, 2, 3}));
+  EXPECT_EQ(offsets, std::vector<cudf::size_type>({0, 4}));
+}
+
+struct HashPartitionIndicesParams
+  : public HashPartitionIndices,
+    public ::testing::WithParamInterface<std::tuple<int, cudf::size_type, cudf::partition_order>> {
+};
+
+TEST_P(HashPartitionIndicesParams, MatchesHashPartition)
+{
+  auto const [num_partitions, num_rows, order] = GetParam();
+  auto keys                                    = make_int64_keys(num_rows, num_rows);
+  auto const keys_view                         = cudf::table_view({keys->view()});
+  auto [map, offsets] = cudf::hash_partition_indices(keys_view, num_partitions, order);
+  expect_valid_partition_indices(
+    keys_view, map->view(), offsets, num_partitions, order == cudf::partition_order::STABLE);
+}
+
+// Partition counts span the shared-memory tile path and the global-memory fallback; row counts
+// include partial tiles and partial warps
+INSTANTIATE_TEST_SUITE_P(HashPartitionIndices,
+                         HashPartitionIndicesParams,
+                         ::testing::Combine(::testing::Values(1, 2, 7, 64, 1000, 1024, 5000, 70000),
+                                            ::testing::Values(1, 33, 4097, 100003),
+                                            ::testing::Values(cudf::partition_order::STABLE,
+                                                              cudf::partition_order::UNSTABLE)));
+
+TEST_F(HashPartitionIndices, SkewedKeys)
+{
+  for (auto const num_partitions : {8, 70000}) {
+    for (auto const order : {cudf::partition_order::STABLE, cudf::partition_order::UNSTABLE}) {
+      auto keys            = make_int64_keys(200000, 3);
+      auto const keys_view = cudf::table_view({keys->view()});
+      auto [map, offsets]  = cudf::hash_partition_indices(keys_view, num_partitions, order);
+      expect_valid_partition_indices(
+        keys_view, map->view(), offsets, num_partitions, order == cudf::partition_order::STABLE);
+    }
+  }
+}
+
+TEST_F(HashPartitionIndices, StringsStructsAndNulls)
+{
+  strings_column_wrapper strings({"a", "bb", "", "ccc", "a", "dddd", "bb"}, nulls_at({2, 5}));
+  fixed_width_column_wrapper<int32_t> ints({1, 2, 3, 4, 1, 6, 2}, null_at(3));
+  fixed_width_column_wrapper<int32_t> child({7, 8, 9, 7, 7, 8, 9});
+  auto structs         = structs_col({child});
+  auto const keys_view = cudf::table_view({strings, ints, structs});
+  auto [map, offsets]  = cudf::hash_partition_indices(keys_view, 3, cudf::partition_order::STABLE);
+  expect_valid_partition_indices(keys_view, map->view(), offsets, 3, true);
+}
+
+TEST_F(HashPartitionIndices, IdentityHashAndSeed)
+{
+  fixed_width_column_wrapper<int32_t> col({0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+  auto const keys_view = cudf::table_view({col});
+  auto [map, offsets]  = cudf::hash_partition_indices(
+    keys_view, 4, cudf::partition_order::STABLE, cudf::hash_id::HASH_IDENTITY);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    map->view(), fixed_width_column_wrapper<int32_t>({0, 4, 8, 1, 5, 9, 2, 6, 3, 7}));
+  EXPECT_EQ(offsets, std::vector<cudf::size_type>({0, 3, 6, 8, 10}));
+
+  auto [map1, offsets1] = cudf::hash_partition_indices(
+    keys_view, 4, cudf::partition_order::STABLE, cudf::hash_id::HASH_MURMUR3, 1);
+  auto [map2, offsets2] = cudf::hash_partition_indices(
+    keys_view, 4, cudf::partition_order::STABLE, cudf::hash_id::HASH_MURMUR3, 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(map1->view(), map2->view());
+  EXPECT_EQ(offsets1, offsets2);
+}
+
+TEST_F(HashPartitionIndices, IdentityHashFailure)
+{
+  strings_column_wrapper strings({"a", "b"});
+  EXPECT_THROW(
+    cudf::hash_partition_indices(
+      cudf::table_view({strings}), 2, cudf::partition_order::STABLE, cudf::hash_id::HASH_IDENTITY),
+    cudf::logic_error);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

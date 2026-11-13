@@ -7,9 +7,13 @@ from libcpp.pair cimport pair
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport partitioning as cpp_partitioning
+from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
+
+from pylibcudf.libcudf.partitioning import partition_order as PartitionOrder  # no-cython-lint
+
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -24,7 +28,9 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 
 
 __all__ = [
+    "PartitionOrder",
     "hash_partition",
+    "hash_partition_indices",
     "partition",
     "round_robin_partition",
 ]
@@ -99,6 +105,66 @@ cpdef tuple[Table, list] hash_partition(
                 mr.get_mr()
             )
     return Table.from_libcudf(move(c_result.first), _stream, mr), list(c_result.second)
+
+
+cpdef tuple[Column, list] hash_partition_indices(
+    Table keys,
+    int num_partitions,
+    cpp_partitioning.partition_order order,
+    cpp_partitioning.hash_id hash_function = cpp_partitioning.hash_id.HASH_MURMUR3,
+    uint32_t seed = cpp_partitioning.DEFAULT_HASH_SEED,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """
+    Computes a gather map that groups the rows of `keys` by hash partition.
+
+    For details, see :cpp:func:`hash_partition_indices`.
+
+    Parameters
+    ----------
+    keys : Table
+        The table whose rows are hashed to determine partitions
+    num_partitions : int
+        The number of partitions to use
+    order : PartitionOrder
+        Whether row indices within each partition preserve input order.
+    hash_function : HashId
+        Hashing function apply to key columns.
+    seed : int
+        Seed for hash function.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
+
+    Returns
+    -------
+    tuple[Column, list[int]]
+        An INT32 gather map and a list of `num_partitions + 1` offsets where
+        partition `i` contains the row indices in the range
+        `[offsets[i], offsets[i+1])` of the gather map
+    """
+    cdef pair[unique_ptr[column], vector[libcudf_types.size_type]] c_result
+    cdef int c_num_partitions = num_partitions
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
+    cdef table_view c_keys = keys.view()
+    with nogil:
+        c_result = cpp_partitioning.hash_partition_indices(
+            c_keys,
+            c_num_partitions,
+            order,
+            hash_function,
+            seed,
+            _cs,
+            mr.get_mr()
+        )
+    return (
+        Column.from_libcudf(move(c_result.first), _stream, mr),
+        list(c_result.second),
+    )
 
 
 cpdef tuple[Table, list] partition(

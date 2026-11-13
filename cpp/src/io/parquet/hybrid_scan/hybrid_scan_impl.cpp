@@ -593,7 +593,8 @@ hybrid_scan_reader_impl::sparse_payload_pages_byte_ranges(
                "Row group source count must match the number of input sources");
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
                "Row mask must span across all input row groups");
-  CUDF_EXPECTS(row_mask.null_count() == 0,
+  // Recount nulls since the filter step clears them without updating the caller's cached count
+  CUDF_EXPECTS(row_mask.null_count(0, row_mask.size(), stream) == 0,
                "Row mask must not have any nulls when planning payload pages");
 
   select_columns(read_columns_mode::PAYLOAD_COLUMNS, options);
@@ -720,7 +721,9 @@ void hybrid_scan_reader_impl::prepare_materialization(
   CUDF_EXPECTS(
     columns_mode != read_columns_mode::FILTER_COLUMNS or options.get_filter().has_value(),
     "Empty input filter expression encountered");
-  CUDF_EXPECTS(columns_mode != read_columns_mode::PAYLOAD_COLUMNS or row_mask.null_count() == 0,
+  // Recount nulls since the filter step clears them without updating the caller's cached count
+  CUDF_EXPECTS(columns_mode != read_columns_mode::PAYLOAD_COLUMNS or
+                 row_mask.null_count(0, row_mask.size(), stream) == 0,
                "Row mask must not have any nulls when materializing payload column");
 
   reset_internal_state();

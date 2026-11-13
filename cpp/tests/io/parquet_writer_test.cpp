@@ -13,6 +13,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
@@ -23,6 +24,8 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
+#include <cudf/stream_compaction.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -1041,9 +1044,13 @@ TEST_F(ParquetWriterTest, FloatingPointNaNCounts)
     d_data[i] = is_nan_row(i) ? nand : 5.0;
     f_data[i] = is_nan_row(i) ? nanf : 5.0f;
   }
+  // Every 7th row is null in the third column, so its pages mix nulls and NaNs
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return i % 7; });
   column_wrapper<double> col_d(d_data.begin(), d_data.end());
   column_wrapper<float> col_f(f_data.begin(), f_data.end());
-  auto const expected = table_view{{col_d, col_f}};
+  column_wrapper<double> col_n(d_data.begin(), d_data.end(), valids);
+  auto const expected = table_view{{col_d, col_f, col_n}};
 
   auto const filepath = temp_env->get_temp_filepath("FloatingPointNaNCounts.parquet");
   cudf::io::parquet_writer_options const out_opts =
@@ -1059,19 +1066,46 @@ TEST_F(ParquetWriterTest, FloatingPointNaNCounts)
   read_footer(source, &fmd);
   ASSERT_EQ(fmd.row_groups.size(), 3);
 
+  // NaN counts per row group for the non-nullable and nullable columns
   std::array<int64_t, 3> const expected_nan_counts{0, 1, 500};
-  std::array<std::optional<std::vector<int64_t>>, 3> const expected_page_nan_counts{
-    std::vector<int64_t>{0, 0}, std::vector<int64_t>{1, 0}, std::nullopt};
+  std::array<int64_t, 3> const expected_nullable_nan_counts{0, 1, 429};
+  std::array<std::vector<int64_t>, 2> const expected_page_nan_counts{std::vector<int64_t>{0, 0},
+                                                                     std::vector<int64_t>{1, 0}};
   for (int rg = 0; rg < 3; ++rg) {
-    for (auto const& chunk : fmd.row_groups[rg].columns) {
-      auto const& stats = get_statistics(chunk);
-      EXPECT_EQ(stats.nan_count, expected_nan_counts[rg]);
+    for (int col = 0; col < 3; ++col) {
+      auto const& chunk    = fmd.row_groups[rg].columns[col];
+      auto const& stats    = get_statistics(chunk);
+      auto const nan_count = col == 2 ? expected_nullable_nan_counts[rg] : expected_nan_counts[rg];
+      EXPECT_EQ(stats.nan_count, nan_count);
       // min/max are omitted for chunks with NaNs so that legacy readers don't misuse them
-      EXPECT_EQ(stats.min_value.has_value(), expected_nan_counts[rg] == 0);
-      EXPECT_EQ(stats.max_value.has_value(), expected_nan_counts[rg] == 0);
-      // An all-NaN page has no valid min/max, so the column index omits `nan_counts`
-      EXPECT_EQ(read_column_index(source, chunk).nan_counts, expected_page_nan_counts[rg]);
+      EXPECT_EQ(stats.min_value.has_value(), nan_count == 0);
+      EXPECT_EQ(stats.max_value.has_value(), nan_count == 0);
+      EXPECT_GT(chunk.offset_index_length, 0);
+      if (rg < 2) {
+        EXPECT_EQ(read_column_index(source, chunk).nan_counts, expected_page_nan_counts[rg]);
+      } else {
+        // An all-NaN page has no valid min/max, so its chunk has no column index
+        EXPECT_EQ(chunk.column_index_length, 0);
+      }
     }
+  }
+
+  // `col != 5` prunes the NaN-free row group, and keeps the ones with NaNs
+  auto five_d = cudf::numeric_scalar<double>(5.0);
+  auto five_f = cudf::numeric_scalar<float>(5.0f);
+  for (cudf::size_type col_idx : {0, 1, 2}) {
+    auto const col_ref = cudf::ast::column_reference(col_idx);
+    auto const five    = col_idx == 1 ? cudf::ast::literal(five_f) : cudf::ast::literal(five_d);
+    auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, five);
+
+    auto const predicate         = cudf::compute_column(expected, filter);
+    auto const expected_filtered = cudf::apply_retention_mask(expected, *predicate);
+
+    cudf::io::parquet_reader_options read_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
+    auto const result = cudf::io::read_parquet(read_opts);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *expected_filtered);
+    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), 2);
   }
 }
 

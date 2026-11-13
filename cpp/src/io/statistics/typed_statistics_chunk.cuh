@@ -255,7 +255,8 @@ __inline__ __device__ typed_statistics_chunk<T, include_aggregate> block_reduce(
   // FIXME : Is another syncthreads needed here?
   if constexpr (include_aggregate) {
     output_chunk.has_sum = __syncthreads_and(output_chunk.has_sum);
-    if (output_chunk.has_minmax or output_chunk.nan_count > 0) {
+    auto const has_nan   = __syncthreads_or(chunk.nan_count > 0);
+    if (output_chunk.has_minmax or has_nan) {
       using A                = typename detail::aggregation_type<T>::type;
       using S                = detail::sum_type<A>;
       using aggregate_reduce = cub::BlockReduce<S, block_size>;

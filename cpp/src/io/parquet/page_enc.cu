@@ -3311,6 +3311,17 @@ CUDF_KERNEL void __launch_bounds__(1)
   uint32_t const pageidx         = ck_g->first_page;
   size_t var_bytes               = 0;
 
+  // A float page holding only NaNs has no valid min/max, so no column index is written for its
+  // chunk (the histograms and var_bytes below are still needed)
+  auto const is_float   = col_g.stats_dtype == dtype_float32 or col_g.stats_dtype == dtype_float64;
+  auto const is_all_nan = [](statistics_chunk const& stats) {
+    return stats.nan_count > 0 and stats.nan_count == stats.non_nulls;
+  };
+  auto const page_stats = column_stats.begin() + pageidx;
+  auto const has_all_nan_page =
+    is_float and
+    cuda::std::any_of(page_stats + first_data_page, page_stats + num_pages, is_all_nan);
+
   header_encoder encoder(ck_g->column_index_blob);
 
   // make sure scratch is aligned properly. here column_index_size indicates
@@ -3394,20 +3405,13 @@ CUDF_KERNEL void __launch_bounds__(1)
     encoder.field_list_end(7);
   }
 
-  // nan_counts. Omitted if a page holds only NaNs, as min/max can't be written for such a page
-  if (col_g.stats_dtype == dtype_float32 or col_g.stats_dtype == dtype_float64) {
-    auto const page_stats       = column_stats.begin() + pageidx;
-    auto const has_all_nan_page = cuda::std::any_of(
-      page_stats + first_data_page, page_stats + num_pages, [](statistics_chunk const& stats) {
-        return stats.nan_count > 0 and stats.nan_count == stats.non_nulls;
-      });
-    if (not has_all_nan_page) {
-      encoder.field_list_begin(8, num_data_pages, FieldType::I64);
-      for (uint32_t page = first_data_page; page < num_pages; page++) {
-        encoder.put_int64(column_stats[pageidx + page].nan_count);
-      }
-      encoder.field_list_end(8);
+  // nan_counts
+  if (is_float) {
+    encoder.field_list_begin(8, num_data_pages, FieldType::I64);
+    for (uint32_t page = first_data_page; page < num_pages; page++) {
+      encoder.put_int64(column_stats[pageidx + page].nan_count);
     }
+    encoder.field_list_end(8);
   }
 
   if (col_g.physical_type == Type::BYTE_ARRAY) {
@@ -3419,8 +3423,9 @@ CUDF_KERNEL void __launch_bounds__(1)
   encoder.end(&col_idx_end, false);
 
   // now reset column_index_size to the actual size of the encoded column index blob
-  ck_g->column_index_size = static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
-  ck_g->var_bytes_size    = var_bytes;
+  ck_g->column_index_size =
+    has_all_nan_page ? 0 : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
+  ck_g->var_bytes_size = var_bytes;
 }
 
 void InitRowGroupFragments(device_2dspan<PageFragment> frag,

@@ -5264,10 +5264,9 @@ void filter_unary_operation_typed_test()
     filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, not_expr1, expr2);
     ref_filter =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, ref_not_expr1, ref_expr2);
-    // Signed integral types pass RGs 1,2,3, others pass RGs 2,3. Floats keep all 4 as they may
-    // hold NaNs, making every ordered comparison false, and get relaxed instead.
+    // Signed types pass RGs 1,2,3, others pass RGs 2,3
     auto constexpr expected_filtered_row_groups_with_unary_or =
-      cudf::is_floating_point<T>() ? 4 : ((cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2);
+      (cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2;
     test_predicate_pushdown(filter_expression,
                             ref_filter,
                             expected_total_row_groups,

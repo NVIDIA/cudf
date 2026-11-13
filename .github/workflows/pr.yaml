@@ -397,7 +397,8 @@ jobs:
       build_type: pull-request
       package_name: libcudf
   conda-cpp-tests:
-    needs: [conda-cpp-build, changed-files]
+    # Temporary diagnostics reuse the original package artifacts.
+    needs: [checks, changed-files]
     permissions:
       actions: read
       contents: read
@@ -418,35 +419,9 @@ jobs:
       fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_streaming
     with:
       build_type: pull-request
-      script: >-
-        env
-        RUN_LIBCUDF_TESTS=${{
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_libcudf
-        }}
-        RUN_EXAMPLES_TESTS=${{
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_examples
-        }}
-        RUN_LIBCUDF_KAFKA_TESTS=${{
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_kafka ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_kafka
-        }}
-        RUN_LIBCUDF_STREAMING_TESTS=${{
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_libcudf ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).cpp_build_inputs_streaming ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_common ||
-        fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_streaming
-        }}
-        ci/test_cpp.sh
+      # Temporary diagnostics for the unrelated TRANSFORM_TEST crash.
+      script: bash ci/diagnose_transform.sh
+      container-options: "--cap-add CAP_SYS_PTRACE"
       cache-paths: .cache/libcudf
       cache-key-prefix: libcudf-rtcx-v2
       # Caches are immutable. Re-key when the embedded JIT runtime or its tests change so a
@@ -473,9 +448,8 @@ jobs:
       cache-read-only: true
       cache-environment: |
         LIBCUDF_KERNEL_CACHE_PATH=.cache/libcudf
-      # https://github.com/NVIDIA/cudf/issues/23498
-      matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
-      matrix_type: pull-request
+      matrix_filter: map(select(.CUDA_VER == "12.9.2" and .LINUX_VER == "ubuntu22.04" and .PY_VER == "3.14" and ((.GPU == "h100" and .ARCH == "amd64") or (.GPU == "l4" and .ARCH == "arm64"))))
+      matrix_type: pull-request,nightly
   conda-python-build:
     needs: [build-details, conda-cpp-build]
     permissions:

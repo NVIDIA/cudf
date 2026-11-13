@@ -120,11 +120,10 @@ auto write_wide_file_data(cudf::size_type num_cols,
   cuio_source_sink_pair source_sink(io_type::HOST_BUFFER);
 
   constexpr cudf::size_type rows_per_row_group = 16;
-  auto const tbl =
-    create_random_table(cycle_dtypes({dtype}, num_cols),
-                        row_count{rows_per_row_group},
-                        data_profile_builder().cardinality(0).avg_run_length(1).null_probability(
-                          0.1));
+  auto const tbl                               = create_random_table(
+    cycle_dtypes({dtype}, num_cols),
+    row_count{rows_per_row_group},
+    data_profile_builder().cardinality(0).avg_run_length(1).null_probability(0.1));
   auto const view = tbl->view();
 
   auto const stats_level = write_page_index ? cudf::io::statistics_freq::STATISTICS_COLUMN
@@ -397,9 +396,9 @@ void BM_parquet_filter_name_resolution(nvbench::state& state)
 //   page_index: ColumnIndex/OffsetIndex decode of all column chunks (`setup_page_index`)
 void BM_parquet_decode_footer(nvbench::state& state)
 {
-  auto const stage            = state.get_string("stage");
-  auto const dtype            = state.get_string("data_type") == "STRING" ? cudf::type_id::STRING
-                                                                          : cudf::type_id::FLOAT32;
+  auto const stage = state.get_string("stage");
+  auto const dtype =
+    state.get_string("data_type") == "STRING" ? cudf::type_id::STRING : cudf::type_id::FLOAT32;
   auto const num_cols         = static_cast<cudf::size_type>(state.get_int64("num_cols"));
   auto const num_row_groups   = static_cast<cudf::size_type>(state.get_int64("num_row_groups"));
   auto const write_page_index = state.get_int64("page_index") != 0;
@@ -409,14 +408,13 @@ void BM_parquet_decode_footer(nvbench::state& state)
     return;
   }
 
-  auto source_sink = write_wide_file_data(num_cols, num_row_groups, dtype, write_page_index);
+  auto source_sink       = write_wide_file_data(num_cols, num_row_groups, dtype, write_page_index);
   auto const datasource  = std::move(cudf::io::make_datasources(source_sink.make_source_info())[0]);
   auto const footer_buf  = cudf::io::parquet::fetch_footer_to_host(*datasource);
   auto const footer_span = std::span<uint8_t const>{footer_buf->data(), footer_buf->size()};
 
-  namespace pq_exp = cudf::io::parquet::experimental;
-  auto const options =
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{}).build();
+  namespace pq_exp   = cudf::io::parquet::experimental;
+  auto const options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{}).build();
   auto const file_metadata = pq_exp::read_parquet_footer_bytes(footer_span);
   CUDF_EXPECTS(std::cmp_equal(file_metadata.row_groups.size(), num_row_groups),
                "Unexpected number of row groups in metadata");
@@ -440,8 +438,7 @@ void BM_parquet_decode_footer(nvbench::state& state)
   auto const page_index_buf = [&]() -> std::unique_ptr<cudf::io::datasource::buffer> {
     if (stage != "page_index") { return nullptr; }
     auto const reader = pq_exp::hybrid_scan_reader(file_metadata, options);
-    return cudf::io::parquet::fetch_page_index_to_host(*datasource,
-                                                       reader.page_index_byte_range());
+    return cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range());
   }();
 
   state.exec(
@@ -473,6 +470,58 @@ void BM_parquet_decode_footer(nvbench::state& state)
   if (page_index_buf) {
     state.add_buffer_size(page_index_buf->size(), "page_index_bytes", "page_index_bytes");
   }
+}
+
+// Benchmark Parquet reader construction on wide files when reading 10 evenly spread columns:
+//   full_footer: decodes the full footers first (the behavior without deferred column chunks)
+//   deferred:    defers decoding the footer column chunks until the input columns are known
+//   deferred_1rg: as `deferred`, reading only the first row group
+void BM_parquet_reader_footer_selection(nvbench::state& state)
+{
+  auto const mode = state.get_string("mode");
+  auto const dtype =
+    state.get_string("data_type") == "STRING" ? cudf::type_id::STRING : cudf::type_id::FLOAT32;
+  auto const num_cols         = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const num_row_groups   = static_cast<cudf::size_type>(state.get_int64("num_row_groups"));
+  auto const write_page_index = state.get_int64("page_index") != 0;
+
+  auto source_sink = write_wide_file_data(num_cols, num_row_groups, dtype, write_page_index);
+
+  // Without metadata, the writer names the columns _col0.._col{n-1}
+  std::vector<std::string> column_names;
+  for (cudf::size_type i = 0; i < std::min(10, num_cols); ++i) {
+    column_names.push_back("_col" + std::to_string(int64_t{i} * num_cols / 10));
+  }
+  auto read_opts = cudf::io::parquet_reader_options::builder(source_sink.make_source_info())
+                     .column_names(column_names)
+                     .use_arrow_schema(false)
+                     .build();
+  if (mode == "deferred_1rg") { read_opts.set_row_groups({{0}}); }
+
+  auto constexpr chunk_read_limit = 0;
+  auto constexpr pass_read_limit  = 0;
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  state.exec(
+    nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch&, auto& timer) {
+      if (mode == "full_footer") {
+        auto sources = cudf::io::make_datasources(source_sink.make_source_info());
+        timer.start();
+        auto metadatas = cudf::io::read_parquet_footers(sources);
+        auto reader    = cudf::io::chunked_parquet_reader(
+          chunk_read_limit, pass_read_limit, std::move(sources), std::move(metadatas), read_opts);
+        timer.stop();
+      } else {
+        timer.start();
+        auto reader =
+          cudf::io::chunked_parquet_reader(chunk_read_limit, pass_read_limit, read_opts);
+        timer.stop();
+      }
+    });
+
+  auto const time = state.get_summary("nv/cold/time/cpu/mean").get_float64("value");
+  state.add_element_count(static_cast<double>(num_cols) * num_row_groups / time,
+                          "colchunks_per_sec");
 }
 
 NVBENCH_BENCH(BM_parquet_read_footer)
@@ -514,3 +563,12 @@ NVBENCH_BENCH(BM_parquet_filter_name_resolution)
   .add_int64_axis("num_cols", {64, 128, 256, 512, 1024, 1536, 2048, 4096})
   .add_int64_axis("case_sensitive", {1, 0})
   .add_int64_axis("heavy_filter", {0, 1});
+
+NVBENCH_BENCH(BM_parquet_reader_footer_selection)
+  .set_name("parquet_reader_footer_selection")
+  .set_min_samples(4)
+  .add_string_axis("mode", {"full_footer", "deferred", "deferred_1rg"})
+  .add_string_axis("data_type", {"FLOAT32", "STRING"})
+  .add_int64_axis("page_index", {true, false})
+  .add_int64_axis("num_cols", {1'000, 10'000, 50'000})
+  .add_int64_axis("num_row_groups", {1, 10});

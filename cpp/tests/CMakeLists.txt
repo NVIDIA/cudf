@@ -356,6 +356,7 @@ ConfigureTest(
   io/parquet_chunked_reader_test.cu
   io/parquet_chunked_writer_test.cpp
   io/parquet_common.cpp
+  io/parquet_deferred_footer_test.cpp
   io/parquet_misc_test.cpp
   io/parquet_reader_dict_test.cpp
   io/parquet_reader_test.cpp

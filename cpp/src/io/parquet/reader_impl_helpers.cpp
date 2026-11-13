@@ -523,11 +523,27 @@ metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
   });
 }
 
-metadata::metadata(datasource* source, bool read_page_indexes)
+metadata::metadata(datasource* source, bool read_page_indexes, bool defer_column_chunks)
 {
-  auto const buffer = cudf::io::parquet::fetch_footer_to_host(*source);
-  decode_footer_and_init_schema({buffer->data(), buffer->size()}, this);
+  auto buffer = cudf::io::parquet::fetch_footer_to_host(*source);
+  if (defer_column_chunks) {
+    deferred_ = std::make_unique<deferred_column_chunks>();
+    decode_footer_deferring_column_chunks({buffer->data(), buffer->size()},
+                                          this,
+                                          &deferred_->chunk_offsets,
+                                          &deferred_->leaf_schema_indices);
+    deferred_->footer            = std::move(buffer);
+    deferred_->read_page_indexes = read_page_indexes;
+  } else {
+    decode_footer_and_init_schema({buffer->data(), buffer->size()}, this);
+    if (read_page_indexes) { this->read_page_indexes(source); }
+  }
 
+  sanitize_schema();
+}
+
+void metadata::read_page_indexes(datasource* source)
+{
   // Reading the page indexes is somewhat expensive, so skip if there are no byte array columns.
   // Currently the indexes are only used for the string size calculations.
   // Could also just read indexes for string columns, but that would require changes elsewhere
@@ -546,8 +562,8 @@ metadata::metadata(datasource* source, bool read_page_indexes)
 
   // Gather page index byte range info
   auto const page_index_range = [&]() -> text::byte_range_info {
-    // Don't read page index if not required or if we don't have strings or only have column indexes
-    if (not read_page_indexes or not has_strings or not has_offset_index()) { return {}; }
+    // Don't read page index if we don't have strings or only have column indexes
+    if (not has_strings or not has_offset_index()) { return {}; }
     try {
       auto const range = page_index_byte_range();
       if (std::cmp_less_equal(range.offset() + range.size(), source->size())) { return range; }
@@ -562,15 +578,68 @@ metadata::metadata(datasource* source, bool read_page_indexes)
     auto const page_idx_buf = source->host_read(page_index_range.offset(), page_index_range.size());
     setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
   }
+}
 
-  sanitize_schema();
+void metadata::materialize_column_chunks(datasource* source,
+                                         std::optional<std::span<size_type const>> row_groups,
+                                         std::span<int const> leaf_schema_indices)
+{
+  if (deferred_ == nullptr) { return; }
+  CUDF_FUNC_RANGE();
+
+  // Normalize the row group selection
+  auto const num_row_groups = static_cast<size_type>(this->row_groups.size());
+  std::vector<size_type> selected_row_groups;
+  if (row_groups.has_value()) {
+    std::ranges::copy_if(*row_groups, std::back_inserter(selected_row_groups), [&](auto rg) {
+      return rg >= 0 and rg < num_row_groups;
+    });
+    std::ranges::sort(selected_row_groups);
+    auto const [first, last] = std::ranges::unique(selected_row_groups);
+    selected_row_groups.erase(first, last);
+  } else {
+    selected_row_groups.resize(num_row_groups);
+    std::iota(selected_row_groups.begin(), selected_row_groups.end(), 0);
+  }
+
+  // Map the selected schema indices to leaf column indices. Leaf schema indices are ascending.
+  auto const& all_leaves = deferred_->leaf_schema_indices;
+  std::vector<size_type> selected_leaves;
+  for (auto const schema_idx : leaf_schema_indices) {
+    if (auto const it = std::ranges::lower_bound(all_leaves, schema_idx);
+        it != all_leaves.end() and *it == schema_idx) {
+      selected_leaves.push_back(static_cast<size_type>(std::distance(all_leaves.begin(), it)));
+    }
+  }
+  std::ranges::sort(selected_leaves);
+  auto const [first, last] = std::ranges::unique(selected_leaves);
+  selected_leaves.erase(first, last);
+
+  auto const footer =
+    std::span<uint8_t const>{deferred_->footer->data(), deferred_->footer->size()};
+  auto const is_decoded = decode_column_chunks(
+    footer, deferred_->chunk_offsets, all_leaves, selected_row_groups, selected_leaves, this);
+  if (not is_decoded) {
+    // Column chunks do not map to leaf columns by position. Fall back to decoding the full footer,
+    // which maps column chunks by path. Schema indices are unaffected by `sanitize_schema`, which
+    // only appends schema elements.
+    FileMetaData full;
+    decode_footer_and_init_schema(footer, &full);
+    CUDF_EXPECTS(full.row_groups.size() == this->row_groups.size(),
+                 "Parquet footer row group count changed between decodes");
+    for (std::size_t i = 0; i < this->row_groups.size(); ++i) {
+      this->row_groups[i].columns = std::move(full.row_groups[i].columns);
+    }
+  }
+
+  auto const read_indexes = deferred_->read_page_indexes;
+  deferred_.reset();
+  if (read_indexes) { read_page_indexes(source); }
 }
 
 text::byte_range_info metadata::page_index_byte_range() const
 {
   if (is_page_index_setup_) { return {}; }
-
-  if (row_groups.empty() or row_groups.front().columns.empty()) { return {}; }
 
   // Scan all column chunks to compute the page index extent
   int64_t min_offset = std::numeric_limits<int64_t>::max();
@@ -606,7 +675,10 @@ void metadata::setup_page_index(std::span<uint8_t const> page_index_bytes, int64
 
   // Flatten all columns into a single vector for easier task distribution
   std::vector<std::reference_wrapper<ColumnChunk>> all_column_chunks;
-  all_column_chunks.reserve(row_groups.size() * row_groups.front().columns.size());
+  all_column_chunks.reserve(std::transform_reduce(
+    row_groups.begin(), row_groups.end(), std::size_t{0}, std::plus<>{}, [](auto const& rg) {
+      return rg.columns.size();
+    }));
   for (auto& rg : row_groups) {
     for (auto& col : rg.columns) {
       all_column_chunks.emplace_back(std::ref(col));
@@ -685,8 +757,11 @@ void metadata::setup_page_index(std::span<uint8_t const> page_index_bytes, int64
 metadata::~metadata()
 {
   constexpr auto defer_threshold = 512;
-  if (row_groups.size() > 0 and
-      row_groups.front().columns.size() * row_groups.size() > defer_threshold) {
+  auto const num_column_chunks   = std::transform_reduce(
+    row_groups.begin(), row_groups.end(), std::size_t{0}, std::plus<>{}, [](auto const& rg) {
+      return rg.columns.size();
+    });
+  if (num_column_chunks > defer_threshold) {
     // Defer destruction to the worker pool when there are many vectors to destroy
     cudf::detail::host_worker_pool().submit_task(
       [schema_to_destroy        = std::move(schema),
@@ -698,11 +773,43 @@ metadata::~metadata()
 }
 
 std::vector<metadata> aggregate_reader_metadata::metadatas_from_sources(
-  std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes)
+  std::span<std::unique_ptr<datasource> const> sources,
+  bool read_page_indexes,
+  bool defer_column_chunks)
 {
-  return parallel_construct_metadatas(sources, [read_page_indexes](auto const& source) {
-    return metadata{source.get(), read_page_indexes};
-  });
+  return parallel_construct_metadatas(
+    sources, [read_page_indexes, defer_column_chunks](auto const& source) {
+      return metadata{source.get(), read_page_indexes, defer_column_chunks};
+    });
+}
+
+void aggregate_reader_metadata::materialize_column_chunks(
+  std::span<std::unique_ptr<datasource> const> sources,
+  std::span<input_column_info const> input_columns,
+  std::span<std::vector<size_type> const> row_group_indices)
+{
+  CUDF_EXPECTS(sources.size() == per_file_metadata.size(),
+               "Encountered a mismatch in the number of data sources and metadatas");
+  for (std::size_t src_idx = 0; src_idx < per_file_metadata.size(); ++src_idx) {
+    auto& pfm = per_file_metadata[src_idx];
+    if (not pfm.has_deferred_column_chunks()) { continue; }
+
+    // Leaf schema indices of the input columns in this source
+    std::vector<int> leaf_schema_indices;
+    for (auto const& col : input_columns) {
+      if (is_schema_index_mapped(col.schema_idx, static_cast<int>(src_idx))) {
+        leaf_schema_indices.push_back(map_schema_index(col.schema_idx, static_cast<int>(src_idx)));
+      }
+    }
+
+    std::optional<std::span<size_type const>> row_groups;
+    if (not row_group_indices.empty()) {
+      row_groups = src_idx < row_group_indices.size()
+                     ? std::span<size_type const>{row_group_indices[src_idx]}
+                     : std::span<size_type const>{};
+    }
+    pfm.materialize_column_chunks(sources[src_idx].get(), row_groups, leaf_schema_indices);
+  }
 }
 
 std::vector<std::unordered_map<std::string, std::string>>
@@ -1014,8 +1121,9 @@ aggregate_reader_metadata::aggregate_reader_metadata(
   std::span<std::unique_ptr<datasource> const> sources,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs,
-  bool read_page_indexes)
-  : per_file_metadata(metadatas_from_sources(sources, read_page_indexes)),
+  bool read_page_indexes,
+  bool defer_column_chunks)
+  : per_file_metadata(metadatas_from_sources(sources, read_page_indexes, defer_column_chunks)),
     keyval_maps(collect_keyval_metadata()),
     schema_idx_maps(init_schema_idx_maps(has_cols_from_mismatched_srcs)),
     num_rows(calc_num_rows()),

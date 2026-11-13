@@ -634,10 +634,24 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
   CUDF_EXPECTS(file_metadatas.empty() or file_metadatas.size() == _sources.size(),
                "Encountered a mismatch in the number of provided data sources and metadatas");
 
+  auto const has_column_selection = options.get_column_names().has_value() or
+                                    options.get_column_indices().has_value() or
+                                    options.get_column_field_ids().has_value();
+
+  // When reading a subset of the columns or row groups, defer decoding the footers' column chunks
+  // until the input columns are known, and then only decode the required ones. The byte-range
+  // row group filter needs each row group's first column chunk, so don't defer it.
+  auto const defer_column_chunks =
+    file_metadatas.empty() and (has_column_selection or not options.get_row_groups().empty()) and
+    options.get_skip_bytes() == 0 and not options.get_num_bytes().has_value();
+
+  constexpr auto read_page_indexes = true;
   _metadata = file_metadatas.empty() ? std::make_shared<aggregate_reader_metadata>(
                                          _sources,
                                          options.is_enabled_use_arrow_schema(),
-                                         has_cols_from_mismatched_sources(options))
+                                         has_cols_from_mismatched_sources(options),
+                                         read_page_indexes,
+                                         defer_column_chunks)
                                      : std::make_shared<aggregate_reader_metadata>(
                                          std::forward<std::vector<FileMetaData>>(file_metadatas),
                                          options.is_enabled_use_arrow_schema(),
@@ -656,9 +670,6 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
   auto select_column_names = get_column_projection(options);
 
   std::optional<std::vector<std::string>> filter_only_columns_names;
-  auto const has_column_selection = options.get_column_names().has_value() or
-                                    options.get_column_indices().has_value() or
-                                    options.get_column_field_ids().has_value();
   if (options.get_filter().has_value() and has_column_selection) {
     // list, struct, dictionary are not supported by AST filter yet.
     // extract columns not present in get_column_names() & keep count to remove at end.
@@ -668,6 +679,10 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
   }
   std::tie(_input_columns, _output_buffers, _output_column_schemas) = _metadata->select_columns(
     select_column_names, filter_only_columns_names, make_column_selection_options(options));
+
+  if (defer_column_chunks) {
+    _metadata->materialize_column_chunks(_sources, _input_columns, options.get_row_groups());
+  }
 
   // Save the states of the output buffers for reuse in `chunk_read()`.
   std::ranges::transform(

@@ -15,17 +15,18 @@
 #include <memory>
 
 /**
- * @brief Output construction for identity and uniform-input partition paths
+ * @brief Output construction for identity and all-null partition paths
  */
 namespace cudf::detail::partition_identity {
 /**
  * @brief Determine whether a column is fixed-width or STRING and contains only nulls
  *
  * Recognizes all-null fixed-width or STRING columns using host metadata only. Columns containing
- * valid values, including empty strings, are not recognized as uniform.
+ * valid values, including empty strings, are not eligible.
  *
  * @param input Column whose type, size and null count are inspected
- * @return Whether the column can be reconstructed by `uniform_column` without reading its values
+ * @return Whether the column can be reconstructed by `create_all_null_column` without reading its
+ * values
  */
 inline bool is_flat_and_all_null(column_view const& input)
 {
@@ -34,21 +35,21 @@ inline bool is_flat_and_all_null(column_view const& input)
 }
 
 /**
- * @brief Construct a uniform partition output without copying input values
+ * @brief Construct an all-null partition output without copying input values
  *
  * Creates an all-null fixed-width or STRING column. STRING offsets are initialized to zero and
  * the character buffer is empty. Row permutation leaves these logical values unchanged.
  *
  * @pre `is_flat_and_all_null(input)` is true
  *
- * @param input Supported uniform column whose logical type, size and null count are preserved
+ * @param input Supported all-null column whose logical type, size and null count are preserved
  * @param stream CUDA stream used for device operations and memory allocation
  * @param mr Device memory resource used to allocate the output buffers
  * @return A newly allocated column with the same logical values as the input
  */
-inline std::unique_ptr<column> uniform_column(column_view const& input,
-                                              cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+inline std::unique_ptr<column> create_all_null_column(column_view const& input,
+                                                      cuda::stream_ref stream,
+                                                      rmm::device_async_resource_ref mr)
 {
   auto const rows = input.size();
   if (input.type().id() != type_id::STRING)

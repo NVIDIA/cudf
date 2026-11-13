@@ -395,7 +395,7 @@ TEST_F(PartitionTestNotTyped, TrivialPartitionSlices)
   }
 }
 
-TEST_F(PartitionTestNotTyped, UniformPartitionColumns)
+TEST_F(PartitionTestNotTyped, AllNullAndEmptyStringColumns)
 {
   constexpr int rows = 1'025;
   std::vector<int32_t> values(rows, 3), assignments(rows);

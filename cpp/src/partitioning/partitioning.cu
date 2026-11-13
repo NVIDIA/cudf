@@ -815,9 +815,9 @@ std::vector<size_type> make_map_partition_offsets(column_view const& partition_m
  * @brief Try partitioning an input that needs no row permutation or payload gathering
  *
  * For one partition, derives the offsets directly; for one row, reads its partition ID to construct
- * the offsets. Otherwise, tables whose columns are all supported uniform columns need only a
- * histogram and scan of the map. Nonuniform inputs use the standard table copy, while uniform
- * columns are reconstructed from their metadata without reading row values.
+ * the offsets. Otherwise, tables containing only all-null fixed-width or STRING columns need only
+ * a histogram and scan of the map. These all-null columns are reconstructed from their metadata
+ * without reading row values. Other inputs on the identity paths use the standard table copy.
  *
  * Reading partition IDs or offsets back to host synchronizes `stream`. Output construction uses
  * the same stream; temporary offset storage uses the current device memory resource.
@@ -846,11 +846,11 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_par
   if (num_partitions <= 0 || num_partitions == std::numeric_limits<size_type>::max()) {
     return std::nullopt;
   }
-  auto const rows    = input.num_rows();
-  auto const uniform = std::all_of(input.begin(), input.end(), [](auto const& col) {
+  auto const rows     = input.num_rows();
+  auto const all_null = std::all_of(input.begin(), input.end(), [](auto const& col) {
     return cudf::detail::partition_identity::is_flat_and_all_null(col);
   });
-  if (!cudf::detail::partition_policy::use_trivial(rows, num_partitions, uniform)) {
+  if (!cudf::detail::partition_policy::use_trivial(rows, num_partitions, all_null)) {
     return std::nullopt;
   }
 
@@ -867,14 +867,14 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_par
   } else {
     offsets = make_map_partition_offsets<MapType>(partition_map, num_partitions, stream);
   }
-  if (!uniform) {
+  if (!all_null) {
     return std::pair{cudf::detail::partition_identity::copy(input, stream, mr), std::move(offsets)};
   }
 
   std::vector<std::unique_ptr<column>> columns;
   columns.reserve(input.num_columns());
   for (auto const& col : input) {
-    columns.push_back(cudf::detail::partition_identity::uniform_column(col, stream, mr));
+    columns.push_back(cudf::detail::partition_identity::create_all_null_column(col, stream, mr));
   }
   return std::pair{std::make_unique<table>(std::move(columns), rows), std::move(offsets)};
 }

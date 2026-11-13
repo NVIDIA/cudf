@@ -123,15 +123,15 @@ inline std::optional<partition_plan> select_partition_plan(table_view const& inp
 }
 
 /**
- * @brief Determine whether partitioning can use an identity-copy or uniform-output path
+ * @brief Determine whether partitioning can use an identity-copy or all-null-output path
  *
  * @param rows Number of input rows
  * @param partitions Number of destination partitions
- * @param uniform Whether every column is a supported all-null fixed-width or STRING column
- * @return Whether there is one row, one partition, or a uniform table
+ * @param all_null Whether every column is a supported all-null fixed-width or STRING column
+ * @return Whether there is one row, one partition, or a table of supported all-null columns
  */
-inline bool use_trivial(size_type rows, size_type partitions, bool uniform)
+inline bool use_trivial(size_type rows, size_type partitions, bool all_null)
 {
-  return partitions == 1 || rows == 1 || uniform;
+  return partitions == 1 || rows == 1 || all_null;
 }
 }  // namespace cudf::detail::partition_policy

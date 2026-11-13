@@ -97,21 +97,19 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
                                                                8863578460974333747ul,
                                                                11176802453047055260ul});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected);
-}
 
-TEST_F(MurmurHash3_x64_128_Test, StringBlockBoundariesBothWords)
-{
   // Cover empty input, partial blocks, and complete 16-byte blocks with a full-width seed.
-  auto const input = cudf::test::strings_column_wrapper({"",
-                                                         "0",
-                                                         "0123456789abcde",
-                                                         "0123456789abcdef",
-                                                         "0123456789abcdef0",
-                                                         "0123456789abcdef0123456789abcde",
-                                                         "0123456789abcdef0123456789abcdef",
-                                                         "0123456789abcdef0123456789abcdef0"});
-  auto const output =
-    cudf::hashing::murmurhash3_x64_128(cudf::table_view{{input}}, uint64_t{0x123456789abcdef0});
+  auto const boundary_input =
+    cudf::test::strings_column_wrapper({"",
+                                        "0",
+                                        "0123456789abcde",
+                                        "0123456789abcdef",
+                                        "0123456789abcdef0",
+                                        "0123456789abcdef0123456789abcde",
+                                        "0123456789abcdef0123456789abcdef",
+                                        "0123456789abcdef0123456789abcdef0"});
+  auto const boundary_output = cudf::hashing::murmurhash3_x64_128(
+    cudf::table_view{{boundary_input}}, uint64_t{0x123456789abcdef0});
 
   // Reference values from the original cuco MurmurHash3 x64 implementation.
   cudf::test::fixed_width_column_wrapper<uint64_t> const expected_low({12670565569421277103ul,
@@ -130,8 +128,8 @@ TEST_F(MurmurHash3_x64_128_Test, StringBlockBoundariesBothWords)
                                                                         4777729961966234481ul,
                                                                         10427324415301665755ul,
                                                                         11601329378799277982ul});
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected_low);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), expected_high);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(boundary_output->view().column(0), expected_low);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(boundary_output->view().column(1), expected_high);
 }
 
 TEST_F(MurmurHash3_x64_128_Test, ZeroColumns)

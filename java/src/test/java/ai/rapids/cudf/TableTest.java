@@ -300,6 +300,115 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testCreateTableFromColumnPointers() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector v2 = ColumnVector.fromStrings("a", "b", "c");
+         Table expected = new Table(v1, v2);
+         Table t = new Table(new long[] {
+             ColumnView.copyColumnViewToCV(v1.getNativeView()),
+             ColumnView.copyColumnViewToCV(v2.getNativeView())})) {
+      assertTablesAreEqual(expected, t);
+    }
+  }
+
+  @Test
+  void testCreateTableFromRowCountAndColumnPointers() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         Table expected = new Table(v1);
+         Table t = Table.fromRowCountAndColumns(new long[] {
+             3, ColumnView.copyColumnViewToCV(v1.getNativeView())})) {
+      assertTablesAreEqual(expected, t);
+    }
+  }
+
+  @Test
+  void testZeroColumnTable() {
+    try (Table t = new Table(5)) {
+      assertEquals(5, t.getRowCount());
+      assertEquals(0, t.getNumberOfColumns());
+      assertEquals(0, t.getDeviceMemorySize());
+    }
+  }
+
+  @Test
+  void testTableWithExplicitRowCount() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         Table t = new Table(3, v1)) {
+      assertEquals(3, t.getRowCount());
+      assertEquals(1, t.getNumberOfColumns());
+    }
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3)) {
+      assertThrows(CudfException.class, () -> new Table(4, v1).close());
+    }
+    assertThrows(IllegalArgumentException.class, () -> new Table(-1).close());
+  }
+
+  @Test
+  void testZeroColumnTableOperations() {
+    try (Table t = new Table(4);
+         ColumnVector map = ColumnVector.fromInts(3, 0, 0, 1, 2, 2);
+         ColumnVector mask = ColumnVector.fromBooleans(true, false, true, true);
+         ColumnVector counts = ColumnVector.fromInts(1, 0, 2, 3);
+         Table other = new Table(3);
+         ColumnVector values = ColumnVector.fromInts(7, 8, 9);
+         Table withColumn = new Table(values)) {
+      try (Table gathered = t.gather(map)) {
+        assertEquals(6, gathered.getRowCount());
+        assertEquals(0, gathered.getNumberOfColumns());
+      }
+      try (Table filtered = t.filter(mask)) {
+        assertEquals(3, filtered.getRowCount());
+        assertEquals(0, filtered.getNumberOfColumns());
+      }
+      try (Table concatenated = Table.concatenate(t, other)) {
+        assertEquals(7, concatenated.getRowCount());
+        assertEquals(0, concatenated.getNumberOfColumns());
+      }
+      try (Table repeated = t.repeat(3)) {
+        assertEquals(12, repeated.getRowCount());
+        assertEquals(0, repeated.getNumberOfColumns());
+      }
+      try (Table repeated = t.repeat(counts)) {
+        assertEquals(6, repeated.getRowCount());
+        assertEquals(0, repeated.getNumberOfColumns());
+      }
+      try (Table sampled = t.sample(2, false, 0)) {
+        assertEquals(2, sampled.getRowCount());
+        assertEquals(0, sampled.getNumberOfColumns());
+      }
+      try (Table joined = t.crossJoin(other)) {
+        assertEquals(12, joined.getRowCount());
+        assertEquals(0, joined.getNumberOfColumns());
+      }
+      try (Table joined = t.crossJoin(withColumn);
+           Table expected = new Table.TestBuilder().column(7, 8, 9, 7, 8, 9, 7, 8, 9, 7, 8, 9).build()) {
+        assertTablesAreEqual(expected, joined);
+      }
+    }
+  }
+
+  @Test
+  void testZeroColumnTableContiguousSplit() {
+    ContiguousTable[] splits = null;
+    try (Table t = new Table(10)) {
+      splits = t.contiguousSplit(2, 5, 9);
+      assertEquals(4, splits.length);
+      long[] expectedRows = {2, 3, 4, 1};
+      for (int i = 0; i < splits.length; i++) {
+        assertEquals(expectedRows[i], splits[i].getRowCount());
+        assertEquals(expectedRows[i], splits[i].getTable().getRowCount());
+        assertEquals(0, splits[i].getTable().getNumberOfColumns());
+      }
+    } finally {
+      if (splits != null) {
+        for (ContiguousTable split : splits) {
+          split.close();
+        }
+      }
+    }
+  }
+
+  @Test
   void testGetRows() {
     try (ColumnVector v1 = ColumnVector.build(DType.INT32, 5, Range.appendInts(5));
          ColumnVector v2 = ColumnVector.build(DType.INT32, 5, Range.appendInts(5));
@@ -1053,6 +1162,7 @@ public class TableTest extends CudfTestBase {
          Table table = tablemeta.releaseTable()) {
         assertArrayEquals(new String[] { "A", "B", "C" }, tablemeta.getColumnNames());
         assertTablesAreEqual(expected, table);
+        assertNull(tablemeta.releaseTable(), "the table can only be released once");
       }
     }
   }

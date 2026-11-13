@@ -305,7 +305,7 @@ public class DeletionVector {
                                             rowGroupOffsets,
                                             rowGroupNumRows,
                                             areRetentionVectors);
-    return new Table(columnHandles);
+    return Table.fromRowCountAndColumns(columnHandles);
   }
 
   /**
@@ -495,7 +495,7 @@ public class DeletionVector {
       }
 
       long[] columnPtrs = parquetChunkedReaderReadChunk(readerHandle);
-      return columnPtrs != null ? new Table(columnPtrs) : null;
+      return columnPtrs != null ? Table.fromRowCountAndColumns(columnPtrs) : null;
     }
 
     @Override

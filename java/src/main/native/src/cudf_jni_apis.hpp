@@ -36,6 +36,32 @@ jlongArray convert_table_for_return(
   std::unique_ptr<cudf::table>&& table_result,
   std::vector<std::unique_ptr<cudf::column>>&& extra_columns = {});
 
+/**
+ * @brief Detach all columns from the specified table, and return the table's row count followed
+ * by pointers to the columns as an array.
+ *
+ * Like convert_table_for_return, but the row count in the first element lets the caller rebuild
+ * a table that has no columns.
+ *
+ * @param env The JNI environment
+ * @param table_result the table to convert for return
+ * @param extra_columns columns not in the table that will be appended to the result. They must
+ * have the same number of rows as the table.
+ */
+jlongArray convert_table_with_row_count_for_return(
+  JNIEnv* env,
+  std::unique_ptr<cudf::table>& table_result,
+  std::vector<std::unique_ptr<cudf::column>>&& extra_columns = {});
+
+/**
+ * @copydoc convert_table_with_row_count_for_return(JNIEnv*, std::unique_ptr<cudf::table>&,
+ *                                                  std::vector<std::unique_ptr<cudf::column>>&&)
+ */
+jlongArray convert_table_with_row_count_for_return(
+  JNIEnv* env,
+  std::unique_ptr<cudf::table>&& table_result,
+  std::vector<std::unique_ptr<cudf::column>>&& extra_columns = {});
+
 //
 // ContiguousTable APIs
 //

@@ -97,7 +97,7 @@ public class ORCChunkedReader implements AutoCloseable {
     }
 
     long[] columnPtrs = readChunk(handle);
-    return columnPtrs != null ? new Table(columnPtrs) : null;
+    return columnPtrs != null ? Table.fromRowCountAndColumns(columnPtrs) : null;
   }
 
   @Override

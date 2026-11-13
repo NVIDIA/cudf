@@ -15,14 +15,7 @@ Ensure JDK (17+) and Maven are installed:
 java -version && mvn --version
 ```
 
-If either is missing, detect the OS and install using the appropriate package manager. Hints:
-
-- **Debian/Ubuntu** (`apt`): `sudo apt-get update -qq && sudo apt-get install -y -qq default-jdk maven`
-- **Fedora/RHEL** (`dnf`): `sudo dnf install -y java-17-openjdk-devel maven`
-- **Arch** (`pacman`): `sudo pacman -S --noconfirm jdk17-openjdk maven`
-- **macOS** (`brew`): `brew install openjdk@17 maven`
-
-Detect the OS by checking which package manager is available (e.g. `command -v apt-get`, `command -v dnf`, etc.) and use the matching command.
+If either is missing, install JDK 17+ and Maven with the platform's package manager.
 
 Run all Maven commands below from the `java/` directory.
 

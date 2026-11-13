@@ -71,7 +71,7 @@ namespace io::parquet::experimental {
   std::string_view path,
   std::optional<mutable_column_view> status = std::nullopt,
   cuda::stream_ref stream                   = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr                 = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Decode a VARIANT value column's blobs into a typed cuDF column.
@@ -109,7 +109,7 @@ namespace io::parquet::experimental {
   data_type desired_type,
   std::optional<mutable_column_view> status = std::nullopt,
   cuda::stream_ref stream                   = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr                 = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Convenience wrapper: extract a nested object value by path and decode into a typed column.
@@ -136,7 +136,7 @@ namespace io::parquet::experimental {
   data_type desired_type,
   std::optional<mutable_column_view> status = std::nullopt,
   cuda::stream_ref stream                   = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr         = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr                 = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Extract the raw VARIANT-encoded bytes of several nested fields in one pass.
@@ -221,8 +221,8 @@ namespace io::parquet::experimental {
  */
 [[nodiscard]] std::unique_ptr<column> get_variant_type_id(
   column_view const& values,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */
 }  // namespace io::parquet::experimental

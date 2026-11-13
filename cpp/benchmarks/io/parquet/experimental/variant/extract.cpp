@@ -380,7 +380,7 @@ std::vector<std::string> get_dict_keys(int nesting)
   return keys;
 }
 
-// Keys for the field-count benchmark: "f00", "f01", ..., "f{N-1}" plus "z" for miss rows.
+// Keys for the field-count benchmark: "f000", "f001", ..., "f{N-1}" plus "z" for miss rows.
 // All sort before "z", maintaining the required lexicographic order.
 std::vector<std::string> get_dict_keys_for_fields(int num_fields)
 {
@@ -710,7 +710,7 @@ static void bench_variant_extract_multi_field(nvbench::state& state)
   constexpr int nesting_depth = 4;
   bool const batched          = state.get_string("api") == "batched";
 
-  // Dictionary: the shared parent key "a", the leaf keys f00..f{N-1}, and "z" for miss rows, in
+  // Dictionary: the shared parent key "a", the leaf keys f000..f{N-1}, and "z" for miss rows, in
   // sorted order. Field ids are dictionary indices, so "a" is 0 and leaf `i` is `i + 1`
   std::vector<std::string> keys{"a"};
   for (int i = 0; i < num_fields; ++i) {

@@ -22,10 +22,10 @@
 #include <cuco/bloom_filter.cuh>
 #include <cuco/bucket_storage.cuh>
 #include <cuco/extent.cuh>
-#include <cuco/hash_functions.cuh>
 #include <cuco/pair.cuh>
 #include <cuco/probing_scheme.cuh>
 #include <cuco/types.cuh>
+#include <cuda/functional>
 #include <cuda/std/limits>
 #include <cuda/stream>
 
@@ -72,7 +72,8 @@ struct secondary_hash_fn {
   template <typename T>
   CUDF_HOST_DEVICE auto operator()(cuco::pair<hash_value_type, T> const& key) const noexcept
   {
-    return cuco::xxhash_32<hash_value_type>{_seed}(unset_mark(key.first));
+    return cuda::hash<hash_value_type, cuda::hash_algorithm::xxhash_32>{_seed}(
+      unset_mark(key.first));
   }
 };
 
@@ -169,7 +170,8 @@ using storage_ref_type =
 using right_key_type = cuco::pair<hash_value_type, rhs_index_type>;
 
 using bloom_filter_policy_type =
-  cudf::arrow_bloom_filter_policy<hash_value_type, cuco::xxhash_64<hash_value_type>>;
+  cudf::arrow_bloom_filter_policy<hash_value_type,
+                                  cuda::hash<hash_value_type, cuda::hash_algorithm::xxhash_64>>;
 using bloom_filter_allocator_type = rmm::mr::polymorphic_allocator<cuda::std::byte>;
 using bloom_filter_type           = cuco::bloom_filter<hash_value_type,
                                                        cuco::extent<std::size_t>,

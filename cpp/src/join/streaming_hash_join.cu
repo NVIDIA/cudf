@@ -27,9 +27,9 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
-#include <cuco/hash_functions.cuh>
 #include <cuco/pair.cuh>
 #include <cuco/static_multiset.cuh>
+#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
@@ -200,7 +200,7 @@ struct masked_hasher2 {
   }
 
   hash_value_type hash_mask;
-  cuco::xxhash_32<hash_value_type> hash;
+  cuda::hash<hash_value_type, cuda::hash_algorithm::xxhash_32> hash;
 };
 
 using probing_scheme  = cuco::double_hashing<DEFAULT_JOIN_CG_SIZE, masked_hasher1, masked_hasher2>;

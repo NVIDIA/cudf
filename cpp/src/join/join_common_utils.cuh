@@ -12,6 +12,7 @@
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 
+#include <cuco/pair.cuh>
 #include <cuda/stream>
 
 #include <memory>

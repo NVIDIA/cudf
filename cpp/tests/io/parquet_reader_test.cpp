@@ -6716,16 +6716,16 @@ TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
     std::memcpy(&orig_len, buffer.data() + length_pos, sizeof(orig_len));
     ASSERT_EQ(orig_len, static_cast<int32_t>(target.size()));
 
-    // Overwrite the length prefix with a value that runs past the end of the page. This mimics the
-    // real-world corruption where a stray byte shifts the length window, producing a bogus length.
-    // The offset preprocessor detects `string_offset + len > dict_size` and must raise
-    // decode_error::STRING_DATA_OVERRUN rather than truncating and back-filling empty strings.
     auto const read_opts = cudf::io::parquet_reader_options::builder(
                              cudf::io::source_info{cudf::host_span<std::byte const>{
                                reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
                              .build();
     CUDF_TEST_EXPECT_TABLES_EQUAL(expected, cudf::io::read_parquet(read_opts).tbl->view());
 
+    // Overwrite the length prefix with a value that runs past the end of the page. This mimics the
+    // real-world corruption where a stray byte shifts the length window, producing a bogus length.
+    // The offset preprocessor detects `string_offset + len > dict_size` and must raise
+    // decode_error::STRING_DATA_OVERRUN rather than truncating and back-filling empty strings.
     for (int32_t const bad_len : {1'000'000,
                                   -1,
                                   std::numeric_limits<int32_t>::min(),

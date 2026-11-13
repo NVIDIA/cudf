@@ -17,6 +17,7 @@
 #include <cudf/quantiles.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -39,7 +40,7 @@ struct percentile_approx_dispatch {
                                            int delta,
                                            std::vector<double> const& percentages,
                                            [[maybe_unused]] cudf::size_type ulps)
-    requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     // gpu implementation.
     auto agg_result = op(values, delta);
@@ -58,7 +59,6 @@ struct percentile_approx_dispatch {
                                            int delta,
                                            std::vector<double> const& percentages,
                                            cudf::size_type ulps)
-    requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
   {
     CUDF_FAIL("Invalid input type for percentile_approx test");
   }
@@ -134,7 +134,10 @@ void percentile_approx_test(cudf::column_view const& _keys,
           tbl.begin(), tbl.end(), std::back_inserter(cols), [](cudf::column_view const& col) {
             return std::make_unique<cudf::column>(col);
           });
-        return cudf::make_structs_column(tbl.num_rows(), std::move(cols), 0, rmm::device_buffer());
+        return cudf::make_structs_column(tbl.num_rows(),
+                                         std::move(cols),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
       };
       // groupby path
       reduce_parts.push_back(cudf::type_dispatcher(values[v_idx].type(),
@@ -224,7 +227,8 @@ void grouped_test(cudf::data_type input_type, std::vector<std::pair<int, int>> p
   });
 }
 
-std::pair<rmm::device_buffer, cudf::size_type> make_null_mask(cudf::column_view const& col)
+std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> make_null_mask(
+  cudf::column_view const& col)
 {
   auto itr = cudf::test::iterators::valids_at_multiples_of(2);
   return cudf::test::detail::make_null_mask(itr, itr + col.size());
@@ -331,8 +335,10 @@ void simple_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<in
   // all in the same group
   auto keys = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT32}, values->size(), cudf::mask_state::UNALLOCATED);
-  CUDF_CUDA_TRY(
-    cudaMemset(keys->mutable_view().data<int32_t>(), 0, values->size() * sizeof(int32_t)));
+  CUDF_CUDA_TRY(cudaMemsetAsync(keys->mutable_view().data<int32_t>(),
+                                0,
+                                values->size() * sizeof(int32_t),
+                                cudf::test::get_default_stream().get()));
 
   // add a null mask
   auto mask = make_null_mask(*values);
@@ -462,6 +468,34 @@ TEST_F(PercentileApproxTest, EmptyInput)
                                           cudf::make_empty_column(cudf::type_id::FLOAT64),
                                           null_count,
                                           std::move(null_mask));
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, *expected);
+}
+
+TEST_F(PercentileApproxTest, MixedEmptyInput)
+{
+  auto const values =
+    cudf::test::fixed_width_column_wrapper<double>{{1, 0, 3}, {true, false, true}};
+  auto const keys        = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 2};
+  auto const percentiles = cudf::test::fixed_width_column_wrapper<double>{0.0, 0.5, 1.0};
+
+  cudf::groupby::groupby gb(
+    cudf::table_view{{keys}}, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+  std::vector<cudf::groupby::aggregation_request> requests;
+  std::vector<std::unique_ptr<cudf::groupby_aggregation>> aggregations;
+  aggregations.push_back(cudf::make_tdigest_aggregation<cudf::groupby_aggregation>(1000));
+  requests.push_back({values, std::move(aggregations)});
+  auto const tdigest_column = gb.aggregate(requests);
+
+  cudf::tdigest::tdigest_column_view tdv(*tdigest_column.second[0].results[0]);
+  auto const result = cudf::percentile_approx(tdv, percentiles);
+
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets{0, 3, 3, 6};
+  cudf::test::fixed_width_column_wrapper<double> child{1, 1, 1, 3, 3, 3};
+  std::vector<bool> nulls{true, false, true};
+  auto [null_mask, null_count] = cudf::test::detail::make_null_mask(nulls.begin(), nulls.end());
+  auto expected                = cudf::make_lists_column(
+    3, offsets.release(), child.release(), null_count, std::move(null_mask));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, *expected);
 }

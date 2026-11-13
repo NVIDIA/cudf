@@ -6,7 +6,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/gather.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/reduction/detail/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -56,7 +56,7 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
                                                          column_view const& input,
                                                          rolling_aggregation const& aggr,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr)
+                                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(group_keys.num_columns() > 0,
                "Ungrouped rolling window not supported in aggregation path.");
@@ -71,9 +71,9 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
     group_by.aggregate(agg_requests, stream, cudf::get_current_device_resource_ref());
   auto const& aggregation_result_col = aggregation_results.second.front().results.front();
 
-  using cudf::groupby::detail::sort::sort_groupby_helper;
-  auto helper = sort_groupby_helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES, {}};
-  auto const& group_labels = helper.group_labels(stream);
+  using cudf::groupby::detail::groupby_helper;
+  auto helper = groupby_helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
+  auto const& group_labels = helper.group_labels(stream, cudf::get_current_device_resource_ref());
 
   auto result_columns = cudf::detail::gather(cudf::table_view{{*aggregation_result_col}},
                                              group_labels,
@@ -90,7 +90,7 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
 std::unique_ptr<column> reduction_based_rolling_window(column_view const& input,
                                                        rolling_aggregation const& aggr,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cudf::memory_resources mr)
 {
   auto const reduce_results = [&] {
     auto const return_dtype = cudf::detail::target_type(input.type(), aggr.kind);
@@ -144,7 +144,7 @@ std::unique_ptr<column> optimized_unbounded_window(table_view const& group_keys,
                                                    column_view const& input,
                                                    rolling_aggregation const& aggr,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   return group_keys.num_columns() > 0
            ? aggregation_based_rolling_window(group_keys, input, aggr, stream, mr)

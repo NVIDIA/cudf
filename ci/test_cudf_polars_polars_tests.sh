@@ -5,6 +5,7 @@
 set -euo pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 rapids-logger "Download wheels"
 
@@ -16,24 +17,27 @@ CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name 
 CUDF_POLARS_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-polars cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
+rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
 
 rapids-logger "Install libcudf, pylibcudf and cudf_polars"
 
+CUDF_INSTALL_ARGS=(
+    --constraint "${PIP_CONSTRAINT}"
+    "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]"
+    "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+    "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+    "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+    "$(echo "${CUDF_STREAMING_WHEELHOUSE}"/cudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+)
+
 # notes:
 #
-#   * echo to expand wildcard before adding `[test]` requires for pip
+#   * echo to expand wildcard before adding `[test]` requires for the installer
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
-    -v \
-    --constraint "${PIP_CONSTRAINT}" \
-    "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
-    "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
-    "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
-    "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
-    "$(echo "${CUDF_STREAMING_WHEELHOUSE}"/cudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+rapids-uv-pip install \
+    "${CUDF_INSTALL_ARGS[@]}"
 
 TAG=$(python -c 'import polars; print(f"py-{polars.__version__}")')
 rapids-logger "Clone polars to ${TAG}"
@@ -41,22 +45,21 @@ git clone https://github.com/pola-rs/polars.git --branch "${TAG}" --depth 1
 
 # Install requirements for running polars tests
 rapids-logger "Install polars test requirements"
+
 # We don't need to pick up dependencies from polars-cloud, so we remove it.
 sed -i '/^polars-cloud$/d' polars/py-polars/requirements-dev.txt
-# Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
-sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
 
-# notes:
-#
-#   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
-#     that environment variable is ignored if any other --constraint are passed via the CLI
-#
-rapids-pip-retry install \
-    -v \
-    --prefer-binary \
-    --constraint "${PIP_CONSTRAINT}" \
+# torch-tests are currently excluded from the cudf-polars test selection.
+sed -i '/^torch$/d' polars/py-polars/requirements-ci.txt
+
+# Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
+echo 'pyarrow<25' >> "${PIP_CONSTRAINT}"
+
+rapids-uv-pip install \
+    "${CUDF_INSTALL_ARGS[@]}" \
     -r polars/py-polars/requirements-dev.txt \
-    -r polars/py-polars/requirements-ci.txt
+    -r polars/py-polars/requirements-ci.txt \
+    "polars-iceberg>=0.1.0,<1.0.0"
 
 # shellcheck disable=SC2317
 function set_exitcode()

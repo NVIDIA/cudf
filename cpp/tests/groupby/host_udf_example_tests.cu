@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/aggregation/host_udf.hpp>
@@ -11,12 +12,14 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <thrust/transform.h>
@@ -67,13 +70,14 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
     using InputType  = double;
     using OutputType = double;
 
-    template <typename T, typename... Args, CUDF_ENABLE_IF(!std::is_same_v<InputType, T>)>
+    template <typename T, typename... Args>
+      requires(not cuda::std::same_as<InputType, T>)
     std::unique_ptr<cudf::column> operator()(Args...) const
     {
       CUDF_FAIL("Unsupported input type.");
     }
 
-    template <typename T, CUDF_ENABLE_IF(std::is_same_v<InputType, T>)>
+    template <cuda::std::same_as<InputType> T>
     std::unique_ptr<cudf::column> operator()(cuda::stream_ref stream,
                                              rmm::device_async_resource_ref mr) const
     {
@@ -97,7 +101,8 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
                                                     mr);
 
       // Store row index if it is valid, otherwise store a negative value denoting a null row.
-      rmm::device_uvector<cudf::size_type> valid_idx(num_groups, stream);
+      cuda::device_buffer<cudf::size_type> valid_idx(
+        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
 
       thrust::transform(
         rmm::exec_policy_nosync(stream),
@@ -110,8 +115,8 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
                      group_max.begin<InputType>(),
                      group_sum.begin<InputType>()});
 
-      auto const valid_idx_cv = cudf::column_view{
-        cudf::data_type{cudf::type_id::INT32}, num_groups, valid_idx.begin(), nullptr, 0};
+      auto const valid_idx_cv =
+        cudf::column_view{cudf::device_span<cudf::size_type const>{valid_idx}};
       return std::move(cudf::gather(cudf::table_view{{output->view()}},
                                     valid_idx_cv,
                                     cudf::out_of_bounds_policy::NULLIFY,
@@ -182,8 +187,20 @@ TEST_F(HostUDFGroupbyExampleTest, SimpleInput)
   // Group sum_sqr: [ 90, null, 93 ]
   // Group max: [ 9, null, 8 ]
   // Group sum: [ 12, null, 15 ]
-  // Output: [ 1 * 90 - 9 * 12, null, 3 * 93 - 8 * 15 ]
-  auto const expected = doubles_col{{-18.0, null, 159.0}, {true, false, true}};
+  // The UDF includes the group index in its result, and group order is unspecified.
+  auto const [group_keys, key_validity] =
+    cudf::test::to_host<int32_t>(grp_result.first->view().column(0));
+  std::vector<double> expected_values;
+  std::vector<bool> expected_validity;
+  for (std::size_t group = 0; group < group_keys.size(); ++group) {
+    auto const key = group_keys[group];
+    expected_values.push_back(key == 0   ? (group + 1) * 90.0 - 9.0 * 12.0
+                              : key == 2 ? (group + 1) * 93.0 - 8.0 * 15.0
+                                         : null);
+    expected_validity.push_back(key != 1);
+  }
+  auto const expected =
+    doubles_col{expected_values.begin(), expected_values.end(), expected_validity.begin()};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
 }
 

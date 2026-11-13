@@ -11,6 +11,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/scatter.h>
 #include <thrust/uninitialized_fill.h>
@@ -24,7 +25,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0 or keys.empty()) {
     return empty_like(input);
@@ -45,7 +46,8 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
   // the need to sort the distinct indices, which is slower.
 
   auto const output_markers = [&] {
-    auto markers = rmm::device_uvector<bool>(input.num_rows(), stream);
+    auto markers = cuda::device_buffer<bool>(
+      stream, cudf::get_current_device_resource_ref(), input.num_rows(), cuda::no_init);
     thrust::uninitialized_fill(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       markers.begin(),
@@ -72,7 +74,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_distinct(input, keys, keep, nulls_equal, nans_equal, stream, mr);

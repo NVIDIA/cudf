@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,10 +67,11 @@ inline constexpr auto first_value = First;
 template <typename Func>
 auto dispatch_bool(bool value, Func&& func)
 {
+  // Avoid a bug with `std::bool_constant<true>` in NVCC 13.1-13.2, see PR 24290.
   if (value) {
-    return func(std::bool_constant<true>{});
+    return func(std::true_type{});
   } else {
-    return func(std::bool_constant<false>{});
+    return func(std::false_type{});
   }
 }
 

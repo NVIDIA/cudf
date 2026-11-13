@@ -243,8 +243,11 @@ def test_dataframe_join_mismatch_cats(how):
     if how == "right":
         got = got[["data_col_left", "data_col_right"]]
 
-    # Unmatched rows introduce NaN, upcasting the integer data columns to
-    # float64 (matching pandas).
+    # Unmatched rows are nulls in the integer data columns; pandas upcasts
+    # them to float64, which cudf only does in pandas-compatible mode.
+    expect.data_col_right = expect.data_col_right.astype(np.int64)
+    expect.data_col_left = expect.data_col_left.astype(np.int64)
+
     assert_join_results_equal(expect, got, how=how, check_categorical=False)
 
 

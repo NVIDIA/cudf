@@ -6,21 +6,25 @@
 
 #include <cudf_test/print_utilities.cuh>
 
+#include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/device/device_radix_sort.cuh>
+#include <cub/device/device_scan.cuh>
+#include <cub/util_type.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
+#include <cuda/std/type_traits>
 #include <thrust/device_ptr.h>
-#include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
 
@@ -65,7 +69,7 @@ namespace detail {
 template <typename StackLevelT, typename ValueT>
 struct StackOp {
   // Must be signed type as any subsequence of stack operations must be able to be covered.
-  static_assert(std::is_signed_v<StackLevelT>, "StackLevelT has to be a signed type");
+  static_assert(cuda::std::is_signed_v<StackLevelT>, "StackLevelT has to be a signed type");
 
   StackLevelT stack_level;
   ValueT value;
@@ -308,7 +312,7 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                      std::size_t const num_symbols_out,
                                      cuda::stream_ref stream)
 {
-  rmm::device_buffer temp_storage{};
+  cuda::device_buffer<std::byte> temp_storage{stream, cudf::get_current_device_resource_ref()};
 
   // Type used to hold pairs of (stack_level, value) pairs
   using StackOpT = detail::StackOp<StackLevelT, StackSymbolT>;
@@ -446,15 +450,19 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
                                             propagate_writes_scan_bytes});
 
   if (temp_storage.size() < total_temp_storage_bytes) {
-    temp_storage.resize(total_temp_storage_bytes, stream);
+    temp_storage = cuda::device_buffer<std::byte>{
+      stream, cudf::get_current_device_resource_ref(), total_temp_storage_bytes, cuda::no_init};
   }
   // Actual device buffer size, as we need to pass in an lvalue-ref to cub algorithms as
   // temp_storage_bytes
   total_temp_storage_bytes = temp_storage.size();
 
-  rmm::device_uvector<SymbolPositionT> d_symbol_position_alt{num_symbols_in, stream};
-  rmm::device_uvector<StackOpT> d_kv_ops_current{num_symbols_in, stream};
-  rmm::device_uvector<StackOpT> d_kv_ops_alt{num_symbols_in, stream};
+  cuda::device_buffer<SymbolPositionT> d_symbol_position_alt(
+    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
+  cuda::device_buffer<StackOpT> d_kv_ops_current{
+    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init};
+  cuda::device_buffer<StackOpT> d_kv_ops_alt(
+    stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
 
   //------------------------------------------------------------------------------
   // ALGORITHM
@@ -473,7 +481,8 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
       d_symbols,
       detail::NewlineToResetStackSegmentOp<StackSymbolToStackOpTypeT>{symbol_to_stack_op});
 
-    rmm::device_uvector<StackSegmentT> key_segments{num_symbols_in, stream};
+    cuda::device_buffer<StackSegmentT> key_segments(
+      stream, cudf::get_current_device_resource_ref(), num_symbols_in, cuda::no_init);
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(
       temp_storage.data(),
       total_temp_storage_bytes,
@@ -505,7 +514,10 @@ void sparse_stack_op_to_top_of_stack(StackSymbolItT d_symbols,
 
   // Check if the last element of d_kv_operations is 0. If not, then we have a problem.
   if (num_symbols_in && !supports_reset_op) {
-    StackOpT last_symbol = d_kv_ops_current.element(num_symbols_in - 1, stream);
+    StackOpT last_symbol;
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+      &last_symbol, d_kv_ops_current.data() + num_symbols_in - 1, sizeof(last_symbol), stream));
+    cudf::detail::sync_stream(stream);
     CUDF_EXPECTS(last_symbol.stack_level == 0, "The logical stack is not empty!");
   }
 

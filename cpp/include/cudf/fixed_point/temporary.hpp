@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,6 +7,7 @@
 
 #include <cudf/types.hpp>
 
+#include <cuda/cmath>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 
@@ -38,7 +39,7 @@ auto to_string(T value) -> std::string
       value /= 10;
     } while (value);
     if (sign) s.push_back('-');
-    std::reverse(s.begin(), s.end());
+    std::ranges::reverse(s);
     return s;
   } else {
     return std::to_string(value);
@@ -69,10 +70,7 @@ CUDF_HOST_DEVICE inline auto max(T lhs, T rhs)
 template <typename BaseType>
 CUDF_HOST_DEVICE constexpr auto exp10(int32_t exponent)
 {
-  BaseType value = 1;
-  while (exponent > 0)
-    value *= 10, --exponent;
-  return value;
+  return cuda::ipow(BaseType{10}, exponent);
 }
 
 }  // namespace detail

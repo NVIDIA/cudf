@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,8 +30,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_KeyRemapping_destroy(JNIEnv* env, jcl
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto remap_ptr = reinterpret_cast<cudf::key_remapping*>(j_handle);
-    delete remap_ptr;
+    cudf::jni::safe_delete<cudf::key_remapping>(j_handle);
   }
   JNI_CATCH(env, );
 }

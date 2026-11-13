@@ -32,7 +32,7 @@ int main(int argc, char const** argv)
   auto const input_file = std::string{argv[1]};
   std::cout << "Input: " << input_file << std::endl;
 
-  auto const mr_name = std::string("pool");
+  auto const mr_name = std::string("async");
   auto resource      = create_memory_resource(mr_name);
   auto stats_mr      = rmm::mr::statistics_resource_adaptor{resource};
   rmm::mr::set_current_device_resource(stats_mr);

@@ -1326,8 +1326,7 @@ def test_read_parquet_sources_from_different_writers(
     )
     paths = [pyarrow_path, polars_path]
     result = _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
-    assert result.num_rows() == 2
-    assert result.columns()[0].type().id() == plc.TypeId.TIMESTAMP_MICROSECONDS
+    assert_table_eq(pa.table({"t": pa.array([t, t], pa.timestamp("us"))}), result)
 
 
 @pytest.mark.parametrize("pyarrow_first", [True, False])

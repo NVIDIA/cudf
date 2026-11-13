@@ -18,6 +18,7 @@ dependencies:
 - cramjam
 - croaring==4.4.2
 - cuda-bindings>=12.9.3,<13.0
+- cuda-core>=1.0,<2
 - cuda-cudart-dev
 - cuda-cupti-dev
 - cuda-nvcc

@@ -12,6 +12,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cstddef>
 #include <optional>
 
 namespace cudf::io::parquet::detail {
@@ -39,6 +40,16 @@ namespace {
 }
 
 }  // namespace
+
+bool is_unordered_int96(FileMetaData const& metadata, Type physical_type, std::size_t leaf_idx)
+{
+  if (physical_type != Type::INT96) { return false; }
+  // Ignoring min/max is always safe, so treat missing column orders as unordered
+  if (not metadata.column_orders.has_value() or leaf_idx >= metadata.column_orders->size()) {
+    return true;
+  }
+  return (*metadata.column_orders)[leaf_idx].type != ColumnOrder::INT96_TIMESTAMP_ORDER;
+}
 
 stats_columns_collector::stats_columns_collector(ast::expression const& expr,
                                                  std::span<cudf::data_type const> output_dtypes)

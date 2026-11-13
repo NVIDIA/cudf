@@ -396,6 +396,7 @@ std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
   auto scatter_map  = detail::apply_mask(table_view{{indices->view()}},
                                         boolean_mask,
                                         mask_type::RETENTION,
+                                        null_policy::EXCLUDE,
                                         stream,
                                         cudf::get_current_device_resource_ref());
   auto output_table = detail::scatter(
@@ -450,6 +451,7 @@ std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
   auto scatter_map = detail::apply_mask(table_view{{indices->view()}},
                                         boolean_mask,
                                         mask_type::RETENTION,
+                                        null_policy::EXCLUDE,
                                         stream,
                                         cudf::get_current_device_resource_ref());
   return detail::scatter(input, scatter_map->get_column(0).view(), target, stream, mr);

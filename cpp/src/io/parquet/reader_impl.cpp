@@ -1176,8 +1176,12 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
     // No STRING columns are to be dictionary encoded
     if (std::ranges::empty(dict_indices)) {
-      out_columns = cudf::detail::apply_mask(
-                      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr)
+      out_columns = cudf::detail::apply_mask(only_output,
+                                             *predicate,
+                                             cudf::detail::mask_type::RETENTION,
+                                             cudf::null_policy::EXCLUDE,
+                                             _stream,
+                                             _mr)
                       ->release();
     } else {
       // Gather map of the surviving rows, computed once for both subsets
@@ -1189,6 +1193,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
         cudf::detail::apply_mask(table_view{std::vector<column_view>{row_indices->view()}},
                                  *predicate,
                                  cudf::detail::mask_type::RETENTION,
+                                 cudf::null_policy::EXCLUDE,
                                  _stream,
                                  _mr.as_temporary());
 

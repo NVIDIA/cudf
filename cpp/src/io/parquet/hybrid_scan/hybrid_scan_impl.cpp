@@ -1290,8 +1290,12 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   // Apply the corresponding range of the row mask to the table
   auto const effective_row_mask = cudf::detail::slice(
     cudf::column_view{row_mask}, mask_offset, mask_offset + read_table->num_rows(), _stream);
-  auto output_table = cudf::detail::apply_mask(
-    read_table->view(), effective_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
+  auto output_table = cudf::detail::apply_mask(read_table->view(),
+                                               effective_row_mask,
+                                               cudf::detail::mask_type::RETENTION,
+                                               cudf::null_policy::EXCLUDE,
+                                               _stream,
+                                               _mr);
   return {std::move(output_table), std::move(out_metadata)};
 }
 

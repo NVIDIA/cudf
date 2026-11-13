@@ -87,6 +87,27 @@ the CUDA runtime. To build libcudf as an archive, specify `-DBUILD_SHARED_LIBS=O
 parameter when building libcudf, then specify `-DCUDF_JNI_LIBCUDF_STATIC=ON` when building the Java
 bindings with Maven.
 
+## Native library packaging
+
+By default, the Java JAR contains the conventional `libcudf.so` resource. To
+produce zstd chunks instead, build with `-Pzstd-native-chunks`. This profile
+splits `libcudf.so` into 32 MiB chunks when it is at least 256 MiB. Each chunk
+is compressed with zstd level 9 and stored in the JAR without ZIP compression.
+The JAR then contains a chunk manifest instead of the original `libcudf.so`
+entry. Maven uses Jython and `zstd-jni` to create and verify the chunks.
+
+The optional zstd packaging requires `zstd-jni` at runtime. cuDF Java declares
+it as an optional Maven dependency, so consumers of a chunked JAR must add it
+to their classpath. For CLI extraction:
+
+```shell script
+java -cp "cudf-<version>-cuda12.jar:zstd-jni-1.5.6-6.jar" \
+  ai.rapids.cudf.NativeDepUtil extract cudf /tmp/libcudf.so
+```
+
+The loader also accepts older JARs with ordinary native libraries or
+uncompressed chunks, and the `ai.rapids.cudf.lib-native-dir` override still works.
+
 ## Per-thread Default Stream
 
 The JNI code can be built with *per-thread default stream* (PTDS), which gives each host thread its

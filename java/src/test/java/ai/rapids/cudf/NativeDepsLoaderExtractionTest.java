@@ -4,6 +4,7 @@
  */
 package ai.rapids.cudf;
 
+import com.github.luben.zstd.Zstd;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -96,6 +97,53 @@ class NativeDepsLoaderExtractionTest {
     } finally {
       Files.deleteIfExists(extracted.toPath());
     }
+  }
+
+  @Test
+  void extractsZstdCompressedChunks() throws IOException {
+    String baseName = "zstdchunktest";
+    byte[] expected = "independently compressed native library chunks"
+        .getBytes(StandardCharsets.UTF_8);
+    writeChunkedResource(baseName, expected, 8, "1", null, null, true);
+
+    File extracted = NativeDepsLoader.createFile(TEST_OS, TEST_ARCH, baseName);
+    try {
+      assertArrayEquals(expected, Files.readAllBytes(extracted.toPath()));
+    } finally {
+      Files.deleteIfExists(extracted.toPath());
+    }
+  }
+
+  @Test
+  void rejectsCorruptZstdChunkAndDeletesPartialFile() throws IOException {
+    String baseName = "corruptzstdtest";
+    byte[] expected = "compressed chunk contents".getBytes(StandardCharsets.UTF_8);
+    writeChunkedResource(baseName, expected, 8, "1", null, null, true);
+    Path firstChunk = chunkDirectory(baseName).resolve("00000");
+    byte[] compressed = Files.readAllBytes(firstChunk);
+    compressed[0] = 0;
+    Files.write(firstChunk, compressed);
+    Set<Path> before = temporaryFiles(baseName);
+
+    assertThrows(IOException.class,
+        () -> NativeDepsLoader.createFile(TEST_OS, TEST_ARCH, baseName));
+
+    assertEquals(before, temporaryFiles(baseName));
+  }
+
+  @Test
+  void rejectsUnsupportedChunkCompression() throws IOException {
+    String baseName = "badcompressiontest";
+    byte[] expected = "chunk contents".getBytes(StandardCharsets.UTF_8);
+    writeChunkedResource(baseName, expected, 8, "1", null, null, true);
+    Path manifestPath = resourceDir.resolve(
+        System.mapLibraryName(baseName) + ".chunks.properties");
+    String manifest = new String(Files.readAllBytes(manifestPath), StandardCharsets.ISO_8859_1);
+    Files.write(manifestPath, manifest.replace("chunk.compression=zstd",
+        "chunk.compression=unsupported").getBytes(StandardCharsets.ISO_8859_1));
+
+    assertThrows(IOException.class,
+        () -> NativeDepsLoader.createFile(TEST_OS, TEST_ARCH, baseName));
   }
 
   @Test
@@ -382,6 +430,13 @@ class NativeDepsLoaderExtractionTest {
   private void writeChunkedResource(String baseName, byte[] contents, int chunkSize,
                                     String version, Long firstChunkCrcOverride,
                                     Long countOverride) throws IOException {
+    writeChunkedResource(baseName, contents, chunkSize, version, firstChunkCrcOverride,
+        countOverride, false);
+  }
+
+  private void writeChunkedResource(String baseName, byte[] contents, int chunkSize,
+                                    String version, Long firstChunkCrcOverride,
+                                    Long countOverride, boolean zstdCompressed) throws IOException {
     String mappedName = System.mapLibraryName(baseName);
     Path chunks = chunkDirectory(baseName);
     Files.createDirectories(chunks);
@@ -392,7 +447,8 @@ class NativeDepsLoaderExtractionTest {
       int length = Math.min(chunkSize, contents.length - offset);
       byte[] chunk = new byte[length];
       System.arraycopy(contents, offset, chunk, 0, length);
-      Files.write(chunks.resolve(String.format(Locale.ROOT, "%05d", i)), chunk);
+      Files.write(chunks.resolve(String.format(Locale.ROOT, "%05d", i)),
+          zstdCompressed ? Zstd.compress(chunk, 9) : chunk);
       CRC32 chunkCrc = new CRC32();
       chunkCrc.update(chunk);
       long crcValue = i == 0 && firstChunkCrcOverride != null
@@ -408,6 +464,7 @@ class NativeDepsLoaderExtractionTest {
             + "chunk.size=%d%n"
             + "chunk.count=%d%n",
         version, contents.length, chunkSize, manifestCount)
+        + (zstdCompressed ? "chunk.compression=zstd\n" : "")
         + chunkCrcProperties;
     Files.write(resourceDir.resolve(mappedName + ".chunks.properties"),
         manifest.getBytes(StandardCharsets.ISO_8859_1));

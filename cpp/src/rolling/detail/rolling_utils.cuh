@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,8 @@
 #include <cudf/types.hpp>
 
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/type_traits>
 
 namespace cudf {

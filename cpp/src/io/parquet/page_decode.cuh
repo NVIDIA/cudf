@@ -13,6 +13,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/tuple>
 
 namespace cudf::io::parquet::detail {

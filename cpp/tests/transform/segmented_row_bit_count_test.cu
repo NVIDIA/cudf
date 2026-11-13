@@ -19,6 +19,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 #include <thrust/fill.h>
 #include <thrust/reduce.h>
 #include <thrust/tabulate.h>

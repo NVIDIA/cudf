@@ -13,6 +13,7 @@ from polars.io.plugins import register_io_source
 from polars.testing import assert_frame_equal
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.rank_aware_source import RankAwareSource, SizedChunks
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -77,6 +78,36 @@ def test_rank_aware_source_multi_chunk(engine: pl.GPUEngine):
     chunks = [pl.DataFrame({"a": [1, 2]}), pl.DataFrame({"a": [3, 4]})]
     q = register_io_source(MultiChunkSource(chunks), schema={"a": pl.Int64})
     assert_frame_equal(q.collect(engine=engine), pl.DataFrame({"a": [1, 2, 3, 4]}))
+
+
+@pytest.mark.engine_params(["ray"])
+@pytest.mark.parametrize("ray_num_ranks", [2, 3], scope="session")
+def test_set_sorted_uneven_rank_chunks(streaming_engine_factory) -> None:
+    class UnevenSource(RankAwareSource):
+        def __call__(
+            self, with_columns, predicate, n_rows, batch_size, rank=0, nranks=1
+        ):
+            chunks = [
+                pl.DataFrame({"a": [1, 2], "v": [10, 20]}),
+                pl.DataFrame({"a": [2], "v": [30]}),
+                pl.DataFrame({"a": [2, 3], "v": [40, 50]}),
+                pl.DataFrame({"a": [4], "v": [60]}),
+                pl.DataFrame({"a": [5], "v": [70]}),
+            ]
+            if nranks > 2:
+                chunks = (chunks[:1], chunks[1:2], chunks[2:])[rank]
+            elif nranks > 1:
+                chunks = chunks[:1] if rank == 0 else chunks[1:]
+            for chunk in chunks:
+                yield chunk.select(with_columns) if with_columns is not None else chunk
+
+    engine = streaming_engine_factory(
+        StreamingOptions(target_partition_size=1, fallback_mode="raise")
+    )
+    source = register_io_source(UnevenSource(), schema={"a": pl.Int64, "v": pl.Int64})
+    q = source.set_sorted("a").group_by("a", maintain_order=True).agg(pl.col("v").sum())
+    expected = pl.DataFrame({"a": [1, 2, 3, 4, 5], "v": [10, 90, 50, 60, 70]})
+    assert_frame_equal(q.collect(engine=engine), expected)
 
 
 def test_rank_aware_source_gpu_chunks(engine: pl.GPUEngine):

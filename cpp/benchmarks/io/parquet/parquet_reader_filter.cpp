@@ -182,6 +182,7 @@ void BM_parquet_read_filter(nvbench::state& state)
   auto const selectivity    = static_cast<float>(state.get_float64("selectivity"));
   auto const nullable       = state.get_string("nullable") == "true";
   auto const use_jit        = state.get_string("executor") == "jit";
+  auto const output_dict    = state.get_string("output_dict") == "true";
   auto const num_input_cols = static_cast<cudf::size_type>(state.get_int64("num_cols"));
   auto const rg_size_bytes  = state.get_int64("row_group_size_bytes");
   auto const rg_size_rows   = state.get_int64("row_group_size_rows");
@@ -195,9 +196,14 @@ void BM_parquet_read_filter(nvbench::state& state)
 
   auto [filter_column, filter_func] =
     filter_generator<DataType>()(selectivity, num_rows, row_width, nullable, predicate_intensity);
-  auto copy_only_dtypes = cycle_dtypes(
-    {cudf::type_id::BOOL8, cudf::type_id::FLOAT32, cudf::type_id::FLOAT64, cudf::type_id::STRING},
-    num_copy_only_cols);
+  // Fraction of the copy-only columns that are STRING; the rest cycle through fixed-width types
+  auto const string_fraction = static_cast<float>(state.get_float64("string_fraction"));
+  CUDF_EXPECTS(string_fraction >= 0.0F && string_fraction <= 1.0F, "Invalid string fraction");
+  auto const num_string_cols = static_cast<cudf::size_type>(num_copy_only_cols * string_fraction);
+  auto copy_only_dtypes =
+    cycle_dtypes({cudf::type_id::BOOL8, cudf::type_id::FLOAT32, cudf::type_id::FLOAT64},
+                 num_copy_only_cols - num_string_cols);
+  copy_only_dtypes.insert(copy_only_dtypes.end(), num_string_cols, cudf::type_id::STRING);
 
   std::vector<std::unique_ptr<cudf::column>> copy_only_cols;
 
@@ -241,7 +247,8 @@ void BM_parquet_read_filter(nvbench::state& state)
     cudf::io::parquet_reader_options::builder(
       cudf::io::source_info{cudf::host_span<char>{parquet_buffer.data(), parquet_buffer.size()}})
       .filter(filter_func())
-      .use_jit_filter(use_jit);
+      .use_jit_filter(use_jit)
+      .output_dict_columns(output_dict);
 
   // pre-warm JIT cache
   if (use_jit) { cudf::io::read_parquet(read_opts); }
@@ -282,10 +289,26 @@ void BM_parquet_read_filter(nvbench::state& state)
     .add_float64_axis("selectivity", {0.5, 0.8})                            \
     .add_string_axis("nullable", {"true"})                                  \
     .add_string_axis("executor", {"jit", "ast"})                            \
+    .add_string_axis("output_dict", {"false"})                              \
+    .add_float64_axis("string_fraction", {0.25})                            \
     .add_int64_axis("row_group_size_bytes", {0})                            \
     .add_int64_axis("row_group_size_rows", {0})
 
 PARQUET_READER_FILTER_BENCHMARK_DEFINE(parquet_read_filter_i32, int32_t);
+
+void parquet_read_filter_dict(nvbench::state& state) { BM_parquet_read_filter<int32_t>(state); }
+
+NVBENCH_BENCH(parquet_read_filter_dict)
+  .add_int64_axis("predicate_intensity", {4})
+  .add_int64_axis("num_cols", {32})
+  .add_int64_axis("num_rows", {1'000'000, 10'000'000})
+  .add_float64_axis("selectivity", {0.5})
+  .add_string_axis("nullable", {"true"})
+  .add_string_axis("executor", {"ast"})
+  .add_string_axis("output_dict", {"false", "true"})
+  .add_float64_axis("string_fraction", {0.25, 1.0})
+  .add_int64_axis("row_group_size_bytes", {0})
+  .add_int64_axis("row_group_size_rows", {0});
 
 PARQUET_READER_FILTER_BENCHMARK_DEFINE(parquet_read_filter_f32, float);
 

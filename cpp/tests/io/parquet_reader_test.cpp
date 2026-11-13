@@ -379,6 +379,113 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   }
 }
 
+TEST_F(ParquetReaderTest, NzMapDeltaMixedColumns)
+{
+  // Exercises the mapped DELTA_BINARY_PACKED decoder on both of its paths: the required-INT64
+  // fast path and the general rank-map path. The general path also zero-fills null slots on pages
+  // with at least a quarter of their rows valid, in short gaps per lane and in long gaps across the
+  // warp, so the null patterns below cover short gaps, long gaps, mostly-null and all-null pages.
+  // Checks both page versions, slices that start and end mid-page, and chunked reads.
+  static constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
+
+  constexpr cudf::size_type num_rows = 6'003;
+  auto const values =
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [](auto i) {
+      return static_cast<int64_t>(i) * int64_t{1'073'741'827} +
+             static_cast<int64_t>(i % 11) * int64_t{100'003};
+    });
+  // Periodic jumps between the extremes give 64-bit-wide mini-blocks.
+  auto const wide_values =
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [](auto i) {
+      if (i % 97 == 0) {
+        return i % 2 == 0 ? std::numeric_limits<int64_t>::min()
+                          : std::numeric_limits<int64_t>::max();
+      }
+      return static_cast<int64_t>(i) * int64_t{1'073'741'827};
+    });
+  auto const small_values = cudf::detail::make_counting_transform_iterator(
+    cudf::size_type{0}, [](auto i) { return static_cast<int32_t>(i * 3 - 7); });
+  auto const short_gaps = cudf::test::iterators::nulls_at_multiples_of(7);
+  auto const long_gaps  = cudf::detail::make_counting_transform_iterator(
+    cudf::size_type{0}, [](auto i) { return i % 20 < 6; });
+  auto const mostly_null = cudf::test::iterators::valids_at_multiples_of(13);
+
+  cudf::test::fixed_width_column_wrapper<int64_t> const required(wide_values,
+                                                                 wide_values + num_rows);
+  cudf::test::fixed_width_column_wrapper<int64_t> const short_gaps_col(
+    values, values + num_rows, short_gaps);
+  cudf::test::fixed_width_column_wrapper<int64_t> const long_gaps_col(
+    values, values + num_rows, long_gaps);
+  cudf::test::fixed_width_column_wrapper<int64_t> const mostly_null_col(
+    values, values + num_rows, mostly_null);
+  cudf::test::fixed_width_column_wrapper<int64_t> const all_null_col(
+    values, values + num_rows, cudf::test::iterators::all_nulls());
+  cudf::test::fixed_width_column_wrapper<int64_t> const optional_col(
+    values, values + num_rows, cudf::test::iterators::no_nulls());
+  // A required column the fast path does not take: its output is four bytes wide.
+  cudf::test::fixed_width_column_wrapper<int32_t> const required_int32(small_values,
+                                                                       small_values + num_rows);
+  cudf::test::fixed_width_column_wrapper<int32_t> const short_gaps_int32(
+    small_values, small_values + num_rows, short_gaps);
+
+  auto const expected = table_view({required,
+                                    short_gaps_col,
+                                    long_gaps_col,
+                                    mostly_null_col,
+                                    all_null_col,
+                                    optional_col,
+                                    required_int32,
+                                    short_gaps_int32});
+  auto metadata       = cudf::io::table_input_metadata{expected};
+  for (auto& column : metadata.column_metadata) {
+    column.set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+  }
+  metadata.column_metadata[0].set_nullability(false);
+  metadata.column_metadata[5].set_nullability(true);
+  metadata.column_metadata[6].set_nullability(false);
+
+  for (bool const v2 : {false, true}) {
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .metadata(metadata)
+        .write_v2_headers(v2)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .max_page_fragment_size(1000)
+        .max_page_size_rows(1000)
+        .build());
+    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+
+    for (auto const nz_map : {"0", "1"}) {
+      SCOPED_TRACE(std::string{"v2="} + (v2 ? "1" : "0") + " nz_map=" + nz_map);
+      tmp_env_var const nz_map_env{nz_map_env_var, nz_map};
+      auto const options = cudf::io::parquet_reader_options::builder(source).build();
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, cudf::io::read_parquet(options).tbl->view());
+
+      for (auto const [skip, count] :
+           {std::pair{1, 129}, std::pair{127, 258}, std::pair{1'500, 4'321}, std::pair{5'999, 4}}) {
+        auto const sliced = cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
+                                                     .skip_rows(skip)
+                                                     .num_rows(count)
+                                                     .build());
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::slice(expected, {skip, skip + count}),
+                                           sliced.tbl->view());
+      }
+
+      auto reader            = cudf::io::chunked_parquet_reader(1'024, 8'192, options);
+      cudf::size_type offset = 0;
+      while (reader.has_next()) {
+        auto const chunk = reader.read_chunk().tbl;
+        auto const end   = offset + chunk->num_rows();
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::slice(expected, {offset, end}), chunk->view());
+        offset = end;
+      }
+      EXPECT_EQ(offset, num_rows);
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBounds)
 {
   // trying to read more rows than there are should result in

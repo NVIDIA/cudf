@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -48,11 +48,16 @@ public class ParquetOptions extends ColumnFilterOptions {
 
     /**
      * Specify the time unit to use when returning timestamps.
+     * TIMESTAMP_DAYS resolution is not supported; cast the returned column to get it.
      * @param unit default unit of time specified by the user
      * @return builder for chaining
+     * @throws IllegalArgumentException if {@code unit} is TIMESTAMP_DAYS or neither
+     *     DType.EMPTY nor a timestamp type
      */
     public Builder withTimeUnit(DType unit) {
-      assert unit.isTimestampType();
+      if (unit == null || (unit != DType.EMPTY && !unit.hasTimeResolution())) {
+        throw new IllegalArgumentException("Unsupported time unit: " + unit);
+      }
       this.unit = unit;
       return this;
     }

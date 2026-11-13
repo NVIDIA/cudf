@@ -6833,8 +6833,9 @@ TEST_F(ParquetReaderTest, DecodeVariableWidthDecimalStats)
   EXPECT_EQ(ParquetStatsDecoder::decode<d128::rep>({0xfe, 0x0c}), d128::rep{-500});
   EXPECT_EQ(ParquetStatsDecoder::decode<int32_t>({0xfe, 0x0c}, cudf::io::parquet::Type::BYTE_ARRAY),
             -500);
-  EXPECT_THROW(ParquetStatsDecoder::decode<int32_t>({0xff, 0xff, 0xff, 0xfe, 0x0c}),
-               cudf::logic_error);
+  // Wider values (e.g. a narrower `decimal_width`) keep their low bytes
+  EXPECT_EQ(ParquetStatsDecoder::decode<int32_t>({0xff, 0xff, 0xff, 0xfe, 0x0c}), -500);
+  EXPECT_EQ(ParquetStatsDecoder::decode<int32_t>({0x01, 0x00, 0x00, 0x00, 0x05}), 5);
 }
 
 TEST_F(ParquetReaderTest, SourceIndexColumn)

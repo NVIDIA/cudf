@@ -42,6 +42,7 @@ using io::detail::inline_column_buffer;
 using parquet::detail::ColumnChunkDesc;
 using parquet::detail::decode_kernel_mask;
 using parquet::detail::file_intermediate_data;
+using parquet::detail::get_output_types;
 using parquet::detail::PageInfo;
 using parquet::detail::PageNestingDecodeInfo;
 using text::byte_range_info;
@@ -64,23 +65,6 @@ namespace {
 {
   if (!logical_type.has_value()) { return true; }
   return logical_type->type != LogicalType::DECIMAL;
-}
-
-/**
- * @brief Get the output types from the output buffer template
- *
- * @param output_buffer_template Output buffer template
- * @return Output types
- */
-[[nodiscard]] std::vector<cudf::data_type> get_output_types(
-  std::span<inline_column_buffer const> output_buffer_template)
-{
-  std::vector<cudf::data_type> output_dtypes;
-  output_dtypes.reserve(output_buffer_template.size());
-  std::ranges::transform(output_buffer_template,
-                         std::back_inserter(output_dtypes),
-                         [](auto const& col) { return col.type; });
-  return output_dtypes;
 }
 
 /**
@@ -353,7 +337,7 @@ hybrid_scan_reader_impl::prepare_filter_and_output_types(parquet_reader_options 
 
   // Normalize the input expression (must be done after column selection)
   auto expr_conv     = build_normalized_expression(options);
-  auto output_dtypes = get_output_types(_output_buffers_template);
+  auto output_dtypes = get_output_types(_output_buffers_template, options.get_decimal_width());
 
   return {std::move(expr_conv), std::move(output_dtypes)};
 }

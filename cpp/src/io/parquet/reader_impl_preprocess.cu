@@ -711,13 +711,9 @@ void reader_impl::preprocess_file(read_mode mode)
 
   // if filter is not empty, then create output types as vector and pass for filtering.
 
-  std::vector<data_type> output_dtypes;
-  if (_expr_conv.get_converted_expr().has_value()) {
-    std::transform(_output_buffers_template.cbegin(),
-                   _output_buffers_template.cend(),
-                   std::back_inserter(output_dtypes),
-                   [](auto const& col) { return col.type; });
-  }
+  auto const output_dtypes = _expr_conv.get_converted_expr().has_value()
+                               ? get_output_types(_output_buffers_template, _options.decimal_width)
+                               : std::vector<data_type>{};
 
   std::tie(_file_itm_data.global_skip_rows,
            _file_itm_data.global_num_rows,

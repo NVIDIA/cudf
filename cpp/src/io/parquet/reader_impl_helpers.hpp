@@ -160,6 +160,18 @@ struct row_group_size_info {
 }
 
 /**
+ * @brief Gets the top-level output column types used to prune with a filter expression
+ *
+ * Fixed-point types are mapped to `decimal_width` (keeping their scale) unless it is `EMPTY`.
+ *
+ * @param output_buffers Output column buffers
+ * @param decimal_width Requested decimal type id, or `EMPTY` to keep the file's decimal types
+ * @return Output column data types
+ */
+[[nodiscard]] std::vector<data_type> get_output_types(
+  std::span<cudf::io::detail::inline_column_buffer const> output_buffers, type_id decimal_width);
+
+/**
  * @brief Derives a bounded input `pass_read_limit` from a `chunk_read_limit`.
  *
  * @param chunk_read_limit The output chunk byte limit

@@ -152,8 +152,8 @@ struct page_stats_caster : public stats_caster_base {
               }
 
               // Translate binary data to Type then to <T>
-              min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
-              max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              host_column<T>::set_min_max(
+                min, max, column_page_idx, min_value, max_value, colchunk.meta_data.type, ts_scale);
               has_nan.set_value(column_page_idx,
                                 parquet::detail::has_nans(
                                   column_index.nan_counts.has_value()

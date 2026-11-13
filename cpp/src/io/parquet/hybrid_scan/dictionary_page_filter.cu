@@ -410,8 +410,8 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
         set_error(error, decode_error::DATA_STREAM_OVERRUN);
         return {};
       }
-      // Check if the flba length is smaller than or equal to the underlying data type size
-      if (flba_length <= 0 or flba_length > sizeof(T)) {
+      // Check if the flba length is valid. Decimals may be narrowed to a smaller `decimal_width`
+      if (flba_length <= 0 or (not is_decimal and flba_length > sizeof(T))) {
         set_error(error, decode_error::INVALID_DATA_TYPE);
         return {};
       }
@@ -489,15 +489,16 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
           cudf::io::unaligned_load<uint32_t>(page_data + (value_idx * sizeof(uint32_t)));
         decoded_value = T{static_cast<typename T::rep>(duration)};
       }
-      // Handle other int32 encoded values including smaller bitwidths and decimal32
+      // Handle other int32 encoded values including smaller bitwidths and decimals
       else {
-        // Reading smaller bitwidth values
-        if (sizeof(T) > sizeof(int32_t) or sizeof(T) != int32_type_len) {
+        // Reading smaller bitwidth values. Decimals may be read at any `decimal_width`
+        if (not is_decimal and (sizeof(T) > sizeof(int32_t) or sizeof(T) != int32_type_len)) {
           set_error(error, decode_error::INVALID_DATA_TYPE);
           return {};
         }
+        // Load as signed to sign extend decimals into wider types
         decoded_value = static_cast<T>(
-          cudf::io::unaligned_load<uint32_t>(page_data + (value_idx * sizeof(uint32_t))));
+          cudf::io::unaligned_load<int32_t>(page_data + (value_idx * sizeof(int32_t))));
       }
       break;
     }
@@ -519,10 +520,11 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
           decoded_value = T{typename T::duration(static_cast<typename T::rep>(timestamp))};
         }
       }
-      // Handle durations and other int64 encoded values including decimal64
+      // Handle durations and other int64 encoded values including decimals. Load as signed to sign
+      // extend decimals into wider types
       else {
         decoded_value = static_cast<T>(
-          cudf::io::unaligned_load<uint64_t>(page_data + (value_idx * sizeof(uint64_t))));
+          cudf::io::unaligned_load<int64_t>(page_data + (value_idx * sizeof(int64_t))));
       }
       break;
     }

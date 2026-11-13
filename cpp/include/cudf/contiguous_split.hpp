@@ -628,8 +628,8 @@ table_view unpack_view(packed_data_view input);
  * this call returns. Device and pinned payloads are read in stream order and must remain valid
  * until the work on `stream` completes.
  *
- * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
- * `payload_alignment` it was packed with
+ * @throw std::invalid_argument if a compressed device or pinned `input.payload` is not aligned to
+ * the `payload_alignment` it was packed with
  * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed.
  * Corrupt compressed blocks are not reliably detected and may produce incorrect data instead.
  *
@@ -654,8 +654,8 @@ std::unique_ptr<table> materialize(
  * in stream order and must remain valid until the work on `stream` completes.
  *
  * @throw std::out_of_range if an index is not in `[0, num_columns)`
- * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
- * `payload_alignment` it was packed with
+ * @throw std::invalid_argument if a compressed device or pinned `input.payload` is not aligned to
+ * the `payload_alignment` it was packed with
  * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed.
  * Corrupt compressed blocks are not reliably detected and may produce incorrect data instead.
  *
@@ -678,8 +678,8 @@ std::unique_ptr<table> materialize(
  * Computed from `input.metadata`, the size of `input.payload` and its memory kind; the payload
  * bytes are not read, so the bound can be computed before the payload is filled.
  *
- * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
- * `payload_alignment` it was packed with
+ * @throw std::invalid_argument if a compressed device or pinned `input.payload` is not aligned to
+ * the `payload_alignment` it was packed with
  * @throw cudf::logic_error if `input.metadata` is truncated or malformed
  *
  * @param input Packed metadata and payload
@@ -697,8 +697,8 @@ std::size_t materialize_scratch_bytes(packed_data_view input,
  * bytes are not read, so the bound can be computed before the payload is filled.
  *
  * @throw std::out_of_range if an index is not in `[0, num_columns)`
- * @throw std::invalid_argument if a compressed `input.payload` is not aligned to the
- * `payload_alignment` it was packed with
+ * @throw std::invalid_argument if a compressed device or pinned `input.payload` is not aligned to
+ * the `payload_alignment` it was packed with
  * @throw cudf::logic_error if `input.metadata` is truncated or malformed
  *
  * @param input Packed metadata and payload

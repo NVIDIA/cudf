@@ -958,6 +958,19 @@ TEST_F(ExperimentalPackUnpackTest, CompressedInputValidation)
     payload, packed.data, packed.result.payload_bytes, cudaMemcpyDefault, stream.get()));
   EXPECT_THROW(cx::materialize({packed.result.metadata, {payload, packed.result.payload_bytes}}),
                std::invalid_argument);
+
+  // A pageable payload is staged at aligned offsets, so it may be framed anywhere.
+  std::vector<uint8_t> host_framed(packed.result.payload_bytes + 64 + 16);
+  auto const base          = reinterpret_cast<std::uintptr_t>(host_framed.data());
+  auto* const host_payload = reinterpret_cast<uint8_t*>((base + 63) / 64 * 64 + 16);
+  CUDF_CUDA_TRY(cudaMemcpyAsync(
+    host_payload, packed.data, packed.result.payload_bytes, cudaMemcpyDefault, stream.get()));
+  stream.sync();
+  auto const unaligned =
+    cx::packed_data_view{packed.result.metadata, {host_payload, packed.result.payload_bytes}};
+  expect_materializes_to(input, unaligned);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(
+    input, cx::materialize(unaligned, std::vector<cudf::size_type>{0})->view());
 }
 
 TEST_F(PackUnpackTest, SingleColumnFixedWidth)

@@ -4031,8 +4031,11 @@ namespace {
 /// Reads the compression metadata of `input` and validates its region directory.
 [[nodiscard]] compression_metadata read_compressed_input(packed_data_view input)
 {
-  // Blocks are aligned relative to the payload start, as decoders require.
-  CUDF_EXPECTS(reinterpret_cast<std::uintptr_t>(input.payload.data()) % split_align == 0,
+  // Blocks are aligned relative to the payload start, as decoders require. Pageable payloads are
+  // staged at aligned device offsets, so only payloads read in place must be aligned.
+  CUDF_EXPECTS(input.payload.empty() ||
+                 memory_type(input.payload.data()) == cudaMemoryTypeUnregistered ||
+                 reinterpret_cast<std::uintptr_t>(input.payload.data()) % split_align == 0,
                "The compressed payload is not aligned to the packed payload alignment",
                std::invalid_argument);
   auto parsed = read_compression_metadata(input.metadata);
@@ -4080,17 +4083,23 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
   auto const payload_contains = [&](uint64_t offset, uint64_t bytes) {
     return offset <= input.payload.size() && bytes <= input.payload.size() - offset;
   };
-  auto const* const block_table = reinterpret_cast<uint64_t const*>(input.payload.data());
-  // Host payloads are read in place once the stream has written them.
-  if (loader.is_host_accessible()) { stream.sync(); }
-  auto const copied_block_sizes = loader.is_host_accessible()
-                                    ? std::nullopt
-                                    : std::optional{cudf::detail::make_pinned_vector(
-                                        device_span{block_table, num_blocks}, stream)};
+  // Host payloads are read once the stream has written them, and pageable ones may be unaligned.
+  std::vector<uint64_t> host_block_sizes;
+  if (loader.is_host_accessible()) {
+    stream.sync();
+    host_block_sizes.resize(num_blocks);
+    std::memcpy(host_block_sizes.data(), input.payload.data(), num_blocks * sizeof(uint64_t));
+  }
+  auto const device_block_sizes =
+    loader.is_host_accessible()
+      ? std::nullopt
+      : std::optional{cudf::detail::make_pinned_vector(
+          device_span{reinterpret_cast<uint64_t const*>(input.payload.data()), num_blocks},
+          stream)};
   auto const block_sizes =
-    copied_block_sizes.has_value()
-      ? std::span<uint64_t const>{copied_block_sizes->data(), copied_block_sizes->size()}
-      : std::span<uint64_t const>{block_table, num_blocks};
+    device_block_sizes.has_value()
+      ? std::span<uint64_t const>{device_block_sizes->data(), device_block_sizes->size()}
+      : std::span<uint64_t const>{host_block_sizes};
 
   std::vector<decompression_task> tasks;
   auto const find_or_add_task = [&](pack_compression codec, type_id cascaded_type) -> auto& {

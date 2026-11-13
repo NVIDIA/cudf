@@ -24,6 +24,7 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/stream>

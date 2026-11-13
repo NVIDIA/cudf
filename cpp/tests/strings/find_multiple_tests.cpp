@@ -10,6 +10,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/strings/find_multiple.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
@@ -57,6 +58,32 @@ TEST_F(StringsFindMultipleTest, ZeroSizeStringsColumn)
   EXPECT_EQ(results->size(), 0);
 }
 
+TEST_F(StringsFindMultipleTest, ContainsMultipleZeroSizeStringsColumn)
+{
+  auto const zero_size_strings_column = cudf::make_empty_column(cudf::type_id::STRING)->view();
+  auto strings_view                   = cudf::strings_column_view(zero_size_strings_column);
+  auto targets = cudf::test::strings_column_wrapper({"abc", "", "x", "longer target string"});
+
+  auto results = cudf::strings::contains_multiple(strings_view, cudf::strings_column_view(targets));
+  EXPECT_EQ(results->num_columns(), 4);
+  EXPECT_EQ(results->num_rows(), 0);
+  auto const expected = cudf::test::fixed_width_column_wrapper<bool>{};
+  for (auto const& col : results->view()) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(col, expected);
+  }
+
+  // zero-size slice of a non-empty column
+  auto input  = cudf::test::strings_column_wrapper({"abc", "xyz", "def"});
+  auto sliced = cudf::slice(input, {1, 1}).front();
+  results     = cudf::strings::contains_multiple(cudf::strings_column_view(sliced),
+                                             cudf::strings_column_view(targets));
+  EXPECT_EQ(results->num_columns(), 4);
+  EXPECT_EQ(results->num_rows(), 0);
+  for (auto const& col : results->view()) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(col, expected);
+  }
+}
+
 TEST_F(StringsFindMultipleTest, ErrorTest)
 {
   cudf::test::strings_column_wrapper strings({""}, {false});
@@ -67,10 +94,12 @@ TEST_F(StringsFindMultipleTest, ErrorTest)
   // targets must have at least one string
   EXPECT_THROW(cudf::strings::find_multiple(strings_view, empty_view), std::invalid_argument);
   EXPECT_THROW(cudf::strings::contains_multiple(strings_view, empty_view), std::invalid_argument);
+  EXPECT_THROW(cudf::strings::contains_multiple(empty_view, empty_view), std::invalid_argument);
 
   // targets cannot have nulls
   EXPECT_THROW(cudf::strings::find_multiple(strings_view, strings_view), std::invalid_argument);
   EXPECT_THROW(cudf::strings::contains_multiple(strings_view, strings_view), std::invalid_argument);
+  EXPECT_THROW(cudf::strings::contains_multiple(empty_view, strings_view), std::invalid_argument);
 }
 
 TEST_F(StringsFindMultipleTest, MultiContains)

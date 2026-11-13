@@ -1015,7 +1015,7 @@ void batched_cascaded_compress(type_id value_type,
 void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> inputs,
                                  device_span<device_span<uint8_t> const> outputs,
                                  device_span<codec_exec_result> results,
-                                 host_span<size_t const> group_offsets,
+                                 std::span<size_t const> group_offsets,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {

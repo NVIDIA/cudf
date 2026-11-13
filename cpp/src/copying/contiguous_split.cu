@@ -51,6 +51,7 @@
 #include <thrust/transform.h>
 
 #include <algorithm>
+#include <concepts>
 #include <cstddef>
 #include <cstring>
 #include <functional>
@@ -59,6 +60,7 @@
 #include <numeric>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -1073,7 +1075,7 @@ dst_buf_info* collect_valid_counts(InputIter begin,
  * @brief Set the valid count of every validity buffer of a single-partition copy of `input`.
  */
 void resolve_valid_counts(cudf::table_view const& input,
-                          host_span<dst_buf_info> buf_info,
+                          std::span<dst_buf_info> buf_info,
                           cuda::stream_ref stream,
                           rmm::device_async_resource_ref temp_mr)
 {
@@ -2635,7 +2637,7 @@ using io::detail::codec_status;
 }
 
 /// Runs `work`, synchronizing `stream` before an exception frees host data its copies still read.
-template <typename Work>
+template <std::invocable Work>
 decltype(auto) sync_on_throw(cuda::stream_ref stream, Work&& work)
 {
   try {
@@ -2886,6 +2888,7 @@ struct block_descriptor {
 }
 
 template <typename T>
+  requires std::is_trivially_copyable_v<T>
 void append_bytes(std::vector<uint8_t>& output, std::span<T const> values)
 {
   auto const begin = reinterpret_cast<uint8_t const*>(values.data());
@@ -2893,6 +2896,7 @@ void append_bytes(std::vector<uint8_t>& output, std::span<T const> values)
 }
 
 template <typename T>
+  requires std::is_trivially_copyable_v<T>
 [[nodiscard]] T read_bytes(std::span<uint8_t const> input, std::size_t offset)
 {
   CUDF_EXPECTS(offset <= input.size() && sizeof(T) <= input.size() - offset,
@@ -3474,8 +3478,7 @@ class pack_plan::impl {
       auto const table_bytes =
         cudf::detail::round_up_safe(blocks.size() * sizeof(uint64_t), split_align);
       destination_bytes = plan_compression_windows(table_bytes, options.staging_buffer_bytes, mr);
-      d_blocks =
-        cudf::detail::make_device_uvector(blocks, input.state->get_stream(), mr.get_output_mr());
+      d_blocks          = cudf::detail::make_device_buffer(blocks, input.state->get_stream(), mr);
     }
 
     auto const metadata_bytes =
@@ -3505,13 +3508,13 @@ class pack_plan::impl {
   std::vector<prepared_compression_region> regions;
   std::vector<block_batch> batches;
   std::vector<block_descriptor> blocks;
-  std::optional<rmm::device_uvector<block_descriptor>> d_blocks;
+  std::optional<cuda::device_buffer<block_descriptor>> d_blocks;
   std::vector<pack_window> windows;  ///< Block windows, or copy batch windows when uncompressed
   std::size_t max_window_bytes        = 0;
   std::size_t max_window_output_bytes = 0;  ///< Bound on a block window's compacted output
   std::size_t max_window_blocks       = 0;
   /// Copies of the staged blocks into their windows, and the first copy of each window
-  std::unique_ptr<rmm::device_uvector<dst_buf_info>> staging_copies;
+  std::unique_ptr<cuda::device_buffer<dst_buf_info>> staging_copies;
   std::vector<std::size_t> window_staging_copies;
 
   /// Copies the table into `destination`, one staged window at a time for host destinations.
@@ -3522,9 +3525,10 @@ class pack_plan::impl {
     auto& state = *input.state;
     if (to_host) {
       auto const stream = state.get_stream();
-      rmm::device_buffer staging(max_window_bytes, stream, mr.get_temporary_mr());
+      cuda::device_buffer<uint8_t> staging(
+        stream, mr.get_temporary_mr(), max_window_bytes, cuda::no_init);
       for (auto const& window : windows) {
-        state.copy_window_into(window, static_cast<uint8_t*>(staging.data()));
+        state.copy_window_into(window, staging.data());
         CUDF_CUDA_TRY(cudf::detail::memcpy_async(
           destination.data() + window.payload_offset, staging.data(), window.bytes, stream));
       }
@@ -3548,13 +3552,15 @@ class pack_plan::impl {
     auto const table_bytes = num_blocks * sizeof(uint64_t);
     auto const compacted_bytes =
       to_host ? max_window_output_bytes + max_window_blocks * split_align : 0;
-    rmm::device_buffer staging(max_window_bytes + compacted_bytes, stream, temp_mr);
-    auto* const slots     = static_cast<uint8_t*>(staging.data());
+    cuda::device_buffer<uint8_t> staging(
+      stream, temp_mr, max_window_bytes + compacted_bytes, cuda::no_init);
+    auto* const slots     = staging.data();
     auto* const compacted = slots + max_window_bytes;
 
-    rmm::device_uvector<device_span<uint8_t const>> inputs(num_blocks, stream, temp_mr);
-    rmm::device_uvector<device_span<uint8_t>> outputs(num_blocks, stream, temp_mr);
-    rmm::device_uvector<codec_exec_result> results(num_blocks, stream, temp_mr);
+    cuda::device_buffer<device_span<uint8_t const>> inputs(
+      stream, temp_mr, num_blocks, cuda::no_init);
+    cuda::device_buffer<device_span<uint8_t>> outputs(stream, temp_mr, num_blocks, cuda::no_init);
+    cuda::device_buffer<codec_exec_result> results(stream, temp_mr, num_blocks, cuda::no_init);
     set_block_spans(*d_blocks, slots, inputs, outputs, results, stream, temp_mr);
     // Raw blocks are copied straight from their input during compaction.
     auto const compress_window = [&](std::size_t window_idx) {
@@ -3834,8 +3840,8 @@ class pack_plan::impl {
     }
     window_staging_copies.push_back(copies.size());
     if (!copies.empty()) {
-      staging_copies = std::make_unique<rmm::device_uvector<dst_buf_info>>(
-        cudf::detail::make_device_uvector(copies, input.state->get_stream(), mr.get_output_mr()));
+      staging_copies = std::make_unique<cuda::device_buffer<dst_buf_info>>(
+        cudf::detail::make_device_buffer(copies, input.state->get_stream(), mr));
     }
     return destination_bytes;
   }
@@ -4208,7 +4214,7 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
     auto const temp_mr   = mr.get_temporary_mr();
     auto const d_inputs  = cudf::detail::make_device_uvector_async(inputs, stream, temp_mr);
     auto const d_outputs = cudf::detail::make_device_uvector_async(outputs, stream, temp_mr);
-    rmm::device_uvector<codec_exec_result> results(inputs.size(), stream, temp_mr);
+    cuda::device_buffer<codec_exec_result> results(stream, temp_mr, inputs.size(), cuda::no_init);
     thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                  results.begin(),
                  results.end(),
@@ -4236,7 +4242,7 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
                        stream,
                        mr);
     }
-    return cudf::detail::make_pinned_vector(results, stream);
+    return cudf::detail::make_pinned_vector(device_span<codec_exec_result const>{results}, stream);
   });
   for (std::size_t i = 0; i < tasks.size(); ++i) {
     if (tasks[i].codec == pack_compression::none) { continue; }

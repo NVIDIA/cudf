@@ -79,6 +79,7 @@ BINARYOP_BENCHMARK_DEFINE(duration_s,   int64_t,      MUL,                  dura
 BINARYOP_BENCHMARK_DEFINE(int64_t,      int64_t,      DIV,                  int64_t);
 BINARYOP_BENCHMARK_DEFINE(duration_ms,  int32_t,      DIV,                  duration_ms);
 BINARYOP_BENCHMARK_DEFINE(int64_t,      int64_t,      TRUE_DIV,             int64_t);
+BINARYOP_BENCHMARK_DEFINE(float,        float,        TRUE_DIV,             float);
 BINARYOP_BENCHMARK_DEFINE(int64_t,      int64_t,      FLOOR_DIV,            int64_t);
 BINARYOP_BENCHMARK_DEFINE(double,       double,       MOD,                  double);
 BINARYOP_BENCHMARK_DEFINE(duration_ms,  int64_t,      MOD,                  duration_ms);

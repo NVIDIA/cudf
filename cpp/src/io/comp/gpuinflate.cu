@@ -45,7 +45,7 @@ Mark Adler    madler@alumni.caltech.edu
 
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/cmath>
 #include <cuda/std/tuple>
 #include <cuda/stream>

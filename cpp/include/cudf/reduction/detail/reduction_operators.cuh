@@ -13,6 +13,7 @@
 
 #include <cuda/std/cmath>
 #include <cuda/std/limits>
+#include <cuda/std/type_traits>
 
 #include <nv/target>
 
@@ -53,12 +54,19 @@ struct var_std {
       return {nan, nan, m + n};
     }
     auto const delta         = rhs.running_mean - running_mean;
-    auto const inverse_count = [&] {
+    auto const inverse_count = [&]() -> ResultType {
+      if constexpr (cuda::std::is_same_v<ResultType, float>) {
+        // Counts up to 2^24 are exact in float, and rounding the double reciprocal to float
+        // gives the same result as a float reciprocal (53 >= 2 * 24 + 2), so skip the
+        // low-throughput fp64 path for FLOAT32 outputs.
+        NV_IF_TARGET(NV_IS_DEVICE,
+                     (if (m + n <= (1 << 24)) { return __frcp_rn(static_cast<float>(m + n)); }))
+      }
       NV_IF_ELSE_TARGET(NV_IS_DEVICE,
                         (return __drcp_rn(static_cast<double>(m + n));),
                         (return 1.0 / static_cast<double>(m + n);))
     }();
-    auto const delta_n = delta * static_cast<ResultType>(inverse_count);
+    auto const delta_n = delta * inverse_count;
     return {running_mean + delta_n * n,
             running_square_deviations + rhs.running_square_deviations + delta * delta_n * m * n,
             m + n};

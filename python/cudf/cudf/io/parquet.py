@@ -2344,6 +2344,9 @@ class ParquetDatasetWriter:
             ]
             cw.write_table(grouped_df, this_cw_part_info)
 
+        # Release retired writers before opening any replacement files
+        self._release_rotated_writers(rotated_paths)
+
         if new_cw_paths:
             # Create new cw for unhandled paths encountered in this write_table
             new_paths, part_info, meta_paths = zip(*new_cw_paths, strict=True)
@@ -2358,8 +2361,6 @@ class ParquetDatasetWriter:
             self._live_paths.append(set(new_paths))
             self.path_cw_map.update({k: new_cw_idx for k in new_paths})
             self._chunked_writers[-1][0].write_table(grouped_df, part_info)
-
-        self._release_rotated_writers(rotated_paths)
 
     def _release_rotated_writers(self, rotated_paths) -> None:
         """Close writers whose files have all been rotated out."""

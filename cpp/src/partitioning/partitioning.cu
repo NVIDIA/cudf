@@ -758,6 +758,21 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   }
 }
 
+/**
+ * @brief Compute partition boundaries without constructing a row permutation
+ *
+ * Builds a histogram of partition IDs and exclusively scans the counts. Temporary device storage
+ * uses the current device memory resource. Copying the offsets to host synchronizes `stream`.
+ *
+ * @pre The map has no nulls and its values lie in `[0, num_partitions)`
+ * @pre `num_partitions` is positive and less than `std::numeric_limits<size_type>::max()`
+ *
+ * @tparam MapType Integral element type matching `partition_map`
+ * @param partition_map Destination partition ID for each input row
+ * @param num_partitions Number of destination partitions
+ * @param stream CUDA stream used for device operations, allocation and offset readback
+ * @return Host vector of `num_partitions + 1` boundaries, from zero to `partition_map.size()`
+ */
 template <typename MapType>
 std::vector<size_type> make_map_partition_offsets(column_view const& partition_map,
                                                   size_type num_partitions,
@@ -796,6 +811,30 @@ std::vector<size_type> make_map_partition_offsets(column_view const& partition_m
   return {pinned_offsets.begin(), pinned_offsets.end()};
 }
 
+/**
+ * @brief Try partitioning an input that needs no row permutation or payload gathering
+ *
+ * For one partition, derives the offsets directly; for one row, reads its partition ID to construct
+ * the offsets. Otherwise, tables whose columns are all supported uniform columns need only a
+ * histogram and scan of the map. Nonuniform inputs use the standard table copy, while uniform
+ * columns are reconstructed from their metadata without reading row values.
+ *
+ * Reading partition IDs or offsets back to host synchronizes `stream`. Output construction uses
+ * the same stream; temporary offset storage uses the current device memory resource.
+ *
+ * @pre `input` and `partition_map` have the same number of rows
+ * @pre The map contains no nulls, matches `MapType`, and contains valid destination partition IDs
+ *
+ * @tparam MapType Integral partition-map element type accepted by the caller's type dispatch
+ * @param input Table to partition
+ * @param partition_map Destination partition ID for each input row
+ * @param num_partitions Number of destination partitions
+ * @param stream CUDA stream used for device operations and memory allocation
+ * @param mr Device memory resource used to allocate the output table
+ * @return Output table and `num_partitions + 1` host boundaries when a shortcut applies, or
+ * `std::nullopt` when it does not apply or the partition count is nonpositive or the maximum
+ * `size_type` value
+ */
 template <typename MapType>
 std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_partition_trivial(
   table_view const& input,

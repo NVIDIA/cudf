@@ -8,14 +8,57 @@
 #include <algorithm>
 #include <optional>
 
+/**
+ * @brief Host-side policy for choosing partition execution plans
+ */
 namespace cudf::detail::partition_policy {
-enum class algorithm { saved, recompute, super2, reserve, binary };
+/**
+ * @brief Strategies for assigning input rows to output positions
+ */
+enum class algorithm {
+  saved,      ///< Save per-row tile ranks during counting and reuse them when writing output.
+  recompute,  ///< Count one tile per block and recompute its row ranks when writing output.
+  super2,     ///< Recompute row ranks with two tiles per block to reduce the block-count array.
+  reserve,    ///< Reserve output ranges per tile and partition using atomic partition cursors.
+  binary      ///< Use a two-way partition of row indices for exactly two partitions.
+};
+
+/**
+ * @brief Partition algorithm and output-materialization choices
+ */
 struct partition_plan {
-  algorithm method;
+  algorithm method;  ///< Strategy used to compute each row's destination.
+
+  /**
+   * @brief Whether to write fixed-width column values directly to their output positions
+   *
+   * A direct plan avoids an intermediate row map. Otherwise, the map engine emits a gather map
+   * that a separate gather operation uses to materialize the output table.
+   */
   bool direct;
+
+  /**
+   * @brief Whether to stage tile destinations in shared memory before writing output
+   *
+   * Reordering groups writes by destination within each tile to improve output locality. It is
+   * supported by the `recompute` and `super2` methods and does not change partition membership.
+   */
   bool reordered;
 };
 
+/**
+ * @brief Select a partition plan from table metadata and the partition count
+ *
+ * Uses the row count, column types and widths, and cached null counts to choose the mapping
+ * algorithm, direct materialization, and write reordering. This helper does not inspect column
+ * data or partition-map values and launches no device work. Execution backends are dispatched
+ * separately; callers handle trivial inputs and retain their fallback when no plan is selected.
+ *
+ * @param input Table whose metadata determines the eligible execution plans
+ * @param partitions Number of destination partitions
+ * @return The selected plan, or `std::nullopt` when the row/partition counts fall outside the
+ * optimized policy's limits or no plan applies to the schema
+ */
 inline std::optional<partition_plan> select_partition_plan(table_view const& input,
                                                            size_type partitions)
 {
@@ -79,6 +122,14 @@ inline std::optional<partition_plan> select_partition_plan(table_view const& inp
   return std::nullopt;
 }
 
+/**
+ * @brief Determine whether partitioning can use an identity-copy or uniform-output path
+ *
+ * @param rows Number of input rows
+ * @param partitions Number of destination partitions
+ * @param uniform Whether every column can be reconstructed from all-null or empty-string metadata
+ * @return Whether there is one row, one partition, or a uniform table
+ */
 inline bool use_trivial(size_type rows, size_type partitions, bool uniform)
 {
   return partitions == 1 || rows == 1 || uniform;

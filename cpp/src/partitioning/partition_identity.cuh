@@ -14,7 +14,19 @@
 
 #include <memory>
 
+/**
+ * @brief Output construction for identity and uniform-input partition paths
+ */
 namespace cudf::detail::partition_identity {
+/**
+ * @brief Determine whether column metadata identifies a supported uniform column
+ *
+ * Recognizes all-null fixed-width or STRING columns and non-null STRING columns with no character
+ * buffer. It does not inspect device data to detect other columns whose values happen to be equal.
+ *
+ * @param input Column whose type, null count and character-buffer pointer are inspected
+ * @return Whether the column can be reconstructed by `uniform_column` without reading its values
+ */
 inline bool is_uniform(column_view const& input)
 {
   bool const flat = is_fixed_width(input.type()) || input.type().id() == type_id::STRING;
@@ -23,6 +35,20 @@ inline bool is_uniform(column_view const& input)
                    input.head<char>() == nullptr));
 }
 
+/**
+ * @brief Construct a uniform partition output without copying input values
+ *
+ * Creates an all-null fixed-width column or a STRING column with zero character bytes. STRING
+ * offsets are initialized to zero, and the null mask reflects whether the input is all-null or
+ * contains only valid empty strings. Row permutation leaves these logical values unchanged.
+ *
+ * @pre `is_uniform(input)` is true
+ *
+ * @param input Supported uniform column whose logical type, size and null count are preserved
+ * @param stream CUDA stream used for device operations and memory allocation
+ * @param mr Device memory resource used to allocate the output buffers
+ * @return A newly allocated column with the same logical values as the input
+ */
 inline std::unique_ptr<column> uniform_column(column_view const& input,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
@@ -45,6 +71,17 @@ inline std::unique_ptr<column> uniform_column(column_view const& input,
       rows, input.null_count() ? mask_state::ALL_NULL : mask_state::UNALLOCATED, stream, mr));
 }
 
+/**
+ * @brief Copy a table for a partition path that preserves the input row order
+ *
+ * Uses the standard table-copy constructor to produce independent output storage, including
+ * nested columns, while preserving the input schema and logical row contents.
+ *
+ * @param input Table to copy
+ * @param stream CUDA stream used for device operations and memory allocation
+ * @param mr Device memory resource used to allocate the output buffers
+ * @return An owning deep copy of the input table
+ */
 inline std::unique_ptr<table> copy(table_view const& input,
                                    cuda::stream_ref stream,
                                    rmm::device_async_resource_ref mr)

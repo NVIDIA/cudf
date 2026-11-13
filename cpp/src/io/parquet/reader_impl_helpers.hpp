@@ -188,7 +188,17 @@ struct row_group_size_info {
  */
 struct metadata : public FileMetaData {
   metadata() = default;
-  explicit metadata(datasource* source, bool read_page_indexes = true);
+  /**
+   * @brief Reads and decodes the footer of `source`
+   *
+   * @param source Source to read the footer from
+   * @param read_page_indexes Whether to read the page indexes, if useful
+   * @param defer_column_chunks Whether to defer decoding the column chunks (and the page indexes)
+   * until `materialize_column_chunks`. Row groups have empty `columns` until then.
+   */
+  explicit metadata(datasource* source,
+                    bool read_page_indexes   = true,
+                    bool defer_column_chunks = false);
   explicit metadata(FileMetaData&& other);
   metadata(metadata const& other)            = delete;
   metadata(metadata&& other)                 = default;
@@ -214,11 +224,46 @@ struct metadata : public FileMetaData {
    */
   [[nodiscard]] bool is_page_index_setup() const { return is_page_index_setup_; }
 
+  /**
+   * @brief Returns whether the column chunks are deferred until `materialize_column_chunks`
+   */
+  [[nodiscard]] bool has_deferred_column_chunks() const { return deferred_ != nullptr; }
+
+  /**
+   * @brief Decodes the deferred column chunks of the selected row groups and leaf columns, then
+   * reads the page indexes if requested at construction
+   *
+   * Afterwards, each selected row group's `columns` holds the chunks of the selected leaf columns
+   * in schema order, and unselected row groups have no column chunks.
+   *
+   * @param source Source the footer was read from
+   * @param row_groups Indices of the row groups to decode, or all if `std::nullopt`. Out-of-range
+   * indices are ignored.
+   * @param leaf_schema_indices Schema indices of the leaf columns to decode. Indices that are not
+   * leaf columns are ignored.
+   */
+  void materialize_column_chunks(datasource* source,
+                                 std::optional<std::span<size_type const>> row_groups,
+                                 std::span<int const> leaf_schema_indices);
+
  protected:
   void sanitize_schema();
 
  private:
+  /**
+   * @brief Reads the page indexes from `source` if they are useful
+   */
+  void read_page_indexes(datasource* source);
+
+  struct deferred_column_chunks {
+    std::unique_ptr<datasource::buffer> footer;        ///< Footer bytes
+    std::vector<std::vector<uint64_t>> chunk_offsets;  ///< Chunk offsets per row group
+    std::vector<int> leaf_schema_indices;              ///< Schema index of each leaf column
+    bool read_page_indexes;                            ///< Whether to read the page indexes
+  };
+
   bool is_page_index_setup_ = false;
+  std::unique_ptr<deferred_column_chunks> deferred_;
 };
 
 /**
@@ -292,7 +337,9 @@ class aggregate_reader_metadata {
    * @brief Create a metadata object from each element in the source vector
    */
   static std::vector<metadata> metadatas_from_sources(
-    std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
+    std::span<std::unique_ptr<datasource> const> sources,
+    bool read_page_indexes   = true,
+    bool defer_column_chunks = false);
 
   /**
    * @brief Collect the keyvalue maps from each per-file metadata object into a vector of maps.
@@ -518,14 +565,34 @@ class aggregate_reader_metadata {
   void initialize_internals(bool use_arrow_schema, bool has_cols_from_mismatched_srcs);
 
  public:
+  /**
+   * @brief Reads and decodes the footers of `sources`
+   *
+   * If `defer_column_chunks` is true, the column chunks are not decoded until
+   * `materialize_column_chunks`, which must be called before any column chunk is accessed.
+   */
   aggregate_reader_metadata(std::span<std::unique_ptr<datasource> const> sources,
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs,
-                            bool read_page_indexes = true);
+                            bool read_page_indexes   = true,
+                            bool defer_column_chunks = false);
 
   aggregate_reader_metadata(std::vector<FileMetaData>&& parquet_metadatas,
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs);
+
+  /**
+   * @brief Decodes the deferred column chunks of the input columns in the selected row groups
+   *
+   * Does nothing for sources whose column chunks were not deferred.
+   *
+   * @param sources Sources the footers were read from
+   * @param input_columns Input (leaf) columns whose chunks are decoded
+   * @param row_group_indices Row groups to decode per source, or all row groups if empty
+   */
+  void materialize_column_chunks(std::span<std::unique_ptr<datasource> const> sources,
+                                 std::span<input_column_info const> input_columns,
+                                 std::span<std::vector<size_type> const> row_group_indices);
 
   aggregate_reader_metadata(aggregate_reader_metadata const&)            = delete;
   aggregate_reader_metadata& operator=(aggregate_reader_metadata const&) = delete;

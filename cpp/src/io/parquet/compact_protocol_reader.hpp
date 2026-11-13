@@ -25,6 +25,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 namespace io::parquet::detail {
@@ -76,6 +77,31 @@ class CompactProtocolReader {
   [[nodiscard]] bool should_throw_on_type_mismatch() const noexcept
   {
     return m_mismatch_policy == experimental::thrift_mismatch_policy::THROW;
+  }
+
+  /**
+   * @brief Decode policy for the optional `ColumnChunkMetaData` fields; a disabled field is
+   * skipped on the wire. Inherited by the parallel sub-readers of struct lists.
+   */
+  struct column_chunk_policy {
+    bool statistics      = true;  ///< Decode `statistics`
+    bool encoding_stats  = true;  ///< Decode `encoding_stats`
+    bool size_statistics = true;  ///< Decode `size_statistics`
+  };
+  void set_column_chunk_policy(column_chunk_policy policy) noexcept { m_chunk_policy = policy; }
+  [[nodiscard]] column_chunk_policy get_column_chunk_policy() const noexcept
+  {
+    return m_chunk_policy;
+  }
+  // Column chunks to decode on the next RowGroup read, indexed by leaf column; the rest are
+  // skipped and `RowGroup::columns` holds only the selected ones. nullptr decodes all chunks.
+  void set_column_mask(std::vector<bool> const* mask) noexcept { m_column_mask = mask; }
+  // If set, the next RowGroup read skips all column chunks and instead records into `offsets` the
+  // byte offset (relative to `base`) of each chunk, followed by the offset just past the last one.
+  void set_column_chunk_offsets(std::vector<uint64_t>* offsets, uint8_t const* base) noexcept
+  {
+    m_chunk_offsets = offsets;
+    m_offsets_base  = base;
   }
   // A read at end-of-buffer sets the sticky overread flag (queried via overread()) and
   // yields 0, keeping the hot parse path noexcept.
@@ -207,10 +233,20 @@ class CompactProtocolReader {
   // Reject (`THROW`) vs skip (`COMPAT`) a struct field whose wire type mismatches the schema type.
   experimental::thrift_mismatch_policy m_mismatch_policy =
     experimental::thrift_mismatch_policy::THROW;
+  column_chunk_policy m_chunk_policy{};
+  std::vector<bool> const* m_column_mask = nullptr;
+  std::vector<uint64_t>* m_chunk_offsets = nullptr;
+  uint8_t const* m_offsets_base          = nullptr;
 
   // Private: only the decode helpers below may read a FileMetaData directly; each pairs the parse
   // with the mandatory overread check so a truncated footer is always rejected.
   void read(FileMetaData* f);
+  // Reads a FileMetaData, decoding the `row_groups` field (4) with `row_groups_field`
+  template <typename RowGroupsField>
+  void read_file_metadata(FileMetaData* f, RowGroupsField row_groups_field);
+  // Reads a RowGroup, decoding the `columns` field (1) with `columns_field`
+  template <typename ColumnsField>
+  void read_row_group(RowGroup* r, ColumnsField columns_field);
   friend class parquet_field_string;
   friend class parquet_field_string_list;
   friend class parquet_field_binary;
@@ -218,13 +254,21 @@ class CompactProtocolReader {
   friend class parquet_field_struct_blob;
   template <typename T, FieldType EXPECTED_ELEM_TYPE>
   friend class parquet_field_list;
-  template <typename T>
+  template <typename T, typename ElementReader>
   friend class parquet_field_struct_list;
   friend void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
                                   FileMetaData* metadata,
                                   experimental::thrift_mismatch_policy mode);
   friend void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes,
                                             FileMetaData* metadata);
+  friend experimental::partial_file_metadata decode_footer_bytes(
+    std::span<uint8_t const> footer_bytes, experimental::footer_decode_options const& options);
+  friend void decode_footer_deferring_column_chunks(
+    std::span<uint8_t const> footer_bytes,
+    FileMetaData* metadata,
+    std::vector<std::vector<uint64_t>>* chunk_offsets,
+    std::vector<int>* leaf_schema_indices);
+  friend class parquet_field_struct_list_offsets;
 };
 
 /**
@@ -254,6 +298,63 @@ void decode_footer_bytes(
  * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
  */
 void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata);
+
+/**
+ * @brief Selectively decodes footer bytes, see `experimental::read_parquet_footer_bytes`
+ *
+ * @param footer_bytes Thrift-compact-encoded footer bytes
+ * @param options Selection and decode options
+ * @return The partially decoded footer
+ */
+[[nodiscard]] experimental::partial_file_metadata decode_footer_bytes(
+  std::span<uint8_t const> footer_bytes, experimental::footer_decode_options const& options);
+
+/**
+ * @brief Decodes footer bytes and initializes the schema, deferring the column chunks
+ *
+ * Row group scalars are decoded, but every row group's `columns` is left empty. Instead, the byte
+ * offsets of each row group's column chunks within `footer_bytes` are recorded so that selected
+ * chunks can later be decoded with `decode_column_chunks`.
+ *
+ * @throws cudf::logic_error If the schema cannot be initialized
+ * @throws cudf::logic_error If the footer is truncated or corrupt within the struct
+ *
+ * @param footer_bytes Thrift-compact-encoded footer bytes
+ * @param metadata Output metadata
+ * @param chunk_offsets Output column chunk offsets, one vector of `num_chunks + 1` per row group
+ * @param leaf_schema_indices Output schema index of each leaf column, in leaf order
+ */
+void decode_footer_deferring_column_chunks(std::span<uint8_t const> footer_bytes,
+                                           FileMetaData* metadata,
+                                           std::vector<std::vector<uint64_t>>* chunk_offsets,
+                                           std::vector<int>* leaf_schema_indices);
+
+/**
+ * @brief Decodes the selected column chunks of the selected row groups deferred by
+ * `decode_footer_deferring_column_chunks`
+ *
+ * For each selected row group, `columns` is replaced with the chunks of the selected leaf columns,
+ * in leaf order. Column chunks are mapped to leaf columns by position, as the Parquet spec
+ * requires, and each chunk's `schema_idx` is set to its leaf's schema index.
+ *
+ * @throws cudf::logic_error If a column chunk is truncated or corrupt
+ *
+ * @param footer_bytes Thrift-compact-encoded footer bytes
+ * @param chunk_offsets Column chunk offsets from `decode_footer_deferring_column_chunks`
+ * @param leaf_schema_indices Leaf schema indices from `decode_footer_deferring_column_chunks`
+ * @param row_groups Sorted, unique, in-range indices of the row groups to decode
+ * @param leaf_columns Sorted, unique, in-range indices of the leaf columns to decode
+ * @param metadata Metadata to decode the column chunks into
+ * @return False if a selected row group's column count does not match the schema or a chunk's
+ * `path_in_schema` does not name its positional leaf column. The column chunks must then not be
+ * used.
+ */
+[[nodiscard]] bool decode_column_chunks(std::span<uint8_t const> footer_bytes,
+                                        std::span<std::vector<uint64_t> const> chunk_offsets,
+                                        std::span<int const> leaf_schema_indices,
+                                        std::span<cudf::size_type const> row_groups,
+                                        std::span<cudf::size_type const> leaf_columns,
+                                        FileMetaData* metadata);
 
 }  // namespace io::parquet::detail
 }  // namespace CUDF_EXPORT cudf

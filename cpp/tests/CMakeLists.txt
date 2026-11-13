@@ -357,6 +357,7 @@ ConfigureTest(
   io/parquet_chunked_reader_test.cu
   io/parquet_chunked_writer_test.cpp
   io/parquet_common.cpp
+  io/parquet_deferred_footer_test.cpp
   io/parquet_misc_test.cpp
   io/parquet_reader_dict_test.cpp
   io/parquet_reader_test.cpp
@@ -368,6 +369,9 @@ ConfigureTest(
 )
 ConfigureTest(COMPACT_PROTOCOL_READER_TEST io/compact_protocol_reader_test.cpp)
 ConfigureTest(PARQUET_FOOTER_FACADE_TEST io/experimental/parquet_footer_facade_test.cpp)
+ConfigureTest(
+  PARQUET_FOOTER_PARTIAL_DECODE_TEST io/experimental/parquet_footer_partial_decode_test.cpp
+)
 ConfigureTest(
   HYBRID_SCAN_TEST
   io/experimental/hybrid_scan_common.cpp

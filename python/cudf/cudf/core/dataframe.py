@@ -350,6 +350,10 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                 "DataFrames with a MultiIndex"
             )
 
+        if isinstance(key[0], Iterator):
+            # Validation and per-column assignment must reuse the same labels.
+            key = (list(key[0]), key[1])
+
         try:
             columns_df = self._frame._get_columns_by_label(key[1])
         except KeyError:

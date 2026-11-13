@@ -614,6 +614,30 @@ def test_dataframe_setitem_loc(key, value):
     assert_eq(pdf, gdf)
 
 
+@pytest.mark.parametrize(
+    "make_iterator",
+    [
+        pytest.param(iter, id="iterator"),
+        pytest.param(
+            lambda values: (value for value in values), id="generator"
+        ),
+    ],
+)
+@pytest.mark.parametrize("row_labels", [[], [0], [0, 1]])
+@pytest.mark.parametrize("column_key", [None, "a", ["a", "b"], slice(None)])
+def test_dataframe_setitem_loc_iterator(make_iterator, row_labels, column_key):
+    pdf = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+    gdf = cudf.from_pandas(pdf)
+    value = 1.5 if not row_labels else 9
+
+    for frame in (pdf, gdf):
+        rows = make_iterator(row_labels)
+        key = rows if column_key is None else (rows, column_key)
+        frame.loc[key] = value
+
+    assert_eq(pdf, gdf, check_dtype=True)
+
+
 @pytest.mark.parametrize("mixed_dtypes", [False, True])
 @pytest.mark.parametrize(
     "key",

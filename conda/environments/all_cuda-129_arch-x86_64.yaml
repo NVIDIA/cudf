@@ -18,6 +18,7 @@ dependencies:
 - cramjam
 - croaring==4.4.2
 - cuda-bindings>=12.9.3,<13.0
+- cuda-core>=1.0,<2
 - cuda-cudart-dev
 - cuda-cupti-dev
 - cuda-nvcc
@@ -66,7 +67,6 @@ dependencies:
 - ninja
 - notebook
 - numba-cuda-mlir>=0.3.0
-- numba-cuda>=0.22.2,<0.31.0
 - numba>=0.60.0,<0.65.0
 - numpy>=2.0,<3.0
 - numpydoc

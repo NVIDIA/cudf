@@ -39,6 +39,7 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <random>
 #include <stdexcept>
 #include <thread>
 #include <tuple>
@@ -3293,7 +3294,7 @@ struct JoinParameterizedTestLists : public JoinTestLists,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr) -> JoinResult {
+                          cudf::memory_resources mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
       return obj.inner_join(left, stream, mr);
     };
@@ -3313,7 +3314,7 @@ struct JoinParameterizedTestLists : public JoinTestLists,
                           cudf::table_view const& right,
                           cudf::null_equality compare_nulls,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr) -> JoinResult {
+                          cudf::memory_resources mr) -> JoinResult {
       cudf::sort_merge_join obj(right, cudf::sorted::NO, compare_nulls, stream);
       return obj.left_join(left, stream, mr);
     };
@@ -3902,6 +3903,174 @@ TEST_F(JoinTest, HashJoinPartitionedSlicedMultiBlock)
   auto concat_sort  = cudf::gather(concat->view(), *concat_order);
 
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*expected_sort, *concat_sort);
+}
+
+// sort_merge_join has faster paths for a single non-null 32- or 64-bit integer or chrono key and
+// for right tables whose keys are all distinct. These tests compare them with hash_join.
+struct SortMergeJoinKeyShapeTest : public JoinTest {
+  void expect_matches_hash_join(cudf::table_view const& left,
+                                cudf::table_view const& right,
+                                cudf::null_equality compare_nulls = cudf::null_equality::EQUAL,
+                                std::vector<cudf::sorted> const& right_sortedness = {
+                                  cudf::sorted::NO, cudf::sorted::YES})
+  {
+    cudf::hash_join hash_joiner(right, compare_nulls);
+    auto const expected_inner = hash_joiner.inner_join(left);
+    auto const expected_left  = hash_joiner.left_join(left);
+    for (auto const is_right_sorted : right_sortedness) {
+      SCOPED_TRACE(is_right_sorted == cudf::sorted::YES ? "right sorted" : "right unsorted");
+      cudf::sort_merge_join joiner(right, is_right_sorted, compare_nulls);
+      {
+        SCOPED_TRACE("inner join");
+        auto const [gold, result] = gather_maps_as_tables(
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_inner.first}},
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_inner.second}},
+          joiner.inner_join(left));
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*gold, *result);
+      }
+      {
+        SCOPED_TRACE("left join");
+        auto const [gold, result] = gather_maps_as_tables(
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_left.first}},
+          cudf::column_view{cudf::device_span<cudf::size_type const>{*expected_left.second}},
+          joiner.left_join(left));
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*gold, *result);
+      }
+    }
+  }
+};
+
+namespace {
+
+/// Sorted keys `0, step, 2 * step, ...`, each repeated `repeats` times.
+template <typename T>
+std::vector<T> sorted_keys(cudf::size_type num_keys, int step, int repeats)
+{
+  std::vector<T> keys;
+  for (cudf::size_type i = 0; i < num_keys; ++i) {
+    keys.insert(keys.end(), repeats, static_cast<T>(i * step));
+  }
+  return keys;
+}
+
+/// `num_rows` keys drawn from `[lo, hi]`, so some miss a right table built by `sorted_keys`.
+template <typename T>
+std::vector<T> random_keys(cudf::size_type num_rows, int lo, int hi)
+{
+  std::mt19937 engine{12345};
+  std::uniform_int_distribution<int> dist{lo, hi};
+  std::vector<T> keys(num_rows);
+  std::generate(keys.begin(), keys.end(), [&] { return static_cast<T>(dist(engine)); });
+  return keys;
+}
+
+}  // namespace
+
+TEST_F(SortMergeJoinKeyShapeTest, DistinctIntegerRightKeys)
+{
+  auto const right_keys = sorted_keys<int32_t>(5000, 3, 1);
+  auto const left_keys  = random_keys<int32_t>(20000, -10, 16000);
+  column_wrapper<int32_t> right(right_keys.begin(), right_keys.end());
+  column_wrapper<int32_t> left(left_keys.begin(), left_keys.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, SlicedKeys)
+{
+  auto const right_keys = sorted_keys<int32_t>(3000, 2, 1);
+  auto const left_keys  = random_keys<int32_t>(10000, -10, 6100);
+  column_wrapper<int32_t> right(right_keys.begin(), right_keys.end());
+  column_wrapper<int32_t> left(left_keys.begin(), left_keys.end());
+  auto const sliced_right = cudf::slice(right, {100, 2900})[0];
+  auto const sliced_left  = cudf::slice(left, {7, 9000})[0];
+  expect_matches_hash_join(cudf::table_view{{sliced_left}}, cudf::table_view{{sliced_right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, TimestampKeys)
+{
+  using T               = cudf::timestamp_s;
+  auto const right_keys = sorted_keys<T::rep>(1000, 5, 1);
+  auto const left_keys  = random_keys<T::rep>(5000, 0, 5100);
+  cudf::test::fixed_width_column_wrapper<T, T::rep> right(right_keys.begin(), right_keys.end());
+  cudf::test::fixed_width_column_wrapper<T, T::rep> left(left_keys.begin(), left_keys.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, Date32Keys)
+{
+  using T               = cudf::timestamp_D;
+  auto const right_keys = sorted_keys<T::rep>(1000, 5, 1);
+  auto const left_keys  = random_keys<T::rep>(5000, 0, 5100);
+  cudf::test::fixed_width_column_wrapper<T, T::rep> right(right_keys.begin(), right_keys.end());
+  cudf::test::fixed_width_column_wrapper<T, T::rep> left(left_keys.begin(), left_keys.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, UnsignedKeysAcrossSignBit)
+{
+  auto const base = uint64_t{1} << 63;
+  auto right_keys = sorted_keys<uint64_t>(2000, 3, 1);
+  auto left_keys  = random_keys<uint64_t>(10000, 0, 6100);
+  for (auto& key : right_keys) {
+    key += base - 3000;
+  }
+  for (auto& key : left_keys) {
+    key += base - 3000;
+  }
+  column_wrapper<uint64_t> right(right_keys.begin(), right_keys.end());
+  column_wrapper<uint64_t> left(left_keys.begin(), left_keys.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, NoMatches)
+{
+  auto const right_keys = sorted_keys<int64_t>(1000, 1, 1);
+  auto const left_keys  = random_keys<int64_t>(5000, 5000, 6000);
+  column_wrapper<int64_t> right(right_keys.begin(), right_keys.end());
+  column_wrapper<int64_t> left(left_keys.begin(), left_keys.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, Int16Keys)
+{
+  auto const right_keys = sorted_keys<int16_t>(1000, 3, 1);
+  auto const left_keys  = random_keys<int16_t>(5000, -10, 3100);
+  column_wrapper<int16_t> right(right_keys.begin(), right_keys.end());
+  column_wrapper<int16_t> left(left_keys.begin(), left_keys.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, FloatingPointKeys)
+{
+  auto const right_keys = sorted_keys<double>(1000, 3, 1);
+  auto const left_keys  = random_keys<double>(5000, -10, 3100);
+  column_wrapper<double> right(right_keys.begin(), right_keys.end());
+  column_wrapper<double> left(left_keys.begin(), left_keys.end());
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, StringKeys)
+{
+  cudf::test::strings_column_wrapper right({"a", "b", "c", "e"});
+  cudf::test::strings_column_wrapper left({"b", "d", "a", "a", "z", "e"});
+  expect_matches_hash_join(cudf::table_view{{left}}, cudf::table_view{{right}});
+}
+
+TEST_F(SortMergeJoinKeyShapeTest, NullableDistinctRightKeys)
+{
+  auto const right_keys = sorted_keys<int32_t>(1000, 2, 1);
+  auto const left_keys  = random_keys<int32_t>(5000, -10, 2100);
+  std::vector<bool> valid(left_keys.size());
+  for (std::size_t i = 0; i < valid.size(); ++i) {
+    valid[i] = i % 7 != 3;
+  }
+  column_wrapper<int32_t> right(right_keys.begin(), right_keys.end(), valid.begin());
+  column_wrapper<int32_t> left(left_keys.begin(), left_keys.end(), valid.begin());
+  for (auto const compare_nulls : {cudf::null_equality::EQUAL, cudf::null_equality::UNEQUAL}) {
+    // With nulls interleaved, the right keys are not in sorted order.
+    expect_matches_hash_join(
+      cudf::table_view{{left}}, cudf::table_view{{right}}, compare_nulls, {cudf::sorted::NO});
+  }
 }
 
 CUDF_TEST_PROGRAM_MAIN()

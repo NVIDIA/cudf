@@ -6,6 +6,8 @@
 
 #include <cudf/utilities/error.hpp>
 
+#include <rmm/exec_policy.hpp>
+
 #include <nvtx3/nvtx3.hpp>
 #include <thrust/device_ptr.h>
 #include <thrust/equal.h>

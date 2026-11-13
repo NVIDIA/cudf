@@ -49,7 +49,10 @@ cudf::size_type unique_count(column_view const& input,
 {
   auto const num_rows = input.size();
 
-  if (num_rows == 0 or num_rows == input.null_count()) { return 0; }
+  if (num_rows == 0) { return 0; }
+  if (num_rows == input.null_count()) {
+    return static_cast<size_type>(null_handling == null_policy::INCLUDE);
+  }
 
   auto const count_nulls      = null_handling == null_policy::INCLUDE;
   auto const nan_is_null      = nan_handling == nan_policy::NAN_IS_NULL;

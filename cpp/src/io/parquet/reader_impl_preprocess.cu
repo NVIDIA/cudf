@@ -105,7 +105,8 @@ void reader_impl::build_string_dict_indices()
                                                            str_dict_index_count.end(),
                                                            size_t{0},
                                                            cuda::std::plus<size_t>{},
-                                                           _stream);
+                                                           _stream,
+                                                           _mr.as_temporary());
 
   if (total_str_dict_indexes == 0) { return; }
 
@@ -569,7 +570,8 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
                                                       d_page_offset_counts.end(),
                                                       size_t{0},
                                                       cuda::std::plus<size_t>{},
-                                                      _stream);
+                                                      _stream,
+                                                      _mr.as_temporary());
 
   // Allocate the string offset buffer
   subpass.string_offset_buffer = cuda::device_buffer<uint32_t>(
@@ -849,13 +851,16 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   // Decode definition and repetition levels for all subpass pages
   // so they're available to compute_page_sizes and decode kernels.
   // We can't determine subpass skip_rows & num_rows yet, so we use the pass values.
-  detail::preprocess_levels(subpass.pages,
-                            pass.chunks,
-                            subpass_page_mask_span(),
-                            pass.skip_rows,
-                            pass.num_rows,
-                            pass.level_type_size,
-                            _stream);
+  // Only launch kernel if there are levels to decode.
+  if (subpass.level_decode_data.size() != 0) {
+    detail::preprocess_levels(subpass.pages,
+                              pass.chunks,
+                              subpass_page_mask_span(),
+                              pass.skip_rows,
+                              pass.num_rows,
+                              pass.level_type_size,
+                              _stream);
+  }
 
   // iterate over all input columns and determine if they contain lists.
   // TODO: we could do this once at the file level instead of every time we get in here. the set of
@@ -1060,12 +1065,24 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   compute_output_chunks_for_subpass();
 }
 
-void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_rows)
+void reader_impl::allocate_columns(read_mode mode,
+                                   size_t skip_rows,
+                                   size_t num_rows,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   auto& pass    = *_pass_itm_data;
   auto& subpass = *pass.subpass;
+
+  // Memory resource for a column buffer at nesting depth `l_idx`
+  auto const buffer_mr = [&](auto const& out_buf, auto const& input_col, auto l_idx) {
+    // Only top-level buffers have a top-level column index
+    auto const top_level_index =
+      l_idx == 0 ? std::make_optional<size_t>(input_col.nesting[0]) : std::nullopt;
+    return is_intermediate_column(out_buf, top_level_index) ? mr.get_temporary_mr()
+                                                            : mr.get_output_mr();
+  };
 
   // Should not reach here if there is no page data.
   CUDF_EXPECTS(subpass.pages.size() > 0, "There are no pages present in the subpass");
@@ -1118,8 +1135,11 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
         CUDF_EXPECTS(out_buf_size <= std::numeric_limits<cudf::size_type>::max(),
                      "Number of rows exceeds cudf's column size limit",
                      std::overflow_error);
-        out_buf.create_with_mask(
-          out_buf_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
+        out_buf.create_with_mask(out_buf_size,
+                                 cudf::mask_state::UNINITIALIZED,
+                                 false,
+                                 _stream,
+                                 buffer_mr(out_buf, input_col, l_idx));
         nullmask_bufs.emplace_back(
           out_buf.null_mask(),
           cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
@@ -1201,7 +1221,8 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                                   cuda::make_discard_iterator(),
                                   sizes.d_begin() + (key_start / subpass.pages.size()),
                                   cuda::std::plus<>{},
-                                  _stream);
+                                  _stream,
+                                  _mr.as_temporary());
 
       // For nested hierarchies, compute per-page start offset
       thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(_stream, _mr.get_temporary_mr()),
@@ -1251,8 +1272,11 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                        std::overflow_error);
           // allocate
           // we're going to start null mask as all valid and then turn bits off if necessary
-          out_buf.create_with_mask(
-            buffer_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
+          out_buf.create_with_mask(buffer_size,
+                                   cudf::mask_state::UNINITIALIZED,
+                                   false,
+                                   _stream,
+                                   buffer_mr(out_buf, input_col, l_idx));
           nullmask_bufs.emplace_back(
             out_buf.null_mask(),
             cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
@@ -1335,7 +1359,8 @@ cudf::detail::host_vector<size_t> reader_impl::calculate_page_string_offsets()
                               reduce_keys.begin(),
                               d_col_sizes.begin(),
                               cuda::std::plus<>{},
-                              _stream);
+                              _stream,
+                              _mr.as_temporary());
 
   return cudf::detail::make_pinned_vector(d_col_sizes, _stream);
 }

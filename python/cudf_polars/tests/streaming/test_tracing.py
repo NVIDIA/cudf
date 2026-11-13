@@ -345,6 +345,92 @@ def test_local_join_prefilter_trace_records_decision_and_effect(
             assert record["prefilter"]["output_rows"] == output_rows
 
 
+@pytest.mark.parametrize(
+    "broadcast_limit, bloom_filter_max_size",
+    [(64, 0), (1, 32 * 1024 * 1024)],
+    ids=["exact", "bloom"],
+)
+def test_prefilter_effect_sizes_shuffle(
+    tmp_path: pathlib.Path,
+    broadcast_limit: int,
+    bloom_filter_max_size: int,
+) -> None:
+    """A shuffle after a selective prefilter is sized for the filtered input."""
+    target = pl.LazyFrame(
+        {"key": [i % 100 for i in range(1_000_000)], "value": range(1_000_000)}
+    )
+    chunk_count = _prefiltered_shuffle_chunk_count(
+        tmp_path, target, broadcast_limit, bloom_filter_max_size
+    )
+    # Sized from the unfiltered target, the shuffle would have 100 partitions;
+    # the prefilter keeps 1% of the rows.
+    assert chunk_count <= 4
+
+
+def test_prefilter_effect_sizes_shuffle_by_bytes(tmp_path: pathlib.Path) -> None:
+    """The kept rows are much wider than the rejected ones."""
+    keys = [i % 100 for i in range(1_000_000)]
+    target = pl.LazyFrame(
+        {
+            "key": keys,
+            "value": range(1_000_000),
+            "payload": ["x" * 200 if key == 1 else "" for key in keys],
+        }
+    )
+    chunk_count = _prefiltered_shuffle_chunk_count(
+        tmp_path, target, broadcast_limit=64, bloom_filter_max_size=0
+    )
+    # The prefilter keeps 1% of the rows but about 10% of the bytes (~34
+    # partitions); sizing by the row ratio would leave about 3.
+    assert chunk_count >= 20
+
+
+def _prefiltered_shuffle_chunk_count(
+    tmp_path: pathlib.Path,
+    target: pl.LazyFrame,
+    broadcast_limit: int,
+    bloom_filter_max_size: int,
+) -> int:
+    """Output chunk count of the shuffle join after a key-1 prefilter."""
+    pytest.importorskip("cudf_polars_quent")
+    from cudf_polars.engine.spmd import SPMDEngine
+    from cudf_polars.quent import QuentConfig
+
+    domain = (
+        pl.LazyFrame({"key": [1, 99], "active": [True, False]})
+        .filter("active")
+        .select("key")
+    )
+    options = {
+        "join_filter_pushdown": {
+            "threshold": 0.5,
+            "bloom_filter_max_size": bloom_filter_max_size,
+        },
+        "broadcast_limit": broadcast_limit,
+        # Large enough chunks that allocation padding does not distort the
+        # measured byte ratio.
+        "target_partition_size": 64 * 1024,
+        "max_rows_per_partition": 100_000,
+        "quent_context": QuentConfig(output_root=str(tmp_path / "quent")),
+    }
+    with SPMDEngine(executor_options=options) as engine:
+        result = domain.join(target, on="key").collect(engine=engine)
+        event_root = engine._quent_output_root
+        assert event_root is not None
+    statistics = [
+        event["Statistics"]["values"]
+        for path in event_root.rglob("*.ndjson")
+        if path.parent.name == "Operator"
+        for line in path.read_text().splitlines()
+        if "Statistics" in (event := json.loads(line)["data"])
+    ]
+    (join_statistics,) = (
+        values for values in statistics if values["decision"] == "shuffle"
+    )
+    assert result.height == 10_000
+    return join_statistics["chunk_count"]
+
+
 def test_standalone_prefilter_trace_records_decision_and_effect(
     tmp_path: pathlib.Path,
 ) -> None:

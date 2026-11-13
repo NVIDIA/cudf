@@ -1120,7 +1120,7 @@ __device__ void prefetch_string_data(string_offset_page const& page,
                                      int32_t& base,
                                      int32_t& end)
 {
-  int32_t const lane = warp.thread_rank();
+  int32_t const lane             = warp.thread_rank();
   constexpr int32_t alignment    = alignof(string_offset_window);
   constexpr int32_t word_bytes   = sizeof(uint32_t);
   constexpr int32_t copy_bytes   = sizeof(uint4);
@@ -1142,10 +1142,11 @@ __device__ void prefetch_string_data(string_offset_page const& page,
     auto* dst       = window.data + lane * (copy_bytes / word_bytes);
     auto const* src = page.data + base + lane * copy_bytes;
 
-    // Each lane copies two 16-byte chunks, 512 bytes apart. 
-    // async copy is Max 16 bytes per thread. 
-    // Using two separate memcpy_async calls instead of one to ensure all copies in a call from the warp is one interleaved 512-byte chunk.
-    // Avoiding using cg::memcpy_async as it adds additional unnecessary runtime instructions (i.e overhead)
+    // Each lane copies two 16-byte chunks, 512 bytes apart.
+    // async copy is Max 16 bytes per thread.
+    // Using two separate memcpy_async calls instead of one to ensure all copies in a call from the
+    // warp is one interleaved 512-byte chunk. Avoiding using cg::memcpy_async as it adds additional
+    // unnecessary runtime instructions (i.e overhead)
     cuda::memcpy_async(
       static_cast<void*>(dst), src, cuda::aligned_size_t<copy_bytes>(copy_bytes), pipeline);
     cuda::memcpy_async(static_cast<void*>(dst + stride_bytes / word_bytes),
@@ -1275,8 +1276,8 @@ __device__ void read_string_offsets_buffered(string_offset_page const& page,
     uint32_t const bias = static_cast<uint32_t>(base) + prefix_bytes;
     while (scanning && index <= limit && pos < page.num_values) {
       uint32_t const word = index / word_bytes;
-      uint32_t const len  = __funnelshift_r(
-        window.data[word], window.data[word + 1], (index % word_bytes) * CHAR_BIT);
+      uint32_t const len =
+        __funnelshift_r(window.data[word], window.data[word + 1], (index % word_bytes) * CHAR_BIT);
       // Remaining page bytes fit in INT32_MAX, so this also rejects negative lengths.
       if (len > remaining - index) {
         scanning = false;
@@ -1420,7 +1421,7 @@ CUDF_KERNEL void __launch_bounds__(string_offset_block_size)
     block.sync();
   }
 
-  auto const page    = pages_to_process[warp.meta_group_rank()];
+  auto const page = pages_to_process[warp.meta_group_rank()];
   if (!page.active) { return; }
 
   constexpr int32_t max_avg_string_length_for_buffer = string_offset_window_bytes / 16;
@@ -1461,7 +1462,7 @@ void preprocess_string_offsets(cudf::detail::hostdevice_span<PageInfo> pages,
 {
   if (pages.size() == 0) { return; }
 
-  auto const num_blocks        = cuda::ceil_div(pages.size(), size_t{string_offset_warps});
+  auto const num_blocks = cuda::ceil_div(pages.size(), size_t{string_offset_warps});
   preprocess_string_offsets_kernel<<<num_blocks, string_offset_block_size, 0, stream.get()>>>(
     pages, chunks, page_string_offset_indices, page_mask, min_row, num_rows, error_code);
   CUDF_CUDA_TRY(cudaGetLastError());

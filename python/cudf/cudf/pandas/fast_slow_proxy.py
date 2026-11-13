@@ -1332,13 +1332,10 @@ class _FastSlowAttribute:
                     raise e
 
             if _is_function_or_method(slow_attr):
-                self._attr = _MethodProxy(
-                    fast_attr,
-                    slow_attr,
-                    _fsproxy_transfer_block=instance.get_transfer_blocking()
-                    if instance is not None
-                    else None,
-                )
+                # The descriptor caches a method shared by every instance.
+                # Argument conversion checks the bound instance's current
+                # transfer restrictions when the method is called.
+                self._attr = _MethodProxy(fast_attr, slow_attr)
             else:
                 # for anything else, use a fast-slow attribute:
                 self._attr, _ = _fast_slow_function_call(

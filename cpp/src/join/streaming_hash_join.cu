@@ -48,6 +48,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -158,12 +159,33 @@ size_type checked_batch_count(size_type batches)
   return batches;
 }
 
+/// Miller-Rabin primality test; these seven bases make it exact for every 64-bit value.
 bool is_prime(std::uint64_t value)
 {
-  if (value < 4) { return value > 1; }
-  if (value % 2 == 0 || value % 3 == 0) { return false; }
-  for (std::uint64_t divisor = 5; divisor * divisor <= value; divisor += 6) {
-    if (value % divisor == 0 || value % (divisor + 2) == 0) { return false; }
+  if (value < 2) { return false; }
+  for (std::uint64_t const prime : {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37}) {
+    if (value % prime == 0) { return value == prime; }
+  }
+  auto const multiply = [value](std::uint64_t a, std::uint64_t b) {
+    return static_cast<std::uint64_t>(static_cast<__uint128_t>(a) * b % value);
+  };
+  auto const shifts = cuda::std::countr_zero(value - 1);
+  auto const odd    = (value - 1) >> shifts;
+  for (std::uint64_t base : {2, 325, 9375, 28178, 450775, 9780504, 1795265022}) {
+    base %= value;
+    if (base == 0) { continue; }
+    std::uint64_t power = 1;
+    for (auto exponent = odd; exponent != 0; exponent >>= 1) {
+      if (exponent & 1) { power = multiply(power, base); }
+      base = multiply(base, base);
+    }
+    if (power == 1 || power == value - 1) { continue; }
+    auto composite = true;
+    for (auto shift = 1; composite && shift < shifts; ++shift) {
+      power     = multiply(power, power);
+      composite = power != value - 1;
+    }
+    if (composite) { return false; }
   }
   return true;
 }

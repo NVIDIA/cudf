@@ -99,6 +99,22 @@ def test_asof_join_grouped():
     assert result.to_arrow().to_pylist() == [0, 2, 1]
 
 
+@pytest.mark.uses_custom_stream
+def test_asof_join_right_key_lifetime_across_streams():
+    input_stream, build_stream, probe_stream = Stream(), Stream(), Stream()
+    right_on = plc.Column.from_arrow(
+        pa.array([1, 3], type=pa.int64()), stream=input_stream
+    )
+    plc.experimental.join_streams([input_stream], build_stream)
+    joiner = plc.join.AsofJoin(plc.Table([]), right_on, stream=build_stream)
+    left_on = plc.Column.from_arrow(
+        pa.array([2], type=pa.int64()), stream=probe_stream
+    )
+    result = joiner.join(plc.Table([]), left_on, stream=probe_stream)
+    del right_on, joiner
+    assert result.to_arrow(stream=probe_stream).to_pylist() == [0]
+
+
 @pytest.mark.parametrize(
     "left_values,right_values,expected",
     [

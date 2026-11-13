@@ -29,6 +29,7 @@ from cudf.io.parquet import (
     is_supported_read_parquet,
     is_supported_write_parquet,
     merge_parquet_filemetadata,
+    translate_filters_to_ast,
 )
 from cudf.testing import (
     assert_arrow_table_equal,
@@ -422,6 +423,23 @@ def test_parquet_read_metadata(tmp_path, pdf):
     assert row_groups == num_row_groups(num_rows, row_group_size)
     for a, b in zip(col_names, pdf.columns, strict=True):
         assert a == b
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["a", 1, 1.25, datetime.date(2026, 1, 1), datetime.timedelta(days=1)],
+)
+def test_parquet_filter_ast_supported_scalar(value):
+    from pylibcudf.expressions import Operation
+
+    result = translate_filters_to_ast([[("x", "in", [value])]])
+    assert isinstance(result, Operation)
+
+
+@pytest.mark.parametrize("value", [object(), b"a", ["a"], None])
+def test_parquet_filter_ast_unsupported_scalar(value):
+    with pytest.raises(NotImplementedError, match="Only numeric, string"):
+        translate_filters_to_ast([[("x", "==", value)]])
 
 
 def test_parquet_read_filtered(set_decomp_env_vars, tmp_path):

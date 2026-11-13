@@ -537,7 +537,7 @@ jobs:
       matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
       matrix_type: pull-request
   conda-python-import-tests:
-    needs: [conda-python-build, changed-files]
+    needs: [conda-python-build, conda-python-build-noarch, changed-files]
     permissions:
       actions: read
       contents: read

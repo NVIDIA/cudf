@@ -11,6 +11,7 @@
 
 #include <cuda/stream>
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -95,9 +96,8 @@ inline type_id to_cudf_decimal_type(host_span<std::string const> decimal128_colu
 {
   if (metadata.get_col_type(column_index).kind != DECIMAL) { return type_id::EMPTY; }
 
-  if (std::find(decimal128_columns.begin(),
-                decimal128_columns.end(),
-                metadata.column_path(0, column_index)) != decimal128_columns.end()) {
+  if (std::ranges::find(decimal128_columns, metadata.column_path(0, column_index)) !=
+      decimal128_columns.end()) {
     return type_id::DECIMAL128;
   }
 
@@ -134,6 +134,6 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 }  // namespace cudf::io::orc::detail

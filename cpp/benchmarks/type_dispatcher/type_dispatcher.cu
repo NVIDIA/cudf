@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -10,25 +12,26 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
+#include <cuda/std/concepts>
 
 #include <nvbench/nvbench.cuh>
-
-#include <type_traits>
 
 enum DispatchingType { HOST_DISPATCHING, DEVICE_DISPATCHING, NO_DISPATCHING };
 
 enum FunctorType { BANDWIDTH_BOUND, COMPUTE_BOUND };
 
-template <class NotFloat, FunctorType ft, class DisableNotFloat = void>
+template <class NotFloat, FunctorType ft>
 struct Functor {
   static __device__ NotFloat f(NotFloat x) { return x; }
 };
 
-template <class Float, FunctorType ft>
-struct Functor<Float, ft, std::enable_if_t<std::is_floating_point_v<Float>>> {
+template <cuda::std::floating_point Float, FunctorType ft>
+struct Functor<Float, ft> {
   static __device__ Float f(Float x)
   {
     if (ft == BANDWIDTH_BOUND) {
@@ -77,7 +80,7 @@ CUDF_KERNEL void host_dispatching_kernel(cudf::mutable_column_device_view source
 
 template <FunctorType functor_type>
 struct ColumnHandle {
-  template <typename ColumnType, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<ColumnType>())>
+  template <cudf::concepts::rep_layout_compatible ColumnType>
   void operator()(cudf::mutable_column_device_view source_column, int work_per_thread)
   {
     cudf::detail::grid_1d grid_config{source_column.size(), block_size};
@@ -86,7 +89,7 @@ struct ColumnHandle {
     host_dispatching_kernel<functor_type, ColumnType><<<grid_size, block_size>>>(source_column);
   }
 
-  template <typename ColumnType, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<ColumnType>())>
+  template <typename ColumnType>
   void operator()(cudf::mutable_column_device_view source_column, int work_per_thread)
   {
     CUDF_FAIL("Invalid type to benchmark.");
@@ -100,14 +103,14 @@ struct ColumnHandle {
 // n_rows * n_cols.
 template <FunctorType functor_type>
 struct RowHandle {
-  template <typename T, CUDF_ENABLE_IF(cudf::is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   __device__ void operator()(cudf::mutable_column_device_view source, cudf::size_type index)
   {
     using F                 = Functor<T, functor_type>;
     source.data<T>()[index] = F::f(source.data<T>()[index]);
   }
 
-  template <typename T, CUDF_ENABLE_IF(not cudf::is_rep_layout_compatible<T>())>
+  template <typename T>
   __device__ void operator()(cudf::mutable_column_device_view source, cudf::size_type index)
   {
     CUDF_UNREACHABLE("Unsupported type.");
@@ -178,13 +181,18 @@ void type_dispatcher_benchmark(nvbench::state& state)
   cudf::mutable_table_view source_table{source_columns};
 
   // For no dispatching
-  std::vector<rmm::device_buffer> h_vec(n_cols);
+  std::vector<cuda::device_buffer<TypeParam>> h_vec;
+  h_vec.reserve(n_cols);
+  for (int i = 0; i < n_cols; ++i) {
+    h_vec.emplace_back(cudf::get_default_stream(),
+                       cudf::get_current_device_resource_ref(),
+                       source_size,
+                       cuda::no_init);
+  }
   std::vector<TypeParam*> h_vec_p(n_cols);
-  std::transform(h_vec.begin(), h_vec.end(), h_vec_p.begin(), [source_size](auto& col) {
-    col.resize(source_size * sizeof(TypeParam), cudf::get_default_stream());
-    return static_cast<TypeParam*>(col.data());
-  });
-  rmm::device_uvector<TypeParam*> d_vec(n_cols, cudf::get_default_stream());
+  std::transform(h_vec.begin(), h_vec.end(), h_vec_p.begin(), [](auto& col) { return col.data(); });
+  cuda::device_buffer<TypeParam*> d_vec(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), n_cols, cuda::no_init);
 
   if (dispatching_type == NO_DISPATCHING) {
     CUDF_CUDA_TRY(
@@ -202,9 +210,12 @@ void type_dispatcher_benchmark(nvbench::state& state)
   launch_kernel<functor_type, dispatching_type>(source_table, d_vec.data(), work_per_thread);
   CUDF_CUDA_TRY(cudaDeviceSynchronize());
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     launch_kernel<functor_type, dispatching_type>(source_table, d_vec.data(), work_per_thread);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 void bench_fp64_bandwidth_host(nvbench::state& state)

@@ -39,7 +39,7 @@ TEST_F(StringsTranslateTest, Translate)
 
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> translate_table{
     make_entry("b", nullptr), make_entry("a", "A"), make_entry("é", "E"), make_entry("e", "_")};
-  auto results = cudf::strings::translate(strings_view, translate_table);
+  auto results = cudf::strings::translate(strings_view, std::span{translate_table});
 
   std::vector<char const*> h_expected{"___ ddd", " cc", nullptr, "", "AA", "dEd"};
   cudf::test::strings_column_wrapper expected(
@@ -55,7 +55,7 @@ TEST_F(StringsTranslateTest, ZeroSizeStringsColumn)
 
   auto strings_view = cudf::strings_column_view(zero_size_strings_column);
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> translate_table;
-  auto results = cudf::strings::translate(strings_view, translate_table);
+  auto results = cudf::strings::translate(strings_view, std::span{translate_table});
   cudf::test::expect_column_empty(results->view());
   results = cudf::strings::filter_characters(strings_view, translate_table);
   cudf::test::expect_column_empty(results->view());

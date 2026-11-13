@@ -27,7 +27,7 @@ std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
                                          size_type start,
                                          size_type end,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   CUDF_EXPECTS(((start >= 0) && (start < end)), "Invalid start parameter value.");
@@ -60,15 +60,14 @@ std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
   // slice the chars child column
   auto const data_size =
     static_cast<std::size_t>(get_offset_value(offsets_column->view(), strings_count, stream));
-  auto chars_buffer =
-    rmm::device_buffer{input.chars_begin(stream) + chars_offset, data_size, stream, mr};
+  auto chars_buffer = rmm::device_buffer{
+    input.chars_begin(stream) + chars_offset, data_size, stream, mr.get_output_mr()};
 
   // slice the null mask
   auto null_mask = cudf::detail::copy_bitmask(
     input.null_mask(), offsets_offset, offsets_offset + strings_count, stream, mr);
 
-  auto null_count = cudf::detail::null_count(
-    static_cast<bitmask_type const*>(null_mask.data()), 0, strings_count, stream);
+  auto null_count = cudf::detail::null_count(null_mask.data(), 0, strings_count, stream);
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),

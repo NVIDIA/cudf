@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 35."""
@@ -119,6 +119,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     aggone = params["aggone"]
     aggtwo = params["aggtwo"]
     aggthree = params["aggthree"]
+    aggthree_suffix = "_1" if aggthree in (aggone, aggtwo) else ""
 
     customer = get_data(run_config.dataset_path, "customer", run_config.suffix)
     customer_address = get_data(
@@ -194,7 +195,11 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 pl.len().alias("cnt1"),
                 _get_agg_expr("cd_dep_count", aggone, f"{aggone}(cd_dep_count)"),
                 _get_agg_expr("cd_dep_count", aggtwo, f"{aggtwo}(cd_dep_count)"),
-                _get_agg_expr("cd_dep_count", aggthree, f"{aggthree}(cd_dep_count)_1"),
+                _get_agg_expr(
+                    "cd_dep_count",
+                    aggthree,
+                    f"{aggthree}(cd_dep_count){aggthree_suffix}",
+                ),
                 pl.len().alias("cnt2"),
                 _get_agg_expr(
                     "cd_dep_employed_count", aggone, f"{aggone}(cd_dep_employed_count)"
@@ -205,7 +210,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 _get_agg_expr(
                     "cd_dep_employed_count",
                     aggthree,
-                    f"{aggthree}(cd_dep_employed_count)_1",
+                    f"{aggthree}(cd_dep_employed_count){aggthree_suffix}",
                 ),
                 pl.len().alias("cnt3"),
                 _get_agg_expr(
@@ -217,7 +222,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 _get_agg_expr(
                     "cd_dep_college_count",
                     aggthree,
-                    f"{aggthree}(cd_dep_college_count)_1",
+                    f"{aggthree}(cd_dep_college_count){aggthree_suffix}",
                 ),
             ]
         )
@@ -230,17 +235,17 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 "cnt1",
                 f"{aggone}(cd_dep_count)",
                 f"{aggtwo}(cd_dep_count)",
-                f"{aggthree}(cd_dep_count)_1",
+                f"{aggthree}(cd_dep_count){aggthree_suffix}",
                 "cd_dep_employed_count",
                 "cnt2",
                 f"{aggone}(cd_dep_employed_count)",
                 f"{aggtwo}(cd_dep_employed_count)",
-                f"{aggthree}(cd_dep_employed_count)_1",
+                f"{aggthree}(cd_dep_employed_count){aggthree_suffix}",
                 "cd_dep_college_count",
                 "cnt3",
                 f"{aggone}(cd_dep_college_count)",
                 f"{aggtwo}(cd_dep_college_count)",
-                f"{aggthree}(cd_dep_college_count)_1",
+                f"{aggthree}(cd_dep_college_count){aggthree_suffix}",
             ]
         )
         .sort(sort_by.keys(), nulls_last=True)

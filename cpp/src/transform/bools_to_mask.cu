@@ -20,12 +20,16 @@
 
 namespace cudf {
 namespace detail {
-std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> bools_to_mask(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, cudf::size_type> bools_to_mask(
+  column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_EXPECTS(input.type().id() == type_id::BOOL8, "Input is not of type bool");
 
-  if (input.is_empty()) { return std::pair(std::make_unique<rmm::device_buffer>(), 0); }
+  if (input.is_empty()) {
+    return std::pair(std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(
+                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)),
+                     0);
+  }
 
   auto input_device_view_ptr = column_device_view::create(input, stream);
   auto input_device_view     = *input_device_view_ptr;
@@ -36,19 +40,23 @@ std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> bools_to_mask(
 
     auto mask = detail::valid_if(input_begin, input_begin + input.size(), pred, stream, mr);
 
-    return std::pair(std::make_unique<rmm::device_buffer>(std::move(mask.first)), mask.second);
+    return std::pair(
+      std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(std::move(mask.first)),
+      mask.second);
   } else {
     auto mask = detail::valid_if(
       input_device_view.begin<bool>(), input_device_view.end<bool>(), pred, stream, mr);
 
-    return std::pair(std::make_unique<rmm::device_buffer>(std::move(mask.first)), mask.second);
+    return std::pair(
+      std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(std::move(mask.first)),
+      mask.second);
   }
 }
 
 }  // namespace detail
 
-std::pair<std::unique_ptr<rmm::device_buffer>, cudf::size_type> bools_to_mask(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+std::pair<std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>, cudf::size_type> bools_to_mask(
+  column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::bools_to_mask(input, stream, mr);

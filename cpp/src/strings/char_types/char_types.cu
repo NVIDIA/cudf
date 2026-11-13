@@ -77,7 +77,7 @@ std::unique_ptr<column> all_characters_of_type(strings_column_view const& input,
                                                string_character_types types,
                                                string_character_types verify_types,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
@@ -166,7 +166,7 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& str
                                                   string_scalar const& replacement,
                                                   string_character_types types_to_keep,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(replacement.is_valid(stream), "Parameter replacement must be valid");
   if (types_to_remove == ALL_TYPES)
@@ -188,7 +188,8 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& str
                            d_replacement};
 
   // copy null mask from input column
-  rmm::device_buffer null_mask = cudf::detail::copy_bitmask(strings.parent(), stream, mr);
+  cuda::device_buffer<cudf::bitmask_type> null_mask =
+    cudf::detail::copy_bitmask(strings.parent(), stream, mr);
 
   // this utility calls filterer to build the offsets and chars columns
   auto [offsets_column, chars] = make_strings_children(filterer, strings_count, stream, mr);
@@ -209,7 +210,7 @@ std::unique_ptr<column> all_characters_of_type(strings_column_view const& input,
                                                string_character_types types,
                                                string_character_types verify_types,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::all_characters_of_type(input, types, verify_types, stream, mr);
@@ -220,11 +221,26 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& inp
                                                   string_scalar const& replacement,
                                                   string_character_types types_to_keep,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_characters_of_type(
     input, types_to_remove, replacement, types_to_keep, stream, mr);
+}
+
+std::uint8_t const* get_character_flags_table(cuda::stream_ref stream)
+{
+  return detail::get_character_flags_table(stream);
+}
+
+std::uint16_t const* get_character_cases_table(cuda::stream_ref stream)
+{
+  return detail::get_character_cases_table(stream);
+}
+
+void const* get_special_case_mapping_table(cuda::stream_ref stream)
+{
+  return detail::get_special_case_mapping_table(stream);
 }
 
 }  // namespace strings

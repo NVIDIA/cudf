@@ -119,7 +119,7 @@ cpdef size_t partition_and_pack_cost(
     --------
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().get())
+    cdef stream_ref _stream = stream.view()
     cdef cpp_BufferResource* _br = br.ptr()
     cdef table_view tbl = table.view()
     cdef size_t ret
@@ -134,6 +134,7 @@ cpdef object partition_and_pack(
     int num_partitions,
     Stream stream,
     BufferResource br,
+    uint32_t seed = cpp_DEFAULT_HASH_SEED,
     MemoryReservation reservation=None,
 ):
     """
@@ -151,6 +152,8 @@ cpdef object partition_and_pack(
         The CUDA stream used for memory operations.
     br
         Buffer resource for memory allocations.
+    seed
+        Optional seed for the hash function.
     reservation
         Device memory reservation covering :func:`partition_and_pack_cost`. It is
         consumed as the allocations land, leaving it empty on return. If not given,
@@ -177,7 +180,7 @@ cpdef object partition_and_pack(
     pylibcudf.contiguous_split.pack
     cudf_streaming.partition_utils.split_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().get())
+    cdef stream_ref _stream = stream.view()
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[size_type] _columns_to_hash = tuple(columns_to_hash)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
@@ -192,7 +195,7 @@ cpdef object partition_and_pack(
                 _columns_to_hash,
                 num_partitions,
                 cpp_HASH_MURMUR3,
-                cpp_DEFAULT_HASH_SEED,
+                seed,
                 _stream,
                 _br,
             )
@@ -202,7 +205,7 @@ cpdef object partition_and_pack(
                 _columns_to_hash,
                 num_partitions,
                 cpp_HASH_MURMUR3,
-                cpp_DEFAULT_HASH_SEED,
+                seed,
                 _stream,
                 deref(_reservation),
             )
@@ -244,7 +247,7 @@ cpdef size_t split_and_pack_cost(
     --------
     cudf_streaming.partition_utils.split_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().get())
+    cdef stream_ref _stream = stream.view()
     cdef cpp_BufferResource* _br = br.ptr()
     cdef table_view tbl = table.view()
     cdef size_t ret
@@ -299,7 +302,7 @@ cpdef object split_and_pack(
     pylibcudf.copying.split
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().get())
+    cdef stream_ref _stream = stream.view()
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[size_type] _splits = tuple(splits)
     cdef unordered_map[uint32_t, cpp_PackedData] _ret
@@ -463,7 +466,7 @@ cpdef object unpack_and_concat(
     cudf_streaming.partition_utils.unpack_and_concat_cost
     cudf_streaming.partition_utils.partition_and_pack
     """
-    cdef stream_ref _stream = stream_ref(stream.view().get())
+    cdef stream_ref _stream = stream.view()
     cdef cpp_BufferResource* _br = br.ptr()
     cdef vector[cpp_PackedData] _partitions = _partitions_py_to_cpp(partitions)
     cdef unique_ptr[cpp_table] _ret
@@ -550,7 +553,7 @@ cpdef object packed_data_from_cudf_packed_columns(
     """
     if packed_columns is None or stream is None or br is None:
         raise TypeError("Arguments must not be None")
-    cdef stream_ref _stream = stream_ref(stream.view().get())
+    cdef stream_ref _stream = stream.view()
     cdef cpp_BufferResource* _br = br.ptr()
     cdef PackedData ret = PackedData.__new__(PackedData)
     with nogil:

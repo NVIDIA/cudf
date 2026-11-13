@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -6,7 +6,10 @@ import pytest
 
 import polars as pl
 
-from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.asserts import (
+    assert_gpu_result_equal,
+    assert_ir_translation_raises,
+)
 from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
@@ -30,6 +33,21 @@ def test_merge_sorted_without_nulls(engine: pl.GPUEngine, descending, request):
     ).sort("age", descending=descending)
     q = df0.merge_sorted(df1, key="age")
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_merge_sorted_multiple_keys_not_supported(engine: pl.GPUEngine):
+    df0 = pl.LazyFrame(
+        {"name": ["steve", "elise", "bob"], "age": [42, 44, 18], "height": [5, 6, 5]}
+    ).sort(["age", "height"])
+    df1 = pl.LazyFrame(
+        {
+            "name": ["anna", "megan", "steve", "thomas"],
+            "age": [21, 33, 42, 20],
+            "height": [5, 5, 5, 5],
+        }
+    ).sort(["age", "height"])
+    q = df0.merge_sorted(df1, key=["age", "height"])
+    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(

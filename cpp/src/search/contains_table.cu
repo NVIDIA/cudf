@@ -6,10 +6,12 @@
 #include "contains_table_impl.cuh"
 
 #include <cudf/detail/row_operator/equality.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/search.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
@@ -27,7 +29,7 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
                                    null_equality compare_nulls,
                                    nan_equality compare_nans,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(haystack, needles), "Column types mismatch");
 
@@ -42,7 +44,7 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
     cudf::detail::row::equality::preprocessed_table::create(haystack, stream, temp_mr);
 
   // The output vector.
-  auto contained = rmm::device_uvector<bool>(needles.num_rows(), stream, mr);
+  auto contained = rmm::device_uvector<bool>(needles.num_rows(), stream, mr.get_output_mr());
 
   // Only use primitive row operators for non-floating-point types since they don't handle NaN
   // equality

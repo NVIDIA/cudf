@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,9 +31,9 @@ public class BatchedLZ4Decompressor extends BatchedDecompressor {
 
   @Override
   protected long batchedDecompressGetTempSize(long numChunks, long maxUncompressedChunkBytes,
-      long maxTotalSize) {
+      long maxTotalSize, long stream) {
     return NvcompJni.batchedLZ4DecompressGetTempSize(numChunks, maxUncompressedChunkBytes,
-      maxTotalSize);
+      maxTotalSize, stream);
   }
 
   @Override

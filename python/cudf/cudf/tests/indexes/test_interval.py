@@ -25,7 +25,9 @@ def test_interval_to_arrow():
 @pytest.mark.parametrize("closed", ["left", "right", "both", "neither"])
 @pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
 @pytest.mark.parametrize("tz", [None, "US/Eastern", "Asia/Kolkata"])
-@pytest.mark.parametrize("selection", [slice(None), slice(1, 3), slice(0, 0)])
+@pytest.mark.parametrize(
+    "selection", [slice(None), slice(1, 3), slice(1, 2), slice(0, 0)]
+)
 def test_interval_to_pandas_datetime(closed, unit, tz, selection):
     breaks = pd.date_range("2025-03-08", periods=5, tz=tz, unit=unit)
     expected = pd.Series(
@@ -36,7 +38,9 @@ def test_interval_to_pandas_datetime(closed, unit, tz, selection):
     )
     result = cudf.Series(intervals, name="intervals").iloc[selection]
 
-    assert_eq(result.to_pandas(), expected)
+    actual = result.to_pandas()
+    assert_eq(actual, expected, check_dtype=True)
+    assert actual.dtype.closed == closed
     assert_eq(
         cudf.IntervalIndex(result, name="intervals").to_pandas(),
         pd.IntervalIndex(expected, name="intervals"),
@@ -61,17 +65,35 @@ def test_interval_to_pandas_extension_subtype(closed, subtype):
 @pytest.mark.parametrize(
     "subtype", ["float64", "datetime64[ns]", "timedelta64[ns]"]
 )
-def test_interval_to_pandas_nulls(closed, subtype):
+@pytest.mark.parametrize("all_null", [False, True])
+def test_interval_to_pandas_nulls(closed, subtype, all_null):
     expected = pd.Series(
         pd.IntervalIndex.from_breaks(
             np.arange(5).astype(subtype), closed=closed
         )
     )
-    expected.iloc[1] = None
+    expected.iloc[slice(None) if all_null else 1] = None
     result = cudf.from_pandas(expected)
 
-    assert_eq(result.to_pandas(), expected)
-    assert_eq(result.iloc[1:3].to_pandas(), expected.iloc[1:3])
+    for selection in (slice(None), slice(1, 3), slice(1, 2)):
+        actual = result.iloc[selection].to_pandas()
+        selected = expected.iloc[selection]
+        assert_eq(actual, selected, check_dtype=True)
+        assert actual.dtype.closed == closed
+        assert_eq(actual.isna(), selected.isna())
+
+
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        (0, pd.Timestamp("2025-01-02")),
+        (pd.Timestamp("2025-01-01"), pd.Timedelta(days=2)),
+    ],
+)
+def test_intervalindex_mixed_endpoint_types(left, right):
+    for index_type in (pd.IntervalIndex, cudf.IntervalIndex):
+        with pytest.raises(ValueError, match=r"differing left .* and right"):
+            index_type.from_tuples([(left, right)])
 
 
 INTERVAL_BOUNDARY_TYPES = [

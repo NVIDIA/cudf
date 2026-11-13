@@ -329,8 +329,7 @@ void makeStreamFromArrays(std::vector<nanoarrow::UniqueArray> arrays,
 std::pair<std::unique_ptr<cudf::table>, ArrowArrayStream> get_nanoarrow_stream(
   int num_copies, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto const temporary_mr        = mr.get_temporary_mr();
-  auto const temporary_resources = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources = mr.as_temporary();
   std::vector<std::unique_ptr<cudf::table>> tables;
   // The schema is unique across all tables.
   nanoarrow::UniqueSchema schema;

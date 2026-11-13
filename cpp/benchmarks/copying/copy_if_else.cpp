@@ -24,9 +24,9 @@ static void bench_copy_if_else(nvbench::state& state, nvbench::type_list<DataTyp
   auto const input = create_random_table({input_type, input_type, bool_type}, row_count{num_rows});
 
   if (!nulls) {
-    input->get_column(0).set_null_mask(rmm::device_buffer{}, 0);
-    input->get_column(1).set_null_mask(rmm::device_buffer{}, 0);
-    input->get_column(2).set_null_mask(rmm::device_buffer{}, 0);
+    input->get_column(0).set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+    input->get_column(1).set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+    input->get_column(2).set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
 
   cudf::column_view lhs(input->view().column(0));

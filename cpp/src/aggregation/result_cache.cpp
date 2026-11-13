@@ -1,9 +1,13 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cudf/column/column.hpp>
 #include <cudf/detail/aggregation/result_cache.hpp>
+#include <cudf/utilities/error.hpp>
+
+#include <string>
 
 namespace cudf {
 namespace detail {

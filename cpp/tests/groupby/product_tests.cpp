@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,8 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+
+#include <cuda/std/type_traits>
 
 using namespace cudf::test::iterators;
 
@@ -25,7 +27,7 @@ TYPED_TEST(groupby_product_test, basic)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys        { 1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
@@ -48,7 +50,7 @@ TYPED_TEST(groupby_product_test, empty_cols)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> vals{};
@@ -67,7 +69,7 @@ TYPED_TEST(groupby_product_test, zero_valid_keys)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys({0, 0, 0}, all_nulls());
   cudf::test::fixed_width_column_wrapper<V> vals{3, 4, 5};
@@ -86,7 +88,7 @@ TYPED_TEST(groupby_product_test, zero_valid_values)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> vals({0, 0, 0}, all_nulls());
@@ -105,7 +107,7 @@ TYPED_TEST(groupby_product_test, null_keys_and_values)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys(       { 1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
@@ -131,7 +133,7 @@ TYPED_TEST(groupby_product_test, dictionary)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys{ 1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
@@ -154,7 +156,7 @@ TYPED_TEST(groupby_product_test, dictionary_with_nulls)
 {
   using K = int32_t;
   using V = TypeParam;
-  using R = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
 
   // clang-format off
   cudf::test::fixed_width_column_wrapper<K> keys{ 1, 2, 3, 1, 2, 2, 1, 3, 3, 2};

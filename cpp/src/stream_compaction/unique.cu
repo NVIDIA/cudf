@@ -26,11 +26,11 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
-#include <thrust/execution_policy.h>
 
 #include <utility>
 #include <vector>
@@ -42,7 +42,7 @@ std::unique_ptr<table> unique(table_view const& input,
                               duplicate_keep_option keep,
                               null_equality nulls_equal,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   // If keep is KEEP_ANY, just alias it to KEEP_FIRST.
   if (keep == duplicate_keep_option::KEEP_ANY) { keep = duplicate_keep_option::KEEP_FIRST; }
@@ -50,7 +50,8 @@ std::unique_ptr<table> unique(table_view const& input,
   auto const num_rows = input.num_rows();
   if (num_rows == 0 or input.num_columns() == 0 or keys.empty()) { return empty_like(input); }
 
-  auto temp_mr        = cudf::get_current_device_resource_ref();
+  cudf::memory_resources mrs(mr);
+  auto temp_mr        = mrs.get_temporary_mr();
   auto unique_indices = make_numeric_column(
     data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, temp_mr);
   auto mutable_view = mutable_column_device_view::create(*unique_indices, stream, temp_mr);
@@ -65,7 +66,7 @@ std::unique_ptr<table> unique(table_view const& input,
       // runtime performance over using the comparator directly in thrust::unique_copy.
       auto row_equal =
         comp.equal_to<true>(nullate::DYNAMIC{has_nested_nulls(keys_view)}, nulls_equal);
-      auto d_results = rmm::device_uvector<bool>(num_rows, stream, temp_mr);
+      auto d_results = cuda::device_buffer<bool>(stream, temp_mr, num_rows, cuda::no_init);
       auto itr       = cuda::counting_iterator<size_type>{0};
       thrust::transform(
         rmm::exec_policy_nosync(stream, temp_mr),
@@ -78,7 +79,8 @@ std::unique_ptr<table> unique(table_view const& input,
                                               d_results.begin(),
                                               mutable_view->begin<size_type>(),
                                               cuda::std::identity{},
-                                              stream);
+                                              stream,
+                                              mrs.as_temporary());
       return static_cast<size_type>(
         cuda::std::distance(mutable_view->begin<size_type>(), result_end));
     } else {
@@ -91,7 +93,8 @@ std::unique_ptr<table> unique(table_view const& input,
                                     mutable_view->begin<size_type>(),
                                     row_equal,
                                     keep,
-                                    stream);
+                                    stream,
+                                    mrs.as_temporary());
       return static_cast<size_type>(
         cuda::std::distance(mutable_view->begin<size_type>(), result_end));
     }
@@ -113,7 +116,7 @@ std::unique_ptr<table> unique(table_view const& input,
                               duplicate_keep_option const keep,
                               null_equality nulls_equal,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::unique(input, keys, keep, nulls_equal, stream, mr);

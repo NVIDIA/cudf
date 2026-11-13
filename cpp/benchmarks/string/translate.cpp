@@ -45,7 +45,7 @@ static void bench_translate(nvbench::state& state)
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { cudf::strings::translate(input, entries); });
+             [&](nvbench::launch& launch) { cudf::strings::translate(input, std::span{entries}); });
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }

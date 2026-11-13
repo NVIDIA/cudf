@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,73 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /** Utility methods for asserting in unit tests */
 public class AssertUtils {
+
+  /**
+   * Checks gather-map indices in order. The caller retains ownership of both arguments.
+   * @param expected expected indices in probe-row order
+   * @param gatherMap actual gather map
+   */
+  public static void assertGatherMapEquals(ColumnView expected, GatherMap gatherMap) {
+    assertEquals(expected.getRowCount(), gatherMap.getRowCount());
+    try (ColumnView actual = gatherMap.toColumnView(0, (int) gatherMap.getRowCount())) {
+      assertColumnsAreEqual(expected, actual);
+    }
+  }
+
+  /**
+   * Checks gather-map indices without regard to order, preserving duplicate counts.
+   * The caller retains ownership of both arguments.
+   * @param expected expected indices
+   * @param gatherMap actual gather map
+   */
+  public static void assertGatherMapEqualsUnordered(ColumnView expected, GatherMap gatherMap) {
+    assertEquals(expected.getRowCount(), gatherMap.getRowCount());
+    try (ColumnView actual = gatherMap.toColumnView(0, (int) gatherMap.getRowCount());
+         ColumnVector expectedIndices = expected.copyToColumnVector();
+         ColumnVector actualIndices = actual.copyToColumnVector();
+         Table expectedTable = new Table(expectedIndices);
+         Table actualTable = new Table(actualIndices);
+         Table orderedExpected = expectedTable.orderBy(OrderByArg.asc(0, true));
+         Table orderedActual = actualTable.orderBy(OrderByArg.asc(0, true))) {
+      assertColumnsAreEqual(orderedExpected.getColumn(0), orderedActual.getColumn(0));
+    }
+  }
+
+  /**
+   * Checks gather-map indices without regard to order, preserving duplicate counts.
+   * The caller retains ownership of the gather map.
+   * @param expectedIndices expected indices
+   * @param gatherMap actual gather map
+   */
+  public static void assertGatherMapEqualsUnordered(int[] expectedIndices, GatherMap gatherMap) {
+    try (ColumnVector expected = ColumnVector.fromInts(expectedIndices)) {
+      assertGatherMapEqualsUnordered(expected, gatherMap);
+    }
+  }
+
+  /**
+   * Checks pairs of gather-map indices without regard to order, preserving duplicate counts.
+   * The caller retains ownership of the expected table and both gather maps.
+   * @param expected expected left and right indices as a two-column table
+   * @param maps actual left and right gather maps
+   */
+  public static void assertGatherMapsEqualUnordered(Table expected, GatherMap[] maps) {
+    assertEquals(2, expected.getNumberOfColumns());
+    assertEquals(2, maps.length);
+    int numRows = (int) expected.getRowCount();
+    assertEquals(numRows, maps[0].getRowCount());
+    assertEquals(numRows, maps[1].getRowCount());
+    // Sort pairs together to preserve which build row matched each probe row.
+    try (ColumnView leftView = maps[0].toColumnView(0, numRows);
+         ColumnView rightView = maps[1].toColumnView(0, numRows);
+         ColumnVector leftMap = leftView.copyToColumnVector();
+         ColumnVector rightMap = rightView.copyToColumnVector();
+         Table result = new Table(leftMap, rightMap);
+         Table orderedExpected = expected.orderBy(OrderByArg.asc(0, true), OrderByArg.asc(1, true));
+         Table orderedResult = result.orderBy(OrderByArg.asc(0, true), OrderByArg.asc(1, true))) {
+      assertTablesAreEqual(orderedExpected, orderedResult);
+    }
+  }
 
   /**
    * Checks and asserts that passed in columns match

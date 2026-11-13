@@ -82,7 +82,7 @@ std::unique_ptr<column> shift(strings_column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   auto d_fill_str = static_cast<string_scalar const&>(fill_value).value(stream);
 
@@ -104,7 +104,7 @@ std::unique_ptr<column> shift(strings_column_view const& input,
   }();
 
   // create output chars child column
-  rmm::device_uvector<char> chars(total_bytes, stream, mr);
+  rmm::device_uvector<char> chars(total_bytes, stream, mr.get_output_mr());
   auto d_chars = chars.data();
 
   // run kernel to shift all the characters
@@ -115,8 +115,11 @@ std::unique_ptr<column> shift(strings_column_view const& input,
                     shift_chars_fn{*d_input, d_fill_str, shift_offset});
 
   // caller sets the null-mask
-  return make_strings_column(
-    input.size(), std::move(offsets_column), chars.release(), 0, rmm::device_buffer{});
+  return make_strings_column(input.size(),
+                             std::move(offsets_column),
+                             chars.release(),
+                             0,
+                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace cudf::strings::detail

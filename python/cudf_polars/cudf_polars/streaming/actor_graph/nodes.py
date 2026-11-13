@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Literal, cast
+from functools import partial
+from typing import TYPE_CHECKING, Any, cast
 
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import (
@@ -18,26 +19,22 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
-from cudf_polars.dsl.ir import IR, Empty, Join
+from cudf_polars.dsl.ir import IR, Empty, HConcat
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
 )
-from cudf_polars.streaming.actor_graph.tracing import (
-    send_chunk,
-    trace_channel,
-)
+from cudf_polars.streaming.actor_graph.hconcat import build_hconcat_partitioning
+from cudf_polars.streaming.actor_graph.partitioning import maybe_remap_partitioning
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     _leading_order_keys,
     chunk_to_frame,
     chunkwise_evaluate,
-    clear_local_ordering,
     empty_table_chunk,
     gather_in_task_group,
-    join_preserves_side_order,
     make_spill_function,
-    maybe_remap_partitioning,
     process_children,
     recv_metadata,
     send_metadata,
@@ -45,6 +42,9 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from cudf_streaming.channel_metadata import Partitioning
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
@@ -53,16 +53,10 @@ if TYPE_CHECKING:
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
 
-
-def _preserves_local_order(ir: IR, partitioning_index: int | None = None) -> bool:
-    """Return True when this IR node preserves advertised local row order."""
-    if isinstance(ir, Join) and partitioning_index is not None:
-        # partitioning_index is the child whose partitioning we forwarded
-        # (0 = left, 1 = right). Local row order holds only when join
-        # maintain_order covers that side.
-        side: Literal["left", "right"] = "left" if partitioning_index == 0 else "right"
-        return join_preserves_side_order(ir.options[5], side)
-    return ir.preserves_output_order
+    type PartitioningCallback = Callable[
+        [Sequence[ChannelMetadata], Context],
+        Partitioning | None,
+    ]
 
 
 @define_actor()
@@ -72,6 +66,8 @@ async def default_node_single(
     ir_context: IRExecutionContext,
     ch_out: Channel[TableChunk],
     ch_in: Channel[TableChunk],
+    *,
+    partitioning_callback: PartitioningCallback | None = None,
 ) -> None:
     """
     Single-channel default node for rapidsmpf.
@@ -88,32 +84,34 @@ async def default_node_single(
         The output Channel[TableChunk].
     ch_in
         The input Channel[TableChunk].
+    partitioning_callback
+        Optional builder for output partitioning metadata.
 
     Notes
     -----
     Chunks are processed in the order they are received.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
-    ) as tracer:
-        ch_in = trace_channel(ch_in, tracer)
-        ch_out = trace_channel(ch_out, tracer)
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         # Recv metadata and prepare output metadata
         metadata_in = await recv_metadata(ch_in, context)
-        partitioning = maybe_remap_partitioning(
-            ir, metadata_in.partitioning, context=context
+        partitioning = (
+            partitioning_callback((metadata_in,), context)
+            if partitioning_callback is not None
+            else maybe_remap_partitioning(ir, metadata_in.partitioning, context=context)
         )
-        if not _preserves_local_order(ir):
-            partitioning = clear_local_ordering(partitioning)
         metadata_out = ChannelMetadata(
             local_count=metadata_in.local_count,
             partitioning=partitioning,
             duplicated=metadata_in.duplicated,
         )
-        import dataclasses
-
-        ir_context = dataclasses.replace(ir_context, tracer=tracer)
-
         # Process chunks (handle empty input for aggregation-like operations)
         await chunkwise_evaluate(
             context,
@@ -136,7 +134,7 @@ async def default_node_multi(
     ch_out: Channel[TableChunk],
     chs_in: tuple[Channel[TableChunk], ...],
     *,
-    partitioning_index: int | None = None,
+    partitioning_callback: PartitioningCallback | None = None,
 ) -> None:
     """
     Pointwise node for rapidsmpf.
@@ -153,15 +151,19 @@ async def default_node_multi(
         The output Channel[TableChunk].
     chs_in
         Tuple of input Channel[TableChunk]s.
-    partitioning_index
-        Index of the input channel to preserve partitioning information for.
-        If None, no partitioning information is preserved.
+    partitioning_callback
+        Optional callback for building output partitioning from child metadata.
+        When None, no partitioning metadata is preserved.
     """
     async with shutdown_on_error(
-        context, *chs_in, ch_out, trace_ir=ir, ir_context=ir_context
-    ) as tracer:
-        chs_in = tuple(trace_channel(ch, tracer) for ch in chs_in)
-        ch_out = trace_channel(ch_out, tracer)
+        context,
+        chs_in=chs_in,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         # Merge and forward basic metadata.
         local_count = 1
         duplicated = True
@@ -172,22 +174,14 @@ async def default_node_multi(
         child_ordering_metadatas = [
             _leading_order_keys(md_child) for md_child in child_metadatas
         ]
-        for idx, md_child in enumerate(child_metadatas):
+        for md_child in child_metadatas:
             # Use simple "max" rule to determine counts.
             local_count = max(md_child.local_count, local_count)
             # Set "duplicated" to False as soon as we
             # find a non-duplicated child.
             duplicated = duplicated and md_child.duplicated
-            if idx == partitioning_index:
-                # Remap partitioning from child schema to output schema
-                partitioning = maybe_remap_partitioning(
-                    ir,
-                    md_child.partitioning,
-                    child_ir=ir.children[idx],
-                    context=context,
-                )
-                if not _preserves_local_order(ir, partitioning_index):
-                    partitioning = clear_local_ordering(partitioning)
+        if partitioning_callback is not None:
+            partitioning = partitioning_callback(child_metadatas, context)
         metadata = ChannelMetadata(
             local_count=local_count,
             partitioning=partitioning,
@@ -311,7 +305,11 @@ async def fanout_node_bounded(
     # See: https://github.com/rapidsai/rapidsmpf/issues/560
     # TODO: Use ir_context
     async with shutdown_on_error(
-        context, ch_in, *chs_out, trace_ir=trace_ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=chs_out,
+        trace_ir=trace_ir,
+        ir_context=ir_context,
     ):
         # Forward metadata to all outputs.
         metadata = await recv_metadata(ch_in, context)
@@ -387,7 +385,11 @@ async def fanout_node_unbounded(
     # See: https://github.com/rapidsai/rapidsmpf/issues/560
     # TODO: Use ir_context
     async with shutdown_on_error(
-        context, ch_in, *chs_out, trace_ir=trace_ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=chs_out,
+        trace_ir=trace_ir,
+        ir_context=ir_context,
     ):
         # Forward metadata to all outputs.
         metadata = await recv_metadata(ch_in, context)
@@ -595,6 +597,11 @@ def _(
                 ir_context,
                 channels[ir].reserve_input_slot(),
                 tuple(channels[c].reserve_output_slot() for c in ir.children),
+                partitioning_callback=(
+                    partial(build_hconcat_partitioning, ir)
+                    if isinstance(ir, HConcat) and ir.streaming_safe
+                    else None
+                ),
             )
         ]
 
@@ -623,9 +630,12 @@ async def empty_node(
         The output Channel[TableChunk].
     """
     async with shutdown_on_error(
-        context, ch_out, ir_context=ir_context, trace_ir=ir
-    ) as tracer:
-        ch_out = trace_channel(ch_out, tracer)
+        context,
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
+    ) as actor_scope:
+        ir_context = actor_scope.require_ir_context()
         # Send metadata indicating a single empty chunk
         await send_metadata(
             ch_out,
@@ -641,7 +651,7 @@ async def empty_node(
         chunk = TableChunk.from_pylibcudf_table(
             df.table, df.stream, exclusive_view=True, br=context.br()
         )
-        await ch_out.send(context, Message(0, chunk))
+        await send_chunk(context, ch_out, chunk, 0, tracer=actor_scope.tracer)
 
         await ch_out.drain(context)
 
@@ -739,7 +749,11 @@ async def metadata_feeder_node(
     """
     # TODO: Use ir_context
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
     ):
         await send_metadata(ch_out, context, metadata)
         while (msg := await ch_in.recv(context)) is not None:
@@ -780,7 +794,11 @@ async def metadata_drain_node(
         If None, metadata will not be collected.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, ir_context=ir_context, trace_ir=ir
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
     ):
         # Drain metadata channel (we don't need it after this point)
         msg = await ch_in.recv_metadata(context)

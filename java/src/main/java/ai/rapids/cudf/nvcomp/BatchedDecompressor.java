@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -61,10 +61,10 @@ public abstract class BatchedDecompressor {
       }
 
       final long tempBufferSize = batchedDecompressGetTempSize(totalChunks, chunkSize,
-        totalChunks * chunkSize);
+        totalChunks * chunkSize, stream.getStream());
       try (DeviceMemoryBuffer devAddrsSizes = buildAddrsSizesBuffer(chunkSize, totalChunks,
               inputs.getArray(), chunksPerInput, outputs, stream);
-           DeviceMemoryBuffer devTemp = DeviceMemoryBuffer.allocate(tempBufferSize)) {
+           DeviceMemoryBuffer devTemp = DeviceMemoryBuffer.allocate(tempBufferSize, stream)) {
         // buffer containing addresses and sizes contains four vectors of longs in this order:
         // - compressed chunk input addresses
         // - chunk output buffer addresses
@@ -108,7 +108,8 @@ public abstract class BatchedDecompressor {
     try (NvtxRange range = new NvtxRange("buildAddrSizesBuffer", NvtxColor.YELLOW)) {
       try (HostMemoryBuffer metadata = fetchMetadata(totalChunks, inputs, chunksPerInput, stream);
            HostMemoryBuffer hostAddrsSizes = HostMemoryBuffer.allocate(totalBufferSize);
-           DeviceMemoryBuffer devAddrsSizes = DeviceMemoryBuffer.allocate(totalBufferSize)) {
+           DeviceMemoryBuffer devAddrsSizes =
+               DeviceMemoryBuffer.allocate(totalBufferSize, stream)) {
         // Build four long vectors in the AddrsSizes buffer:
         // - compressed input address (one per chunk)
         // - uncompressed output address (one per chunk)
@@ -165,7 +166,8 @@ public abstract class BatchedDecompressor {
       long[] srcAddrs = new long[inputs.length];
       long[] sizes = new long[inputs.length];
       try (HostMemoryBuffer hostMetadata = HostMemoryBuffer.allocate(totalMetadataSize);
-           DeviceMemoryBuffer devMetadata = DeviceMemoryBuffer.allocate(totalMetadataSize)) {
+           DeviceMemoryBuffer devMetadata =
+               DeviceMemoryBuffer.allocate(totalMetadataSize, stream)) {
         long destCopyAddr = devMetadata.getAddress();
         for (int inputIdx = 0; inputIdx < inputs.length; inputIdx++) {
           final BaseDeviceMemoryBuffer input = inputs[inputIdx];
@@ -189,10 +191,11 @@ public abstract class BatchedDecompressor {
    * @param numChunks number of chunks in the batch
    * @param maxUncompressedChunkBytes maximum uncompressed size of any chunk in bytes
    * @param maxTotalSize Upper bound on the total uncompressed size of all chunks
+   * @param stream CUDA stream to use
    * @return number of temporary storage bytes needed to decompress the batch
    */
   protected abstract long batchedDecompressGetTempSize(long numChunks,
-      long maxUncompressedChunkBytes, long maxTotalSize);
+      long maxUncompressedChunkBytes, long maxTotalSize, long stream);
 
     /**
    * Asynchronously decompress a batch of compressed data buffers.

@@ -16,6 +16,44 @@ import pylibcudf as plc
 from pylibcudf.io.types import CompressionType
 
 
+def write_hybrid_scan_parquet_bytes(
+    table, row_group_size, write_statistics=True
+):
+    """Write a PyArrow table to parquet bytes with hybrid-scan-friendly settings
+    (dictionary encoding, statistics, page index).
+    """
+    buf = io.BytesIO()
+    pq_write_table(
+        table,
+        buf,
+        row_group_size=row_group_size,
+        use_dictionary=True,
+        write_statistics=write_statistics,
+        write_page_index=True,
+    )
+    return buf.getvalue()
+
+
+def extract_parquet_footer(parquet_bytes):
+    """Extract footer bytes from a parquet file's raw bytes.
+
+    Per the Parquet file format specification:
+    https://parquet.apache.org/docs/file-format/
+    """
+    PARQUET_FOOTER_SIZE_BYTES = 4
+    PARQUET_MAGIC_BYTES = 4
+    PARQUET_SUFFIX_BYTES = PARQUET_FOOTER_SIZE_BYTES + PARQUET_MAGIC_BYTES
+
+    mv = memoryview(parquet_bytes)
+    footer_size = int.from_bytes(
+        mv[-PARQUET_SUFFIX_BYTES:-PARQUET_MAGIC_BYTES],
+        byteorder="little",
+    )
+    footer_start = len(mv) - PARQUET_SUFFIX_BYTES - footer_size
+    footer_end = len(mv) - PARQUET_SUFFIX_BYTES
+    return mv[footer_start:footer_end]
+
+
 def _map_string_view_to_string(dtype: pa.DataType) -> pa.DataType:
     """Recursively convert string_view -> string in a pyarrow type."""
     if pa.types.is_string_view(dtype):
@@ -541,3 +579,11 @@ COMPRESSION_TYPE_TO_PANDAS = {
     CompressionType.BROTLI: "brotli",
 }
 ALL_PA_TYPES = DEFAULT_PA_TYPES
+
+requires_pyarrow_bloom_filters = pytest.mark.skipif(
+    int(pa.__version__.split(".", 1)[0]) < 24,
+    reason="pyarrow writes Parquet bloom filters from 24.0",
+)
+
+# Sized so that absent values are practically never false positives
+BLOOM_FILTER_OPTIONS = {"ndv": 1000, "fpp": 0.0001}

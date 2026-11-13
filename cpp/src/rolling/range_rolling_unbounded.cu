@@ -12,6 +12,7 @@
 #include <cudf/rolling.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/resource_ref.hpp>
@@ -32,7 +33,7 @@ std::unique_ptr<column> dispatch_range_window(
   bool nulls_at_start,
   range_window_delta const& delta,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return type_dispatcher(orderby.type(),
                          rolling::range_window_clamper<unbounded>{},

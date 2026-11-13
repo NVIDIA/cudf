@@ -11,6 +11,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -48,7 +49,7 @@ std::unique_ptr<column> fill(strings_column_view const& input,
                              size_type end,
                              string_scalar const& value,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   auto const strings_count = input.size();
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }
@@ -61,7 +62,8 @@ std::unique_ptr<column> fill(strings_column_view const& input,
   auto const d_value   = cudf::get_scalar_device_view(const_cast<string_scalar&>(value));
 
   auto fn = fill_fn{*d_strings, begin, end, d_value};
-  rmm::device_uvector<string_index_pair> indices(strings_count, stream);
+  cuda::device_buffer<string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},

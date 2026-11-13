@@ -605,7 +605,7 @@ class MultiIndex(Index):
     @property
     @_external_only_api("Use ._codes instead")
     @_performance_tracking
-    def codes(self) -> pd.core.indexes.frozen.FrozenList:
+    def codes(self) -> pd.api.typing.FrozenList:
         """
         Returns the codes of the underlying MultiIndex.
 
@@ -2405,7 +2405,7 @@ class MultiIndex(Index):
     @_performance_tracking
     def _new_index_for_reset_index(
         self, levels: tuple | None, name
-    ) -> None | Index:
+    ) -> Index | None:
         """Return the new index after .reset_index"""
         if levels is None:
             return None

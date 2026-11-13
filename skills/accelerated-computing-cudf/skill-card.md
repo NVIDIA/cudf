@@ -7,9 +7,9 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-CC-BY-4.0 AND Apache-2.0 <br>
+CC-BY-4.0 AND Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers implementing GPU-accelerated DataFrame operations with NVIDIA cuDF, including pandas-to-GPU migration, ETL pipeline optimization, and multi-GPU workloads with dask-cuDF. <br>
+Developers and data engineers use this skill to have an agent migrate or accelerate pandas DataFrame code on NVIDIA GPUs with cudf.pandas, explicit cuDF, or dask-cuDF, covering ETL, joins, groupby, reshape, nullable semantics, CSV/Parquet I/O, memory management, and CPU/GPU parity validation. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -26,15 +26,17 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [cuDF API Patterns, Gaps, and Semantic Differences](references/api-patterns.md) <br>
-- [cudf.pandas Accelerator Deep Dive](references/cudf-pandas-accelerator.md) <br>
+- [cudf.pandas Accelerator — Deep Dive](references/cudf-pandas-accelerator.md) <br>
 - [dask-cuDF Patterns](references/dask-cudf-patterns.md) <br>
-- [cuDF Documentation](https://docs.rapids.ai/api/cudf/stable/) <br>
-- [dask-cuDF API Reference](https://docs.rapids.ai/api/dask-cudf/stable/api/) <br>
-- [cuDF GitHub Repository](https://github.com/NVIDIA/cudf) <br>
+- [cuDF Documentation](https://docs.nvidia.com/cudf/) <br>
+- [dask-cuDF API Reference](https://docs.nvidia.com/dask-cudf/) <br>
+- [Installation System Requirements](https://docs.nvidia.com/datascience/install/#system-req) <br>
+- [cuDF GitHub](https://github.com/NVIDIA/cudf) <br>
+- [cuDF CHANGELOG](https://github.com/NVIDIA/cudf/blob/main/CHANGELOG.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Code, Configuration instructions, Analysis] <br>
+**Output Type(s):** [Code, Shell commands, Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -46,38 +48,39 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-13 evaluation tasks (12 positive, 1 negative). <br>
+13 evaluation tasks (12 positive, 1 negative), one attempt per task, each run in an isolated k8s sandbox pod and compared against a no-skill baseline. Overall verdict: PASS — recommended for publication (evaluation date 2026-10-15, evaluator version 1.5.6). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Whether the skill avoids unsafe operations, secret leakage, and unauthorized access. <br>
-- Correctness: Whether the final answer is correct against the reference answer. <br>
-- Discoverability: Whether the expected skill is found and executed when needed. <br>
-- Effectiveness: Whether the skill helps complete the user's goal and follows expected workflow. <br>
-- Efficiency: Whether the skill avoids wasted tool or skill usage. <br>
+- Security: Is it safe to use? Scored from the security signal. <br>
+- Correctness: Is the answer correct? Scored from final-answer accuracy. <br>
+- Discoverability: Was the right skill loaded when needed? Scored from skill execution. <br>
+- Effectiveness: Did the skill help complete the task? Equal-weight mean of goal accuracy and behavior check. <br>
+- Efficiency: Did it avoid wasted tool calls and token usage? 50% tool-call productivity and 50% token efficiency. <br>
 
 Underlying evaluation signals used in this run: <br>
-- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
-- `accuracy`: Verifies final-answer correctness against the reference answer. <br>
-- `skill_execution`: Whether the expected skill was found and executed. <br>
-- `skill_efficiency`: Routing quality, workspace-aware skill reads, and productive tool use. <br>
+- `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Whether the expected skill was selected, decoys were avoided, and the workflow executed. <br>
+- `skill_efficiency`: Tool-call productivity. <br>
+- `accuracy`: Final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
+- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 74% → 88% (+14 points) | 68% → 83% (+15 points) |
-| Security | 85% → 69% (-15 points) | 54% → 46% (-8 points) |
-| Correctness | 100% → 100% (±0 points) | 100% → 98% (-2 points) |
-| Discoverability | 47% → 89% (+42 points) | 45% → 85% (+40 points) |
-| Effectiveness | 96% → 96% (±0 points) | 95% → 94% (-1 points) |
-| Efficiency | 44% → 87% (+43 points) | 46% → 89% (+43 points) |
+| Overall | 76.8% — baseline ran, but no comparable score was available; uplift unavailable | 89.3% — baseline ran, but no comparable score was available; uplift unavailable |
+| Security | 23.1% → 38.5% (+15.4 points) | 38.5% → 92.3% (+53.8 points) |
+| Correctness | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
+| Discoverability | 79.2% — baseline ran, but no comparable score was available; uplift unavailable | 78.8% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 92.5% → 94.9% (+2.4 points) | 88.5% → 92.1% (+3.6 points) |
+| Efficiency | 71.4% — baseline ran, but no comparable score was available; uplift unavailable | 83.3% — baseline ran, but no comparable score was available; uplift unavailable |
 
 ## Skill Version(s): <br>
-333911cf41 (source: git SHA, committed 2026-08-26) <br>
+26.12.00 development release (source: repo VERSION file and SKILL.md compatibility section; latest CHANGELOG release 26.10.00, git SHA 62921dda53 committed 2026-10-14) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

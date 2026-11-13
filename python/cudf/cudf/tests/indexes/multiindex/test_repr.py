@@ -58,6 +58,26 @@ def test_multiindex_repr_unused_datetime_levels(
         assert repr(result) == repr(expected)
 
 
+@pytest.mark.parametrize("unit", ["s", "ns"])
+@pytest.mark.parametrize("tz", [None, "US/Eastern"])
+@pytest.mark.parametrize("max_seq_items", [None, 2])
+@pytest.mark.parametrize("selection", [slice(None), slice(0, 1), slice(0, 0)])
+def test_multiindex_repr_all_null_datetime_level(
+    unit, tz, max_seq_items, selection
+):
+    times = pd.date_range("2025-01-01", periods=3, freq="s", tz=tz, unit=unit)
+    expected = pd.MultiIndex(
+        levels=[pd.CategoricalIndex(["a", "long label"]), times],
+        codes=[[0, 0, 0, 1, 1, 1], [-1] * 6],
+        names=["label", "time"],
+    )
+    result = cudf.from_pandas(expected)[selection]
+    expected = expected[selection]
+
+    with pd.option_context("display.max_seq_items", max_seq_items):
+        assert repr(result) == repr(expected)
+
+
 @pytest.mark.parametrize(
     "gdi, expected_repr",
     [

@@ -18,9 +18,8 @@
  */
 inline cudf::transform_udf get_benchmark_udf(std::string_view symbol)
 {
-  static auto const range =
-    cudf_benchmark_fragments::file_ranges[cudf_benchmark_fragments::benchmark_udfs];
   static cudf::lto_fragment const fragment{
-    cudf::lto_binary_type::FATBIN, cudf_benchmark_fragments::files.subspan(range[0], range[1])};
+    cudf::lto_binary_type::FATBIN,
+    cudf_benchmark_fragments::get(cudf_benchmark_fragments::benchmark_udfs)};
   return {symbol, {&fragment, 1}};
 }

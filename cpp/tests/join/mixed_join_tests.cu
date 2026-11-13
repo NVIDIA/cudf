@@ -49,9 +49,8 @@
 namespace {
 cudf::transform_udf get_join_udf(std::string_view symbol)
 {
-  static auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::mixed_join_udfs];
-  static cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
-                                           cudf_test_fragments::files.subspan(range[0], range[1])};
+  static cudf::lto_fragment const fragment{
+    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::mixed_join_udfs)};
   return {symbol, {&fragment, 1}};
 }
 
@@ -1045,9 +1044,8 @@ TEST_F(MixedInnerJoinTest2, UdfCallPredicate)
   auto hash_result = hash_joiner.inner_join(left_equality);
 
   // transform/fragments/ast_udfs.cu
-  auto const range        = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udfs];
   auto const fragments    = std::array{cudf::lto_fragment{
-    cudf::lto_binary_type::FATBIN, cudf_test_fragments::files.subspan(range[0], range[1])}};
+    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::ast_udfs)}};
   auto const type         = cudf::data_type{cudf::type_id::INT32};
   auto const xor_popcount = cudf::ast::jit::udf{"lto_xor_popcount", true, type, {type, type}};
 

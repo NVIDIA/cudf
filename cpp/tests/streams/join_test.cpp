@@ -253,9 +253,8 @@ TEST_F(JoinTest, FullJoinWithPostFilter)
                                           cudf::join_kind::FULL_JOIN,
                                           size,
                                           stream);
-  auto const range    = cudf_test_fragments::file_ranges[cudf_test_fragments::mixed_join_udfs];
   cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
-                                    cudf_test_fragments::files.subspan(range[0], range[1])};
+                                    cudf_test_fragments::get(cudf_test_fragments::mixed_join_udfs)};
   auto jit_result = cudf::filter_join_indices_jit(conditional0.view().select({0}),
                                                   conditional1.view().select({0}),
                                                   left_indices,

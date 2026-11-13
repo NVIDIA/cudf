@@ -26,9 +26,8 @@ namespace {
 cudf::transform_udf get_filter_udf(std::string_view symbol,
                                    cudf::null_aware is_null_aware = cudf::null_aware::NO)
 {
-  static auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::filter_udfs];
-  static cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
-                                           cudf_test_fragments::files.subspan(range[0], range[1])};
+  static cudf::lto_fragment const fragment{
+    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::filter_udfs)};
   return {symbol, {&fragment, 1}, is_null_aware};
 }
 }  // namespace

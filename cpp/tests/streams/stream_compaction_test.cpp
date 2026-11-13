@@ -408,9 +408,8 @@ TEST_F(StreamCompactionTest, FilterUDF)
   auto const expected            = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}.release();
   auto const input               = cudf::table_view{{col}};
   cudf::transform_input inputs[] = {col};
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::filter_udfs];
   cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
-                                    cudf_test_fragments::files.subspan(range[0], range[1])};
+                                    cudf_test_fragments::get(cudf_test_fragments::filter_udfs)};
   auto const predicate =
     cudf::transform(cudf::transform_udf{"less_than_ten", {&fragment, 1}},
                     std::span{inputs},

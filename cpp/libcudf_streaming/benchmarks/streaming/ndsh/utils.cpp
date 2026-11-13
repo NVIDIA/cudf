@@ -55,10 +55,9 @@ namespace rapidsmpf::ndsh {
 
 cudf::transform_udf get_transform_udf(std::string_view symbol)
 {
-  static auto const range =
-    streaming_ndsh_fragments::file_ranges[streaming_ndsh_fragments::ndsh_udfs];
   static cudf::lto_fragment const fragment{
-    cudf::lto_binary_type::FATBIN, streaming_ndsh_fragments::files.subspan(range[0], range[1])};
+    cudf::lto_binary_type::FATBIN,
+    streaming_ndsh_fragments::get(streaming_ndsh_fragments::ndsh_udfs)};
   return {symbol, {&fragment, 1}};
 }
 

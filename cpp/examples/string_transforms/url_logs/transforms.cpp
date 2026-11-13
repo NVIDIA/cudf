@@ -200,9 +200,8 @@ constexpr std::string_view usage =
                                          cudf::output_nullability::ALL_VALID};
   std::vector<cudf::transform_output> const size_outputs(output_count, size_spec);
   cudf::transform_input inputs[] = {input};
-  auto const range = url_log_fragments::file_ranges[url_log_fragments::url_components];
   cudf::lto_fragment module{cudf::lto_binary_type::FATBIN,
-                            url_log_fragments::files.subspan(range[0], range[1])};
+                            url_log_fragments::get(url_log_fragments::url_components)};
   auto sizes = cudf::transform({"compute_url_component_sizes", {&module, 1}},
                                inputs,
                                size_outputs,

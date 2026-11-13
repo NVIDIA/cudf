@@ -23,9 +23,8 @@ inline cudf::transform_udf get_transform_udf(std::string_view symbol,
                                              cudf::null_aware is_null_aware = cudf::null_aware::NO,
                                              bool indexed                   = false)
 {
-  static auto const range = cudf_test_fragments::file_ranges[Fragment];
   static cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
-                                           cudf_test_fragments::files.subspan(range[0], range[1])};
+                                           cudf_test_fragments::get(Fragment)};
   return {symbol, {&fragment, 1}, is_null_aware, indexed};
 }
 

@@ -16,6 +16,7 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cassert>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -62,7 +63,8 @@ struct hybrid_scan_two_step_fn {
         input_sources[source_idx], filter_expression_opt, filters, false, stream, mr);
     }
 
-    stream.synchronize_no_throw();
+    [[maybe_unused]] auto const status = cudaStreamSynchronize(stream.get());
+    assert(status == cudaSuccess);
 
     if (verbose) {
       std::cout << "Thread " << tid << " ";
@@ -157,7 +159,7 @@ int main(int argc, char const** argv)
   // Create filter expressions (one per thread; reused circularly if needed)
   auto const column_reference = cudf::ast::column_name_reference(column_name);
   auto scalar                 = cudf::string_scalar(literal_value, true, default_stream);
-  default_stream.synchronize();
+  default_stream.sync();
   auto literal = cudf::ast::literal(scalar);
 
   std::vector<cudf::ast::operation> filter_expressions;

@@ -7,7 +7,10 @@ import pytest
 import polars as pl
 from polars.exceptions import ShapeError
 
-from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.testing.asserts import (
+    assert_gpu_result_equal,
+    assert_ir_translation_raises,
+)
 from cudf_polars.testing.engine_utils import is_streaming_engine
 
 
@@ -46,3 +49,11 @@ def test_when_then(engine: pl.GPUEngine, when, then, otherwise):
 
     q = df.select(pl.when(when).then(then).otherwise(otherwise))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("predicate", ["a", "s"])
+def test_when_then_non_boolean_predicate_unsupported(engine, predicate):
+    # polars raises a SchemaError; we leave that to the CPU engine.
+    df = pl.LazyFrame({"a": [1, 2], "s": ["x", "y"]})
+    q = df.select(pl.when(pl.col(predicate)).then(1).otherwise(0))
+    assert_ir_translation_raises(q, engine, NotImplementedError)

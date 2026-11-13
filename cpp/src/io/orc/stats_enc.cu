@@ -6,15 +6,21 @@
 #include "orc_gpu.hpp"
 
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/fixed_point/temporary.hpp>
 #include <cudf/io/orc_types.hpp>
 #include <cudf/strings/detail/convert/fixed_point_to_string.cuh>
 
+#include <cuda/std/limits>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
 namespace cudf::io::orc::detail {
 
 using strings::detail::fixed_point_string_size;
+
+// Largest decimal magnitude ORC supports (38 digits); ORC Java drops statistics sums that don't fit
+constexpr auto max_orc_decimal =
+  numeric::detail::exp10<__int128_t>(cuda::std::numeric_limits<__int128_t>::digits10) - 1;
 
 // Nanosecond statistics should not be enabled until the spec version is set correctly in the output
 // files. See https://github.com/NVIDIA/cudf/issues/14325 for more details
@@ -201,13 +207,27 @@ __device__ inline uint8_t* pb_put_fixed64(uint8_t* p, uint32_t id, void const* r
   return p + 9;
 }
 
-// Splits a nanosecond timestamp into milliseconds and nanoseconds
-__device__ cuda::std::pair<int64_t, int32_t> split_nanosecond_timestamp(int64_t nano_count)
+// Splits a nanosecond timestamp into the milliseconds and the sub-millisecond remainder ORC writes
+// a timestamp bound as
+__device__ constexpr cuda::std::pair<__int128_t, int32_t> split_nanosecond_timestamp(
+  __int128_t nano_count)
 {
-  auto const ns           = cuda::std::chrono::nanoseconds(nano_count);
-  auto const ms_floor     = cuda::std::chrono::floor<cuda::std::chrono::milliseconds>(ns);
-  auto const ns_remainder = ns - ms_floor;
-  return {ms_floor.count(), ns_remainder.count()};
+  auto constexpr ns_per_ms = __int128_t{1'000'000};
+  auto ms                  = nano_count / ns_per_ms;
+  auto ns_remainder        = static_cast<int32_t>(nano_count % ns_per_ms);
+  // Round towards negative infinity, leaving the remainder positive
+  if (ns_remainder < 0) {
+    --ms;
+    ns_remainder += 1'000'000;
+  }
+
+  return {ms, ns_remainder};
+}
+
+__device__ constexpr bool fits_int64(__int128_t value)
+{
+  return value >= cuda::std::numeric_limits<int64_t>::min() and
+         value <= cuda::std::numeric_limits<int64_t>::max();
 }
 
 /**
@@ -243,7 +263,8 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
   gpu_encode_statistics(uint8_t* blob_bfr,
                         statistics_merge_group* groups,
                         statistics_chunk const* chunks,
-                        uint32_t statistics_count)
+                        uint32_t statistics_count,
+                        bool write_legacy_timestamp_bounds)
 {
   __shared__ __align__(8) stats_state_s state_g[encode_chunks_per_block];
   auto t                 = threadIdx.x;
@@ -363,8 +384,14 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             sz += (pb_put_uint(cur, 1, min_size) - cur) + min_size +
                   (pb_put_uint(cur, 1, max_size) - cur) + max_size;
           }
-          auto const sum_size = fixed_point_string_size(s->chunk.sum.d128_val, scale);
-          sz += (pb_put_uint(cur, 1, sum_size) - cur) + sum_size;
+          auto const sum = s->chunk.sum.d128_val;
+          auto const has_sum =
+            s->chunk.has_sum and -max_orc_decimal <= sum and sum <= max_orc_decimal;
+          int32_t sum_size = 0;
+          if (has_sum) {
+            sum_size = fixed_point_string_size(sum, scale);
+            sz += (pb_put_uint(cur, 1, sum_size) - cur) + sum_size;
+          }
 
           cur[0] = 6 * 8 + ProtofType::FIXEDLEN;
           cur    = pb_encode_uint(cur + 1, sz);
@@ -373,7 +400,7 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
             cur = pb_put_decimal(cur, 1, s->chunk.min_value.d128_val, scale, min_size);  //  minimum
             cur = pb_put_decimal(cur, 2, s->chunk.max_value.d128_val, scale, max_size);  // maximum
           }
-          cur = pb_put_decimal(cur, 3, s->chunk.sum.d128_val, scale, sum_size);  // sum
+          if (has_sum) { cur = pb_put_decimal(cur, 3, sum, scale, sum_size); }  // sum
         }
         break;
       case dtype_date32:
@@ -408,24 +435,33 @@ CUDF_KERNEL void __launch_bounds__(encode_threads_per_block)
           cur += 2;
           if (s->chunk.has_minmax) {
             auto const [min_ms, min_ns_remainder] =
-              split_nanosecond_timestamp(s->chunk.min_value.i_val);
+              split_nanosecond_timestamp(s->chunk.min_value.d128_val);
             auto const [max_ms, max_ns_remainder] =
-              split_nanosecond_timestamp(s->chunk.max_value.i_val);
+              split_nanosecond_timestamp(s->chunk.max_value.d128_val);
 
-            // minimum/maximum are the same as minimumUtc/maximumUtc as we always write files in UTC
-            cur = pb_put_int(cur, 1, min_ms);  // minimum
-            cur = pb_put_int(cur, 2, max_ms);  // maximum
-            cur = pb_put_int(cur, 3, min_ms);  // minimumUtc
-            cur = pb_put_int(cur, 4, max_ms);  // maximumUtc
-
-            if constexpr (enable_nanosecond_statistics) {
-              if (min_ns_remainder != DEFAULT_MIN_NANOS) {
-                // using uint because positive values are not zigzag encoded
-                cur = pb_put_uint(cur, 5, min_ns_remainder + 1);  // minimumNanos
+            // The bounds are milliseconds in an int64 field, which a timestamp more than about 292
+            // million years from the epoch exceeds. Both are then left out, so that a reader takes
+            // the range as unknown rather than pruning on a bound that wrapped.
+            if (fits_int64(min_ms) and fits_int64(max_ms)) {
+              // The values are on the writer's wall clock, as Apache's are. The legacy pair holds
+              // instants, which readers convert to the wall clock, so it only equals the UTC pair
+              // when writing UTC. Apache writes only the UTC pair, and readers prefer it.
+              if (write_legacy_timestamp_bounds) {
+                cur = pb_put_int(cur, 1, static_cast<int64_t>(min_ms));  // minimum
+                cur = pb_put_int(cur, 2, static_cast<int64_t>(max_ms));  // maximum
               }
-              if (max_ns_remainder != DEFAULT_MAX_NANOS) {
-                // using uint because positive values are not zigzag encoded
-                cur = pb_put_uint(cur, 6, max_ns_remainder + 1);  // maximumNanos
+              cur = pb_put_int(cur, 3, static_cast<int64_t>(min_ms));  // minimumUtc
+              cur = pb_put_int(cur, 4, static_cast<int64_t>(max_ms));  // maximumUtc
+
+              if constexpr (enable_nanosecond_statistics) {
+                if (min_ns_remainder != DEFAULT_MIN_NANOS) {
+                  // using uint because positive values are not zigzag encoded
+                  cur = pb_put_uint(cur, 5, min_ns_remainder + 1);  // minimumNanos
+                }
+                if (max_ns_remainder != DEFAULT_MAX_NANOS) {
+                  // using uint because positive values are not zigzag encoded
+                  cur = pb_put_uint(cur, 6, max_ns_remainder + 1);  // maximumNanos
+                }
               }
             }
           }
@@ -443,9 +479,9 @@ void orc_init_statistics_groups(statistics_group* groups,
                                 device_2dspan<rowgroup_rows const> rowgroup_bounds,
                                 cuda::stream_ref stream)
 {
-  auto const num_blocks =
-    cudf::util::div_rounding_up_safe<size_t>(rowgroup_bounds.size().first, init_groups_per_block) *
-    rowgroup_bounds.size().second;
+  auto const num_blocks = cudf::detail::div_rounding_up_safe<size_t>(rowgroup_bounds.size().first,
+                                                                     init_groups_per_block) *
+                          rowgroup_bounds.size().second;
 
   dim3 dim_block(init_threads_per_group, init_groups_per_block);
   gpu_init_statistics_groups<<<num_blocks, dim_block, 0, stream.get()>>>(
@@ -478,19 +514,22 @@ void orc_init_statistics_buffersize(statistics_merge_group* groups,
  * @param[in,out] groups Statistics merge groups
  * @param[in,out] chunks Statistics data
  * @param[in] statistics_count Number of statistics buffers
+ * @param[in] write_legacy_timestamp_bounds Whether to write the pre-ORC-135 `minimum` and
+ * `maximum` timestamp fields alongside `minimumUtc` and `maximumUtc`
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void orc_encode_statistics(uint8_t* blob_bfr,
                            statistics_merge_group* groups,
                            statistics_chunk const* chunks,
                            uint32_t statistics_count,
+                           bool write_legacy_timestamp_bounds,
                            cuda::stream_ref stream)
 {
   auto const num_blocks =
-    cudf::util::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
+    cudf::detail::div_rounding_up_safe(statistics_count, encode_chunks_per_block);
   dim3 dim_block(encode_threads_per_chunk, encode_chunks_per_block);
   gpu_encode_statistics<<<num_blocks, dim_block, 0, stream.get()>>>(
-    blob_bfr, groups, chunks, statistics_count);
+    blob_bfr, groups, chunks, statistics_count, write_legacy_timestamp_bounds);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

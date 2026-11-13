@@ -7,7 +7,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 
 #include <cooperative_groups.h>
-#include <cub/cub.cuh>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/cstdint>
 #include <cuda/std/cstring>
 

@@ -10,7 +10,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/optional>
 
 namespace CUDF_EXPORT cudf {

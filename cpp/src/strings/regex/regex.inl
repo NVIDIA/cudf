@@ -7,6 +7,8 @@
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/cmath>
+
 namespace cudf {
 namespace strings {
 namespace detail {
@@ -25,8 +27,7 @@ struct alignas(8) relist {
    */
   CUDF_HOST_DEVICE constexpr inline static std::size_t data_size_for(int32_t insts)
   {
-    return ((sizeof(ranges[0]) + sizeof(inst_ids[0])) * insts) +
-           cudf::util::div_rounding_up_unsafe(insts, 8);
+    return ((sizeof(ranges[0]) + sizeof(inst_ids[0])) * insts) + cuda::ceil_div(insts, 8);
   }
 
   /**
@@ -35,7 +36,7 @@ struct alignas(8) relist {
   CUDF_HOST_DEVICE constexpr inline static std::size_t alloc_size(int32_t insts,
                                                                   int32_t num_threads)
   {
-    return cudf::util::round_up_unsafe<size_t>(data_size_for(insts) * num_threads, sizeof(restate));
+    return cuda::round_up<size_t>(data_size_for(insts) * num_threads, sizeof(restate));
   }
 
   struct alignas(16) restate {
@@ -46,7 +47,7 @@ struct alignas(8) relist {
 
   __device__ __forceinline__
   relist(int16_t insts, int32_t num_threads, u_char* gp_ptr, int32_t index)
-    : masksize(cudf::util::div_rounding_up_unsafe(insts, 8)), stride(num_threads)
+    : masksize(cuda::ceil_div(insts, 8)), stride(num_threads)
   {
     auto const rdata_size = sizeof(ranges[0]);
     auto const idata_size = sizeof(inst_ids[0]);
@@ -157,14 +158,14 @@ __device__ __forceinline__ void reprog_device::store(void* buffer) const
     *insts++ = _insts[idx];
 
   // add the startinst_ids array
-  ptr += cudf::util::round_up_unsafe(_insts_count * sizeof(_insts[0]), sizeof(_startinst_ids[0]));
+  ptr += cuda::round_up(_insts_count * sizeof(_insts[0]), sizeof(_startinst_ids[0]));
   auto ids               = reinterpret_cast<int32_t*>(ptr);
   result->_startinst_ids = ids;
   for (int idx = 0; idx < _starts_count; ++idx)
     *ids++ = _startinst_ids[idx];
 
   // add the classes array
-  ptr += cudf::util::round_up_unsafe(_starts_count * sizeof(int32_t), sizeof(_classes[0]));
+  ptr += cuda::round_up(_starts_count * sizeof(int32_t), sizeof(_classes[0]));
   auto classes     = reinterpret_cast<reclass_device*>(ptr);
   result->_classes = classes;
   // fill in each class

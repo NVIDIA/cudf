@@ -37,21 +37,22 @@ permissions: {}
 jobs:
   build-details:
     uses: rapidsai/shared-workflows/.github/workflows/compute-build-details.yaml@main
-  telemetry-setup:
+  checks:
+    if: ${{ github.ref == 'refs/heads/main' }}
     permissions:
-      id-token: write
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    env:
-      OTEL_SERVICE_NAME: "build-cudf"
-    steps:
-      - name: Telemetry setup
-        # This gate is here and not at the job level because we need the job to not be skipped,
-        # since other jobs depend on it.
-        if: ${{ vars.TELEMETRY_ENABLED == 'true' }}
-        uses: rapidsai/shared-actions/telemetry-dispatch-stash-base-env-vars@main
+      actions: read
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
+    with:
+      # Seed the default-branch pre-commit cache without running checks that only apply to PRs.
+      base-branch: main
+      enable_check_size: false
+      enable_check_generated_files: false
+      enable_check_pr_job_dependencies: false
+      enable_check_version_files_changed: false
+      enable_check_version_against_tag: false
   cpp-build:
-    needs: [build-details, telemetry-setup]
+    needs: ["build-details"]
     permissions:
       actions: read
       contents: read
@@ -68,8 +69,9 @@ jobs:
       node_type: cpu16
       script: ci/build_cpp.sh
       sha: ${{ inputs.sha }}
+      matrix_type: nightly
   python-build:
-    needs: [build-details, telemetry-setup, cpp-build]
+    needs: ["build-details", "cpp-build"]
     permissions:
       actions: read
       contents: read
@@ -87,8 +89,9 @@ jobs:
       sha: ${{ inputs.sha }}
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
       matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
+      matrix_type: nightly
   python-build-noarch:
-    needs: [build-details, telemetry-setup]
+    needs: ["build-details"]
     permissions:
       actions: read
       contents: read
@@ -105,8 +108,29 @@ jobs:
       script: ci/build_python_noarch.sh
       sha: ${{ inputs.sha }}
       pure-conda: cuda_major
+      matrix_type: nightly
+  python-build-cudf-polars-quent:
+    needs: ["build-details"]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    uses: rapidsai/shared-workflows/.github/workflows/conda-python-build.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      branch: ${{ inputs.branch }}
+      date: ${{ inputs.date }}
+      script: ci/build_python_cudf_polars_quent.sh
+      sha: ${{ inputs.sha }}
+      # The package is abi3 and has no CUDA dependency, so build one per architecture:
+      # pick the entry with the oldest Python, then the oldest CUDA.
+      matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+      matrix_type: nightly
   upload-conda:
-    needs: [cpp-build, python-build, python-build-noarch]
+    needs: [cpp-build, python-build, python-build-noarch, python-build-cudf-polars-quent]
     permissions:
       actions: read
       contents: read
@@ -122,9 +146,17 @@ jobs:
       branch: ${{ inputs.branch }}
       date: ${{ inputs.date }}
       sha: ${{ inputs.sha }}
+  docs-build-matrix:
+    permissions:
+      contents: read
+    uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      matrix_name: docs-build
+      matrix_type: nightly
   docs-build:
     if: github.ref_type == 'branch'
-    needs: [python-build, python-build-noarch]
+    needs: [docs-build-matrix, python-build, python-build-noarch]
     permissions:
       actions: read
       contents: read
@@ -133,13 +165,16 @@ jobs:
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
     uses: rapidsai/shared-workflows/.github/workflows/custom-job.yaml@main
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.docs-build-matrix.outputs.matrix) }}
     with:
-      arch: "amd64"
+      arch: "${{ matrix.arch }}"
       branch: ${{ inputs.branch }}
       build_type: ${{ inputs.build_type || 'branch' }}
-      container_image: "rapidsai/ci-conda:26.12-latest"
+      container_image: "rapidsai/ci-conda:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       date: ${{ inputs.date }}
-      node_type: "gpu-rtxpro6000-latest-1"
+      node_type: "gpu-${{ matrix.GPU }}-${{ matrix.DRIVER }}-1"
       script: "ci/build_docs.sh"
       sha: ${{ inputs.sha }}
   publish-api-docs:
@@ -157,14 +192,37 @@ jobs:
       target-aws-access-key-id: ${{ secrets.NVIDIA_DOCS_AWS_ACCESS_KEY_ID }}
       target-aws-region: ${{ secrets.NVIDIA_DOCS_AWS_REGION }}
       target-aws-secret-access-key: ${{ secrets.NVIDIA_DOCS_AWS_SECRET_ACCESS_KEY }}
+      target-archive-s3-bucket: ${{ secrets.NVIDIA_DOCS_ARCHIVE_S3_BUCKET }}
       target-s3-bucket: ${{ secrets.NVIDIA_DOCS_S3_BUCKET }}
     uses: rapidsai/shared-workflows/.github/workflows/publish-api-docs.yaml@main
     with:
       docs-projects: cudf,dask-cudf,libcudf
       dry-run: false
-      version-map: ${{ vars.VERSION_MAP }}
-  wheel-cpp-build:
-    needs: [build-details, telemetry-setup]
+  cudf-polars-quent:
+    needs: [build-details]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-build.yaml@main
+    with:
+      build_type: ${{ inputs.build_type || 'branch' }}
+      branch: ${{ inputs.branch }}
+      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
+      date: ${{ inputs.date }}
+      sha: ${{ inputs.sha }}
+      node_type: cpu8
+      script: ci/build_wheel_cudf_polars_quent.sh
+      package-name: cudf_polars_quent
+      package-type: python
+      append-cuda-suffix: false
+      # The wheel is abi3 and has no CUDA dependency, so build one per architecture:
+      # pick the entry with the oldest Python, then the oldest CUDA.
+      matrix_filter: group_by(.ARCH) | map(min_by([(.PY_VER | split(".") | map(tonumber)), (.CUDA_VER | split(".") | map(tonumber))]))
+  wheel-publish-cudf-polars-quent:
+    needs: cudf-polars-quent
     permissions:
       actions: read
       contents: read
@@ -172,20 +230,37 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
+    uses: rapidsai/shared-workflows/.github/workflows/wheels-publish.yaml@main
     with:
-      # build for every combination of arch and CUDA version, but only for the latest Python
-      matrix_filter: group_by([.ARCH, (.CUDA_VER|split(".")|map(tonumber)|.[0])]) | map(max_by(.PY_VER|split(".")|map(tonumber)))
+      build_type: ${{ inputs.build_type || 'branch' }}
+      branch: ${{ inputs.branch }}
+      sha: ${{ inputs.sha }}
+      date: ${{ inputs.date }}
+      package-name: cudf_polars_quent
+      package-type: python
+      publish-wheel-search-key: cudf_wheel_python_cudf-polars-quent
+  wheel-build:
+    needs: ["build-details"]
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      packages: read
+      pull-requests: read
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+    uses: $/.github/workflows/wheels-build-stage.yaml
+    with:
+      # Build a wheel for each CUDA x ARCH x minimum supported Python version.
+      matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
       build_type: ${{ inputs.build_type || 'branch' }}
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       branch: ${{ inputs.branch }}
       sha: ${{ inputs.sha }}
       date: ${{ inputs.date }}
       node_type: cpu16
-      script: ci/build_wheel_cpp.sh
-      stage: cpp
+      matrix_type: nightly
   wheel-publish-libcudf:
-    needs: wheel-cpp-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -206,7 +281,7 @@ jobs:
       # trailing underscore to avoid collision with `libcudf-streaming`
       publish-wheel-search-key: cudf_wheel_cpp_libcudf_
   wheel-publish-libcudf-streaming:
-    needs: wheel-cpp-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -225,29 +300,8 @@ jobs:
       package-name: libcudf_streaming
       package-type: cpp
       publish-wheel-search-key: cudf_wheel_cpp_libcudf-streaming
-  wheel-python-build:
-    needs: [build-details, telemetry-setup, wheel-cpp-build]
-    permissions:
-      actions: read
-      contents: read
-      id-token: write
-      packages: read
-      pull-requests: read
-    secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
-    with:
-      # Build a wheel for each CUDA x ARCH x minimum supported Python version
-      matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
-      build_type: ${{ inputs.build_type || 'branch' }}
-      build-datetime: ${{ needs.build-details.outputs.build-datetime }}
-      branch: ${{ inputs.branch }}
-      sha: ${{ inputs.sha }}
-      date: ${{ inputs.date }}
-      node_type: cpu8
-      script: ci/build_wheel_python.sh
-      stage: python
   wheel-publish-cudf-streaming:
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -267,7 +321,7 @@ jobs:
       package-type: python
       publish-wheel-search-key: cudf_wheel_python_cudf-streaming
   wheel-publish-pylibcudf:
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -285,7 +339,7 @@ jobs:
       package-type: python
       publish-wheel-search-key: cudf_wheel_python_pylibcudf
   wheel-publish-cudf:
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: read
       contents: read
@@ -304,7 +358,7 @@ jobs:
       # trailing underscore to avoid collision with `cudf-streaming` and `cudf-polars`
       publish-wheel-search-key: cudf_wheel_python_cudf_
   wheel-python-build-noarch:
-    needs: [build-details, telemetry-setup]
+    needs: ["build-details"]
     permissions:
       actions: read
       contents: read
@@ -312,7 +366,7 @@ jobs:
       packages: read
       pull-requests: read
     secrets: inherit # zizmor: ignore[secrets-inherit]
-    uses: ./.github/workflows/wheels-build-stage.yaml
+    uses: $/.github/workflows/wheels-build-stage.yaml
     with:
       # This selects "ARCH=amd64 + the latest supported Python + CUDA".
       matrix_filter: map(select(.ARCH == "amd64")) | group_by(.CUDA_VER|split(".")|map(tonumber)|.[0]) | map(max_by([(.PY_VER|split(".")|map(tonumber)), (.CUDA_VER|split(".")|map(tonumber))]))
@@ -322,9 +376,8 @@ jobs:
       sha: ${{ inputs.sha }}
       date: ${{ inputs.date }}
       node_type: cpu8
-      script: ci/build_wheel_python_noarch.sh
-      stage: python-noarch
       pure-wheel: true
+      matrix_type: nightly
   wheel-publish-dask-cudf:
     needs: wheel-python-build-noarch
     permissions:
@@ -360,10 +413,11 @@ jobs:
       date: ${{ inputs.date }}
       package-name: cudf_polars
       package-type: python
-      publish-wheel-search-key: cudf_wheel_python_cudf-polars
+      # trailing underscore to avoid collision with `cudf-polars-quent`
+      publish-wheel-search-key: cudf_wheel_python_cudf-polars_
   trigger-pandas-tests:
     if: inputs.build_type == 'nightly'
-    needs: wheel-python-build
+    needs: wheel-build
     permissions:
       actions: write
       contents: read
@@ -385,24 +439,6 @@ jobs:
             -f branch=$BRANCH \
             -f sha=$SHA \
             -f date=$DATE
-  telemetry-summarize:
-    # This job must use a self-hosted runner to record telemetry traces.
-    runs-on: linux-amd64-cpu4
-    permissions:
-      id-token: write
-    needs:
-      - docs-build
-      - upload-conda
-      - wheel-publish-cudf
-      - wheel-publish-cudf-polars
-      - wheel-publish-dask-cudf
-      - wheel-publish-libcudf
-      - wheel-publish-pylibcudf
-    if: ${{ vars.TELEMETRY_ENABLED == 'true' && !cancelled() }}
-    continue-on-error: true
-    steps:
-      - name: Telemetry summarize
-        uses: rapidsai/shared-actions/telemetry-dispatch-summarize@main
   devcontainers:
     name: Build devcontainers
     secrets: inherit  # zizmor: ignore[secrets-inherit]
@@ -411,10 +447,9 @@ jobs:
       packages: write
     with:
       push: true
-      cuda: '["12.9", "13.3"]'
+      cuda: '["12.9", "13.4"]'
   # Build the cuDF Java JAR for every Maven classifier.
   java-build-matrix:
-    needs: [telemetry-setup]
     permissions:
       contents: read
     uses: rapidsai/shared-workflows/.github/workflows/compute-matrix.yaml@main
@@ -423,7 +458,7 @@ jobs:
       matrix_name: conda-cpp-build
       matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
-    needs: [build-details, telemetry-setup, java-build-matrix]
+    needs: ["build-details", "java-build-matrix"]
     permissions:
       actions: read
       contents: read
@@ -443,7 +478,7 @@ jobs:
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       arch: ${{ matrix.ARCH }}
       node_type: cpu16
-      container_image: "rapidsai/ci-wheel:26.12-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
+      container_image: "rapidsai/ci-wheel:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/build_java.sh"
       file_to_upload: output_jars
       artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
@@ -451,15 +486,8 @@ jobs:
   java-gather:
     needs: [java-build]
     runs-on: linux-amd64-cpu4
-    # The container image is only used to make rapids-is-release-build
-    # available for the release-flag check below. The artifact assembly
-    # itself does not depend on any image-specific tooling.
-    container:
-      image: "rapidsai/ci-wheel:26.12-latest"
     permissions:
       contents: read
-    outputs:
-      is_release: ${{ steps.release-check.outputs.is_release }}
     steps:
       - name: Checkout code repo
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -483,22 +511,13 @@ jobs:
           name: cudf_java_maven_repo
           path: ${{ runner.temp }}/maven-repo
           if-no-files-found: error
-      - name: Determine release-build status
-        id: release-check
-        run: |
-          if rapids-is-release-build; then
-            echo "is_release=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "is_release=false" >> "${GITHUB_OUTPUT}"
-          fi
 
-  # Publish tagged release candidates to Maven Central via the Sonatype
-  # Central Publisher Portal. Release path only (vYY.MM.PP tags). Does not
-  # publish nightlies.
-  # TODO: add nightly Sonatype snapshot publishing.
+  # Publish the assembled Maven repository. maven-publish.yaml routes on
+  # rapids-is-release-build. Release tags -> Maven Central (human-gated via the
+  # Publisher Portal). Other runs -> Sonatype snapshots (immediate, overwrites
+  # -SNAPSHOT).
   java-publish:
     needs: [java-gather]
-    if: ${{ needs.java-gather.outputs.is_release == 'true' && (inputs.build_type || 'branch') == 'branch' }}
     permissions:
       actions: read
       contents: read
@@ -508,8 +527,8 @@ jobs:
       GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       MAVEN_DEPLOY_TOKEN: ${{ secrets.MAVEN_DEPLOY_TOKEN }}
     with:
-      publication-type: 'rc'
       artifact-name: cudf_java_maven_repo
       source-git-sha: ${{ inputs.sha || github.sha }}
-      # false = validate + drop (safe). true = stage PENDING for manual publish.
+      # Release path only: false = validate + drop (safe). true = stage
+      # PENDING for manual publish. Ignored on the Sonatype snapshot path.
       stage-for-maven-central-publish: true

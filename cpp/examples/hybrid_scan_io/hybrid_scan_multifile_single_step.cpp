@@ -16,6 +16,7 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cassert>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -60,7 +61,8 @@ struct hybrid_scan_single_step_fn {
           input_sources[source_idx], {}, filters, false, stream, mr);
       }
     }
-    stream.synchronize_no_throw();
+    [[maybe_unused]] auto const status = cudaStreamSynchronize(stream.get());
+    assert(status == cudaSuccess);
     if (verbose) {
       std::cout << "Thread " << tid << " ";
       timer.print_elapsed_millis();

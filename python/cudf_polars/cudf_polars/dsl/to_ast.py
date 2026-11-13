@@ -191,6 +191,59 @@ def _(node: expr.Literal, self: Transformer) -> plc_expr.Expression:
     )
 
 
+def _with_polars_nan_semantics(
+    op: plc.binaryop.BinaryOperator,
+    left: plc_expr.Expression,
+    right: plc_expr.Expression,
+    result: plc_expr.Expression,
+) -> plc_expr.Expression:
+    """
+    Make an AST float comparison treat NaN the way Polars does.
+
+    Polars orders NaN above every other value and considers it equal to
+    itself, but an AST comparison follows IEEE 754.
+    """
+    # TODO: Use NaN-aware comparison operators once libcudf has them, and
+    # remove this workaround. https://github.com/NVIDIA/cudf/issues/18930
+    binop = plc.binaryop.BinaryOperator
+
+    def is_nan(operand: plc_expr.Expression) -> plc_expr.Expression:
+        # NaN is the only value that is not equal to itself.
+        if op == binop.NULL_EQUALS:
+            # A null-aware comparison is never null, so a null must not make
+            # the NaN test null. Nulls are equal to themselves here.
+            return plc_expr.Operation(
+                plc_expr.ASTOperator.NOT,
+                plc_expr.Operation(plc_expr.ASTOperator.NULL_EQUAL, operand, operand),
+            )
+        return plc_expr.Operation(plc_expr.ASTOperator.NOT_EQUAL, operand, operand)
+
+    def logical(
+        astop: plc_expr.ASTOperator, *operands: plc_expr.Expression
+    ) -> plc_expr.Expression:
+        return plc_expr.Operation(astop, *operands)
+
+    AND, OR, NOT = (
+        plc_expr.ASTOperator.LOGICAL_AND,
+        plc_expr.ASTOperator.LOGICAL_OR,
+        plc_expr.ASTOperator.NOT,
+    )
+    left_nan, right_nan = is_nan(left), is_nan(right)
+    if op == binop.GREATER:
+        return logical(OR, result, logical(AND, left_nan, logical(NOT, right_nan)))
+    if op == binop.GREATER_EQUAL:
+        return logical(OR, result, left_nan)
+    if op == binop.LESS:
+        return logical(OR, result, logical(AND, right_nan, logical(NOT, left_nan)))
+    if op == binop.LESS_EQUAL:
+        return logical(OR, result, right_nan)
+    both_nan = logical(AND, left_nan, right_nan)
+    if op in {binop.EQUAL, binop.NULL_EQUALS}:
+        return logical(OR, result, both_nan)
+    assert op == binop.NOT_EQUAL
+    return logical(AND, result, logical(NOT, both_nan))
+
+
 @_to_ast.register
 def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
     if node.op == plc.binaryop.BinaryOperator.NULL_NOT_EQUALS:
@@ -232,8 +285,15 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
             raise NotImplementedError(
                 "BinOp with mismatching dtypes"
             )  # pragma: no cover
-    children = (c1, c2)
-    return plc_expr.Operation(ast_op, *map(self, children))
+    left, right = map(self, (c1, c2))
+    result = plc_expr.Operation(ast_op, left, right)
+    if (
+        node.op in expr.BinOp._NAN_AWARE_COMPARISONS
+        and plc.traits.is_floating_point(c1.dtype.plc_type)
+        and plc.traits.is_floating_point(c2.dtype.plc_type)
+    ):
+        return _with_polars_nan_semantics(node.op, left, right, result)
+    return result
 
 
 @_to_ast.register

@@ -20,7 +20,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
-#include <cuda/execution>
+#include <cuda/execution.tune.h>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/stream>

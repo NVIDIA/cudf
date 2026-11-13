@@ -292,7 +292,7 @@ struct TransduceToNormalizedWS {
 
 namespace detail {
 
-void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& indata,
+void normalize_single_quotes(datasource::owning_buffer<cuda::device_buffer<char>>& indata,
                              char delimiter,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
@@ -307,7 +307,7 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
       normalize_quotes::TransduceToNormalizedQuotes{}),
     stream);
 
-  rmm::device_buffer outbuf(indata.size() * 2, stream, mr.get_output_mr());
+  cuda::device_buffer<char> outbuf{stream, mr.get_output_mr(), indata.size() * 2, cuda::no_init};
   cudf::detail::device_scalar<SymbolOffsetT> outbuf_size(stream, mr.get_output_mr());
   parser.Transduce(reinterpret_cast<SymbolT const*>(indata.data()),
                    static_cast<SymbolOffsetT>(indata.size()),
@@ -317,8 +317,11 @@ void normalize_single_quotes(datasource::owning_buffer<rmm::device_buffer>& inda
                    normalize_quotes::start_state,
                    stream);
 
-  outbuf.resize(outbuf_size.value(stream), stream);
-  datasource::owning_buffer<rmm::device_buffer> outdata(std::move(outbuf));
+  // TODO: Use resize() instead of exposing a subspan once
+  // https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+  auto const size = outbuf_size.value(stream);
+  auto const data = reinterpret_cast<uint8_t const*>(outbuf.data());
+  datasource::owning_buffer<cuda::device_buffer<char>> outdata(std::move(outbuf), data, size);
   std::swap(indata, outdata);
 }
 

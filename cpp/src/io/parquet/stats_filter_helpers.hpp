@@ -60,16 +60,32 @@ class stats_caster_base {
   static inline T decode_fixed_width_decimal(uint8_t const* stats_val, size_t stats_size)
   {
     // Decimal statistics with physical BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY are stored as
-    // signed two's-complement values using big-endian byte order. The physical width may be
-    // smaller than the selected cudf storage width, so sign extend while decoding
+    // signed two's-complement values using big-endian byte order. Sign extend if the physical
+    // width is smaller than the cudf storage width, or keep the low bytes if it is larger (e.g. a
+    // narrower `decimal_width`)
 
     CUDF_EXPECTS(cudf::is_signed<T>(),
                  "FLBA/BYTE_ARRAY decimals must have signed representation types");
     CUDF_EXPECTS(stats_size > 0, "Parquet reader encountered an empty decimal statistics vector");
-    CUDF_EXPECTS(stats_size <= sizeof(T),
-                 "Parquet reader encountered a statistics vector larger than the type's size");
 
     return decode_big_endian_decimal<T>(stats_val, static_cast<int32_t>(stats_size));
+  }
+
+  /**
+   * @brief Whether an optional binary stats value of a signed integral type `T` (including
+   * decimal storage types) fits in `T` without truncation
+   */
+  template <typename T>
+  static inline bool fits_in_type(std::optional<std::vector<uint8_t>> const& binary_value,
+                                  Type const type)
+  {
+    if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
+      if (binary_value.has_value()) {
+        auto const value = convert<__int128_t>(binary_value->data(), binary_value->size(), type);
+        return static_cast<__int128_t>(static_cast<T>(value)) == value;
+      }
+    }
+    return true;
   }
 
   template <typename T>
@@ -256,6 +272,37 @@ class stats_caster_base {
             return;
           }
         }
+      }
+    }
+
+    /**
+     * @brief Sets the min and max statistics, or nulls both if either does not fit in `T`
+     *
+     * Values truncated to `T` (e.g. decimals read with a narrower `decimal_width`) lose their
+     * order, so neither bound is valid
+     *
+     * @param min Min statistics column
+     * @param max Max statistics column
+     * @param index Row of the column chunk or page in this column
+     * @param min_value Optional binary min value
+     * @param max_value Optional binary max value
+     * @param type Parquet physical type
+     * @param ts_scale Timestamp scale
+     */
+    static inline void set_min_max(host_column& min,
+                                   host_column& max,
+                                   size_type index,
+                                   std::optional<std::vector<uint8_t>> const& min_value,
+                                   std::optional<std::vector<uint8_t>> const& max_value,
+                                   Type const type,
+                                   int32_t ts_scale = 0)
+    {
+      if (fits_in_type<T>(min_value, type) and fits_in_type<T>(max_value, type)) {
+        min.set_index(index, min_value, type, ts_scale);
+        max.set_index(index, max_value, type, ts_scale);
+      } else {
+        min.set_index(index, std::nullopt, type);
+        max.set_index(index, std::nullopt, type);
       }
     }
 

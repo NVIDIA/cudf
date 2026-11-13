@@ -294,6 +294,19 @@ struct schema_child_lookup {
 
 }  // namespace
 
+std::vector<data_type> get_output_types(
+  std::span<cudf::io::detail::inline_column_buffer const> output_buffers, type_id decimal_width)
+{
+  std::vector<data_type> output_dtypes;
+  output_dtypes.reserve(output_buffers.size());
+  std::ranges::transform(output_buffers, std::back_inserter(output_dtypes), [&](auto const& col) {
+    return (decimal_width != type_id::EMPTY and cudf::is_fixed_point(col.type))
+             ? data_type{decimal_width, col.type.scale()}
+             : col.type;
+  });
+  return output_dtypes;
+}
+
 type_id to_type_id(SchemaElement const& schema,
                    bool strings_to_categorical,
                    type_id timestamp_type_id,

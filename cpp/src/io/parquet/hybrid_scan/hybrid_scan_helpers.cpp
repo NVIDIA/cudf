@@ -400,15 +400,15 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter)
 {
-  // Timestamp columns stored with another precision in any source cannot use bloom filters
-  auto const ts_precision_mismatches =
-    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
+  // Mismatched timestamp and narrowed decimal columns cannot use bloom filters
+  auto const bloom_mismatch_mask =
+    calc_bloom_mismatch_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
     filter.get(),
     output_dtypes,
-    std::span{ts_precision_mismatches.data(), ts_precision_mismatches.size()}};
+    std::span{bloom_mismatch_mask.data(), bloom_mismatch_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return {}; }
@@ -634,15 +634,15 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream) const
 {
-  // Timestamp columns stored with another precision in any source cannot use bloom filters
-  auto const ts_precision_mismatches =
-    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
+  // Mismatched timestamp and narrowed decimal columns cannot use bloom filters
+  auto const bloom_mismatch_mask =
+    calc_bloom_mismatch_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
     filter.get(),
     output_dtypes,
-    std::span{ts_precision_mismatches.data(), ts_precision_mismatches.size()}};
+    std::span{bloom_mismatch_mask.data(), bloom_mismatch_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return all_row_group_indices(row_group_indices); }

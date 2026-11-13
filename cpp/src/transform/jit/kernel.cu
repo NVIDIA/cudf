@@ -11,12 +11,12 @@
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
+#include <cuda/std/algorithm>  // UDFs may use any algorithm without including it
 #include <cuda/std/cstddef>
 #include <cuda/std/tuple>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 
-#include <jit/column_device_view_wrappers.cuh>
 #include <jit/transform_kernel.cuh>
 
 #pragma nv_hdrstop  // The above headers are used by the kernel below and need to be included before

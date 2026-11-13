@@ -74,9 +74,9 @@ enum class endian : bool { BIG, LITTLE };
 std::unique_ptr<column> cast_to_integer(
   strings_column_view const& input,
   data_type output_type,
-  endian swap                       = endian::LITTLE,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  endian swap               = endian::LITTLE,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new strings column converting the encoded integer values from the
@@ -111,9 +111,9 @@ std::unique_ptr<column> cast_to_integer(
  */
 std::unique_ptr<column> cast_from_integer(
   column_view const& integers,
-  endian swap                       = endian::LITTLE,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  endian swap               = endian::LITTLE,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the minimum integer type required to encode the input column.

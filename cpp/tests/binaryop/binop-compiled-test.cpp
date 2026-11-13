@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -222,7 +222,8 @@ TYPED_TEST(BinaryOperationCompiledTest_Div, Vector_Vector)
 using TrueDiv_types = cudf::test::Types<cudf::test::Types<int16_t, u_int64_t, u_int64_t>,
                                         cudf::test::Types<double, int8_t, int64_t>,
                                         cudf::test::Types<int8_t, bool, u_int32_t>,
-                                        cudf::test::Types<u_int64_t, float, int16_t>>;
+                                        cudf::test::Types<u_int64_t, float, int16_t>,
+                                        cudf::test::Types<float, float, float>>;
 
 template <typename T>
 struct BinaryOperationCompiledTest_TrueDiv : public BinaryOperationCompiledTest<T> {};

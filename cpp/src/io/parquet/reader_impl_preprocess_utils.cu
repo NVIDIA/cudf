@@ -20,7 +20,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 #include <thrust/scan.h>
@@ -182,7 +182,7 @@ void generate_depth_remappings(
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   // Construct per source byte ranges in chunk iteration order
   std::vector<std::vector<byte_range_info>> source_byte_ranges(sources.size());
@@ -309,11 +309,17 @@ std::string encoding_to_string(Encoding encoding)
 [[nodiscard]] std::string list_unsupported_encodings(device_span<PageInfo const> pages,
                                                      cuda::stream_ref stream)
 {
-  auto const to_mask     = cuda::proclaim_return_type<uint32_t>([] __device__(auto const& page) {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto const to_mask        = cuda::proclaim_return_type<uint32_t>([] __device__(auto const& page) {
     return is_supported_encoding(page.encoding) ? uint32_t{0} : encoding_to_mask(page.encoding);
   });
-  auto const unsupported = cudf::detail::transform_reduce(
-    pages.begin(), pages.end(), to_mask, uint32_t{0}, cuda::std::bit_or<uint32_t>(), stream);
+  auto const unsupported    = cudf::detail::transform_reduce(pages.begin(),
+                                                          pages.end(),
+                                                          to_mask,
+                                                          uint32_t{0},
+                                                          cuda::std::bit_or<uint32_t>(),
+                                                          stream,
+                                                          mr.as_temporary());
   return encoding_bitmask_to_str(unsupported);
 }
 
@@ -457,13 +463,15 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                               std::span<cudf::device_span<uint8_t const> const> page_data,
                               cuda::stream_ref stream)
 {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr        = mr.get_temporary_mr();
   CUDF_FUNC_RANGE();
 
   auto iter = cuda::counting_iterator<size_t>{0};
   cuda::device_buffer<size_type> chunk_page_offsets(
     stream, cudf::get_current_device_resource_ref(), pass.chunks.size() + 1, cuda::no_init);
   thrust::transform_exclusive_scan(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, temp_mr),
     iter,
     iter + pass.chunks.size() + 1,
     chunk_page_offsets.begin(),
@@ -475,8 +483,8 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
     size_type{0},
     cuda::std::plus<size_type>{});
   cuda::device_buffer<chunk_page_info> d_chunk_page_info(
-    stream, cudf::get_current_device_resource_ref(), pass.chunks.size(), cuda::no_init);
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    stream, temp_mr, pass.chunks.size(), cuda::no_init);
+  thrust::for_each(rmm::exec_policy_nosync(stream, temp_mr),
                    iter,
                    iter + pass.chunks.size(),
                    [cpi                = d_chunk_page_info.begin(),
@@ -611,8 +619,12 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                                      c.level_bits[level_type::DEFINITION]);
     }));
   // max level data bit size.
-  auto const max_level_bits = cudf::detail::reduce(
-    level_bit_size, level_bit_size + pass.chunks.size(), int{0}, cuda::maximum<int>{}, stream);
+  auto const max_level_bits = cudf::detail::reduce(level_bit_size,
+                                                   level_bit_size + pass.chunks.size(),
+                                                   int{0},
+                                                   cuda::maximum<int>{},
+                                                   stream,
+                                                   mr.as_temporary());
   pass.level_type_size =
     std::max<int32_t>(1, cudf::detail::div_rounding_up_safe(max_level_bits, 8));
 
@@ -636,18 +648,19 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
                                                            cuda::make_discard_iterator(),
                                                            page_counts.begin(),
                                                            cuda::std::plus<>{},
-                                                           stream)
+                                                           stream,
+                                                           mr)
                                  .second;
   auto const num_page_counts = page_counts_end - page_counts.begin();
-  pass.page_offsets          = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), num_page_counts + 1, cuda::no_init);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  pass.page_offsets =
+    cuda::device_buffer<size_type>(stream, temp_mr, num_page_counts + 1, cuda::no_init);
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          page_counts.begin(),
                          page_counts.begin() + num_page_counts + 1,
                          pass.page_offsets.begin());
 
   // setup dict_page for each chunk if necessary
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(rmm::exec_policy_nosync(stream, temp_mr),
                    pass.pages.d_begin(),
                    pass.pages.d_end(),
                    [chunks = pass.chunks.d_begin()] __device__(PageInfo const& p) {

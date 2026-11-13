@@ -165,6 +165,7 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
                                                  cuda::stream_ref stream,
                                                  cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto strings_count = strings_column.size();
   if (strings_count == 0) {
     return cudf::make_empty_lists_column(cudf::data_type{cudf::type_id::STRING});
@@ -216,7 +217,8 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
       // this will also set the final value to the size chars_bytes
       return idx < chars_bytes ? cudf::strings::detail::is_begin_utf8_char(d_chars[idx]) : true;
     },
-    stream);
+    stream,
+    mrs.as_temporary());
 
   // create the output chars buffer -- just a copy of the input's chars
   rmm::device_uvector<char> output_chars(chars_bytes, stream, mr.get_output_mr());

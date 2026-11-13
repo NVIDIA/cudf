@@ -18,7 +18,7 @@ namespace detail {
  */
 std::pair<std::unique_ptr<column>, table_view> transpose(table_view const& input,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr);
+                                                         cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

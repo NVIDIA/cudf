@@ -24,15 +24,15 @@
 
 #include <nvtext/generate_ngrams.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/copy.h>
+#include <thrust/execution_policy.h>
 
 #include <stdexcept>
 

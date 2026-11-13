@@ -505,8 +505,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   static std::unique_ptr<column_device_view, std::function<void(column_device_view*)>> create(
     column_view source_view,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destroy the `column_device_view` object.
@@ -656,8 +656,8 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
   static std::unique_ptr<mutable_column_device_view,
                          std::function<void(mutable_column_device_view*)>>
   create(mutable_column_view source_view,
-         cuda::stream_ref stream           = cudf::get_default_stream(),
-         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+         cuda::stream_ref stream   = cudf::get_default_stream(),
+         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns reference to element at the specified index.

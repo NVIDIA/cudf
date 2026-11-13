@@ -12,6 +12,7 @@
 
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/datasource.hpp>
@@ -22,7 +23,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -180,16 +180,17 @@ cuda::device_buffer<std::uint8_t> decompress_data(
   datasource& source,
   metadata& meta,
   cuda::device_buffer<std::uint8_t> const& comp_block_data,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   if (meta.codec == "deflate") {
-    auto inflate_in =
-      cudf::detail::hostdevice_vector<device_span<uint8_t const>>(meta.block_list.size(), stream);
-    auto inflate_out =
-      cudf::detail::hostdevice_vector<device_span<uint8_t>>(meta.block_list.size(), stream);
-    auto inflate_stats =
-      cudf::detail::hostdevice_vector<codec_exec_result>(meta.block_list.size(), stream);
-    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    auto inflate_in = cudf::detail::hostdevice_vector<device_span<uint8_t const>>(
+      meta.block_list.size(), stream, mr.get_temporary_mr());
+    auto inflate_out = cudf::detail::hostdevice_vector<device_span<uint8_t>>(
+      meta.block_list.size(), stream, mr.get_temporary_mr());
+    auto inflate_stats = cudf::detail::hostdevice_vector<codec_exec_result>(
+      meta.block_list.size(), stream, mr.get_temporary_mr());
+    thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                  inflate_stats.d_begin(),
                  inflate_stats.d_end(),
                  codec_exec_result{0, codec_status::FAILURE});
@@ -200,7 +201,7 @@ cuda::device_buffer<std::uint8_t> decompress_data(
     size_t const uncomp_size       = initial_blk_len * meta.block_list.size();
 
     cuda::device_buffer<std::uint8_t> decomp_block_data(
-      stream, cudf::get_current_device_resource_ref(), uncomp_size, cuda::no_init);
+      stream, mr.get_output_mr(), uncomp_size, cuda::no_init);
 
     auto const base_offset = meta.block_list[0].offset;
     for (size_t i = 0, dst_pos = 0; i < meta.block_list.size(); i++) {
@@ -239,11 +240,8 @@ cuda::device_buffer<std::uint8_t> decompress_data(
         auto const total_actual_uncomp_size =
           std::accumulate(actual_uncomp_sizes.cbegin(), actual_uncomp_sizes.cend(), 0ul);
         if (total_actual_uncomp_size > uncomp_size) {
-          decomp_block_data =
-            cuda::device_buffer<std::uint8_t>(stream,
-                                              cudf::get_current_device_resource_ref(),
-                                              total_actual_uncomp_size,
-                                              cuda::no_init);
+          decomp_block_data = cuda::device_buffer<std::uint8_t>(
+            stream, mr.get_output_mr(), total_actual_uncomp_size, cuda::no_init);
           for (size_t i = 0; i < meta.block_list.size(); ++i) {
             meta.block_list[i].offset =
               i > 0 ? (meta.block_list[i - 1].size + meta.block_list[i - 1].offset) : 0;
@@ -265,8 +263,8 @@ cuda::device_buffer<std::uint8_t> decompress_data(
     // comp_block_data contains contents of the avro file starting from the first block, excluding
     // file header. meta.block_list[i].offset refers to offset of block i in the file, including
     // file header.
-    cudf::detail::hostdevice_vector<device_span<uint8_t const>> compressed_blocks(num_blocks,
-                                                                                  stream);
+    cudf::detail::hostdevice_vector<device_span<uint8_t const>> compressed_blocks(
+      num_blocks, stream, mr.get_temporary_mr());
     std::transform(meta.block_list.begin(),
                    meta.block_list.end(),
                    compressed_blocks.host_ptr(),
@@ -278,11 +276,13 @@ cuda::device_buffer<std::uint8_t> decompress_data(
                    });
     compressed_blocks.host_to_device_async(stream);
 
-    cudf::detail::hostdevice_vector<size_t> uncompressed_sizes(num_blocks, stream);
+    cudf::detail::hostdevice_vector<size_t> uncompressed_sizes(
+      num_blocks, stream, mr.get_temporary_mr());
     get_snappy_uncompressed_size(compressed_blocks, uncompressed_sizes, stream);
     uncompressed_sizes.device_to_host(stream);
 
-    cudf::detail::hostdevice_vector<size_t> uncompressed_offsets(num_blocks, stream);
+    cudf::detail::hostdevice_vector<size_t> uncompressed_offsets(
+      num_blocks, stream, mr.get_temporary_mr());
     std::exclusive_scan(uncompressed_sizes.begin(),
                         uncompressed_sizes.end(),
                         uncompressed_offsets.begin(),
@@ -294,9 +294,10 @@ cuda::device_buffer<std::uint8_t> decompress_data(
       *std::max_element(uncompressed_sizes.begin(), uncompressed_sizes.end());
 
     cuda::device_buffer<std::uint8_t> decompressed_data(
-      stream, cudf::get_current_device_resource_ref(), uncompressed_data_size, cuda::no_init);
-    rmm::device_uvector<device_span<uint8_t>> decompressed_blocks(num_blocks, stream);
-    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      stream, mr.get_output_mr(), uncompressed_data_size, cuda::no_init);
+    cuda::device_buffer<device_span<uint8_t>> decompressed_blocks(
+      stream, mr.get_temporary_mr(), num_blocks, cuda::no_init);
+    thrust::tabulate(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                      decompressed_blocks.begin(),
                      decompressed_blocks.end(),
                      [off  = uncompressed_offsets.device_ptr(),
@@ -305,8 +306,9 @@ cuda::device_buffer<std::uint8_t> decompress_data(
                        return device_span<uint8_t>{data + off[i], size[i]};
                      });
 
-    rmm::device_uvector<codec_exec_result> decomp_results(num_blocks, stream);
-    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::device_buffer<codec_exec_result> decomp_results(
+      stream, mr.get_temporary_mr(), num_blocks, cuda::no_init);
+    thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                  decomp_results.begin(),
                  decomp_results.end(),
                  codec_exec_result{0, codec_status::FAILURE});
@@ -318,15 +320,15 @@ cuda::device_buffer<std::uint8_t> decompress_data(
                max_decomp_block_size,
                uncompressed_data_size,
                stream,
-               cudf::get_current_device_resource_ref());
-    CUDF_EXPECTS(thrust::equal(
-                   rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   uncompressed_sizes.d_begin(),
-                   uncompressed_sizes.d_end(),
-                   decomp_results.begin(),
-                   [] __device__(auto const& size, auto const& result) {
-                     return size == result.bytes_written and result.status == codec_status::SUCCESS;
-                   }),
+               mr.as_temporary());
+    CUDF_EXPECTS(thrust::equal(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                               uncompressed_sizes.d_begin(),
+                               uncompressed_sizes.d_end(),
+                               decomp_results.begin(),
+                               [] __device__(auto const& size, auto const& result) {
+                                 return size == result.bytes_written and
+                                        result.status == codec_status::SUCCESS;
+                               }),
                  "Error during Snappy decompression");
 
     // Update blocks offsets & sizes to refer to uncompressed data
@@ -349,7 +351,7 @@ std::vector<column_buffer> decode_data(metadata& meta,
                                        std::vector<std::pair<int, std::string>> const& selection,
                                        std::vector<data_type> const& column_types,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto out_buffers = std::vector<column_buffer>();
 
@@ -360,7 +362,8 @@ std::vector<column_buffer> decode_data(metadata& meta,
   }
 
   // Build gpu schema
-  auto schema_desc = cudf::detail::hostdevice_vector<gpu::schemadesc_s>(meta.schema.size(), stream);
+  auto schema_desc = cudf::detail::hostdevice_vector<gpu::schemadesc_s>(
+    meta.schema.size(), stream, cudf::get_current_device_resource_ref());
 
   uint32_t min_row_data_size = 0;
   int skip_field_cnt         = 0;
@@ -422,7 +425,7 @@ std::vector<column_buffer> decode_data(metadata& meta,
     }
   }
 
-  auto block_list = cudf::detail::make_device_uvector_async(
+  auto block_list = cudf::detail::make_device_buffer_async(
     meta.block_list, stream, cudf::get_current_device_resource_ref());
 
   schema_desc.host_to_device_async(stream);
@@ -461,7 +464,7 @@ std::vector<column_buffer> decode_data(metadata& meta,
 table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
                               avro_reader_options const& options,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   auto skip_rows = options.get_skip_rows();
   auto num_rows  = options.get_num_rows();
@@ -511,8 +514,9 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
       }
 
       if (meta.codec != "" && meta.codec != "null") {
-        auto decomp_block_data = decompress_data(*source, meta, block_data, stream);
-        block_data             = std::move(decomp_block_data);
+        auto decomp_block_data = decompress_data(
+          *source, meta, block_data, stream, cudf::get_current_device_resource_ref());
+        block_data = std::move(decomp_block_data);
       } else {
         auto dst_ofs = meta.block_list[0].offset;
         for (size_t i = 0; i < meta.block_list.size(); i++) {
@@ -536,8 +540,10 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
         }
       }
 
-      auto d_global_dict      = rmm::device_uvector<string_index_pair>(0, stream);
-      auto d_global_dict_data = rmm::device_uvector<char>(0, stream);
+      cuda::device_buffer<string_index_pair> d_global_dict(
+        stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
+      cuda::device_buffer<char> d_global_dict_data(
+        stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
 
       if (total_dictionary_entries > 0) {
         auto h_global_dict =
@@ -563,9 +569,9 @@ table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
           }
         }
 
-        d_global_dict = cudf::detail::make_device_uvector_async(
+        d_global_dict = cudf::detail::make_device_buffer_async(
           h_global_dict, stream, cudf::get_current_device_resource_ref());
-        d_global_dict_data = cudf::detail::make_device_uvector_async(
+        d_global_dict_data = cudf::detail::make_device_buffer_async(
           h_global_dict_data, stream, cudf::get_current_device_resource_ref());
 
         stream.sync();

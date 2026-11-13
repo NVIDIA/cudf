@@ -27,8 +27,9 @@
 #include <cooperative_groups/scan.h>
 #include <cub/warp/warp_reduce.cuh>
 #include <cub/warp/warp_scan.cuh>
+#include <cuda/buffer>
 #include <cuda/cmath>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/stream>
 
 namespace cudf {
@@ -123,7 +124,7 @@ struct url_encoder_fn {
 //
 std::unique_ptr<column> url_encode(strings_column_view const& input,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
 
@@ -144,7 +145,7 @@ std::unique_ptr<column> url_encode(strings_column_view const& input,
 // external API
 std::unique_ptr<column> url_encode(strings_column_view const& input,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::url_encode(input, stream, mr);
@@ -377,7 +378,7 @@ CUDF_KERNEL void url_decode_char_replacer(column_device_view const in_strings,
 //
 std::unique_ptr<column> url_decode(strings_column_view const& strings,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   size_type strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);
@@ -391,7 +392,8 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
   auto const d_strings = column_device_view::create(strings.parent(), stream);
 
   // build offsets column by computing the output row sizes and scanning the results
-  auto row_sizes = rmm::device_uvector<size_type>(strings_count, stream);
+  auto row_sizes = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
   url_decode_char_counter<num_warps_per_threadblock, char_block_size>
     <<<num_threadblocks, threadblock_size, 0, stream.get()>>>(*d_strings, row_sizes.data());
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -400,7 +402,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
     row_sizes.begin(), row_sizes.end(), stream, mr);
 
   // create the chars column
-  rmm::device_uvector<char> chars(out_chars_bytes, stream, mr);
+  rmm::device_uvector<char> chars(out_chars_bytes, stream, mr.get_output_mr());
   auto d_out_chars = chars.data();
   auto const offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
@@ -427,7 +429,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
 
 std::unique_ptr<column> url_decode(strings_column_view const& input,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::url_decode(input, stream, mr);

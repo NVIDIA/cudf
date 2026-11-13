@@ -19,6 +19,7 @@ import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataType
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
+from cudf_polars.dsl.utils.reshape import broadcast
 
 if TYPE_CHECKING:
     from typing import Self
@@ -37,6 +38,53 @@ _TIMESTAMP_TO_DURATION = {
     plc.TypeId.TIMESTAMP_MICROSECONDS: plc.TypeId.DURATION_MICROSECONDS,
     plc.TypeId.TIMESTAMP_NANOSECONDS: plc.TypeId.DURATION_NANOSECONDS,
 }
+
+# libcudf reads the weekday and month names for the "%a", "%A", "%b" and "%B"
+# specifiers from a 40 element names column, after the AM/PM strings (it yields
+# empty strings if the column is empty). Polars formats with chrono, which
+# always uses English names regardless of the process locale.
+_STRFTIME_NAMES = [
+    "AM",
+    "PM",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sun",
+    "Mon",
+    "Tue",
+    "Wed",
+    "Thu",
+    "Fri",
+    "Sat",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
 
 
 def _find_tzif_dir(zone: str | None) -> str | None:
@@ -211,7 +259,7 @@ def _apply_ambiguous(
     utc_earliest: plc.Column,
     is_ambiguous: plc.Column,
     ambiguous_scalar: str | None,
-    ambiguous_column: plc.Column,
+    ambiguous_column: plc.Column | None,
     null_scalar: plc.Scalar,
     stream: Stream,
 ) -> plc.Column:
@@ -237,6 +285,7 @@ def _apply_ambiguous(
         return plc.copying.copy_if_else(
             null_scalar, utc_latest, is_ambiguous, stream=stream
         )
+    assert ambiguous_column is not None
     string_type = plc.DataType(plc.TypeId.STRING)
     allowed = plc.Column.from_iterable_of_py(
         ["earliest", "latest", "null", "raise"],
@@ -324,7 +373,7 @@ def _apply_ambiguous(
 def _apply_ambiguous_without_transitions(
     local: plc.Column,
     ambiguous_scalar: str | None,
-    ambiguous_column: plc.Column,
+    ambiguous_column: plc.Column | None,
     stream: Stream,
 ) -> plc.Column:
     unit = local.type()
@@ -376,7 +425,7 @@ def _localize(
     to_zone: str,
     tzif_dir: str,
     ambiguous_scalar: str | None,
-    ambiguous_column: plc.Column,
+    ambiguous_column: plc.Column | None,
     non_existent: str,
     stream: Stream,
 ) -> plc.Column:
@@ -979,6 +1028,35 @@ def _truncate(column: plc.Column, plan: _TruncatePlan, stream: Stream) -> plc.Co
     )
 
 
+def _scale_ticks(
+    ticks: plc.Column, factor: int, stream: Stream, *, max_abs_ticks: int = 2**63
+) -> plc.Column:
+    """``ticks * factor`` for INT64 ``ticks``, or null where it overflows INT64."""
+    if max_abs_ticks * factor < 2**63:
+        return _wrapping(plc.binaryop.BinaryOperator.MUL, ticks, factor, stream)
+    limit = (2**63 - 1) // factor
+    column = plc.expressions.ColumnReference(0)
+    in_range = plc.transform.compute_column(
+        plc.Table([ticks]),
+        plc.expressions.Operation(
+            _AST.LOGICAL_AND,
+            plc.expressions.Operation(
+                _AST.GREATER_EQUAL, column, _int64_literal(-limit, stream)
+            ),
+            plc.expressions.Operation(
+                _AST.LESS_EQUAL, column, _int64_literal(limit, stream)
+            ),
+        ),
+        stream=stream,
+    )
+    return plc.copying.copy_if_else(
+        _wrapping(plc.binaryop.BinaryOperator.MUL, ticks, factor, stream),
+        plc.Scalar.from_py(None, _INT64, stream=stream),
+        in_range,
+        stream=stream,
+    )
+
+
 class TemporalFunction(Expr):
     class Name(IntEnum):
         """Internal and picklable representation of polars' `TemporalFunction`."""
@@ -1071,8 +1149,24 @@ class TemporalFunction(Expr):
         Name.Millennium: 1_000,
         Name.Century: 100,
     }
+    # Functions that read calendar fields; on a time-zone-aware column polars
+    # reads them from the local wall clock, not from the UTC instant.
+    _LOCAL_FIELDS: ClassVar[frozenset[Name]] = frozenset(
+        {
+            *_COMPONENT_MAP.keys(),
+            Name.Date,
+            Name.DaysInMonth,
+            Name.IsLeapYear,
+            Name.IsoYear,
+            Name.OrdinalDay,
+            Name.Quarter,
+            Name.Week,
+            *_CENTURY_MILLENNIUM_DIVISOR.keys(),
+        }
+    )
     _valid_ops: ClassVar[set[Name]] = {
         *_COMPONENT_MAP.keys(),
+        Name.Combine,
         Name.Round,
         Name.IsLeapYear,
         Name.OrdinalDay,
@@ -1142,12 +1236,28 @@ class TemporalFunction(Expr):
                 "pl.Datetime", self.children[0].dtype.polars_type
             ).time_zone
             self.tz_descs = (_get_tz_desc(from_zone), _get_tz_desc(self.options[0]))
+        elif (
+            self.name in self._LOCAL_FIELDS
+            or self.name is TemporalFunction.Name.ToString
+        ):
+            # Calendar fields and formatted datetimes use the column's local wall clock.
+            child_dtype = self.children[0].dtype.polars_type
+            if isinstance(child_dtype, pl.Datetime):
+                self.tz_descs = (_get_tz_desc(child_dtype.time_zone), None)
         elif self.name is TemporalFunction.Name.Time:
             child_dtype = self.children[0].dtype.polars_type
             if isinstance(child_dtype, pl.Datetime):
                 self.tz_descs = (_get_tz_desc(child_dtype.time_zone), None)
             elif not isinstance(child_dtype, pl.Time):
                 raise NotImplementedError(f"dt.time on {child_dtype} input")
+        elif self.name is TemporalFunction.Name.Combine:
+            date_dtype, time_dtype = (
+                child.dtype.polars_type for child in self.children
+            )
+            if not isinstance(time_dtype, (pl.Time, pl.Duration)):
+                raise NotImplementedError(f"dt.combine with {time_dtype} time input")
+            if isinstance(date_dtype, pl.Datetime):
+                self.tz_descs = (_get_tz_desc(date_dtype.time_zone), None)
         elif self.name in {
             TemporalFunction.Name.Truncate,
             TemporalFunction.Name.Round,
@@ -1174,6 +1284,14 @@ class TemporalFunction(Expr):
     ) -> Column:
         """Evaluate this expression given a dataframe for context."""
         columns = [child.evaluate(df, context=context) for child in self.children]
+        if self.name in self._LOCAL_FIELDS and self.tz_descs[0] is not None:
+            (column,) = columns
+            columns = [
+                Column(
+                    _local_wall_clock(column.obj, self.tz_descs[0], df.stream),
+                    dtype=column.dtype,
+                )
+            ]
         if self.name is TemporalFunction.Name.ConvertTimeZone:
             (column,) = columns
             return Column(
@@ -1219,6 +1337,98 @@ class TemporalFunction(Expr):
                 ),
                 dtype=self.dtype,
             )
+        if self.name is TemporalFunction.Name.Combine:
+            date_column, time_column = broadcast(*columns, stream=df.stream)
+            stream = df.stream
+            unit = self.dtype.plc_type
+            date = date_column.obj
+            if date.type().id() == plc.TypeId.TIMESTAMP_DAYS:
+                days = plc.unary.cast(
+                    plc.unary.bit_cast(
+                        date, plc.DataType(plc.TypeId.INT32), stream=stream
+                    ),
+                    _INT64,
+                    stream=stream,
+                )
+            else:
+                ticks_per_day = (
+                    _NANOSECONDS_PER_DAY
+                    // _TIMESTAMP_TICK_NANOSECONDS[date.type().id()]
+                )
+                ref = plc.expressions.ColumnReference(0)
+                days = _evaluate_int64(
+                    [plc.unary.bit_cast(date, _INT64, stream=stream)],
+                    plc.expressions.Operation(
+                        _AST.FLOOR_DIV, ref, _int64_literal(ticks_per_day, stream)
+                    ),
+                    stream,
+                )
+                if 2**63 // ticks_per_day >= 2**31:
+                    in_range = plc.transform.compute_column(
+                        plc.Table([days]),
+                        plc.expressions.Operation(
+                            _AST.LOGICAL_AND,
+                            plc.expressions.Operation(
+                                _AST.GREATER_EQUAL,
+                                ref,
+                                _int64_literal(-(2**31), stream),
+                            ),
+                            plc.expressions.Operation(
+                                _AST.LESS_EQUAL,
+                                ref,
+                                _int64_literal(2**31 - 1, stream),
+                            ),
+                        ),
+                        stream=stream,
+                    )
+                    days = plc.copying.copy_if_else(
+                        days,
+                        plc.Scalar.from_py(None, _INT64, stream=stream),
+                        in_range,
+                        stream=stream,
+                    )
+            tick = _TIMESTAMP_TICK_NANOSECONDS[unit.id()]
+            midnight = _scale_ticks(
+                days, _NANOSECONDS_PER_DAY // tick, stream, max_abs_ticks=2**31
+            )
+            time = time_column.obj
+            if plc.traits.is_timestamp(time.type()):
+                time = plc.unary.bit_cast(
+                    time, plc.DataType(plc.TypeId.DURATION_NANOSECONDS), stream=stream
+                )
+            time_tick = _unit_to_nanoseconds_conversion[time.type().id()]
+            time_ticks = plc.unary.bit_cast(time, _INT64, stream=stream)
+            if time_tick > tick:
+                time_ticks = _scale_ticks(time_ticks, time_tick // tick, stream)
+            elif time_tick < tick:
+                time_ticks = _evaluate_int64(
+                    [time_ticks],
+                    plc.expressions.Operation(
+                        _AST.DIV,
+                        plc.expressions.ColumnReference(0),
+                        _int64_literal(tick // time_tick, stream),
+                    ),
+                    stream,
+                )
+            result = plc.unary.bit_cast(
+                _wrapping(
+                    plc.binaryop.BinaryOperator.ADD, midnight, time_ticks, stream
+                ),
+                unit,
+                stream=stream,
+            )
+            if (zone_desc := self.tz_descs[0]) is not None:
+                zone, tzif_dir = zone_desc
+                result = _localize(
+                    result,
+                    zone,
+                    tzif_dir,
+                    ambiguous_scalar="raise",
+                    ambiguous_column=None,
+                    non_existent="raise",
+                    stream=stream,
+                )
+            return Column(result, dtype=self.dtype)
         if self.name is TemporalFunction.Name.Time:
             (column,) = columns
             if isinstance(column.dtype.polars_type, pl.Time):
@@ -1388,10 +1598,10 @@ class TemporalFunction(Expr):
                 )
             return Column(
                 plc.strings.convert.convert_datetime.from_timestamps(
-                    column.obj,
+                    _local_wall_clock(column.obj, self.tz_descs[0], df.stream),
                     format_string,
                     plc.Column.from_iterable_of_py(
-                        [], dtype=self.dtype.plc_type, stream=df.stream
+                        _STRFTIME_NAMES, dtype=self.dtype.plc_type, stream=df.stream
                     ),
                     stream=df.stream,
                 ),

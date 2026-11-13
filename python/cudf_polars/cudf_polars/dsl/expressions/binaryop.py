@@ -6,21 +6,64 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, localcontext
 from typing import TYPE_CHECKING, ClassVar
 
+import polars as pl
 from polars import _plr as polars
+from polars.exceptions import ComputeError
 
 import pylibcudf as plc
 
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
+from cudf_polars.dsl.expressions.literal import Literal
 
 pl_expr = polars._expr_nodes
 
 if TYPE_CHECKING:
+    from rmm.pylibrmm.stream import Stream
+
     from cudf_polars.containers import DataFrame, DataType
 
 __all__ = ["BinOp"]
+
+_DECIMAL128_MAX_PRECISION = 38
+
+
+def _decimal_precision(node: Expr) -> int:
+    """
+    The number of digits needed for the values of a Decimal expression.
+
+    A literal only needs as many digits as its value, which can be far fewer
+    than its type declares: polars gives the literal ``24`` the type
+    ``Decimal(38, 0)``.
+    """
+    dtype = node.dtype.polars_type
+    assert isinstance(dtype, pl.Decimal)
+    if isinstance(node, Literal) and isinstance(node.value, Decimal):
+        # Polars writes a Decimal literal with exactly the scale of its dtype, so
+        # the scaled value is a whole number. The default context rounds to 28
+        # digits, which would change the count near the 38 digit limit.
+        with localcontext(prec=2 * _DECIMAL128_MAX_PRECISION):
+            return max(len(str(abs(int(node.value.scaleb(dtype.scale))))), 1)
+    return dtype.precision or _DECIMAL128_MAX_PRECISION
+
+
+def _decimal_rescale_may_overflow(left: Expr, right: Expr) -> bool:
+    """Whether rescaling two Decimals to their finer scale can exceed 38 digits."""
+    if not (
+        plc.traits.is_fixed_point(left.dtype.plc_type)
+        and plc.traits.is_fixed_point(right.dtype.plc_type)
+    ):
+        return False
+    lt, rt = left.dtype.polars_type, right.dtype.polars_type
+    assert isinstance(lt, pl.Decimal)
+    assert isinstance(rt, pl.Decimal)
+    lp = _decimal_precision(left)
+    rp = _decimal_precision(right)
+    scale = max(lt.scale, rt.scale)
+    return max(lp - lt.scale, rp - rt.scale) + scale > _DECIMAL128_MAX_PRECISION
 
 
 class BinOp(Expr):
@@ -43,6 +86,12 @@ class BinOp(Expr):
         self.op = op
         self.children = (left, right)
         self.is_pointwise = True
+        if op in BinOp._COMPARISONS and _decimal_rescale_may_overflow(left, right):
+            # Polars 2.1 compares decimals of different scales exactly, but
+            # libcudf rescales to the finer scale in 128 bits and wraps.
+            raise NotImplementedError(
+                "Comparing Decimals whose common scale does not fit in 38 digits"
+            )
         if not plc.binaryop.is_supported_operation(
             self.dtype.plc_type, left.dtype.plc_type, right.dtype.plc_type, op
         ):
@@ -51,6 +100,34 @@ class BinOp(Expr):
                 f"for types {left.dtype.id().name} and {right.dtype.id().name} "
                 f"with output type {self.dtype.id().name}"
             )
+
+    _COMPARISONS: ClassVar[frozenset[plc.binaryop.BinaryOperator]] = frozenset(
+        {
+            plc.binaryop.BinaryOperator.EQUAL,
+            plc.binaryop.BinaryOperator.NULL_EQUALS,
+            plc.binaryop.BinaryOperator.NOT_EQUAL,
+            plc.binaryop.BinaryOperator.NULL_NOT_EQUALS,
+            plc.binaryop.BinaryOperator.LESS,
+            plc.binaryop.BinaryOperator.LESS_EQUAL,
+            plc.binaryop.BinaryOperator.GREATER,
+            plc.binaryop.BinaryOperator.GREATER_EQUAL,
+        }
+    )
+
+    _NAN_AWARE_COMPARISONS: ClassVar[frozenset[plc.binaryop.BinaryOperator]] = (
+        frozenset(
+            {
+                plc.binaryop.BinaryOperator.EQUAL,
+                plc.binaryop.BinaryOperator.NULL_EQUALS,
+                plc.binaryop.BinaryOperator.NOT_EQUAL,
+                plc.binaryop.BinaryOperator.NULL_NOT_EQUALS,
+                plc.binaryop.BinaryOperator.LESS,
+                plc.binaryop.BinaryOperator.LESS_EQUAL,
+                plc.binaryop.BinaryOperator.GREATER,
+                plc.binaryop.BinaryOperator.GREATER_EQUAL,
+            }
+        )
+    )
 
     _BOOL_KLEENE_MAPPING: ClassVar[
         dict[plc.binaryop.BinaryOperator, plc.binaryop.BinaryOperator]
@@ -132,9 +209,107 @@ class BinOp(Expr):
                     ),
                     stream=df.stream,
                 )
-        return Column(
-            plc.binaryop.binary_operation(
-                lop, rop, self.op, self.dtype.plc_type, stream=df.stream
-            ),
-            dtype=self.dtype,
+        result = plc.binaryop.binary_operation(
+            lop, rop, self.op, self.dtype.plc_type, stream=df.stream
         )
+        if self.op in BinOp._NAN_AWARE_COMPARISONS and (
+            plc.traits.is_floating_point(left.dtype.plc_type)
+            and plc.traits.is_floating_point(right.dtype.plc_type)
+        ):
+            result = self._with_polars_nan_semantics(left, right, result, df.stream)
+        if self.op == plc.binaryop.BinaryOperator.DIV and plc.traits.is_fixed_point(
+            self.dtype.plc_type
+        ):
+            self._raise_on_decimal_division_by_zero(right, result, df.stream)
+        return Column(result, dtype=self.dtype)
+
+    def _with_polars_nan_semantics(
+        self,
+        left: Column,
+        right: Column,
+        result: plc.Column,
+        stream: Stream,
+    ) -> plc.Column:
+        """
+        Make a floating point comparison treat NaN the way Polars does.
+
+        Polars orders NaN above every other value and considers it equal to
+        itself, but libcudf follows IEEE 754, where every comparison with NaN
+        except ``!=`` is false.
+        """
+        # TODO: Use NaN-aware comparison operators once libcudf has them, and
+        # remove this workaround. https://github.com/NVIDIA/cudf/issues/18930
+        binop = plc.binaryop.BinaryOperator
+        bool_type = plc.DataType(plc.TypeId.BOOL8)
+
+        def is_nan(operand: Column, other: Column) -> plc.Column | plc.Scalar:
+            flags = plc.unary.is_nan(operand.obj, stream=stream)
+            # A scalar is broadcast against a longer column, as in do_evaluate.
+            if operand.is_scalar and operand.size != other.size:
+                return flags.to_scalar(stream=stream)
+            return flags
+
+        def combine(
+            op: plc.binaryop.BinaryOperator,
+            lhs: plc.Column | plc.Scalar,
+            rhs: plc.Column | plc.Scalar,
+        ) -> plc.Column:
+            return plc.binaryop.binary_operation(lhs, rhs, op, bool_type, stream=stream)
+
+        left_nan, right_nan = is_nan(left, right), is_nan(right, left)
+        # NaN flags are never null, so nulls in the result still come from the
+        # operands.
+        if self.op == binop.GREATER:
+            return combine(
+                binop.LOGICAL_OR, result, combine(binop.GREATER, left_nan, right_nan)
+            )
+        if self.op == binop.GREATER_EQUAL:
+            return combine(binop.LOGICAL_OR, result, left_nan)
+        if self.op == binop.LESS:
+            return combine(
+                binop.LOGICAL_OR, result, combine(binop.GREATER, right_nan, left_nan)
+            )
+        if self.op == binop.LESS_EQUAL:
+            return combine(binop.LOGICAL_OR, result, right_nan)
+        both_nan = combine(binop.LOGICAL_AND, left_nan, right_nan)
+        if self.op in {binop.EQUAL, binop.NULL_EQUALS}:
+            return combine(binop.LOGICAL_OR, result, both_nan)
+        assert self.op in {binop.NOT_EQUAL, binop.NULL_NOT_EQUALS}
+        return combine(binop.GREATER, result, both_nan)
+
+    @staticmethod
+    def _raise_on_decimal_division_by_zero(
+        right: Column, result: plc.Column, stream: Stream
+    ) -> None:
+        bool_type = plc.DataType(plc.TypeId.BOOL8)
+
+        def any_true(mask: plc.Column) -> bool:
+            return bool(
+                plc.reduce.reduce(
+                    mask, plc.aggregation.any(), bool_type, stream=stream
+                ).to_py(stream=stream)
+            )
+
+        is_zero = plc.binaryop.binary_operation(
+            right.obj,
+            plc.Scalar.from_py(Decimal(0), right.obj.type(), stream=stream),
+            plc.binaryop.BinaryOperator.EQUAL,
+            bool_type,
+            stream=stream,
+        )
+        if right.size == 1:
+            # A scalar divisor: one value decides, so the result is only
+            # looked at when that value is zero.
+            if not any_true(is_zero):
+                return
+            divides_by_zero = plc.unary.is_valid(result, stream=stream)
+        else:
+            divides_by_zero = plc.binaryop.binary_operation(
+                is_zero,
+                plc.unary.is_valid(result, stream=stream),
+                plc.binaryop.BinaryOperator.LOGICAL_AND,
+                bool_type,
+                stream=stream,
+            )
+        if any_true(divides_by_zero):
+            raise ComputeError("division by zero Decimal")

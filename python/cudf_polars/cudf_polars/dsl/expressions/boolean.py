@@ -16,6 +16,7 @@ from polars.exceptions import ComputeError, InvalidOperationError
 import pylibcudf as plc
 
 from cudf_polars.containers import Column, DataType
+from cudf_polars.containers.column import with_mask_from
 from cudf_polars.dsl.expressions.base import (
     Col,
     ExecutionContext,
@@ -131,6 +132,15 @@ class BooleanFunction(Expr):
             and plc.traits.is_nested(children[1].dtype.plc_type)
         ):
             raise NotImplementedError("is_in with a nested column haystack")
+        if (
+            self.name is BooleanFunction.Name.IsIn
+            and len(children) == 2
+            and isinstance(children[1], LiteralColumn)
+            and isinstance(children[1].value.dtype, pl.List)
+            and len(children[1].value) > 1
+        ):
+            # One list per row, rather than a single list to test membership of.
+            raise NotImplementedError("is_in with a per-row list haystack")
         if self.name is BooleanFunction.Name.IsClose:
             abs_tol, rel_tol, _ = self.options
             if abs_tol < 0.0:
@@ -375,8 +385,7 @@ class BooleanFunction(Expr):
                     values.size,
                     stream=df.stream,
                 )
-                out = base.with_mask(values.obj.null_mask(), values.null_count)
-                return Column(out, dtype=self.dtype)
+                return Column(with_mask_from(base, values, df.stream), dtype=self.dtype)
             to_search = [-float("inf"), float("inf")]
             if is_finite:
                 # NaN is neither finite not infinite
@@ -392,7 +401,7 @@ class BooleanFunction(Expr):
                     result, plc.unary.UnaryOperator.NOT, stream=df.stream
                 )
             return Column(
-                result.with_mask(values.obj.null_mask(), values.null_count),
+                with_mask_from(result, values, df.stream),
                 dtype=self.dtype,
             )
         columns = [child.evaluate(df, context=context) for child in self.children]
@@ -461,8 +470,7 @@ class BooleanFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-            out = base.with_mask(column.obj.null_mask(), column.null_count)
-            return Column(out, dtype=self.dtype)
+            return Column(with_mask_from(base, column, df.stream), dtype=self.dtype)
         elif self.name is BooleanFunction.Name.IsFirstDistinct:
             (column,) = columns
             return self._distinct(
@@ -574,6 +582,18 @@ class BooleanFunction(Expr):
                 ).astype(needles.dtype, stream=df.stream)
             else:
                 haystack_size = haystack.size
+            if haystack_size and haystack.obj.type().id() == plc.TypeId.EMPTY:
+                # The haystack only contains nulls (e.g. ``is_in([None])``) and
+                # libcudf cannot search a column of type EMPTY.
+                if nulls_equal:
+                    out = plc.unary.is_null(needles.obj, stream=df.stream)
+                else:
+                    out = plc.Column.from_scalar(
+                        plc.Scalar.from_py(py_val=False, stream=df.stream),
+                        needles.size,
+                        stream=df.stream,
+                    ).with_mask(needles.obj.null_mask(), needles.null_count)
+                return Column(out, dtype=self.dtype)
             if haystack_size:
                 result = plc.search.contains(
                     haystack.obj,
@@ -593,7 +613,7 @@ class BooleanFunction(Expr):
                 stream=df.stream,
             )
             if not nulls_equal:
-                out = out.with_mask(needles.obj.null_mask(), needles.null_count)
+                out = with_mask_from(out, needles, df.stream)
             return Column(out, dtype=self.dtype)
         elif self.name is BooleanFunction.Name.IsSorted:
             (column,) = columns

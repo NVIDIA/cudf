@@ -10,6 +10,7 @@
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
+#include <cudf/join/asof_join.hpp>
 #include <cudf/join/conditional_join.hpp>
 #include <cudf/join/direct_join.hpp>
 #include <cudf/join/filtered_join.hpp>
@@ -58,6 +59,31 @@ TEST_F(JoinTest, InnerJoin)
   cudf::inner_join(table0, table1, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
 }
 
+TEST_F(JoinTest, AsofJoin)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> right_on{1, 3, 5};
+  cudf::test::fixed_width_column_wrapper<int32_t> left_on{2, 5};
+  cudf::test::strings_column_wrapper right_by{"a", "a", "b"};
+  cudf::test::strings_column_wrapper left_by{"a", "b"};
+
+  cudf::experimental::asof_join ungrouped(cudf::table_view{}, right_on, stream);
+  [[maybe_unused]] auto ungrouped_result =
+    ungrouped.join(cudf::table_view{},
+                   left_on,
+                   cudf::experimental::asof_join_strategy::BACKWARD,
+                   cudf::experimental::asof_join_exact_matches::YES,
+                   stream);
+
+  cudf::experimental::asof_join grouped(cudf::table_view{{right_by}}, right_on, stream);
+  [[maybe_unused]] auto grouped_result =
+    grouped.join(cudf::table_view{{left_by}},
+                 left_on,
+                 cudf::experimental::asof_join_strategy::BACKWARD,
+                 cudf::experimental::asof_join_exact_matches::YES,
+                 stream);
+}
+
 TEST_F(JoinTest, StreamingHashJoin)
 {
   auto const stream = cudf::test::get_default_stream();
@@ -84,6 +110,18 @@ TEST_F(JoinTest, SortMergeInnerJoin)
   cudf::sort_merge_join obj(
     table1, cudf::sorted::NO, cudf::null_equality::EQUAL, cudf::test::get_default_stream());
   obj.inner_join(table0, cudf::test::get_default_stream());
+}
+
+TEST_F(JoinTest, HashJoinPartitionedJoin)
+{
+  auto const stream = cudf::test::get_default_stream();
+  cudf::hash_join obj(table1, cudf::null_equality::EQUAL, stream);
+  auto context = cudf::join_partition_context{
+    std::make_unique<cudf::join_match_context>(obj.left_join_match_context(table0, stream)),
+    1,
+    table0.num_rows()};
+  std::ignore = context.left_table_context->output_size(stream);
+  std::ignore = obj.partitioned_left_join(context, stream);
 }
 
 TEST_F(JoinTest, LeftJoin)
@@ -218,6 +256,7 @@ TEST_F(JoinTest, FullJoinWithPostFilter)
                                                   right_indices,
                                                   predicate,
                                                   cudf::join_kind::FULL_JOIN,
+                                                      {},
                                                   stream);
   EXPECT_EQ(size, table0.num_rows() + table1.num_rows());
   EXPECT_EQ(result.first->size(), table0.num_rows() + table1.num_rows());

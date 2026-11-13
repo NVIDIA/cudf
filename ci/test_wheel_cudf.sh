@@ -5,35 +5,50 @@
 set -euo pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 RUN_PYLIBCUDF_TESTS="${RUN_PYLIBCUDF_TESTS:-true}"
 RUN_CUDF_TESTS="${RUN_CUDF_TESTS:-true}"
 RUN_CUDF_STREAMING_TESTS="${RUN_CUDF_STREAMING_TESTS:-true}"
 
-# When CUPY_NIGHTLY=true, test against the nightly cupy wheel published at
-# https://pypi.anaconda.org/scientific-python-nightly-wheels/simple/ instead of
-# PyPI. The HTTP response from pypi.anaconda.org doesn't currently let pip
-# reuse the wheel when installing this cupy into multiple virtual enviroments,
-# so we download the wheel once and install from the local filesystem.
+# uv's shared cache reuses the nightly wheel across the isolated test environments.
 CUPY_NIGHTLY="${CUPY_NIGHTLY:-false}"
-CUPY_NIGHTLY_PIP_ARGS=()
+CUPY_NIGHTLY_UV_ARGS=()
 CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
-if [[ "${CUPY_NIGHTLY}" == "true" ]]; then
-  # The pre-release specifier here only lets pip consider pre-releases of cupy,
-  # which are merged with the constraints from depednecies.yaml to find the latest cupy;
-  cupy_nightly_spec="cupy-cuda${CUDA_MAJOR}x>=0.0.0a0"
-  rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}" constraints
-  CUPY_NIGHTLY_WHEELHOUSE="$(mktemp -d)"
-  rapids-logger "Downloading nightly cupy wheel"
-  rapids-pip-retry download \
-    --no-deps \
-    --constraint "${PIP_CONSTRAINT}" \
-    --dest "${CUPY_NIGHTLY_WHEELHOUSE}" \
-    --extra-index-url "https://pypi.anaconda.org/scientific-python-nightly-wheels/simple/" \
-    "${cupy_nightly_spec}"
-  CUPY_NIGHTLY_PIP_ARGS=(--find-links "${CUPY_NIGHTLY_WHEELHOUSE}" "${cupy_nightly_spec}")
+CUDA_CORE_UV_ARGS=()
+if [[ "${CUDA_MAJOR}" == "12" ]]; then
+  # cuda-core is not a cuDF dependency, but it's currently required to
+  # in the install command to ensure we get a compatible version of
+  # cuda-bindings and cuda-core via numba-cuda-mlir.
+  # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
+  CUDA_CORE_UV_ARGS=("cuda-core[cu12]")
 fi
+if [[ "${CUPY_NIGHTLY}" == "true" ]]; then
+  # Keep the RAPIDS nightly index and any caller-provided indexes.
+  export UV_EXTRA_INDEX_URL="${UV_EXTRA_INDEX_URL} ${NV_GHA_RUNNERS_PYPI_ANACONDA_CACHE_URL:-https://pypi.anaconda.org}/scientific-python-nightly-wheels/simple/"
+  CUPY_NIGHTLY_UV_ARGS=(
+    --prerelease-package "cupy-cuda${CUDA_MAJOR}x=allow"
+    --upgrade-package "cupy-cuda${CUDA_MAJOR}x"
+    "cupy-cuda${CUDA_MAJOR}x>=0.0.0a0"
+  )
+fi
+
+check_cupy_nightly() {
+  if [[ "${CUPY_NIGHTLY}" == "true" ]]; then
+    # A compatible stable release must not silently replace the nightly coverage.
+    python - "${CUDA_MAJOR}" <<'PY'
+from importlib.metadata import version
+import sys
+
+from packaging.version import Version
+
+installed = version(f"cupy-cuda{sys.argv[1]}x")
+if not Version(installed).is_prerelease:
+    raise RuntimeError(f"Expected nightly CuPy, installed {installed}")
+PY
+  fi
+}
 
 pylibcudf_timeout=30m
 cudf_timeout=30m
@@ -48,41 +63,40 @@ PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel
 
 if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; then
   # Generate constraints (possibly pinning to oldest support versions of dependencies).
-  rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}" constraints
+  rapids-generate-pip-constraints py_test_cudf "${PIP_CONSTRAINT}"
 
   if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" ]]; then
     rapids-logger "Install libcudf and verify its runtime dependencies in a virtual environment"
 
-    python -m venv libcudf-env
+    uv venv --python "$(command -v python)" libcudf-env
     . libcudf-env/bin/activate
 
-    rapids-pip-retry install \
-      -v \
-      --prefer-binary \
+    rapids-uv-pip install \
       --constraint "${PIP_CONSTRAINT}" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
     python -c "import libcudf; assert libcudf.load_library() is not None"
     deactivate
 
     # To test pylibcudf without its optional dependencies, we create a virtual environment.
-    python -m venv pylibcudf-env
+    uv venv --python "$(command -v python)" pylibcudf-env
     . pylibcudf-env/bin/activate
 
     rapids-logger "Install pylibcudf and its basic dependencies"
 
     # Notes:
     #
-    #   * echo to expand wildcard before adding `[test]` requires for pip
+    #   * echo to expand wildcard before adding `[test]` requires for the installer
     #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
     #     that environment variable is ignored if any other --constraint are passed via the CLI
     #
-    rapids-pip-retry install \
-      -v \
-      --prefer-binary \
+    rapids-uv-pip install \
       --constraint "${PIP_CONSTRAINT}" \
-      "${CUPY_NIGHTLY_PIP_ARGS[@]}" \
+      "${CUDA_CORE_UV_ARGS[@]}" \
+      "${CUPY_NIGHTLY_UV_ARGS[@]}" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
       "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]"
+
+    check_cupy_nightly
 
     rapids-logger "pytest pylibcudf without optional dependencies"
     pushd python/pylibcudf/tests
@@ -105,14 +119,15 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
 
     rapids-logger "Install cudf, pylibcudf, and test requirements"
 
-    rapids-pip-retry install \
-      -v \
-      --prefer-binary \
+    rapids-uv-pip install \
       --constraint "${PIP_CONSTRAINT}" \
-      "${CUPY_NIGHTLY_PIP_ARGS[@]}" \
+      "${CUDA_CORE_UV_ARGS[@]}" \
+      "${CUPY_NIGHTLY_UV_ARGS[@]}" \
       "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
       "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test, pyarrow, numpy]"
+
+    check_cupy_nightly
 
     if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" ]]; then
       rapids-logger "pytest pylibcudf"
@@ -142,16 +157,14 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
   LIBCUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "$RAPIDS_CUDA_VERSION")")
 
   # Generate constraints (possibly pinning to oldest support versions of dependencies).
-  rapids-generate-pip-constraints py_test_cudf_streaming "${PIP_CONSTRAINT}" constraints
+  rapids-generate-pip-constraints py_test_cudf_streaming "${PIP_CONSTRAINT}"
 
   rapids-logger "Install libcudf_streaming and verify its runtime dependencies in a virtual environment"
 
-  python -m venv libcudf-streaming-env
+  uv venv --python "$(command -v python)" libcudf-streaming-env
   . libcudf-streaming-env/bin/activate
 
-  rapids-pip-retry install \
-    -v \
-    --prefer-binary \
+  rapids-uv-pip install \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
@@ -160,18 +173,18 @@ if [[ "${RUN_CUDF_STREAMING_TESTS}" == "true" ]]; then
 
   rapids-logger "Install cudf_streaming and its dependencies"
 
-  python -m venv cudf-streaming-env
+  uv venv --python "$(command -v python)" cudf-streaming-env
   . cudf-streaming-env/bin/activate
 
-  rapids-pip-retry install \
-    -v \
-    --prefer-binary \
+  rapids-uv-pip install \
     --constraint "${PIP_CONSTRAINT}" \
-    "${CUPY_NIGHTLY_PIP_ARGS[@]}" \
+    "${CUPY_NIGHTLY_UV_ARGS[@]}" \
     "$(echo "${CUDF_STREAMING_WHEELHOUSE}"/cudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
     "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
+
+  check_cupy_nightly
 
   rapids-logger "pytest cudf_streaming"
   pushd python/cudf_streaming/cudf_streaming/tests

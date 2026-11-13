@@ -18,14 +18,15 @@
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/iterator>
+#include <cuda/std/cmath>
 #include <cuda/std/limits>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
@@ -63,7 +64,6 @@ struct DeviceRolling {
 
   // operations we don't support
   template <typename T = InputType, aggregation::Kind O = op>
-    requires(not is_supported<T, O>())
   explicit DeviceRolling(size_type min_periods) : min_periods(min_periods)
   {
     CUDF_FAIL("Invalid aggregation/type pair");
@@ -82,15 +82,25 @@ struct DeviceRolling {
     using AggOp = typename corresponding_operator<op>::type;
     AggOp agg_op;
 
+    // A NaN element never replaces the accumulated MIN/MAX value, so a window of only NaNs
+    // would otherwise produce the identity value (+/-infinity) instead of NaN
+    constexpr bool track_nans = cuda::std::is_floating_point_v<OutputType> &&
+                                (op == aggregation::MIN || op == aggregation::MAX);
+
     cudf::size_type count = 0;
+    bool all_nans         = true;
     OutputType val        = AggOp::template identity<OutputType>();
 
     for (size_type j = start_index; j < end_index; j++) {
       if (!has_nulls || input.is_valid_nocheck(j)) {
         OutputType element = input.element<device_storage_type_t<InputType>>(j);
-        val                = agg_op(element, val);
+        if constexpr (track_nans) { all_nans = all_nans && cuda::std::isnan(element); }
+        val = agg_op(element, val);
         count++;
       }
+    }
+    if constexpr (track_nans) {
+      if (count > 0 && all_nans) { val = cuda::std::numeric_limits<OutputType>::quiet_NaN(); }
     }
 
     bool output_is_valid = (count >= min_periods);
@@ -237,8 +247,7 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
   using DeviceRollingArgMinMaxBase<cudf::dictionary32, op>::min_periods;
 
   struct keys_dispatch_fn {
-    template <typename T>
-      requires(cudf::is_dictionary_key<T>())
+    template <cudf::concepts::dictionary_key T>
     size_type __device__ operator()(column_device_view const& dict,
                                     bool has_nulls,
                                     size_type start_index,
@@ -263,7 +272,6 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
       return count >= min_periods ? index : -1;
     }
     template <typename T>
-      requires(not cudf::is_dictionary_key<T>())
     size_type __device__
     operator()(column_device_view const&, bool, size_type, size_type, size_type)
     {
@@ -537,9 +545,7 @@ struct DeviceRollingLead {
   }
 
   template <typename T = InputType>
-  DeviceRollingLead(size_type _row_offset)
-    requires(!is_supported<T>())
-    : row_offset(_row_offset)
+  DeviceRollingLead(size_type _row_offset) : row_offset(_row_offset)
   {
     CUDF_FAIL("Invalid aggregation/type pair");
   }
@@ -602,9 +608,7 @@ struct DeviceRollingLag {
   }
 
   template <typename T = InputType>
-  DeviceRollingLag(size_type _row_offset)
-    requires(!is_supported<T>())
-    : row_offset(_row_offset)
+  DeviceRollingLag(size_type _row_offset) : row_offset(_row_offset)
   {
     CUDF_FAIL("Invalid aggregation/type pair");
   }
@@ -705,7 +709,7 @@ struct corresponding_rolling_operator<InputType, aggregation::Kind::LAG> {
 /**
  * @brief Functor for creating a device rolling operator based on input type and aggregation type.
  */
-template <typename InputType, aggregation::Kind k, typename = void>
+template <typename InputType, aggregation::Kind k>
 struct create_rolling_operator {
   auto operator()(size_type min_periods, rolling_aggregation const&)
   {
@@ -750,9 +754,8 @@ struct create_rolling_operator<InputType, aggregation::Kind::LAG> {
   }
 };
 
-template <typename InputType, aggregation::Kind k>
-  requires(std::is_same_v<InputType, cudf::string_view> &&
-           (k == aggregation::Kind::ARGMIN || k == aggregation::Kind::ARGMAX))
+template <cudf::concepts::string_view InputType, aggregation::Kind k>
+  requires(k == aggregation::Kind::ARGMIN or k == aggregation::Kind::ARGMAX)
 struct create_rolling_operator<InputType, k> {
   auto operator()(size_type min_periods, rolling_aggregation const&)
   {
@@ -760,9 +763,8 @@ struct create_rolling_operator<InputType, k> {
   }
 };
 
-template <typename InputType, aggregation::Kind k>
-  requires(std::is_same_v<InputType, cudf::dictionary32> &&
-           (k == aggregation::Kind::ARGMIN || k == aggregation::Kind::ARGMAX))
+template <cudf::concepts::dictionary InputType, aggregation::Kind k>
+  requires(k == aggregation::Kind::ARGMIN or k == aggregation::Kind::ARGMAX)
 struct create_rolling_operator<InputType, k> {
   auto operator()(size_type min_periods, rolling_aggregation const&)
   {
@@ -770,9 +772,8 @@ struct create_rolling_operator<InputType, k> {
   }
 };
 
-template <typename InputType, aggregation::Kind k>
-  requires(std::is_same_v<InputType, cudf::struct_view> &&
-           (k == aggregation::Kind::ARGMIN || k == aggregation::Kind::ARGMAX))
+template <cudf::concepts::struct_view InputType, aggregation::Kind k>
+  requires(k == aggregation::Kind::ARGMIN or k == aggregation::Kind::ARGMAX)
 struct create_rolling_operator<InputType, k> {
   template <typename Comparator>
   auto operator()(size_type min_periods, Comparator const& comp)

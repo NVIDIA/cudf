@@ -10,6 +10,7 @@
 #include <cudf/detail/unary.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -297,7 +298,7 @@ struct fixed_point_negate {
 template <typename T, template <typename> typename FixedPointFunctor>
 std::unique_ptr<column> unary_op_with(column_view const& input,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   using Type                     = device_storage_type_t<T>;
   using FixedPointUnaryOpFunctor = FixedPointFunctor<Type>;
@@ -339,7 +340,7 @@ std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
                                            cuda::device_buffer<cudf::bitmask_type>&& null_mask,
                                            size_type null_count,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   auto const size = cudf::distance(begin, end);
 
@@ -364,7 +365,7 @@ std::unique_ptr<cudf::column> transform_fn(InputIterator begin,
 template <typename T, typename UFN>
 std::unique_ptr<cudf::column> transform_fn(cudf::column_view const& input,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   return transform_fn<T, UFN>(input.begin<T>(),
                               input.end<T>(),
@@ -377,7 +378,7 @@ std::unique_ptr<cudf::column> transform_fn(cudf::column_view const& input,
 template <typename T, typename UFN>
 std::unique_ptr<cudf::column> transform_fn(cudf::dictionary_column_view const& input,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   auto dictionary_view = cudf::column_device_view::create(input.parent(), stream);
   auto dictionary_itr  = dictionary::detail::make_dictionary_iterator<T>(*dictionary_view);
@@ -430,7 +431,7 @@ struct MathOpDispatcher {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
     requires(Supported<T>::is_supported())
   {
     return (input.type().id() == type_id::DICTIONARY32)
@@ -462,7 +463,7 @@ struct BitwiseCountDispatcher {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
     requires(is_supported<T>())
   {
     if (input.type().id() == type_id::DICTIONARY32) {
@@ -504,7 +505,7 @@ struct LogicalOpDispatcher {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
     requires(is_supported<T>())
   {
     if (input.type().id() == type_id::DICTIONARY32) {
@@ -536,17 +537,16 @@ struct LogicalOpDispatcher {
 struct FixedPointOpDispatcher {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(not cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::fixed_point<T>)
   {
     CUDF_FAIL("FixedPointOpDispatcher only for fixed_point");
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      cudf::unary_operator op,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(cudf::is_fixed_point<T>())
+                                     cudf::memory_resources mr)
   {
     // clang-format off
     switch (op) {
@@ -565,7 +565,7 @@ struct FixedPointOpDispatcher {
 std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
                                               cudf::unary_operator op,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   if (checked_arithmetic::is_checked(op)) {
     // Omitting an error policy for a checked operator means propagate any row error.
@@ -668,7 +668,7 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
 std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
                                               cudf::unary_operator op,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::unary_operation(input, op, stream, mr);
@@ -678,7 +678,7 @@ std::unique_ptr<cudf::column> unary_operation(cudf::column_view const& input,
                                               cudf::unary_operator op,
                                               cudf::error_policy policy,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::checked_arithmetic::unary_operation(input, op, policy, stream, mr);

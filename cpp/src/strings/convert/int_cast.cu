@@ -11,6 +11,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -20,7 +21,8 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/functional>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
@@ -35,8 +37,7 @@ namespace detail {
 namespace {
 
 struct dispatch_set_int_fn {
-  template <typename T>
-    requires(cudf::is_integral_not_bool<T>())
+  template <cudf::concepts::integral_not_bool T>
   __device__ void operator()(mutable_column_device_view& d_results,
                              size_type idx,
                              uint64_t value) const
@@ -44,7 +45,6 @@ struct dispatch_set_int_fn {
     d_results.element<T>(idx) = static_cast<T>(value);
   }
   template <typename T>
-    requires(not cudf::is_integral_not_bool<T>())
   __device__ void operator()(mutable_column_device_view&, size_type, uint64_t) const
   {
     CUDF_UNREACHABLE("invalid type");
@@ -82,7 +82,7 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
                                         data_type output_type,
                                         endian swap,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::is_integral_not_bool(output_type),
                "Output type must be an integer type",
@@ -113,7 +113,7 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
                                         data_type output_type,
                                         endian swap,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::cast_to_integer(input, output_type, swap, stream, mr);
@@ -122,8 +122,7 @@ std::unique_ptr<column> cast_to_integer(strings_column_view const& input,
 namespace detail {
 
 struct dispatch_get_int_fn {
-  template <typename T>
-    requires(cudf::is_integral_not_bool<T>())
+  template <cudf::concepts::integral_not_bool T>
   __device__ uint64_t operator()(column_device_view const& d_results, size_type idx) const
   {
     // convert through the unsigned type to prevent sign-extension
@@ -131,7 +130,6 @@ struct dispatch_get_int_fn {
       static_cast<cuda::std::make_unsigned_t<T>>(d_results.element<T>(idx)));
   }
   template <typename T>
-    requires(not cudf::is_integral_not_bool<T>())
   __device__ uint64_t operator()(column_device_view const&, size_type) const
   {
     CUDF_UNREACHABLE("invalid type");
@@ -184,7 +182,7 @@ struct from_integers_fn {
 std::unique_ptr<column> cast_from_integer(column_view const& integers,
                                           endian swap,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::is_integral_not_bool(integers.type()),
                "Input type must be an integer type",
@@ -211,7 +209,7 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
 std::unique_ptr<column> cast_from_integer(column_view const& integers,
                                           endian swap,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::cast_from_integer(integers, swap, stream, mr);

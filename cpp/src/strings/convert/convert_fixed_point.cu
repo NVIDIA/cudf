@@ -15,6 +15,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -115,12 +116,11 @@ struct string_to_decimal_check_fn {
  * @brief The dispatch function for converting strings column to fixed-point column.
  */
 struct dispatch_to_fixed_point_fn {
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(strings_column_view const& input,
                                      data_type output_type,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(cudf::is_fixed_point<T>())
+                                     cudf::memory_resources mr) const
   {
     using DecimalType = device_storage_type_t<T>;
 
@@ -149,8 +149,7 @@ struct dispatch_to_fixed_point_fn {
   std::unique_ptr<column> operator()(strings_column_view const&,
                                      data_type,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
-    requires(not cudf::is_fixed_point<T>())
+                                     cudf::memory_resources) const
   {
     CUDF_FAIL("Output for to_fixed_point must be a decimal type.");
   }
@@ -162,7 +161,7 @@ struct dispatch_to_fixed_point_fn {
 std::unique_ptr<column> to_fixed_point(strings_column_view const& input,
                                        data_type output_type,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(output_type);
   return type_dispatcher(output_type, dispatch_to_fixed_point_fn{}, input, output_type, stream, mr);
@@ -174,7 +173,7 @@ std::unique_ptr<column> to_fixed_point(strings_column_view const& input,
 std::unique_ptr<column> to_fixed_point(strings_column_view const& input,
                                        data_type output_type,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_fixed_point(input, output_type, stream, mr);
@@ -223,11 +222,10 @@ struct from_fixed_point_fn {
  * @brief The dispatcher functor for converting fixed-point values into strings.
  */
 struct dispatch_from_fixed_point_fn {
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(cudf::is_fixed_point<T>())
+                                     cudf::memory_resources mr) const
   {
     using DecimalType = device_storage_type_t<T>;  // underlying value type
 
@@ -246,8 +244,7 @@ struct dispatch_from_fixed_point_fn {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
-    requires(not cudf::is_fixed_point<T>())
+                                     cudf::memory_resources) const
   {
     CUDF_FAIL("Values for from_fixed_point function must be a decimal type.");
   }
@@ -257,7 +254,7 @@ struct dispatch_from_fixed_point_fn {
 
 std::unique_ptr<column> from_fixed_point(column_view const& input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
   return type_dispatcher(input.type(), dispatch_from_fixed_point_fn{}, input, stream, mr);
@@ -269,7 +266,7 @@ std::unique_ptr<column> from_fixed_point(column_view const& input,
 
 std::unique_ptr<column> from_fixed_point(column_view const& input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::from_fixed_point(input, stream, mr);
@@ -279,12 +276,11 @@ namespace detail {
 namespace {
 
 struct dispatch_is_fixed_point_fn {
-  template <typename T>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<column> operator()(strings_column_view const& input,
                                      data_type decimal_type,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(cudf::is_fixed_point<T>())
+                                     cudf::memory_resources mr) const
   {
     using DecimalType = device_storage_type_t<T>;
 
@@ -313,8 +309,7 @@ struct dispatch_is_fixed_point_fn {
   std::unique_ptr<column> operator()(strings_column_view const&,
                                      data_type,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
-    requires(not cudf::is_fixed_point<T>())
+                                     cudf::memory_resources) const
   {
     CUDF_FAIL("is_fixed_point is expecting a decimal type");
   }
@@ -325,7 +320,7 @@ struct dispatch_is_fixed_point_fn {
 std::unique_ptr<column> is_fixed_point(strings_column_view const& input,
                                        data_type decimal_type,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   if (input.is_empty()) return cudf::make_empty_column(type_id::BOOL8);
   return type_dispatcher(
@@ -336,7 +331,7 @@ std::unique_ptr<column> is_fixed_point(strings_column_view const& input,
 std::unique_ptr<column> is_fixed_point(strings_column_view const& input,
                                        data_type decimal_type,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_fixed_point(input, decimal_type, stream, mr);

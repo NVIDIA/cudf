@@ -5,6 +5,7 @@
 set -eoxu pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
 RAPIDS_COVERAGE_DIR=${RAPIDS_COVERAGE_DIR:-"${PWD}/coverage-results"}
@@ -14,6 +15,14 @@ mkdir -p "${RAPIDS_TESTS_DIR}" "${RAPIDS_COVERAGE_DIR}"
 export JUPYTER_PLATFORM_DIRS=1
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
+CUDA_CORE_UV_ARGS=()
+if [[ "${RAPIDS_CUDA_VERSION%%.*}" == "12" ]]; then
+    # cuda-core is not a cuDF dependency, but it's currently required to
+    # in the install command to ensure we get a compatible version of
+    # cuda-bindings and cuda-core via numba-cuda-mlir.
+    # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
+    CUDA_CORE_UV_ARGS=("cuda-core[cu12]")
+fi
 
 # Download the cudf, libcudf, and pylibcudf built in the previous step
 source rapids-prompt-local-repo-config
@@ -22,18 +31,18 @@ PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel
 CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt constraints
+rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt
 
 # notes:
 #
-#   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for pip
+#   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for the installer
 #   * need to provide --constraint="${PIP_CONSTRAINT}" because that environment variable is
 #     ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
-    -v \
+rapids-uv-pip install \
     --constraint ./constraints.txt \
     --constraint "${PIP_CONSTRAINT}" \
+    "${CUDA_CORE_UV_ARGS[@]}" \
     "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
@@ -97,20 +106,20 @@ for version in "${versions[@]}"; do
         > "${pandas_requirements_txt}"
 
     env_name="venv_pandas_${version}"
-    python -m venv --clear "${env_name}"
+    uv venv --python "$(command -v python)" --clear "${env_name}"
     # shellcheck disable=SC1090
     source "${env_name}/bin/activate"
 
     # notes:
     #
-    #   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for pip
+    #   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for the installer
     #   * need to provide --constraint="${PIP_CONSTRAINT}" because that environment variable is
     #     ignored if any other --constraint are passed via the CLI
     #
-    rapids-pip-retry install \
-        -v \
+    rapids-uv-pip install \
         --constraint ./constraints.txt \
         --constraint "${PIP_CONSTRAINT}" \
+        "${CUDA_CORE_UV_ARGS[@]}" \
         "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \
         "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
         "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \

@@ -26,7 +26,8 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/array>
 #include <cuda/std/cstddef>
 #include <cuda/std/cstdint>
@@ -144,7 +145,8 @@ grouped_rows make_grouped_rows(device_span<size_type const> rows,
   auto const chunk_counts = cudf::detail::make_counting_transform_iterator(
     0, [offsets = offsets.begin(), long_groups] __device__(size_type index) -> size_type {
       auto const group = long_groups[index];
-      return cudf::util::div_rounding_up_safe(offsets[group + 1] - offsets[group], rows_per_chunk);
+      return cudf::detail::div_rounding_up_safe(offsets[group + 1] - offsets[group],
+                                                rows_per_chunk);
     });
   grouped.group_chunks = cuda::device_buffer<size_type>{
     stream, mr.get_output_mr(), static_cast<std::size_t>(num_long_groups) + 1, cuda::no_init};

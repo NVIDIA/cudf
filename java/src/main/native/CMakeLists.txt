@@ -152,6 +152,7 @@ add_library(
   src/FilteredJoinJni.cpp
   src/HashJoinJni.cpp
   src/HostMemoryBufferNativeUtilsJni.cpp
+  src/HybridScanMetadataJni.cpp
   src/HybridScanReaderJni.cpp
   src/HybridScanReaderJniInternal.cpp
   src/HybridScanReaderJniMaterialize.cpp

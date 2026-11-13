@@ -2,7 +2,8 @@
 
 [package]
 name = "cudf-polars-quent"
-version = "0.1.0"
+# rapids-pre-commit-hooks: disable-next-line
+version = "27.2.0"
 edition = "2024"
 publish = false
 

@@ -471,6 +471,36 @@ def test_quarter_boundaries_null_propagation(attr, dtype):
     assert actual.to_pandas().isna().tolist() == expected_mask
 
 
+@pytest.mark.parametrize("attr", ["is_quarter_start", "is_quarter_end"])
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+@pytest.mark.parametrize(
+    "start, stop", [(1, 8), (3, 11), (4, 6), (7, 14), (8, 9), (9, 15)]
+)
+def test_quarter_boundaries_sliced_null_mask(attr, dtype, start, stop):
+    data = [
+        None,
+        "2024-01-01",
+        "2024-01-20",
+        None,
+        "2024-03-31",
+        "2024-04-01",
+        None,
+        "2024-06-30",
+        "2024-07-01",
+        None,
+        "2024-09-30",
+        "2024-10-01",
+        None,
+        "2024-12-31",
+        None,
+    ]
+    ps = pd.Series(data, dtype=dtype).iloc[start:stop]
+    gs = cudf.Series(data, dtype=dtype).iloc[start:stop]
+
+    assert gs._column.offset > 0
+    assert_eq(getattr(ps.dt, attr), getattr(gs.dt, attr))
+
+
 @pytest.mark.parametrize(
     "dtype",
     ["datetime64[s]", pd.ArrowDtype(pa.timestamp("s"))],

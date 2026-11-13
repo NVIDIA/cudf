@@ -99,6 +99,41 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected);
 }
 
+TEST_F(MurmurHash3_x64_128_Test, StringBlockBoundariesBothWords)
+{
+  // Cover empty input, partial blocks, and complete 16-byte blocks with a full-width seed.
+  auto const input = cudf::test::strings_column_wrapper({"",
+                                                         "0",
+                                                         "0123456789abcde",
+                                                         "0123456789abcdef",
+                                                         "0123456789abcdef0",
+                                                         "0123456789abcdef0123456789abcde",
+                                                         "0123456789abcdef0123456789abcdef",
+                                                         "0123456789abcdef0123456789abcdef0"});
+  auto const output =
+    cudf::hashing::murmurhash3_x64_128(cudf::table_view{{input}}, uint64_t{0x123456789abcdef0});
+
+  // Reference values from the original cuco MurmurHash3 x64 implementation.
+  cudf::test::fixed_width_column_wrapper<uint64_t> const expected_low({12670565569421277103ul,
+                                                                       7436438012523435542ul,
+                                                                       9182848219183220191ul,
+                                                                       1608373816723163038ul,
+                                                                       17566612986151629899ul,
+                                                                       13352410209864817512ul,
+                                                                       1213784217078048059ul,
+                                                                       4667731712117700191ul});
+  cudf::test::fixed_width_column_wrapper<uint64_t> const expected_high({8552480720497679734ul,
+                                                                        15811099216923661374ul,
+                                                                        5968932763527278272ul,
+                                                                        7539280683575153609ul,
+                                                                        16398509401717830041ul,
+                                                                        4777729961966234481ul,
+                                                                        10427324415301665755ul,
+                                                                        11601329378799277982ul});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected_low);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), expected_high);
+}
+
 TEST_F(MurmurHash3_x64_128_Test, ZeroColumns)
 {
   auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};

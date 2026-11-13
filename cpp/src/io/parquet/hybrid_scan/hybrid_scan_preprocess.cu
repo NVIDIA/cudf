@@ -201,21 +201,14 @@ void hybrid_scan_reader_impl::setup_compressed_data(
   // This function should never be called if `num_rows == 0`.
   CUDF_EXPECTS(_pass_itm_data->num_rows > 0, "Number of reading rows must not be zero.");
 
-  auto& chunks = pass.chunks;
-
   pass.has_compressed_data = setup_column_chunks(column_chunk_data);
 
   // Process dataset chunk pages into output columns
-  auto const total_pages = _has_offset_index
-                             ? count_page_headers_with_pgidx(chunks, _stream)
-                             : count_page_headers(chunks, _stream, _mr.as_temporary());
-  if (total_pages <= 0) { return; }
-  auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
-    total_pages, _stream, _mr.as_temporary());
-
-  // decoding of column/page information
-  parquet::detail::decode_page_headers(
-    pass, unsorted_pages, _has_offset_index, _stream, _mr.as_temporary());
+  auto const unsorted_pages =
+    _has_offset_index
+      ? parquet::detail::decode_page_headers_with_pgidx(pass, _stream, _mr.as_temporary())
+      : parquet::detail::decode_page_headers(pass, _stream, _mr.as_temporary());
+  if (unsorted_pages.size() == 0) { return; }
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -247,11 +240,11 @@ void hybrid_scan_reader_impl::setup_sparse_compressed_data(
     page_idx += num_pages;
   }
 
-  // `decode_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
+  // `decode_sparse_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
   // PageInfo as whole objects.
   auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, _mr.as_temporary());
-  parquet::detail::decode_page_headers(
+  parquet::detail::decode_sparse_page_headers(
     pass, unsorted_pages, page_data, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");

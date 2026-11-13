@@ -41,7 +41,6 @@
 
 namespace cudf::io::parquet::hybrid_scan::detail {
 
-using parquet::detail::chunk_page_info;
 using parquet::detail::ColumnChunkDesc;
 using parquet::detail::decode_big_endian_decimal;
 using parquet::detail::decode_byte_array_decimal;

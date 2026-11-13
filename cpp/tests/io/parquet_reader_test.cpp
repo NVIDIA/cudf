@@ -167,8 +167,9 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
-  // https://github.com/NVIDIA/cccl/issues/11167.
-  constexpr cudf::size_type num_rows    = 1000;
+  // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
+  // counting page headers without an offset index (1M).
+  constexpr cudf::size_type num_rows    = 300'000;
   constexpr cudf::size_type num_columns = 4;
 
   std::vector<std::string> values;

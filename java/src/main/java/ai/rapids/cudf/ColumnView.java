@@ -386,9 +386,24 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * TRUE for any entry that is not null, and FALSE for any null entry (as per the validity mask)
    *
    * @return - Boolean vector
+   * @deprecated Use {@link #isNotNull(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector isNotNull() {
-    return new ColumnVector(isNotNullNative(getNativeView()));
+    return isNotNull(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Returns a Boolean vector with the same number of rows as this instance, that has
+   * TRUE for any entry that is not null, and FALSE for any null entry (as per the validity mask)
+   *
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return - Boolean vector
+   */
+  public final ColumnVector isNotNull(Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(isNotNullNative(getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -396,9 +411,24 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * FALSE for any entry that is not null, and TRUE for any null entry (as per the validity mask)
    *
    * @return - Boolean vector
+   * @deprecated Use {@link #isNull(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector isNull() {
-    return new ColumnVector(isNullNative(getNativeView()));
+    return isNull(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Returns a Boolean vector with the same number of rows as this instance, that has
+   * FALSE for any entry that is not null, and TRUE for any null entry (as per the validity mask)
+   *
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return - Boolean vector
+   */
+  public final ColumnVector isNull(Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(isNullNative(getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -483,18 +513,46 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Returns a Boolean vector with the same number of rows as this instance, that has
    * TRUE for any entry that is NaN, and FALSE if null or a valid floating point value
    * @return - Boolean vector
+   * @deprecated Use {@link #isNan(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector isNan() {
-    return new ColumnVector(isNanNative(getNativeView()));
+    return isNan(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Returns a Boolean vector with the same number of rows as this instance, that has
+   * TRUE for any entry that is NaN, and FALSE if null or a valid floating point value
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return - Boolean vector
+   */
+  public final ColumnVector isNan(Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(isNanNative(getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
    * Returns a Boolean vector with the same number of rows as this instance, that has
    * TRUE for any entry that is null or a valid floating point value, FALSE otherwise
    * @return - Boolean vector
+   * @deprecated Use {@link #isNotNan(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector isNotNan() {
-    return new ColumnVector(isNotNanNative(getNativeView()));
+    return isNotNan(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Returns a Boolean vector with the same number of rows as this instance, that has
+   * TRUE for any entry that is null or a valid floating point value, FALSE otherwise
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return - Boolean vector
+   */
+  public final ColumnVector isNotNan(Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(isNotNanNative(getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -532,9 +590,25 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    *
    * @param scalar - Scalar value to use as replacement
    * @return - ColumnVector with nulls replaced by scalar
+   * @deprecated Use {@link #replaceNulls(Scalar, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector replaceNulls(Scalar scalar) {
-    return new ColumnVector(replaceNullsScalar(getNativeView(), scalar.getScalarHandle()));
+    return replaceNulls(scalar, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Returns a ColumnVector with any null values replaced with a scalar.
+   * The types of the input ColumnVector and Scalar must match, else an error is thrown.
+   *
+   * @param scalar - Scalar value to use as replacement
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return - ColumnVector with nulls replaced by scalar
+   */
+  public final ColumnVector replaceNulls(Scalar scalar, Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(replaceNullsScalar(getNativeView(), scalar.getScalarHandle(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -544,13 +618,39 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    *
    * @param replacements column of replacement values
    * @return column with nulls replaced by corresponding row of replacements column
+   * @deprecated Use {@link #replaceNulls(ColumnView, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector replaceNulls(ColumnView replacements) {
-    return new ColumnVector(replaceNullsColumn(getNativeView(), replacements.getNativeView()));
+    return replaceNulls(replacements, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
   }
 
+  /**
+   * Returns a ColumnVector with any null values replaced with the corresponding row in the
+   * specified replacement column.
+   * This column and the replacement column must have the same type and number of rows.
+   *
+   * @param replacements column of replacement values
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return column with nulls replaced by corresponding row of replacements column
+   */
+  public final ColumnVector replaceNulls(ColumnView replacements,
+      Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(replaceNullsColumn(getNativeView(), replacements.getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
+  }
+
+  /** @deprecated Use {@link #replaceNulls(ReplacePolicy, Cuda.Stream, MemoryResources)}. */
+  @Deprecated
   public final ColumnVector replaceNulls(ReplacePolicy policy) {
-    return new ColumnVector(replaceNullsPolicy(getNativeView(), policy.isPreceding));
+    return replaceNulls(policy, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  public final ColumnVector replaceNulls(ReplacePolicy policy,
+      Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(replaceNullsPolicy(getNativeView(), policy.isPreceding,
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -563,12 +663,33 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param trueValues the values to select if a row in this column is true
    * @param falseValues the values to select if a row in this column is not true
    * @return the computed vector
+   * @deprecated Use {@link #ifElse(ColumnView, ColumnView, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector ifElse(ColumnView trueValues, ColumnView falseValues) {
+    return ifElse(trueValues, falseValues, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * For a BOOL8 vector, computes a vector whose rows are selected from two other vectors
+   * based on the boolean value of this vector in the corresponding row.
+   * If the boolean value in a row is true, the corresponding row is selected from trueValues
+   * otherwise the corresponding row from falseValues is selected.
+   * Note that trueValues and falseValues vectors must be the same length as this vector,
+   * and trueValues and falseValues must have the same data type.
+   * @param trueValues the values to select if a row in this column is true
+   * @param falseValues the values to select if a row in this column is not true
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return the computed vector
+   */
+  public final ColumnVector ifElse(ColumnView trueValues, ColumnView falseValues,
+      Cuda.Stream stream, MemoryResources mr) {
     if (!type.equals(DType.BOOL8)) {
       throw new IllegalArgumentException("Cannot select with a predicate vector of type " + type);
     }
-    long result = ifElseVV(getNativeView(), trueValues.getNativeView(), falseValues.getNativeView());
+    long result = ifElseVV(getNativeView(), trueValues.getNativeView(), falseValues.getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle());
     return new ColumnVector(result);
   }
 
@@ -583,12 +704,34 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param trueValues the values to select if a row in this column is true
    * @param falseValue the value to select if a row in this column is not true
    * @return the computed vector
+   * @deprecated Use {@link #ifElse(ColumnView, Scalar, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector ifElse(ColumnView trueValues, Scalar falseValue) {
+    return ifElse(trueValues, falseValue, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * For a BOOL8 vector, computes a vector whose rows are selected from two other inputs
+   * based on the boolean value of this vector in the corresponding row.
+   * If the boolean value in a row is true, the corresponding row is selected from trueValues
+   * otherwise the value from falseValue is selected.
+   * Note that trueValues must be the same length as this vector,
+   * and trueValues and falseValue must have the same data type.
+   * Note that the trueValues vector and falseValue scalar must have the same data type.
+   * @param trueValues the values to select if a row in this column is true
+   * @param falseValue the value to select if a row in this column is not true
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return the computed vector
+   */
+  public final ColumnVector ifElse(ColumnView trueValues, Scalar falseValue,
+      Cuda.Stream stream, MemoryResources mr) {
     if (!type.equals(DType.BOOL8)) {
       throw new IllegalArgumentException("Cannot select with a predicate vector of type " + type);
     }
-    long result = ifElseVS(getNativeView(), trueValues.getNativeView(), falseValue.getScalarHandle());
+    long result = ifElseVS(getNativeView(), trueValues.getNativeView(), falseValue.getScalarHandle(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle());
     return new ColumnVector(result);
   }
 
@@ -603,12 +746,34 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param trueValue the value to select if a row in this column is true
    * @param falseValues the values to select if a row in this column is not true
    * @return the computed vector
+   * @deprecated Use {@link #ifElse(Scalar, ColumnView, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector ifElse(Scalar trueValue, ColumnView falseValues) {
+    return ifElse(trueValue, falseValues, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * For a BOOL8 vector, computes a vector whose rows are selected from two other inputs
+   * based on the boolean value of this vector in the corresponding row.
+   * If the boolean value in a row is true, the value from trueValue is selected
+   * otherwise the corresponding row from falseValues is selected.
+   * Note that falseValues must be the same length as this vector,
+   * and trueValue and falseValues must have the same data type.
+   * Note that the trueValue scalar and falseValues vector must have the same data type.
+   * @param trueValue the value to select if a row in this column is true
+   * @param falseValues the values to select if a row in this column is not true
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return the computed vector
+   */
+  public final ColumnVector ifElse(Scalar trueValue, ColumnView falseValues,
+      Cuda.Stream stream, MemoryResources mr) {
     if (!type.equals(DType.BOOL8)) {
       throw new IllegalArgumentException("Cannot select with a predicate vector of type " + type);
     }
-    long result = ifElseSV(getNativeView(), trueValue.getScalarHandle(), falseValues.getNativeView());
+    long result = ifElseSV(getNativeView(), trueValue.getScalarHandle(), falseValues.getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle());
     return new ColumnVector(result);
   }
 
@@ -621,12 +786,32 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param trueValue the value to select if a row in this column is true
    * @param falseValue the value to select if a row in this column is not true
    * @return the computed vector
+   * @deprecated Use {@link #ifElse(Scalar, Scalar, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector ifElse(Scalar trueValue, Scalar falseValue) {
+    return ifElse(trueValue, falseValue, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * For a BOOL8 vector, computes a vector whose rows are selected from two other inputs
+   * based on the boolean value of this vector in the corresponding row.
+   * If the boolean value in a row is true, the value from trueValue is selected
+   * otherwise the value from falseValue is selected.
+   * Note that the trueValue and falseValue scalars must have the same data type.
+   * @param trueValue the value to select if a row in this column is true
+   * @param falseValue the value to select if a row in this column is not true
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return the computed vector
+   */
+  public final ColumnVector ifElse(Scalar trueValue, Scalar falseValue,
+      Cuda.Stream stream, MemoryResources mr) {
     if (!type.equals(DType.BOOL8)) {
       throw new IllegalArgumentException("Cannot select with a predicate vector of type " + type);
     }
-    long result = ifElseSS(getNativeView(), trueValue.getScalarHandle(), falseValue.getScalarHandle());
+    long result = ifElseSS(getNativeView(), trueValue.getScalarHandle(), falseValue.getScalarHandle(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle());
     return new ColumnVector(result);
   }
 
@@ -1130,183 +1315,463 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * Multiple different unary operations. The output is the same type as input.
    * @param op      the operation to perform
    * @return the result
+   * @deprecated Use {@link #unaryOp(UnaryOp, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector unaryOp(UnaryOp op) {
-    return new ColumnVector(unaryOperation(getNativeView(), op.nativeId));
+    return unaryOp(op, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Multiple different unary operations. The output is the same type as input.
+   * @param op      the operation to perform
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return the result
+   */
+  public final ColumnVector unaryOp(UnaryOp op, Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(unaryOperation(getNativeView(), op.nativeId,
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
    * Calculate the sin, output is the same type as input.
+   * @deprecated Use {@link #sin(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector sin() {
-    return unaryOp(UnaryOp.SIN);
+    return sin(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the sin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector sin(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.SIN, stream, mr);
   }
 
   /**
    * Calculate the cos, output is the same type as input.
+   * @deprecated Use {@link #cos(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector cos() {
-    return unaryOp(UnaryOp.COS);
+    return cos(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the cos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector cos(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.COS, stream, mr);
   }
 
   /**
    * Calculate the tan, output is the same type as input.
+   * @deprecated Use {@link #tan(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector tan() {
-    return unaryOp(UnaryOp.TAN);
+    return tan(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the tan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector tan(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.TAN, stream, mr);
   }
 
   /**
    * Calculate the arcsin, output is the same type as input.
+   * @deprecated Use {@link #arcsin(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arcsin() {
-    return unaryOp(UnaryOp.ARCSIN);
+    return arcsin(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the arcsin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arcsin(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCSIN, stream, mr);
   }
 
   /**
    * Calculate the arccos, output is the same type as input.
+   * @deprecated Use {@link #arccos(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arccos() {
-    return unaryOp(UnaryOp.ARCCOS);
+    return arccos(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the arccos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arccos(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCCOS, stream, mr);
   }
 
   /**
    * Calculate the arctan, output is the same type as input.
+   * @deprecated Use {@link #arctan(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arctan() {
-    return unaryOp(UnaryOp.ARCTAN);
+    return arctan(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the arctan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arctan(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCTAN, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic sin, output is the same type as input.
+   * @deprecated Use {@link #sinh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector sinh() {
-    return unaryOp(UnaryOp.SINH);
+    return sinh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic sin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector sinh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.SINH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic cos, output is the same type as input.
+   * @deprecated Use {@link #cosh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector cosh() {
-    return unaryOp(UnaryOp.COSH);
+    return cosh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic cos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector cosh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.COSH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic tan, output is the same type as input.
+   * @deprecated Use {@link #tanh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector tanh() {
-    return unaryOp(UnaryOp.TANH);
+    return tanh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic tan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector tanh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.TANH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic arcsin, output is the same type as input.
+   * @deprecated Use {@link #arcsinh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arcsinh() {
-    return unaryOp(UnaryOp.ARCSINH);
+    return arcsinh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic arcsin, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arcsinh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCSINH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic arccos, output is the same type as input.
+   * @deprecated Use {@link #arccosh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arccosh() {
-    return unaryOp(UnaryOp.ARCCOSH);
+    return arccosh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic arccos, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arccosh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCCOSH, stream, mr);
   }
 
   /**
    * Calculate the hyperbolic arctan, output is the same type as input.
+   * @deprecated Use {@link #arctanh(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector arctanh() {
-    return unaryOp(UnaryOp.ARCTANH);
+    return arctanh(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the hyperbolic arctan, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector arctanh(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ARCTANH, stream, mr);
   }
 
   /**
    * Calculate the exp, output is the same type as input.
+   * @deprecated Use {@link #exp(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector exp() {
-    return unaryOp(UnaryOp.EXP);
+    return exp(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the exp, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector exp(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.EXP, stream, mr);
   }
 
   /**
    * Calculate the log, output is the same type as input.
+   * @deprecated Use {@link #log(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector log() {
-    return unaryOp(UnaryOp.LOG);
+    return log(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the log, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector log(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.LOG, stream, mr);
   }
 
   /**
    * Calculate the log with base 2, output is the same type as input.
+   * @deprecated Use {@link #log2(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector log2() {
+    return log2(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the log with base 2, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector log2(Cuda.Stream stream, MemoryResources mr) {
     try (Scalar base = Scalar.fromInt(2)) {
-      return binaryOp(BinaryOp.LOG_BASE, base, getType());
+      return binaryOp(BinaryOp.LOG_BASE, base, getType(), stream, mr);
     }
   }
 
   /**
    * Calculate the log with base 10, output is the same type as input.
+   * @deprecated Use {@link #log10(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector log10() {
+    return log10(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the log with base 10, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector log10(Cuda.Stream stream, MemoryResources mr) {
     try (Scalar base = Scalar.fromInt(10)) {
-      return binaryOp(BinaryOp.LOG_BASE, base, getType());
+      return binaryOp(BinaryOp.LOG_BASE, base, getType(), stream, mr);
     }
   }
 
   /**
    * Calculate the sqrt, output is the same type as input.
+   * @deprecated Use {@link #sqrt(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector sqrt() {
-    return unaryOp(UnaryOp.SQRT);
+    return sqrt(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the sqrt, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector sqrt(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.SQRT, stream, mr);
   }
 
   /**
    * Calculate the cube root, output is the same type as input.
+   * @deprecated Use {@link #cbrt(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector cbrt() {
-    return unaryOp(UnaryOp.CBRT);
+    return cbrt(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the cube root, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector cbrt(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.CBRT, stream, mr);
   }
 
   /**
    * Calculate the ceil, output is the same type as input.
+   * @deprecated Use {@link #ceil(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector ceil() {
-    return unaryOp(UnaryOp.CEIL);
+    return ceil(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the ceil, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector ceil(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.CEIL, stream, mr);
   }
 
   /**
    * Calculate the floor, output is the same type as input.
+   * @deprecated Use {@link #floor(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector floor() {
-    return unaryOp(UnaryOp.FLOOR);
+    return floor(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the floor, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector floor(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.FLOOR, stream, mr);
   }
 
   /**
    * Calculate the abs, output is the same type as input.
+   * @deprecated Use {@link #abs(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector abs() {
-    return unaryOp(UnaryOp.ABS);
+    return abs(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Calculate the abs, output is the same type as input.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector abs(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.ABS, stream, mr);
   }
 
   /**
    * Rounds a floating-point argument to the closest integer value, but returns it as a float.
+   * @deprecated Use {@link #rint(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector rint() {
-    return unaryOp(UnaryOp.RINT);
+    return rint(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Rounds a floating-point argument to the closest integer value, but returns it as a float.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector rint(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.RINT, stream, mr);
   }
 
   /**
    * Count the number of set bit for each integer value.
+   * @deprecated Use {@link #bitCount(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector bitCount() {
-    return unaryOp(UnaryOp.BIT_COUNT);
+    return bitCount(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Count the number of set bit for each integer value.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector bitCount(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.BIT_COUNT, stream, mr);
   }
 
   /**
    * Invert the bits, output is the same type as input.
    * For BOOL8 type, this is equivalent to logical not (UnaryOp.NOT), but this does not
    * matter since Spark does not support bitwise inverting on boolean type.
+   * @deprecated Use {@link #bitInvert(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector bitInvert() {
-    return unaryOp(UnaryOp.BIT_INVERT);
+    return bitInvert(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Invert the bits, output is the same type as input.
+   * For BOOL8 type, this is equivalent to logical not (UnaryOp.NOT), but this does not
+   * matter since Spark does not support bitwise inverting on boolean type.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector bitInvert(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.BIT_INVERT, stream, mr);
   }
 
   /**
@@ -1314,26 +1779,33 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * @param op      the operation to perform
    * @param rhs     the rhs of the operation
    * @param outType the type of output you want.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
    * @return the result
    */
   @Override
-  public final ColumnVector binaryOp(BinaryOp op, BinaryOperable rhs, DType outType) {
+  public final ColumnVector binaryOp(BinaryOp op, BinaryOperable rhs, DType outType,
+      Cuda.Stream stream, MemoryResources mr) {
     if (rhs instanceof ColumnView) {
       assert rows == ((ColumnView) rhs).getRowCount();
-      return new ColumnVector(binaryOp(this, (ColumnView) rhs, op, outType));
+      return new ColumnVector(binaryOp(this, (ColumnView) rhs, op, outType, stream, mr));
     } else {
-      return new ColumnVector(binaryOp(this, (Scalar) rhs, op, outType));
+      return new ColumnVector(binaryOp(this, (Scalar) rhs, op, outType, stream, mr));
     }
   }
 
-  static long binaryOp(ColumnView lhs, ColumnView rhs, BinaryOp op, DType outputType) {
+  static long binaryOp(ColumnView lhs, ColumnView rhs, BinaryOp op, DType outputType,
+      Cuda.Stream stream, MemoryResources mr) {
     return binaryOpVV(lhs.getNativeView(), rhs.getNativeView(),
-        op.nativeId, outputType.typeId.getNativeId(), outputType.getScale());
+        op.nativeId, outputType.typeId.getNativeId(), outputType.getScale(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle());
   }
 
-  static long binaryOp(ColumnView lhs, Scalar rhs, BinaryOp op, DType outputType) {
+  static long binaryOp(ColumnView lhs, Scalar rhs, BinaryOp op, DType outputType,
+      Cuda.Stream stream, MemoryResources mr) {
     return binaryOpVS(lhs.getNativeView(), rhs.getScalarHandle(),
-        op.nativeId, outputType.typeId.getNativeId(), outputType.getScale());
+        op.nativeId, outputType.typeId.getNativeId(), outputType.getScale(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle());
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -2176,9 +2648,21 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Returns a vector of the logical `not` of each value in the input
    * column (this)
+   * @deprecated Use {@link #not(Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public final ColumnVector not() {
-    return unaryOp(UnaryOp.NOT);
+    return not(Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Returns a vector of the logical `not` of each value in the input
+   * column (this)
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   */
+  public final ColumnVector not(Cuda.Stream stream, MemoryResources mr) {
+    return unaryOp(UnaryOp.NOT, stream, mr);
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -2307,9 +2791,39 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    *
    * @param type type of the resulting ColumnVector
    * @return A new vector allocated on the GPU
+   * @deprecated Use {@link #castTo(DType, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public ColumnVector castTo(DType type) {
-    return new ColumnVector(castTo(getNativeView(), type.typeId.getNativeId(), type.getScale()));
+    return castTo(type, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Generic method to cast ColumnVector
+   * When casting from a Date, Timestamp, or Boolean to a numerical type the underlying numerical
+   * representation of the data will be used for the cast.
+   *
+   * For Strings:
+   * Casting strings from/to timestamp isn't supported atm.
+   * Please look at {@link ColumnVector#asTimestamp(DType, String)}
+   * and {@link ColumnVector#asStrings(String)} for casting string to timestamp when the format
+   * is known
+   *
+   * Float values when converted to String could be different from the expected default behavior in
+   * Java
+   * e.g.
+   * 12.3 => "12.30000019" instead of "12.3"
+   * Double.POSITIVE_INFINITY => "Inf" instead of "INFINITY"
+   * Double.NEGATIVE_INFINITY => "-Inf" instead of "-INFINITY"
+   *
+   * @param type type of the resulting ColumnVector
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return A new vector allocated on the GPU
+   */
+  public ColumnVector castTo(DType type, Cuda.Stream stream, MemoryResources mr) {
+    return new ColumnVector(castTo(getNativeView(), type.typeId.getNativeId(), type.getScale(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -4980,9 +5494,11 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   private static native long pad(long nativeHandle, int width, int side, String fillChar);
 
-  private static native long binaryOpVS(long lhs, long rhs, int op, int dtype, int scale);
+  private static native long binaryOpVS(long lhs, long rhs, int op, int dtype, int scale,
+      long stream, long outputMr, long temporaryMr);
 
-  private static native long binaryOpVV(long lhs, long rhs, int op, int dtype, int scale);
+  private static native long binaryOpVV(long lhs, long rhs, int op, int dtype, int scale,
+      long stream, long outputMr, long temporaryMr);
 
   private static native long countElements(long viewHandle);
 
@@ -5055,7 +5571,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   private static native long getElement(long nativeView, int index);
 
-  private static native long castTo(long nativeHandle, int type, int scale);
+  private static native long castTo(long nativeHandle, int type, int scale,
+      long stream, long outputMr, long temporaryMr);
 
   private static native long bitCastTo(long nativeHandle, int type, int scale);
 
@@ -5114,19 +5631,26 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   private static native long charLengths(long viewHandle) throws CudfException;
 
-  private static native long replaceNullsScalar(long viewHandle, long scalarHandle) throws CudfException;
+  private static native long replaceNullsScalar(long viewHandle, long scalarHandle,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
-  private static native long replaceNullsColumn(long viewHandle, long replaceViewHandle) throws CudfException;
+  private static native long replaceNullsColumn(long viewHandle, long replaceViewHandle,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
-  private static native long replaceNullsPolicy(long nativeView, boolean isPreceding) throws CudfException;
+  private static native long replaceNullsPolicy(long nativeView, boolean isPreceding,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
-  private static native long ifElseVV(long predVec, long trueVec, long falseVec) throws CudfException;
+  private static native long ifElseVV(long predVec, long trueVec, long falseVec,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
-  private static native long ifElseVS(long predVec, long trueVec, long falseScalar) throws CudfException;
+  private static native long ifElseVS(long predVec, long trueVec, long falseScalar,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
-  private static native long ifElseSV(long predVec, long trueScalar, long falseVec) throws CudfException;
+  private static native long ifElseSV(long predVec, long trueScalar, long falseVec,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
-  private static native long ifElseSS(long predVec, long trueScalar, long falseScalar) throws CudfException;
+  private static native long ifElseSS(long predVec, long trueScalar, long falseScalar,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
   private static native long reduce(long viewHandle, long aggregation, int dtype, int scale) throws CudfException;
 
@@ -5136,9 +5660,11 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long segmentedGather(long sourceColumnHandle, long gatherMapListHandle,
       boolean isNullifyOutBounds) throws CudfException;
 
-  private static native long isNullNative(long viewHandle);
+  private static native long isNullNative(long viewHandle,
+      long stream, long outputMr, long temporaryMr);
 
-  private static native long isNanNative(long viewHandle);
+  private static native long isNanNative(long viewHandle,
+      long stream, long outputMr, long temporaryMr);
 
   private static native long isFloat(long viewHandle);
 
@@ -5146,11 +5672,14 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   private static native long isIntegerWithType(long viewHandle, int typeId, int typeScale);
 
-  private static native long isNotNanNative(long viewHandle);
+  private static native long isNotNanNative(long viewHandle,
+      long stream, long outputMr, long temporaryMr);
 
-  private static native long isNotNullNative(long viewHandle);
+  private static native long isNotNullNative(long viewHandle,
+      long stream, long outputMr, long temporaryMr);
 
-  private static native long unaryOperation(long viewHandle, int op);
+  private static native long unaryOperation(long viewHandle, int op,
+      long stream, long outputMr, long temporaryMr);
 
   private static native long extractDateTimeComponent(long viewHandle, int component);
 

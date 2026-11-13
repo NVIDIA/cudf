@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -683,22 +683,26 @@ public final class Scalar implements AutoCloseable, BinaryOperable {
   }
 
   @Override
-  public ColumnVector binaryOp(BinaryOp op, BinaryOperable rhs, DType outType) {
+  public ColumnVector binaryOp(BinaryOp op, BinaryOperable rhs, DType outType,
+      Cuda.Stream stream, MemoryResources mr) {
     if (rhs instanceof ColumnView) {
       ColumnView cvRhs = (ColumnView) rhs;
-      return new ColumnVector(binaryOp(this, cvRhs, op, outType));
+      return new ColumnVector(binaryOp(this, cvRhs, op, outType, stream, mr));
     } else {
       throw new IllegalArgumentException(rhs.getClass() + " is not supported as a binary op with " +
           "Scalar");
     }
   }
 
-  static long binaryOp(Scalar lhs, ColumnView rhs, BinaryOp op, DType outputType) {
+  static long binaryOp(Scalar lhs, ColumnView rhs, BinaryOp op, DType outputType,
+      Cuda.Stream stream, MemoryResources mr) {
     return binaryOpSV(lhs.getScalarHandle(), rhs.getNativeView(),
-        op.nativeId, outputType.typeId.getNativeId(), outputType.getScale());
+        op.nativeId, outputType.typeId.getNativeId(), outputType.getScale(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle());
   }
 
-  private static native long binaryOpSV(long lhs, long rhs, int op, int dtype, int scale);
+  private static native long binaryOpSV(long lhs, long rhs, int op, int dtype, int scale,
+      long stream, long outputMr, long temporaryMr);
 
   @Override
   public boolean equals(Object o) {

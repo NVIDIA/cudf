@@ -123,7 +123,7 @@ auto make_index_column(cudf::size_type num_rows, cuda::stream_ref stream)
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                         num_rows,
                                         std::move(buffer),
-                                        rmm::device_buffer{},
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                         0);
 }
 
@@ -144,7 +144,7 @@ auto make_column(cudf::host_span<T const> host_data, cuda::stream_ref stream)
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<T>()},
                                         host_data.size(),
                                         std::move(device_buffer),
-                                        rmm::device_buffer{},
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                         0);
 }
 
@@ -180,14 +180,14 @@ auto make_page_data_list_column(cudf::host_span<T const> data,
     std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
                                    num_pages_this_column,
                                    std::move(page_data_buffer),
-                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                    0);
 
   return cudf::make_lists_column(num_row_groups,
                                  std::move(offsets_column),
                                  std::move(page_data_column),
                                  0,
-                                 rmm::device_buffer{});
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace
@@ -287,21 +287,24 @@ void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
     rmm::device_buffer(row_group_byte_offsets.data(), num_row_groups * sizeof(int64_t), stream);
 
   stream.sync();
-  columns.emplace_back(std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
-                                                      num_row_groups,
-                                                      std::move(row_offsets_buffer),
-                                                      rmm::device_buffer{},
-                                                      0));
-  columns.emplace_back(std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
-                                                      num_row_groups,
-                                                      std::move(row_counts_buffer),
-                                                      rmm::device_buffer{},
-                                                      0));
-  columns.emplace_back(std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
-                                                      num_row_groups,
-                                                      std::move(byte_offsets_buffer),
-                                                      rmm::device_buffer{},
-                                                      0));
+  columns.emplace_back(
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
+                                   num_row_groups,
+                                   std::move(row_offsets_buffer),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0));
+  columns.emplace_back(
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
+                                   num_row_groups,
+                                   std::move(row_counts_buffer),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0));
+  columns.emplace_back(
+    std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<int64_t>()},
+                                   num_row_groups,
+                                   std::move(byte_offsets_buffer),
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0));
 
   auto table = std::make_unique<cudf::table>(std::move(columns));
 

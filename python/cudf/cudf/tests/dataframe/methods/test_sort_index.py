@@ -107,56 +107,39 @@ def _assert_dataframe_multiindex_sort_index(
 
 
 @pytest.mark.parametrize(
-    "level, ascending, na_position",
+    "axis, level, ascending, ignore_index, inplace, na_position",
     [
-        (None, True, "last"),
-        (None, False, "last"),
-        (0, True, "first"),
-        (0, False, "last"),
-        ("b", False, "first"),
-        (1, True, "last"),
-        (1, False, "last"),
-        (["b"], False, "first"),
-        ("a", False, "last"),
-        (["a", "b"], True, "last"),
-        (["b", "a"], False, "last"),
-        ([0, 1], False, "last"),
-        ([1, 0], True, "last"),
-        ([0, 2], False, "first"),
+        (0, None, True, False, False, "last"),
+        (0, None, False, False, False, "last"),
+        (0, 0, True, False, False, "first"),
+        (0, 0, False, False, False, "last"),
+        (0, "b", False, False, False, "first"),
+        (0, 1, True, False, False, "last"),
+        (0, 1, False, False, False, "last"),
+        (0, ["b"], False, False, False, "first"),
+        (0, "a", False, False, False, "last"),
+        (0, ["a", "b"], True, False, False, "last"),
+        (0, ["b", "a"], False, False, False, "last"),
+        (0, [0, 1], False, False, False, "last"),
+        (0, [1, 0], True, False, False, "last"),
+        (0, [0, 2], False, False, False, "first"),
+        (0, [1, 0], False, True, True, "first"),
+        (0, [1, 0], False, False, True, "first"),
+        (0, [1, 0], False, True, False, "first"),
+        (0, [1, 0], False, False, False, "first"),
+        ("index", [0, 2], False, False, False, "first"),
     ],
 )
-def test_dataframe_multiindex_sort_index(level, ascending, na_position):
+def test_dataframe_multiindex_sort_index(
+    axis, level, ascending, ignore_index, inplace, na_position
+):
     _assert_dataframe_multiindex_sort_index(
-        axis=0,
+        axis=axis,
         level=level,
         ascending=ascending,
-        inplace=False,
-        ignore_index=False,
-        na_position=na_position,
-    )
-
-
-@pytest.mark.parametrize("inplace", [True, False])
-@pytest.mark.parametrize("ignore_index", [True, False])
-def test_dataframe_multiindex_sort_index_lifecycle(inplace, ignore_index):
-    _assert_dataframe_multiindex_sort_index(
-        axis=0,
-        level=[1, 0],
-        ascending=False,
         inplace=inplace,
         ignore_index=ignore_index,
-        na_position="first",
-    )
-
-
-def test_dataframe_multiindex_sort_index_axis_alias():
-    _assert_dataframe_multiindex_sort_index(
-        axis="index",
-        level=[0, 2],
-        ascending=False,
-        inplace=False,
-        ignore_index=False,
-        na_position="first",
+        na_position=na_position,
     )
 
 

@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 import pickle
+import threading
 from decimal import Decimal
 
 import pytest
@@ -13,9 +14,22 @@ import pylibcudf as plc
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr as ir_expr
-from cudf_polars.dsl.ir import ConditionalJoin
+from cudf_polars.dsl.ir import ConditionalJoin, IRExecutionContext
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.testing.engine_utils import is_streaming_engine
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
+
+FUSED_PREDICATE_XFAIL = pytest.mark.xfail(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 plans an equi join with a residual predicate as a "
+    "'fused predicate' join, which its visitor does not expose",
+)
+
+
+MISMATCHED_DECIMAL_SCALE_XFAIL = pytest.mark.xfail(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 cannot join decimals with different scales on CPU",
+)
 
 
 @pytest.fixture(params=[False, True], ids=["nulls_not_equal", "nulls_equal"])
@@ -80,15 +94,7 @@ def test_non_coalesce_join(
     how,
     nulls_equal,
     join_expr,
-    request,
 ):
-    request.applymarker(
-        pytest.mark.xfail(
-            is_streaming_engine(engine),
-            strict=False,
-            reason="Non deterministic sort/join on nulls",
-        )
-    )
     query = left.join(
         right, on=join_expr, how=how, nulls_equal=nulls_equal, coalesce=False
     )
@@ -158,7 +164,10 @@ def test_join_literal_key(engine: pl.GPUEngine, left, right, left_on, right_on):
             pl.col("a_right") <= pl.col("a") * 2,
             pl.col("a_right") <= 2 * pl.col("a"),
         ],
-        [pl.col("b") * 2 > pl.col("a_right"), pl.col("a") == pl.col("c_right")],
+        pytest.param(
+            [pl.col("b") * 2 > pl.col("a_right"), pl.col("a") == pl.col("c_right")],
+            marks=FUSED_PREDICATE_XFAIL,
+        ),
         [pl.col("b") * 2 <= pl.col("a_right"), pl.col("a") < pl.col("c_right")],
         [pl.col("b") <= pl.col("a_right") * 7, pl.col("a") < pl.col("d") * 2],
     ],
@@ -290,7 +299,10 @@ def test_join_maintain_order_with_slice(
         pl.col("foo") == pl.col("bar"),
         pytest.param(
             pl.col("foo") != pl.col("bar"),
-            marks=pytest.mark.xfail(reason="nested loop join"),
+            marks=pytest.mark.xfail(
+                POLARS_VERSION_LT_21,
+                reason="Polars 2.0 plans this as a nested loop join, which its visitor does not expose",
+            ),
         ),
     ],
 )
@@ -298,8 +310,16 @@ def test_join_maintain_order_with_slice(
     "left_dtype,right_dtype",
     [
         (pl.Decimal(15, 2), pl.Decimal(15, 2)),
-        (pl.Decimal(15, 4), pl.Decimal(15, 2)),
-        (pl.Decimal(15, 2), pl.Decimal(15, 4)),
+        pytest.param(
+            pl.Decimal(15, 4),
+            pl.Decimal(15, 2),
+            marks=MISMATCHED_DECIMAL_SCALE_XFAIL,
+        ),
+        pytest.param(
+            pl.Decimal(15, 2),
+            pl.Decimal(15, 4),
+            marks=MISMATCHED_DECIMAL_SCALE_XFAIL,
+        ),
         (pl.Decimal(15, 2), pl.Float32),
         (pl.Decimal(15, 2), pl.Float64),
     ],
@@ -337,6 +357,55 @@ def test_cross_join_filter_with_decimals(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("foo") > pl.col("bar"),
+        pl.col("foo") >= pl.col("bar"),
+        pl.col("foo") < pl.col("bar"),
+        pl.col("foo") <= pl.col("bar"),
+    ],
+)
+@pytest.mark.parametrize("threshold", [2.499, 2.501])
+@pytest.mark.parametrize("right_dtype", [pl.Float32, pl.Float64])
+@pytest.mark.skip_on_streaming_engine(
+    "ConditionalJoin not supported for multiple partitions"
+)
+def test_cross_join_filter_decimal_float_finer_than_scale(
+    engine: pl.GPUEngine, expr, threshold, right_dtype
+):
+    left = pl.LazyFrame(
+        {"foo": [Decimal("2.49"), Decimal("2.50"), Decimal("2.51")]},
+        schema={"foo": pl.Decimal(15, 2)},
+    )
+    right = pl.LazyFrame({"bar": [threshold]}, schema={"bar": right_dtype})
+
+    q = left.join(right, how="cross").filter(expr)
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@MISMATCHED_DECIMAL_SCALE_XFAIL
+@pytest.mark.skip_on_streaming_engine(
+    "ConditionalJoin not supported for multiple partitions"
+)
+def test_cross_join_filter_decimal_float_and_decimal_conditions(engine: pl.GPUEngine):
+    left = pl.LazyFrame(
+        {"foo": [Decimal("2.49"), Decimal("2.50"), Decimal("2.51")]},
+        schema={"foo": pl.Decimal(15, 2)},
+    )
+    right = pl.LazyFrame(
+        {"bar": [2.499], "baz": [Decimal("2.5100")]},
+        schema={"bar": pl.Float64, "baz": pl.Decimal(15, 4)},
+    )
+
+    q = left.join(right, how="cross").filter(
+        (pl.col("foo") > pl.col("bar")) & (pl.col("foo") < pl.col("baz"))
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 def test_conditional_join_predicate_pickle():
     dt = DataType(pl.Int64())
     col_left = ir_expr.ColRef(
@@ -354,3 +423,65 @@ def test_conditional_join_predicate_pickle():
     predicate = ConditionalJoin.Predicate(predicate_expr)
     unpickled = pickle.loads(pickle.dumps(predicate))
     assert unpickled.predicate == predicate.predicate
+
+
+def test_conditional_join_cuda_context_initialized():
+    # https://github.com/NVIDIA/cudf/issues/24156
+    # Create a ConditionalJoin.Predicate on a thread, mimicking how our
+    # cudf-polars does it when executing with a Ray or Dask engine.
+
+    dt = DataType(pl.Int64())
+    col_left = ir_expr.ColRef(
+        dt, 0, plc.expressions.TableReference.LEFT, ir_expr.Col(dt, "a")
+    )
+    col_right = ir_expr.ColRef(
+        dt, 0, plc.expressions.TableReference.RIGHT, ir_expr.Col(dt, "a")
+    )
+    predicate_expr = ir_expr.BinOp(
+        DataType(pl.Boolean()),
+        plc.binaryop.BinaryOperator.LESS,
+        col_left,
+        col_right,
+    )
+
+    t = threading.Thread(target=ConditionalJoin.Predicate, args=(predicate_expr,))
+    t.start()
+    t.join()
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["none", "left", "right", "left_right", "right_left"]
+)
+def test_cross_join_maintain_order(engine: pl.GPUEngine, maintain_order):
+    left = pl.LazyFrame({"x": [0, 1, 2], "a": ["p", "q", "r"]})
+    right = pl.LazyFrame({"y": [5, 6], "a": ["s", "t"]})
+    q = left.join(right, how="cross", maintain_order=maintain_order)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=maintain_order != "none")
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["none", "left", "right", "left_right", "right_left"]
+)
+@pytest.mark.parametrize("empty", ["left", "right", "both"])
+def test_cross_join_maintain_order_empty(engine: pl.GPUEngine, maintain_order, empty):
+    schema = {"k": pl.Int64, "a": pl.Int64}
+    left_rows = [] if empty in {"left", "both"} else [0, 1, 2]
+    right_rows = [] if empty in {"right", "both"} else [5, 6]
+    left = pl.LazyFrame({"k": left_rows, "a": left_rows}, schema=schema)
+    right = pl.LazyFrame({"k": right_rows, "a": right_rows}, schema=schema)
+    q = left.join(right, how="cross", maintain_order=maintain_order, suffix="_r")
+    assert_gpu_result_equal(q, engine=engine, check_row_order=maintain_order != "none")
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["none", "left", "right", "left_right", "right_left"]
+)
+def test_cross_join_left_sortedness(maintain_order):
+    left = pl.LazyFrame({"x": [0, 1]}).set_sorted("x")
+    right = pl.LazyFrame({"y": [10, 20]})
+    q = left.join(right, how="cross", maintain_order=maintain_order)
+    node = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+    result = node.evaluate(cache={}, context=IRExecutionContext())
+    swapped = maintain_order.startswith("right")
+    expected = plc.types.Sorted.NO if swapped else plc.types.Sorted.YES
+    assert result.column_map["x"].is_sorted == expected

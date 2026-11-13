@@ -126,17 +126,17 @@ std::vector<column_view> get_nullable_columns(table_view const& table)
 
 bool nullable(table_view const& view)
 {
-  return std::any_of(view.begin(), view.end(), [](auto const& col) { return col.nullable(); });
+  return std::ranges::any_of(view, [](auto const& col) { return col.nullable(); });
 }
 
 bool has_nulls(table_view const& view)
 {
-  return std::any_of(view.begin(), view.end(), [](auto const& col) { return col.has_nulls(); });
+  return std::ranges::any_of(view, [](auto const& col) { return col.has_nulls(); });
 }
 
 bool has_nested_nulls(table_view const& input)
 {
-  return std::any_of(input.begin(), input.end(), [](auto const& col) {
+  return std::ranges::any_of(input, [](auto const& col) {
     return col.has_nulls() ||
            std::any_of(col.child_begin(), col.child_end(), [](auto const& child_col) {
              return has_nested_nulls(table_view{{child_col}});
@@ -146,7 +146,7 @@ bool has_nested_nulls(table_view const& input)
 
 bool has_nested_nullable_columns(table_view const& input)
 {
-  return std::any_of(input.begin(), input.end(), [](auto const& col) {
+  return std::ranges::any_of(input, [](auto const& col) {
     return col.nullable() ||
            std::any_of(col.child_begin(), col.child_end(), [](auto const& child_col) {
              return has_nested_nullable_columns(table_view{{child_col}});
@@ -178,8 +178,7 @@ template bool is_relationally_comparable<mutable_table_view>(mutable_table_view 
 
 bool has_nested_columns(table_view const& table)
 {
-  return std::any_of(
-    table.begin(), table.end(), [](column_view const& col) { return is_nested(col.type()); });
+  return std::ranges::any_of(table, [](column_view const& col) { return is_nested(col.type()); });
 }
 }  // namespace detail
 

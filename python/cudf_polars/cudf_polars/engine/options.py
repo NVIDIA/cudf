@@ -12,6 +12,8 @@ import os
 import textwrap
 from typing import TYPE_CHECKING, Any, Literal
 
+import kvikio
+
 from rapidsmpf.config import Options
 from rapidsmpf.utils.string import parse_boolean
 
@@ -29,7 +31,7 @@ from cudf_polars.utils.config import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from cudf_polars.quent import QuentContext
+    from cudf_polars.quent import QuentConfig
     from cudf_polars.utils.config import (
         JoinFilterPushdownOptions,
         ParquetOptions,
@@ -42,10 +44,15 @@ __all__: list[str] = [
 ]
 
 
+def _parse_remote_io_backend(value: str) -> kvikio.RemoteIOBackend:
+    return kvikio.RemoteIOBackend[value.upper()]
+
+
 def _opt(
     category: str,
     env_var: str | None = None,
     coerce: Callable[[str], Any] = str,
+    default: Any = UNSPECIFIED,
 ) -> Any:
     """
     Factory for ``StreamingOptions`` fields with category and env-var metadata.
@@ -60,10 +67,14 @@ def _opt(
         :class:`StreamingOptions` is instantiated without an explicit value for
         this field, the factory reads the environment variable (if set) on the constructing
         process.  ``None`` means no environment variable; the field defaults to
-        :data:`UNSPECIFIED`.
+        *default*.
     coerce
         Callable used to convert the raw env-var string to the field's type.
         Defaults to ``str`` (no conversion).
+    default
+        Value used when neither an explicit value nor the environment variable
+        is set. Defaults to :data:`UNSPECIFIED`, which defers to rapidsmpf's
+        built-in default.
     """
 
     def _default() -> Any:
@@ -71,7 +82,7 @@ def _opt(
             raw = os.environ.get(env_var)
             if raw is not None:
                 return coerce(raw)
-        return UNSPECIFIED
+        return default
 
     return dataclasses.field(
         default_factory=_default,
@@ -130,7 +141,7 @@ class StreamingOptions:
     num_streaming_threads
         Threads used to execute coroutines.
         Env: ``RAPIDSMPF_NUM_STREAMING_THREADS``.
-        Default: ``1``.
+        Default: ``4``.
         Category: rapidsmpf.
     num_streams
         CUDA streams for concurrent GPU execution.
@@ -161,7 +172,8 @@ class StreamingOptions:
     pinned_memory
         Enable pinned host memory.
         Env: ``RAPIDSMPF_PINNED_MEMORY``.
-        Default: ``False``.
+        Default: ``True`` if the system supports pinned memory resources,
+        otherwise ``False``.
         Category: rapidsmpf.
     pinned_initial_pool_size
         Initial pinned memory pool size (bytes).
@@ -178,17 +190,37 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_SPILL_DEVICE_LIMIT``.
         Default: ``"80%"``.
         Category: rapidsmpf.
+    spill_host_limit
+        Limit on the pageable host memory the RapidsMPF buffer resource may
+        reserve, per GPU, as a byte count (e.g. ``"96GiB"``) or a percentage
+        of per-GPU host memory (e.g. ``"10%"``). Independent of
+        ``pinned_max_pool_size``.
+        Env: ``RAPIDSMPF_SPILL_HOST_LIMIT``.
+        Default: unlimited.
+        Category: rapidsmpf.
     periodic_spill_check
         Interval between spill checks (e.g. ``"1ms"``).
         Env: ``RAPIDSMPF_PERIODIC_SPILL_CHECK``.
         Default: ``"1ms"``.
         Category: rapidsmpf.
-    unbounded_file_read_cache
+    disk_spill_dir
+        Directory for disk-backed buffers. When set, the RapidsMPF buffer
+        resource gets a disk memory tier whose files live in a subdirectory it
+        owns under this path.
+        Env: ``RAPIDSMPF_DISK_SPILL_DIR``.
+        Default: disabled.
+        Category: rapidsmpf.
+    experimental_unbounded_file_read_cache
         Cache file-read results in the Context's message storage.
         Accepts a memory type (``"host"``, ``"pinned"``, ``"device"``) or
-        ``"disabled"``. Primarily for benchmarking. Each file slice must be
-        read with identical parameters (see rapidsmpf docs).
-        Env: ``RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE``.
+        ``"disabled"``. The first read of a file slice is cached in the given
+        memory type and later reads of the exact same slice reuse the copy.
+        The cache is unbounded and lives as long as the Engine. Primarily for
+        benchmarking. Each file slice must always be read with identical
+        parameters, such as filters and schemas. This is not validated, and
+        differing parameters may return incorrect data.
+        Experimental: may be changed or removed without a deprecation period.
+        Env: ``CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE``.
         Default: ``"disabled"``.
         Category: rapidsmpf.
     ucxx_progress_mode
@@ -207,6 +239,36 @@ class StreamingOptions:
         :meth:`~cudf_polars.engine.core.StreamingEngine.gather_io_summary`.
         Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS``.
         Default: ``False``.
+        Category: executor.
+    kvikio_remote_io_backend
+        The kvikio remote I/O backend.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND``.
+        Default: ``kvikio.RemoteIOBackend.MULTI_POLL``.
+        Category: executor.
+    kvikio_task_size
+        Size, in bytes, of the chunks kvikio splits reads into for parallel
+        dispatch. Applies to local and remote I/O under both backends.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE``.
+        Default: ``16777216`` (16 MiB) for the ``MULTI_POLL`` backend,
+        ``67108864`` (64 MiB) for ``EASY_THREADPOOL``.
+        Category: executor.
+    kvikio_bounce_buffer_bytes
+        Size, in bytes, of the kvikio bounce buffer used to stage host memory
+        for device-memory transfers. Applies to local and remote I/O under
+        both backends (not specific to ``MULTI_POLL``).
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES``.
+        Default: ``16777216`` (16 MiB).
+        Category: executor.
+    kvikio_reactor_count
+        Number of reactor threads used by the ``MULTI_POLL`` remote I/O backend.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT``.
+        Default: ``24``.
+        Category: executor.
+    kvikio_request_ceiling
+        Maximum number of concurrent in-flight requests across all reactor
+        threads under the ``MULTI_POLL`` remote I/O backend. 0 means unlimited.
+        Env: ``CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING``.
+        Default: ``256``.
         Category: executor.
     max_concurrent_io_tasks
         Maximum concurrent IO tasks for each scan node.
@@ -248,7 +310,7 @@ class StreamingOptions:
         disables the rewrite.
         Env: ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN`` and
         ``CUDF_POLARS__EXECUTOR__JOIN_FILTER_PUSHDOWN__*``.
-        Default: enabled.
+        Default: disabled.
         Category: executor.
     sink_to_directory
         Whether multi-partition sink operations should write to a directory
@@ -256,6 +318,12 @@ class StreamingOptions:
         always use ``True``; passing ``False`` raises ``ValueError``.
         Env: ``CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY``.
         Default: ``True`` (forced by the streaming engines).
+        Category: executor.
+    parallel_sink_batches
+        Run callbacks on each rank for ``sink_batches(maintain_order=False)``.
+        Enable only for callbacks safe to invoke concurrently across ranks.
+        Env: ``CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES``.
+        Default: ``False``.
         Category: executor.
     quent_context
         Quent tracing context, or ``None`` to disable tracing.
@@ -323,11 +391,15 @@ class StreamingOptions:
     spill_device_limit: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_SPILL_DEVICE_LIMIT"
     )
+    spill_host_limit: str | Unspecified = _opt(
+        "rapidsmpf", "RAPIDSMPF_SPILL_HOST_LIMIT"
+    )
     periodic_spill_check: str | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_PERIODIC_SPILL_CHECK"
     )
-    unbounded_file_read_cache: str | Unspecified = _opt(
-        "rapidsmpf", "RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE"
+    disk_spill_dir: str | Unspecified = _opt("rapidsmpf", "RAPIDSMPF_DISK_SPILL_DIR")
+    experimental_unbounded_file_read_cache: str | Unspecified = _opt(
+        "rapidsmpf", "CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE"
     )
     ucxx_progress_mode: (
         Literal["polling", "thread-blocking", "thread-polling"] | Unspecified
@@ -341,6 +413,23 @@ class StreamingOptions:
     )
     kvikio_statistics: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_STATISTICS", parse_boolean
+    )
+    kvikio_remote_io_backend: kvikio.RemoteIOBackend | Unspecified = _opt(
+        "executor",
+        "CUDF_POLARS__EXECUTOR__KVIKIO_REMOTE_IO_BACKEND",
+        _parse_remote_io_backend,
+    )
+    kvikio_task_size: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_TASK_SIZE", int
+    )
+    kvikio_bounce_buffer_bytes: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_BOUNCE_BUFFER_BYTES", int
+    )
+    kvikio_reactor_count: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REACTOR_COUNT", int
+    )
+    kvikio_request_ceiling: int | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING", int
     )
     max_concurrent_io_tasks: int | dict[str, int] | Unspecified | None = _opt(
         "executor",
@@ -359,16 +448,19 @@ class StreamingOptions:
     target_partition_size: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", int
     )
-    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | None | Unspecified = (
+    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | Unspecified | None = (
         _opt("executor")
     )
     join_filter_pushdown: (
-        dict[str, Any] | JoinFilterPushdownOptions | None | Unspecified
+        dict[str, Any] | JoinFilterPushdownOptions | Unspecified | None
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
     )
-    quent_context: QuentContext | None | Unspecified = _opt(
+    parallel_sink_batches: bool | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", parse_boolean
+    )
+    quent_context: QuentConfig | Unspecified | None = _opt(
         "executor",
     )
 
@@ -433,8 +525,8 @@ class StreamingOptions:
 
         Examples
         --------
-        >>> StreamingOptions(fallback_mode="silent").to_dict()
-        {'fallback_mode': 'silent'}
+        >>> StreamingOptions(fallback_mode="silent").to_dict()  # doctest: +ELLIPSIS
+        {..., 'fallback_mode': 'silent'}
         >>> StreamingOptions.from_dict(
         ...     StreamingOptions(fallback_mode="silent").to_dict()
         ... )  # doctest: +ELLIPSIS
@@ -584,7 +676,7 @@ class StreamingOptions:
             type=int,
             help=textwrap.dedent("""\
                 Number of threads used to execute coroutines. Must be > 0.
-                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 1."""),
+                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 4."""),
         )
         g.add_argument(
             "--num-streams",
@@ -639,7 +731,7 @@ class StreamingOptions:
             action=argparse.BooleanOptionalAction,
             help=textwrap.dedent("""\
                 Enable pinned host memory if available on the system.
-                Env: RAPIDSMPF_PINNED_MEMORY. Built-in default: false."""),
+                Env: RAPIDSMPF_PINNED_MEMORY. Default: true if supported."""),
         )
         g.add_argument(
             "--pinned-initial-pool-size",
@@ -648,7 +740,7 @@ class StreamingOptions:
             type=int,
             help=textwrap.dedent("""\
                 Starting allocation for the pinned memory pool in bytes.
-                Env: RAPIDSMPF_PINNED_INITIAL_POOL_SIZE. Built-in default: 0."""),
+                Env: RAPIDSMPF_PINNED_INITIAL_POOL_SIZE. Default: 0."""),
         )
         g.add_argument(
             "--pinned-max-pool-size",
@@ -681,14 +773,33 @@ class StreamingOptions:
                 Env: RAPIDSMPF_PERIODIC_SPILL_CHECK. Built-in default: 1ms."""),
         )
         g.add_argument(
-            "--unbounded-file-read-cache",
-            dest="unbounded_file_read_cache",
+            "--spill-host-limit",
+            dest="spill_host_limit",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Limit on pageable host memory per GPU, as bytes (e.g. "96GiB")
+                or a percentage of per-GPU host memory (e.g. "10%%").
+                Env: RAPIDSMPF_SPILL_HOST_LIMIT. Built-in default: unlimited."""),
+        )
+        g.add_argument(
+            "--disk-spill-dir",
+            dest="disk_spill_dir",
+            default=None,
+            type=str,
+            help=textwrap.dedent("""\
+                Directory for disk-backed buffers (enables the disk memory tier).
+                Env: RAPIDSMPF_DISK_SPILL_DIR. Built-in default: disabled."""),
+        )
+        g.add_argument(
+            "--experimental-unbounded-file-read-cache",
+            dest="experimental_unbounded_file_read_cache",
             default=None,
             type=str,
             help=textwrap.dedent("""\
                 Cache file-read results in the Context's message storage.
                 One of "host", "pinned", "device", or "disabled".
-                Env: RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE. Built-in default: disabled."""),
+                Env: CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE. Built-in default: disabled."""),
         )
         g.add_argument(
             "--hardware-binding",

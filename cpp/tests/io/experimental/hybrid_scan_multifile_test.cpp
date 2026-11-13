@@ -8,6 +8,7 @@
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/table_utilities.hpp>
 
@@ -27,10 +28,12 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -334,9 +337,13 @@ TEST_F(HybridScanMultifileTest, SparseDictionaryEncodedPages)
                                                                        reader_options};
   setup_page_indexes(reader, inputs);
 
+  // Retain only the first data page of every other row group
+  auto const is_row_retained = [](int64_t row) {
+    return row % (2 * page_size_for_ordered_tests) < page_size_for_ordered_tests / 5;
+  };
   auto const row_groups = reader.all_row_groups(reader_options);
-  auto row_mask_values  = cudf::detail::make_counting_transform_iterator(
-    cudf::size_type{0}, [](auto i) { return (i / page_size_for_ordered_tests) % 2 == 0; });
+  auto row_mask_values =
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, is_row_retained);
   auto row_mask = cudf::test::fixed_width_column_wrapper<bool>(
     row_mask_values, row_mask_values + reader.total_rows_in_row_groups(row_groups));
   auto const stream = cudf::get_default_stream();
@@ -344,8 +351,40 @@ TEST_F(HybridScanMultifileTest, SparseDictionaryEncodedPages)
 
   auto const page_ranges =
     reader.payload_pages_byte_ranges(row_groups, row_mask, reader_options, stream);
+
+  // Expect exact page byte ranges: the dictionary page is kept only along with a data page and
+  // pruned pages have empty byte ranges
+  auto expected_ranges = std::vector<std::pair<int64_t, int64_t>>{};
+  auto row_offset      = int64_t{0};
+  for (auto const& metadata : reader.parquet_metadatas()) {
+    for (auto const& row_group : metadata.row_groups) {
+      auto const& column_chunk = row_group.columns[2];
+      ASSERT_TRUE(column_chunk.offset_index.has_value());
+      ASSERT_GT(column_chunk.meta_data.dictionary_page_offset, 0);
+      auto const& page_locations  = column_chunk.offset_index->page_locations;
+      auto const is_page_retained = [&](auto const& page) {
+        return is_row_retained(row_offset + page.first_row_index);
+      };
+      auto const dict_offset = column_chunk.meta_data.dictionary_page_offset;
+      expected_ranges.emplace_back(dict_offset,
+                                   std::ranges::any_of(page_locations, is_page_retained)
+                                     ? column_chunk.meta_data.data_page_offset - dict_offset
+                                     : 0);
+      std::ranges::transform(page_locations, std::back_inserter(expected_ranges), [&](auto page) {
+        return std::pair<int64_t, int64_t>{page.offset,
+                                           is_page_retained(page) ? page.compressed_page_size : 0};
+      });
+      row_offset += row_group.num_rows;
+    }
+  }
+  auto actual_ranges = std::vector<std::pair<int64_t, int64_t>>{};
+  std::ranges::transform(page_ranges.first, std::back_inserter(actual_ranges), [](auto range) {
+    return std::pair{range.offset(), range.size()};
+  });
+  EXPECT_EQ(expected_ranges, actual_ranges);
+
   auto page_data = fetch_multisource_device_data(inputs, page_ranges, stream, mr);
-  reader.setup_chunking_for_payload_columns(
+  reader.setup_chunking_for_payload_pages(
     0, 0, row_groups, row_mask, page_data.flat_spans, reader_options, stream, mr);
 
   ASSERT_TRUE(reader.has_next_table_chunk());
@@ -419,7 +458,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
     auto false_scalar          = cudf::numeric_scalar<bool>{false};
     auto row_mask              = cudf::make_column_from_scalar(false_scalar, 0);
 
-    EXPECT_NO_THROW(reader->setup_chunking_for_payload_columns(
+    EXPECT_NO_THROW(reader->setup_chunking_for_payload_pages(
       0, 0, row_groups, row_mask->view(), empty_page_data, options, stream, mr));
     ASSERT_TRUE(reader->has_next_table_chunk());
     auto const result = reader->materialize_payload_columns_chunk(row_mask->view());
@@ -438,7 +477,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
     auto const row_mask        = reader->build_all_true_row_mask(row_groups, stream, mr);
     auto const empty_page_data = std::vector<cudf::device_span<uint8_t const>>{};
 
-    EXPECT_THROW(reader->setup_chunking_for_payload_columns(
+    EXPECT_THROW(reader->setup_chunking_for_payload_pages(
                    0, 0, row_groups, row_mask->view(), empty_page_data, options, stream, mr),
                  cudf::logic_error);
   }
@@ -462,7 +501,7 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
                             [](auto const& range) { return range.is_empty(); }));
     auto const all_pruned_page_data =
       std::vector<cudf::device_span<uint8_t const>>(page_ranges.first.size());
-    reader->setup_chunking_for_payload_columns(
+    reader->setup_chunking_for_payload_pages(
       0, 0, row_groups, row_mask->view(), all_pruned_page_data, options, stream, mr);
     ASSERT_TRUE(reader->has_next_table_chunk());
     auto const result = reader->materialize_payload_columns_chunk(row_mask->view());
@@ -500,4 +539,194 @@ TEST_F(HybridScanMultifileTest, AllColumnsPreservesRequiredNullability)
   // Check results
   EXPECT_FALSE(result.tbl->view().column(0).nullable());
   CUDF_TEST_EXPECT_TABLES_EQUAL(input_table->view(), result.tbl->view());
+}
+
+TEST_F(HybridScanMultifileTest, MismatchedSchemaNullabilityDoesNotLeakIntoMetadata)
+{
+  // The first source has REQUIRED columns and the second one has the same columns, reordered and
+  // nullable. The output must be nullable, but the metadata handed back by the reader must keep
+  // reporting the repetition types that were read from the file footers, both before and after
+  // materialization.
+  auto const buffer_a = std::get<1>(create_parquet_with_stats<int64_t, 1>());
+  auto const buffer_b = std::get<1>(create_parquet_with_stats<int64_t, 1, true, true>(
+    100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1}));
+
+  auto const parquet_buffers = std::vector<std::vector<char>>{buffer_a, buffer_b};
+  auto const source_info     = build_source_info(parquet_buffers);
+  auto inputs                = multifile_inputs(source_info);
+  auto const stream          = cudf::get_default_stream();
+  auto const mr              = cudf::get_current_device_resource_ref();
+
+  auto const expected =
+    cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source_info)
+                             .allow_mismatched_pq_schemas(true)
+                             .column_names({"col0", "col1", "col2"})
+                             .build(),
+                           stream,
+                           mr);
+
+  auto const options =
+    cudf::io::parquet_reader_options::builder().allow_mismatched_pq_schemas(true).build();
+  auto reader =
+    cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
+
+  // `col0` is REQUIRED in the first source, and stays REQUIRED in the reported metadata even
+  // though the second source declares it nullable
+  auto const col0_repetition_type = [](auto const& metadatas) {
+    return metadatas.front().schema[1].repetition_type;
+  };
+  ASSERT_EQ(reader.parquet_metadatas().front().schema[1].name, "col0");
+  EXPECT_EQ(col0_repetition_type(reader.parquet_metadatas()),
+            cudf::io::parquet::FieldRepetitionType::REQUIRED);
+
+  auto const row_groups = reader.all_row_groups(options);
+  auto column_data      = fetch_multisource_device_data(
+    inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
+  auto const result =
+    reader.materialize_all_columns(row_groups, column_data.flat_spans, options, stream, mr);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), result.tbl->view());
+  EXPECT_TRUE(result.tbl->view().column(0).nullable());
+  EXPECT_TRUE(result.metadata.schema_info[0].is_nullable);
+
+  // Materializing must not have rewritten the reported repetition type
+  auto metadatas = reader.parquet_metadatas();
+  EXPECT_EQ(col0_repetition_type(metadatas), cudf::io::parquet::FieldRepetitionType::REQUIRED);
+
+  // A reader built from that metadata must produce the same table, i.e. no fabricated nullability
+  // carried over from the first reader
+  auto reader_from_metadata =
+    cudf::io::parquet::experimental::hybrid_scan_multifile{std::move(metadatas), options};
+  auto downstream_column_data = fetch_multisource_device_data(
+    inputs, reader_from_metadata.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
+  auto const downstream_result = reader_from_metadata.materialize_all_columns(
+    row_groups, downstream_column_data.flat_spans, options, stream, mr);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), downstream_result.tbl->view());
+  EXPECT_EQ(col0_repetition_type(reader_from_metadata.parquet_metadatas()),
+            cudf::io::parquet::FieldRepetitionType::REQUIRED);
+}
+
+TEST_F(HybridScanMultifileTest, ReadColumnsFromMismatchedSchemas)
+{
+  using T = cudf::timestamp_ms;
+
+  // Create two sources with mismatched schemas
+  auto const buffer_a = std::get<1>(create_parquet_with_stats<T, 1>());
+  auto const buffer_b = std::get<1>(create_parquet_with_stats<T, 1>(
+    100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1}));
+
+  auto const parquet_buffers = std::vector<std::vector<char>>{buffer_a, buffer_b};
+  auto const source_info     = build_source_info(parquet_buffers);
+  auto inputs                = multifile_inputs(source_info);
+  auto const stream          = cudf::get_default_stream();
+  auto const mr              = cudf::get_current_device_resource_ref();
+
+  // Read ms timestamps as us so that page statistics need scaling in every source
+  auto const timestamp_type = cudf::data_type{cudf::type_id::TIMESTAMP_MICROSECONDS};
+
+  // Reading mismatched schemas must be opted into, even without a column projection
+  EXPECT_THROW(cudf::io::parquet::experimental::hybrid_scan_multifile(
+                 inputs.footer_byte_spans, cudf::io::parquet_reader_options::builder().build()),
+               cudf::logic_error);
+
+  // Expected table from the regular reader
+  auto const expected =
+    cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source_info)
+                             .allow_mismatched_pq_schemas(true)
+                             .column_names({"col0", "col1", "col2"})
+                             .timestamp_type(timestamp_type)
+                             .build(),
+                           stream,
+                           mr);
+
+  auto options = cudf::io::parquet_reader_options::builder()
+                   .allow_mismatched_pq_schemas(true)
+                   .timestamp_type(timestamp_type)
+                   .build();
+  auto reader =
+    cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
+  auto const row_groups = reader.all_row_groups(options);
+
+  // Single step materialize with hybrid scan
+  {
+    auto column_data = fetch_multisource_device_data(
+      inputs, reader.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
+    auto const result =
+      reader.materialize_all_columns(row_groups, column_data.flat_spans, options, stream, mr);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected.tbl->view(), result.tbl->view());
+  }
+
+  // Two step materialize with hybrid scan, pruning pages with per-source mapped page indexes
+  {
+    auto literal_value = cudf::timestamp_scalar<cudf::timestamp_us>(
+      cudf::timestamp_us{cudf::duration_us{4'900'000}}, true);
+    auto literal = cudf::ast::literal(literal_value);
+    auto col_ref = cudf::ast::column_name_reference("col0");
+    auto filter  = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref, literal);
+
+    options.set_filter(filter);
+    reader.reset_column_selection();
+
+    auto const expected_filtered =
+      cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source_info)
+                               .allow_mismatched_pq_schemas(true)
+                               .column_names({"col0", "col1", "col2"})
+                               .timestamp_type(timestamp_type)
+                               .filter(filter)
+                               .build(),
+                             stream,
+                             mr);
+
+    setup_page_indexes(reader, inputs);
+    auto row_mask = reader.build_row_mask_with_page_index_stats(row_groups, options, stream, mr);
+    auto row_mask_view = row_mask->mutable_view();
+
+    // `col0` is 0..19999 ms (read as us), so only the first 5 of the 20 pages in each source can
+    // satisfy `col0 < 4900 ms`
+    EXPECT_EQ(std::ranges::count(cudf::test::to_host<bool>(row_mask->view()).first, true),
+              2 * page_size_for_ordered_tests);
+
+    auto filter_column_chunks = fetch_multisource_device_data(
+      inputs, reader.filter_column_chunks_byte_ranges(row_groups, options), stream, mr);
+    auto const filter_result = reader.materialize_filter_columns(row_groups,
+                                                                 filter_column_chunks.flat_spans,
+                                                                 row_mask_view,
+                                                                 use_data_page_mask::YES,
+                                                                 options,
+                                                                 stream,
+                                                                 mr);
+
+    auto payload_column_chunks = fetch_multisource_device_data(
+      inputs, reader.payload_column_chunks_byte_ranges(row_groups, options), stream, mr);
+    auto const payload_result = reader.materialize_payload_columns(row_groups,
+                                                                   payload_column_chunks.flat_spans,
+                                                                   row_mask_view,
+                                                                   use_data_page_mask::YES,
+                                                                   options,
+                                                                   stream,
+                                                                   mr);
+
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_filtered.tbl->select({0}),
+                                       filter_result.tbl->view());
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_filtered.tbl->select({1, 2}),
+                                       payload_result.tbl->view());
+  }
+}
+
+TEST_F(HybridScanMultifileTest, EmptySources)
+{
+  // Arrow schema is applied during metadata construction, so make sure empty inputs are rejected
+  // before any metadata is touched
+  auto const options = cudf::io::parquet_reader_options::builder().use_arrow_schema(true).build();
+
+  EXPECT_THROW(cudf::io::parquet::experimental::hybrid_scan_multifile(
+                 cudf::host_span<cudf::host_span<uint8_t const> const>{}, options),
+               std::invalid_argument);
+  EXPECT_THROW(cudf::io::parquet::experimental::hybrid_scan_multifile(
+                 cudf::host_span<cudf::io::parquet::FileMetaData const>{}, options),
+               std::invalid_argument);
+  EXPECT_THROW(cudf::io::parquet::experimental::hybrid_scan_multifile(
+                 std::vector<cudf::io::parquet::FileMetaData>{}, options),
+               std::invalid_argument);
 }

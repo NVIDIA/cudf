@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -165,6 +165,7 @@ def read_orc(
     timestamp_type=None,
     storage_options=None,
     bytes_per_thread=None,
+    filesystem=None,
 ):
     """{docstring}"""
     if skiprows is not None:
@@ -202,6 +203,7 @@ def read_orc(
     filepaths_or_buffers = ioutils.get_reader_filepath_or_buffer(
         path_or_data=filepath_or_buffer,
         storage_options=storage_options,
+        filesystem=filesystem,
         bytes_per_thread=bytes_per_thread,
         expand_dir_pattern="*.orc",
     )
@@ -373,6 +375,7 @@ def to_orc(
     cols_as_map_type=None,
     storage_options=None,
     index: bool | None = None,
+    filesystem=None,
 ):
     """{docstring}"""
 
@@ -393,7 +396,10 @@ def to_orc(
         raise TypeError("cols_as_map_type must be a list of column names.")
 
     path_or_buf = ioutils.get_writer_filepath_or_buffer(
-        path_or_data=fname, mode="wb", storage_options=storage_options
+        path_or_data=fname,
+        mode="wb",
+        storage_options=storage_options,
+        filesystem=filesystem,
     )
     if ioutils.is_fsspec_open_file(path_or_buf):
         with path_or_buf as file_obj:

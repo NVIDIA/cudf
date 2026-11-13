@@ -23,6 +23,7 @@ def partition_and_pack(
     num_partitions: int,
     stream: Stream,
     br: BufferResource,
+    seed: int = ...,
     reservation: MemoryReservation | None = None,
 ) -> dict[int, PackedData]: ...
 def split_and_pack_cost(

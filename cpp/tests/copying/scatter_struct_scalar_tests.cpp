@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -240,13 +240,11 @@ TYPED_TEST(TypedStructScalarScatterTest, StructOfLists)
   cudf::test::fixed_width_column_wrapper<cudf::size_type> scatter_map{0, 1, 4};
 
   // Target column
-  LCW field0({LCW{XXX}, LCW{22}, LCW{33, 44}, LCW{null}, LCW{55}},
-             cudf::test::iterators::null_at(3));
+  LCW field0({{XXX}, {22}, {33, 44}, {null}, {55}}, cudf::test::iterators::null_at(3));
   structs_col target({field0}, cudf::test::iterators::null_at(0));
 
   // Expect column
-  LCW ef0({LCW{777}, LCW{777}, LCW{33, 44}, LCW{null}, LCW{777}},
-          cudf::test::iterators::null_at(3));
+  LCW ef0({{777}, {777}, {33, 44}, {null}, {777}}, cudf::test::iterators::null_at(3));
   structs_col expected{ef0};
 
   auto got = scatter_single_scalar(*slr, scatter_map, target);

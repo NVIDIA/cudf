@@ -374,7 +374,7 @@ def test_unique(data):
 def test_len(data):
     expect = Series(data).list.len()
     ds = dask_cudf.from_cudf(Series(data), 5)
-    assert_eq(expect, ds.list.len().compute())
+    dd.assert_eq(expect, ds.list.len())
 
 
 @pytest.mark.parametrize(
@@ -384,7 +384,7 @@ def test_len(data):
 def test_contains(data, search_key):
     expect = Series(data).list.contains(search_key)
     ds = dask_cudf.from_cudf(Series(data), 5)
-    assert_eq(expect, ds.list.contains(search_key).compute())
+    dd.assert_eq(expect, ds.list.contains(search_key))
 
 
 @pytest.mark.parametrize(
@@ -397,7 +397,14 @@ def test_contains(data, search_key):
 def test_get(data, index):
     expect = Series(data).list.get(index)
     ds = dask_cudf.from_cudf(Series(data), 5)
-    assert_eq(expect, ds.list.get(index).compute())
+    dd.assert_eq(expect, ds.list.get(index))
+
+
+def test_get_list_index():
+    # A list of per-row indices works when there is a single partition.
+    s = Series([[1, 2], [3, 4], [5, 6]])
+    ds = dask_cudf.from_cudf(s, 1)
+    dd.assert_eq(s.list.get([0, 1, 0]), ds.list.get([0, 1, 0]))
 
 
 @pytest.mark.parametrize(
@@ -407,6 +414,7 @@ def test_get(data, index):
 def test_leaves(data):
     expect = Series(data).list.leaves
     ds = dask_cudf.from_cudf(Series(data), 5)
+    assert ds.list.leaves.dtype == expect.dtype
     got = ds.list.leaves.compute().reset_index(drop=True)
     assert_eq(expect, got)
 

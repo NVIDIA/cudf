@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,17 +10,19 @@
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
+#include <cuda/std/concepts>
+#include <cuda/std/type_traits>
 #include <thrust/host_vector.h>
 
 #include <array>
 #include <tuple>
-#include <type_traits>
 
 /**
  * @file type_lists.hpp
@@ -70,16 +72,16 @@ constexpr auto types_to_ids()
  * @param init_list Values used to create the output vector
  * @return Vector of TypeParam with the values specified
  */
-template <typename TypeParam, typename T>
-std::enable_if_t<cudf::is_fixed_width<TypeParam>() && !cudf::is_timestamp_t<TypeParam>::value,
-                 thrust::host_vector<TypeParam>>
-make_type_param_vector(std::initializer_list<T> const& init_list)
+template <cudf::concepts::fixed_width TypeParam, typename T>
+thrust::host_vector<TypeParam> make_type_param_vector(std::initializer_list<T> const& init_list)
 {
   std::vector<T> input{init_list};
   std::vector<TypeParam> vec(init_list.size());
   std::transform(
     std::cbegin(input), std::cend(input), std::begin(vec), [](auto const& e) -> TypeParam {
-      if constexpr (std::is_unsigned_v<TypeParam>) { return static_cast<TypeParam>(std::abs(e)); }
+      if constexpr (cuda::std::is_unsigned_v<TypeParam>) {
+        return static_cast<TypeParam>(std::abs(e));
+      }
       return static_cast<TypeParam>(e);
     });
   return vec;
@@ -91,9 +93,8 @@ make_type_param_vector(std::initializer_list<T> const& init_list)
  * @param init_list Values used to create the output vector
  * @return Vector of TypeParam with the values specified
  */
-template <typename TypeParam, typename T>
-std::enable_if_t<cudf::is_timestamp_t<TypeParam>::value, thrust::host_vector<TypeParam>>
-make_type_param_vector(std::initializer_list<T> const& init_list)
+template <cudf::concepts::timestamp TypeParam, typename T>
+thrust::host_vector<TypeParam> make_type_param_vector(std::initializer_list<T> const& init_list)
 {
   thrust::host_vector<TypeParam> vec(init_list.size());
   std::transform(std::cbegin(init_list), std::cend(init_list), std::begin(vec), [](auto const& e) {
@@ -109,9 +110,8 @@ make_type_param_vector(std::initializer_list<T> const& init_list)
  * @return Vector of TypeParam with the values specified
  */
 
-template <typename TypeParam, typename T>
-std::enable_if_t<std::is_same_v<TypeParam, std::string>, thrust::host_vector<std::string>>
-make_type_param_vector(std::initializer_list<T> const& init_list)
+template <cuda::std::same_as<std::string> TypeParam, typename T>
+thrust::host_vector<std::string> make_type_param_vector(std::initializer_list<T> const& init_list)
 {
   thrust::host_vector<std::string> vec(init_list.size());
   std::transform(std::cbegin(init_list), std::cend(init_list), std::begin(vec), [](auto const& e) {
@@ -131,10 +131,8 @@ make_type_param_vector(std::initializer_list<T> const& init_list)
  * @return A fixed width type - [u]int32/float/duration etc. of type TypeParam with the
  *         value specified
  */
-template <typename TypeParam, typename T>
-std::enable_if_t<cudf::is_fixed_width<TypeParam>() && !cudf::is_timestamp_t<TypeParam>::value,
-                 TypeParam>
-make_type_param_scalar(T const init_value)
+template <cudf::concepts::fixed_width TypeParam, typename T>
+TypeParam make_type_param_scalar(T const init_value)
 {
   return static_cast<TypeParam>(init_value);
 }
@@ -150,9 +148,8 @@ make_type_param_scalar(T const init_value)
  * @return A fixed width type - TimeStamp of type TypeParam with the
  *         value specified
  */
-template <typename TypeParam, typename T>
-std::enable_if_t<cudf::is_timestamp_t<TypeParam>::value, TypeParam> make_type_param_scalar(
-  T const init_value)
+template <cudf::concepts::timestamp TypeParam, typename T>
+TypeParam make_type_param_scalar(T const init_value)
 {
   return TypeParam{typename TypeParam::duration(init_value)};
 }
@@ -165,9 +162,8 @@ std::enable_if_t<cudf::is_timestamp_t<TypeParam>::value, TypeParam> make_type_pa
  * @param init_value Value to convert to a string
  * @return string representation of the value
  */
-template <typename TypeParam, typename T>
-std::enable_if_t<std::is_same_v<TypeParam, std::string>, TypeParam> make_type_param_scalar(
-  T const init_value)
+template <cuda::std::same_as<std::string> TypeParam, typename T>
+TypeParam make_type_param_scalar(T const init_value)
 {
   return std::to_string(init_value);
 }

@@ -6,14 +6,13 @@ mod analyzer;
 mod evaluate;
 mod model;
 mod resource;
+#[cfg(all(feature = "filesystem", not(target_arch = "wasm32")))]
 mod viewer;
 
-mod generated {
-    #![allow(dead_code, unused_imports)]
-    include!(concat!(env!("OUT_DIR"), "/cudfpolars.rs"));
-}
+pub(crate) use cudf_polars_quent_store as generated;
 
 pub use analyzer::CudfPolarsUiAnalyzer;
+#[cfg(all(feature = "filesystem", not(target_arch = "wasm32")))]
 pub use viewer::Viewer;
 
 #[cfg(test)]

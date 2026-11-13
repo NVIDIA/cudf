@@ -17,6 +17,7 @@ pytest.importorskip("cudf_polars_quent")
 
 from cudf_polars.quent._export import (
     SIDECAR_FILE_NAME,
+    write_quent_browser_bundle,
     write_quent_export,
 )
 from cudf_polars.quent._runtime import QuentSession, start_collector
@@ -80,3 +81,24 @@ def test_export_packages_generated_context(tmp_path: Path) -> None:
         streams = {name.split("/")[1] for name in names if "/" in name}
         assert "Engine" in streams
         assert "engine" not in streams
+
+
+def test_export_writes_browser_bundle(tmp_path: Path) -> None:
+    root = tmp_path / "quent"
+    _collect_engine_events(root)
+    bundle_path = tmp_path / "trace.quent-browser"
+
+    info = write_quent_browser_bundle(root, bundle_path)
+
+    data = bundle_path.read_bytes()
+    metadata_length = int.from_bytes(data[8:12], "big")
+    metadata = json.loads(data[28 : 28 + metadata_length])
+    assert data[:8] == b"QNTBR001"
+    assert metadata["model_name"] == "cudf-polars"
+    assert metadata["engine_id"] == info.engine_id
+    assert metadata["schema_digest"] == info.schema_digest
+    assert metadata["model_provenance"]["model"]["name"] == "CudfPolars"
+    assert metadata["capabilities"] == {"data_flow": False, "nvtx": False}
+    assert info.context_count == 1
+    assert info.event_count == 2
+    assert info.format_version == 1

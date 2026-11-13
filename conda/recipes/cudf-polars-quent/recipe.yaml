@@ -40,6 +40,8 @@ requirements:
   build:
     # Keep the rust version in sync with RUSTUP_TOOLCHAIN in ci/build_wheel_cudf_polars_quent.sh.
     - rust =1.97
+    - rust-std-wasm32-unknown-unknown =1.97
+    - wasm-bindgen-cli =0.2.128
     - ${{ compiler("c") }}
     - ${{ stdlib("c") }}
   host:

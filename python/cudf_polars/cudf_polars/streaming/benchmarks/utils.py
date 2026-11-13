@@ -78,7 +78,10 @@ try:
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.dsl.translate import Translator
     from cudf_polars.engine.core import StreamingEngine
-    from cudf_polars.quent._export import write_quent_export
+    from cudf_polars.quent._export import (
+        write_quent_browser_bundle,
+        write_quent_export,
+    )
     from cudf_polars.streaming.benchmarks.asserts import (
         ValidationError,
         assert_tpch_result_equal,
@@ -96,6 +99,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.quent import QuentConfig
+    from cudf_polars.quent._export import BrowserBundleInfo
 
 POLARS_VALIDATION_OPTIONS: dict[str, Any] = {
     "check_row_order": True,
@@ -220,7 +224,22 @@ class QuentRole:
     filename: str
 
 
-Role = NightlyRole | NsysRole | QuentRole
+@dataclasses.dataclass
+class QuentBrowserRole:
+    """Role indicating a serverless Quent browser payload."""
+
+    type: Literal["quent-browser"] = dataclasses.field(
+        default="quent-browser", init=False
+    )
+    filename: str
+    engine_id: str
+    schema_digest: str
+    format_version: int
+    context_count: int
+    event_count: int
+
+
+Role = NightlyRole | NsysRole | QuentRole | QuentBrowserRole
 
 
 @dataclasses.dataclass
@@ -1699,11 +1718,12 @@ def run_polars_spmd(
         shutdown_time_begin = time.monotonic()
 
     if is_rank_0 and quent_archive is not None:
-        _write_quent_traces(
+        bundle_info = _write_quent_traces(
             engine=engine,
             run_id=run_config.run_id,
             quent_archive=quent_archive,
         )
+        _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
     shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         run_options,
@@ -1772,11 +1792,12 @@ def run_polars_ray(
         shutdown_time_begin = time.monotonic()
 
     if quent_archive is not None:
-        _write_quent_traces(
+        bundle_info = _write_quent_traces(
             engine=engine,
             run_id=run_config.run_id,
             quent_archive=quent_archive,
         )
+        _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
     shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         run_options,
@@ -1848,11 +1869,12 @@ def run_polars_dask(
             shutdown_time_begin = time.monotonic()
 
         if quent_archive is not None:
-            _write_quent_traces(
+            bundle_info = _write_quent_traces(
                 engine=engine,
                 run_id=run_config.run_id,
                 quent_archive=quent_archive,
             )
+            _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
     finally:
         if dask_client is not None:
             dask_client.close()
@@ -1873,16 +1895,40 @@ def _write_quent_traces(
     run_id: uuid.UUID,
     *,
     quent_archive: Path,
-) -> Path | None:
+) -> BrowserBundleInfo | None:
     """Write collected Quent events to a ``logs/<run_id>.zip`` archive."""
     export_root = engine._quent_output_root
     if export_root is None:
         return None
     if export_root.name != str(run_id):
         raise ValueError(f"Quent output {export_root} does not match run {run_id}")
+    browser_bundle = quent_archive.with_suffix(".quent-browser")
+    bundle_info = write_quent_browser_bundle(export_root, browser_bundle)
     output_path = write_quent_export(export_root, quent_archive)
     print(f"Wrote Quent trace archive to {output_path}")
-    return output_path
+    print(f"Wrote Quent browser bundle to {bundle_info.path}")
+    return bundle_info
+
+
+def _add_browser_bundle_metadata(
+    serializable_engine_config: dict[str, Any],
+    bundle: BrowserBundleInfo | None,
+) -> None:
+    """Add a generated browser bundle to benchmark output metadata."""
+    if bundle is None:
+        return
+    role = QuentBrowserRole(
+        filename=bundle.path.name,
+        engine_id=bundle.engine_id,
+        schema_digest=bundle.schema_digest,
+        format_version=bundle.format_version,
+        context_count=bundle.context_count,
+        event_count=bundle.event_count,
+    )
+    serializable_engine_config["roles"].append(dataclasses.asdict(role))
+    serializable_engine_config["extra_info"]["quent-browser-bundle"] = str(
+        bundle.path.absolute()
+    )
 
 
 PDSDS_TABLE_NAMES: list[str] = [
@@ -2515,7 +2561,12 @@ def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
         raise ValueError(
             f"--collect-traces is not supported with --frontend {run_config.frontend}; "
             "cudf-polars tracing only applies to GPU frontends "
-            "(in-memory, dask, ray, spmd)."
+            "(dask, ray, spmd)."
+        )
+    if run_config.collect_traces and run_config.frontend == "in-memory":
+        raise ValueError(
+            "--collect-traces is not yet supported with --frontend in-memory; "
+            "use dask, ray, or spmd."
         )
 
     elif (

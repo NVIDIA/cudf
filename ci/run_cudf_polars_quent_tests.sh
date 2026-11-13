@@ -71,4 +71,29 @@ pushd python/cudf_polars/quent/analyzer
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
+cargo check --locked --no-default-features
+popd
+
+pushd python/cudf_polars/quent/store
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+popd
+
+pushd python/cudf_polars/quent/browser
+cargo fmt --all -- --check
+cargo clippy --locked --features generate --all-targets -- -D warnings
+cargo test --locked --features generate --all-targets
+cargo build --locked --release --target wasm32-unknown-unknown
+target_dir="$(
+  cargo metadata --no-deps --format-version 1 |
+    python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])'
+)"
+rm -rf generated
+wasm-bindgen \
+  "${target_dir}/wasm32-unknown-unknown/release/cudf_polars_quent_browser.wasm" \
+  --target web \
+  --out-dir generated
+rg -q "export class BrowserServer" generated/cudf_polars_quent_browser.d.ts
+test "$(stat -c%s generated/cudf_polars_quent_browser_bg.wasm)" -lt 5000000
 popd

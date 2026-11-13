@@ -294,27 +294,6 @@ struct schema_child_lookup {
 };
 
 /**
- * @brief Checks if a BYTE_ARRAY schema element must be read as binary (`list<uint8>`) because it
- * is the `metadata` / `value` child of a VARIANT group or the `inline` child of a FILE group
- *
- * @param schema_elem Schema element to check
- * @param parent_schema Parent schema element of `schema_elem`
- * @return Boolean indicating if `schema_elem` must be read as binary
- */
-[[nodiscard]] bool is_binary_child_of_logical_group(SchemaElement const& schema_elem,
-                                                    SchemaElement const& parent_schema)
-{
-  if (schema_elem.type != Type::BYTE_ARRAY or not parent_schema.logical_type.has_value()) {
-    return false;
-  }
-  switch (parent_schema.logical_type->type) {
-    case LogicalType::VARIANT: return schema_elem.name == "metadata" or schema_elem.name == "value";
-    case LogicalType::FILE: return schema_elem.name == "inline";
-    default: return false;
-  }
-}
-
-/**
  * @brief Checks if a schema element is a FILE group whose children follow the FILE spec: each is a
  * unique, OPTIONAL `uri`, `offset`, `size`, `content_type`, `checksum` or `inline` leaf of the
  * expected physical and logical type
@@ -2167,6 +2146,15 @@ aggregate_reader_metadata::select_columns(
         }
       }
 
+      // Flag the `inline` child of a valid FILE group so that `make_column` materializes it as
+      // `list<uint8>` instead of strings.
+      if (output_col.is_file) {
+        auto const inline_col = std::ranges::find(output_col.children,
+                                                  std::string_view{"inline"},
+                                                  &cudf::io::detail::inline_column_buffer::name);
+        if (inline_col != output_col.children.end()) { inline_col->string_as_binary = true; }
+      }
+
       // if I have no children, we're at a leaf and I'm an input column (that is, one with actual
       // data stored) so add me to the list.
       if (schema_elem.num_children == 0) {
@@ -2200,9 +2188,13 @@ aggregate_reader_metadata::select_columns(
         // pop off the extra nesting element.
         if (one_level_list) { nesting.pop_back(); }
 
-        // Flag binary children of VARIANT / FILE groups so that `make_column` materializes them as
-        // `list<uint8>` instead of strings.
-        output_col.string_as_binary = is_binary_child_of_logical_group(schema_elem, parent_schema);
+        // Flag the `metadata` / `value` BYTE_ARRAY children of a VARIANT group so that
+        // `make_column` materializes them as `list<uint8>` instead of strings.
+        if (schema_elem.type == Type::BYTE_ARRAY && parent_schema.logical_type.has_value() &&
+            parent_schema.logical_type->type == LogicalType::VARIANT &&
+            (schema_elem.name == "metadata" || schema_elem.name == "value")) {
+          output_col.string_as_binary = true;
+        }
 
         path_is_valid = true;  // If we're able to reach leaf then path is valid
       }

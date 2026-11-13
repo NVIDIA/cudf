@@ -2378,10 +2378,10 @@ TEST_F(ParquetReaderTest, FileLogicalType)
     EXPECT_EQ(file_info.children[2].is_binary, true);
   }
 
-  // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct
+  // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct of strings
   fmd.schema[4].logical_type = LogicalType{LogicalType::STRING};
   auto const result          = read_with_footer(input.num_rows());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result.tbl->view().column(0));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(file_col, result.tbl->view().column(0));
   EXPECT_FALSE(result.metadata.schema_info[0].is_file.has_value());
 }
 

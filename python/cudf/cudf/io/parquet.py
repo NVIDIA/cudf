@@ -2095,10 +2095,7 @@ class ParquetDatasetWriter:
         It is in bytes, if the input is int.
         Size can also be a str in form or "10 MB", "1 GB", etc.
         If this parameter is used, it is mandatory to pass
-        `file_name_prefix`. Files from one ``write_table`` call share
-        a writer, which is closed once all of them reach this size; a
-        partition that is not written again keeps its writer open until
-        ``close()``.
+        `file_name_prefix`.
     file_name_prefix : str
         This is a prefix to file names generated only when
         `max_file_size` is specified.
@@ -2190,7 +2187,9 @@ class ParquetDatasetWriter:
         self._chunked_writers: list[
             tuple[ParquetWriter, list[str], str] | None
         ] = []
-        # Paths each writer may still write to; the writer is closed once empty
+        # Paths each writer may still write to; the writer is closed once
+        # empty. Files from one `write_table` call share a writer, so a
+        # partition that is not written again keeps it open until `close()`
         self._live_paths: list[set[str]] = []
         # Footer metadata of writers closed early, keyed by writer index
         self._closed_metadata: dict[int, np.ndarray | None] = {}

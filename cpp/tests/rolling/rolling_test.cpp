@@ -872,24 +872,25 @@ template <typename T>
 struct RollingMinMaxNaNTest : public cudf::test::BaseFixture {};
 TYPED_TEST_SUITE(RollingMinMaxNaNTest, cudf::test::FloatingPointTypes);
 
-TYPED_TEST(RollingMinMaxNaNTest, AllNaNWindows)
+TYPED_TEST(RollingMinMaxNaNTest, NaNPropagates)
 {
   using T            = TypeParam;
   auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  using wrapper      = cudf::test::fixed_width_column_wrapper<T>;
 
-  // A window of only NaNs (ignoring nulls) must produce NaN, not the +/-infinity identity
-  auto const input = cudf::test::fixed_width_column_wrapper<T>{
-    {NaN, NaN, T{1}, NaN, NaN, T{2}, NaN, T{0}}, {1, 1, 1, 1, 1, 1, 1, 0}};
+  // A window containing a NaN produces NaN; a null row is ignored even if its value is NaN
+  auto const input =
+    wrapper{{T{1}, NaN, NaN, T{2}, T{3}, NaN, T{4}, NaN}, {1, 1, 1, 1, 1, 0, 1, 1}};
   // window of the current and previous rows
-  auto const expected = cudf::test::fixed_width_column_wrapper<T>{
-    {NaN, NaN, T{1}, T{1}, NaN, T{2}, T{2}, NaN}, {1, 1, 1, 1, 1, 1, 1, 1}};
+  auto const expected_min = wrapper{T{1}, NaN, NaN, NaN, T{2}, T{3}, T{4}, NaN};
+  auto const expected_max = wrapper{T{1}, NaN, NaN, NaN, T{3}, T{3}, T{4}, NaN};
 
   auto const fixed_min =
     cudf::rolling_window(input, 2, 0, 1, *cudf::make_min_aggregation<cudf::rolling_aggregation>());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, fixed_min->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_min, fixed_min->view());
   auto const fixed_max =
     cudf::rolling_window(input, 2, 0, 1, *cudf::make_max_aggregation<cudf::rolling_aggregation>());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, fixed_max->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_max, fixed_max->view());
 
   // the same windows specified per row exercise the variable-size window path
   auto const preceding =
@@ -898,10 +899,32 @@ TYPED_TEST(RollingMinMaxNaNTest, AllNaNWindows)
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{{0, 0, 0, 0, 0, 0, 0, 0}};
   auto const variable_min = cudf::rolling_window(
     input, preceding, following, 1, *cudf::make_min_aggregation<cudf::rolling_aggregation>());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, variable_min->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_min, variable_min->view());
   auto const variable_max = cudf::rolling_window(
     input, preceding, following, 1, *cudf::make_max_aggregation<cudf::rolling_aggregation>());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, variable_max->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_max, variable_max->view());
+}
+
+TYPED_TEST(RollingMinMaxNaNTest, Dictionary)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  using wrapper      = cudf::test::fixed_width_column_wrapper<T>;
+
+  // MIN/MAX of a dictionary column select rows by their keys; a window containing a NaN
+  // produces NaN
+  auto const input =
+    cudf::test::dictionary_column_wrapper<T>({T{3}, NaN, NaN, T{2}, T{1}}, {1, 1, 1, 1, 1});
+  auto const rolling = [&](cudf::rolling_aggregation const& agg) {
+    auto const result = cudf::rolling_window(input, 2, 0, 1, agg);
+    return cudf::dictionary::decode(cudf::dictionary_column_view(result->view()));
+  };
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    wrapper{T{3}, NaN, NaN, NaN, T{1}},
+    rolling(*cudf::make_min_aggregation<cudf::rolling_aggregation>())->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    wrapper{T{3}, NaN, NaN, NaN, T{2}},
+    rolling(*cudf::make_max_aggregation<cudf::rolling_aggregation>())->view());
 }
 
 TYPED_TEST(RollingVarStdTest, SimpleStaticVarianceStd)

@@ -59,6 +59,20 @@ def test_fill_null_with_strategy(engine: pl.GPUEngine, null_data, strategy):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("strategy", ["min", "max"])
+@pytest.mark.parametrize(
+    "data",
+    [
+        [float("nan"), None, 1.0, 3.0],
+        [float("nan"), None, float("nan")],
+    ],
+)
+def test_fill_null_with_strategy_nan(engine: pl.GPUEngine, strategy, data):
+    # NaN is ignored unless every non-null value is NaN
+    q = pl.LazyFrame({"a": data}).select(pl.col("a").fill_null(strategy=strategy))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("strategy", ["zero", "one"])
 def test_fill_null_with_strategy_bool(engine: pl.GPUEngine, strategy):
     q = pl.LazyFrame({"a": [True, None, False]}).select(

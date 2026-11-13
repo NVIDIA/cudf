@@ -18,6 +18,7 @@ from cudf_polars.dsl.ir import (
     Distinct,
     Join,
     Projection,
+    Scan,
     Select,
     Slice,
 )
@@ -63,6 +64,7 @@ from cudf_polars.utils.config import ConfigOptions
 
 if TYPE_CHECKING:
     import concurrent.futures
+    import pathlib
     from typing import Any
 
     from cudf_polars.dsl.ir import IR
@@ -685,6 +687,230 @@ def test_rewritten_domain_filters_other_side_instead_of_stacking(
     assert sum(hint.children[0] is lineitem_ir for hint in hints) == 1
     assert not any(hint.children[0] is orders_ir for hint in hints)
     assert not any(isinstance(hint.children[0], PushdownFilterHint) for hint in hints)
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "nulls_equal", [False, True], ids=["nulls_not_equal", "nulls_equal"]
+)
+def test_reuses_existing_aggregate_domain_to_replace_detail_join(
+    nulls_equal: bool,  # noqa: FBT001
+    tmp_path: pathlib.Path,
+    engine: SPMDEngine,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+) -> None:
+    lineitem_path = tmp_path / "lineitem.parquet"
+    orders_path = tmp_path / "orders.parquet"
+    customer_path = tmp_path / "customer.parquet"
+    pl.DataFrame(
+        {
+            "l_orderkey": [1, 1, 2, 3],
+            "l_quantity": [2.0, 3.0, 7.0, 1.0],
+        }
+    ).write_parquet(lineitem_path)
+    pl.DataFrame({"o_orderkey": [1, 2, 3], "o_custkey": [10, 20, 30]}).write_parquet(
+        orders_path
+    )
+    pl.DataFrame({"c_custkey": [10, 20, 30], "c_name": ["a", "b", "c"]}).write_parquet(
+        customer_path
+    )
+
+    lineitem = pl.scan_parquet(lineitem_path)
+    orders = pl.scan_parquet(orders_path)
+    customer = pl.scan_parquet(customer_path)
+    selected_keys = (
+        lineitem.group_by("l_orderkey")
+        .agg(pl.col("l_quantity").sum().alias("sum_quantity"))
+        .filter(pl.col("sum_quantity") > 4)
+        .select("l_orderkey")
+    )
+    query = (
+        orders.join(
+            selected_keys,
+            how="semi",
+            left_on="o_orderkey",
+            right_on="l_orderkey",
+            nulls_equal=nulls_equal,
+        )
+        .join(
+            lineitem,
+            left_on="o_orderkey",
+            right_on="l_orderkey",
+            nulls_equal=nulls_equal,
+        )
+        .join(customer, left_on="o_custkey", right_on="c_custkey")
+        .group_by("c_name", "o_custkey", "o_orderkey")
+        .agg(pl.col("l_quantity").sum())
+    )
+    ir = remove_cache_nodes(Translator(query._ldf.visit(), engine).translate_ir())
+    config = ConfigOptions.from_polars_engine(engine)
+
+    optimized = optimize_join_filter_pushdown(
+        ir,
+        collect_statistics(ir, config, parquet_stats_executor),
+        config,
+    )
+
+    def is_raw_detail_scan(node: IR) -> bool:
+        return isinstance(node, Scan) and "l_quantity" in node.schema
+
+    # Before the rewrite the final join reads the raw lineitem detail side;
+    # afterwards it is fed by the filtered aggregate domain instead.
+    assert any(
+        is_raw_detail_scan(child) for join in find_joins(ir) for child in join.children
+    )
+    assert not any(
+        is_raw_detail_scan(child)
+        for join in find_joins(optimized)
+        for child in join.children
+    )
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+
+
+def _write_aggregate_reuse_tables(
+    tmp_path: pathlib.Path,
+) -> tuple[pl.LazyFrame, pl.LazyFrame, pl.LazyFrame]:
+    lineitem_path = tmp_path / "lineitem.parquet"
+    orders_path = tmp_path / "orders.parquet"
+    customer_path = tmp_path / "customer.parquet"
+    pl.DataFrame(
+        {
+            "l_orderkey": [1, 1, 2, 3, 3, 4],
+            "l_partkey": [7, 8, 9, 7, 8, 9],
+            "l_quantity": [2.0, 3.0, 7.0, 1.0, 5.0, 6.0],
+        }
+    ).write_parquet(lineitem_path)
+    pl.DataFrame(
+        {
+            "o_orderkey": [1, 2, 3, 4],
+            "o_custkey": [10, 20, 30, 10],
+            "o_totalprice": [1.5, 2.5, 3.5, 4.5],
+        }
+    ).write_parquet(orders_path)
+    pl.DataFrame({"c_custkey": [10, 20, 30], "c_name": ["a", "b", "c"]}).write_parquet(
+        customer_path
+    )
+    return (
+        pl.scan_parquet(lineitem_path),
+        pl.scan_parquet(orders_path),
+        pl.scan_parquet(customer_path),
+    )
+
+
+def _optimize_aggregate_reuse_query(
+    query: pl.LazyFrame,
+    engine: SPMDEngine,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+) -> tuple[IR, IR]:
+    ir = remove_cache_nodes(Translator(query._ldf.visit(), engine).translate_ir())
+    config = ConfigOptions.from_polars_engine(engine)
+    optimized = optimize_join_filter_pushdown(
+        ir,
+        collect_statistics(ir, config, parquet_stats_executor),
+        config,
+    )
+    return ir, optimized
+
+
+def _joins_reading_raw_detail(ir: IR) -> list[Join]:
+    """Joins with an input that is the raw lineitem scan (possibly projected)."""
+
+    def is_raw_detail(node: IR) -> bool:
+        while isinstance(node, Projection):
+            (node,) = node.children
+        return isinstance(node, Scan) and "l_quantity" in node.schema
+
+    return [
+        join
+        for join in find_joins(ir)
+        if any(is_raw_detail(child) for child in join.children)
+    ]
+
+
+def test_aggregate_domain_reuse_looks_through_detail_projection(
+    tmp_path: pathlib.Path,
+    engine: SPMDEngine,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+) -> None:
+    # PDS-H Q18 shape: grouping by order columns makes the detail side of the
+    # orders x lineitem join a reordering projection of the lineitem scan.
+    lineitem, orders, customer = _write_aggregate_reuse_tables(tmp_path)
+    selected = (
+        lineitem.group_by("l_orderkey")
+        .agg(pl.col("l_quantity").sum().alias("sum_quantity"))
+        .filter(pl.col("sum_quantity") > 4)
+    )
+    query = (
+        orders.join(selected, left_on="o_orderkey", right_on="l_orderkey", how="semi")
+        .join(lineitem, left_on="o_orderkey", right_on="l_orderkey")
+        .join(customer, left_on="o_custkey", right_on="c_custkey")
+        .group_by("c_name", "o_custkey", "o_orderkey", "o_totalprice")
+        .agg(pl.col("l_quantity").sum())
+    )
+    ir, optimized = _optimize_aggregate_reuse_query(
+        query, engine, parquet_stats_executor
+    )
+
+    assert any(
+        isinstance(child, Projection)
+        for join in _joins_reading_raw_detail(ir)
+        for child in join.children
+    )
+    assert not _joins_reading_raw_detail(optimized)
+    assert_gpu_result_equal(query, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "nulls_equal", [False, True], ids=["nulls_not_equal", "nulls_equal"]
+)
+def test_aggregate_domain_reuse_semi_filters_reduced_domain(
+    nulls_equal: bool,  # noqa: FBT001
+    tmp_path: pathlib.Path,
+    engine: SPMDEngine,
+    parquet_stats_executor: concurrent.futures.ThreadPoolExecutor,
+) -> None:
+    # The semi-join domain drops keys after the aggregate value is projected
+    # away, so the reused aggregate must itself be semi-filtered.
+    lineitem, orders, customer = _write_aggregate_reuse_tables(tmp_path)
+    allowed_path = tmp_path / "allowed.parquet"
+    pl.DataFrame({"a_orderkey": [1, 2, 4]}).write_parquet(allowed_path)
+    selected_keys = (
+        lineitem.group_by("l_orderkey")
+        .agg(pl.col("l_quantity").sum().alias("sum_quantity"))
+        .filter(pl.col("sum_quantity") > 4)
+        .select("l_orderkey")
+        .join(
+            pl.scan_parquet(allowed_path),
+            left_on="l_orderkey",
+            right_on="a_orderkey",
+            how="semi",
+        )
+    )
+    query = (
+        orders.join(
+            selected_keys,
+            how="semi",
+            left_on="o_orderkey",
+            right_on="l_orderkey",
+            nulls_equal=nulls_equal,
+        )
+        .join(
+            lineitem,
+            left_on="o_orderkey",
+            right_on="l_orderkey",
+            nulls_equal=nulls_equal,
+        )
+        .join(customer, left_on="o_custkey", right_on="c_custkey")
+        .group_by("c_name", "o_custkey", "o_orderkey")
+        .agg(pl.col("l_quantity").sum())
+    )
+    _, optimized = _optimize_aggregate_reuse_query(
+        query, engine, parquet_stats_executor
+    )
+
+    assert not _joins_reading_raw_detail(optimized)
+    # Two semi joins are the user's; the third restricts the reused aggregate.
+    assert len(find_joins(optimized, "Semi")) == 3
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 

@@ -37,7 +37,8 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -418,13 +419,13 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
   cudf::device_span<size_type const> input_slice_bounds,
   cudf::device_span<size_type const> segment_row_offsets,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_inputs   = input_slice_bounds.size() - 1;
   auto const num_segments = segment_row_offsets.size() - 1;
 
-  auto page_maps =
-    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
+  auto page_maps = cuda::device_buffer<size_type>(
+    stream, mr.get_output_mr(), num_inputs * num_segments, cuda::no_init);
 
   // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
   // built from the union of all page boundaries, so containment is guaranteed.
@@ -740,6 +741,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   //   min(col[i])     = segment_views[i * stats_cols_per_column + 0]
   //   max(col[i])     = segment_views[i * stats_cols_per_column + 1]
   //   is_null(col[i]) = segment_views[i * stats_cols_per_column + 2]
+  //   has_nan(col[i]) = segment_views[i * stats_cols_per_column + 3]
   std::vector<std::unique_ptr<column>> segment_columns;
   segment_columns.reserve(stats_cols_per_column * inputs.size());
   std::vector<column_view> segment_views(stats_cols_per_column * num_columns,

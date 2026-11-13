@@ -11,6 +11,7 @@
 
 #include <cuda/cmath>
 #include <cuda/numeric>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/cassert>
 #include <cuda/std/cmath>
 #include <cuda/std/functional>

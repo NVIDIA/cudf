@@ -26,6 +26,7 @@
 
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/optional>
 #include <cuda/stream>
 #include <thrust/tabulate.h>
@@ -474,7 +475,7 @@ CUDF_KERNEL void compute_segment_sizes(device_span<column_device_view const> col
 std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
                                                 size_type segment_length,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   // If there is no rows, segment_length will not be checked.
   if (t.num_rows() <= 0) { return cudf::make_empty_column(type_id::INT32); }
@@ -556,7 +557,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 
 std::unique_ptr<column> row_bit_count(table_view const& t,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   return detail::segmented_row_bit_count(t, 1, stream, mr);
 }
@@ -566,7 +567,7 @@ std::unique_ptr<column> row_bit_count(table_view const& t,
 std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
                                                 size_type segment_length,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::segmented_row_bit_count(t, segment_length, stream, mr);
@@ -574,7 +575,7 @@ std::unique_ptr<column> segmented_row_bit_count(table_view const& t,
 
 std::unique_ptr<column> row_bit_count(table_view const& t,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::row_bit_count(t, stream, mr);

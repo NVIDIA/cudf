@@ -19,6 +19,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/logger.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -289,7 +290,7 @@ fetch_byte_ranges_to_device_async_impl(
   std::span<std::span<cudf::io::text::byte_range_info const> const> byte_ranges_per_source,
   bool serialize_submissions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_sources = datasources.size();
 
@@ -340,7 +341,7 @@ fetch_byte_ranges_to_device_async_impl(
       column_chunk_buffers.emplace_back(
         cudf::detail::round_up_safe(buffer_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
         stream,
-        mr);
+        mr.get_output_mr());
 
       auto buffer_data        = static_cast<uint8_t*>(column_chunk_buffers.back().data());
       auto const padding_size = column_chunk_buffers.back().size() - buffer_size;
@@ -489,7 +490,7 @@ fetch_bloom_filters_to_device_impl(
     bloom_filter_byte_ranges_per_source,
   bool serialize_submissions,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_sources = datasources.size();
   CUDF_EXPECTS(num_sources == bloom_filter_byte_ranges_per_source.size(),
@@ -628,7 +629,7 @@ fetch_bloom_filters_to_device_impl(
   // Add the buffer base to every output span and copy destination.
   cuda::device_buffer<uint8_t> bitset_buffer(
     stream,
-    mr,
+    mr.get_output_mr(),
     total_device_size,
     cuda::no_init,
     cuda::std::execution::prop{cuda::allocation_alignment, bloom_filter_block_bytes});

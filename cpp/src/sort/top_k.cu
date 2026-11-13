@@ -22,6 +22,9 @@
 
 #include <cub/device/device_topk.cuh>
 #include <cuda/buffer>
+#include <cuda/execution.determinism.h>
+#include <cuda/execution.output_ordering.h>
+#include <cuda/execution.require.h>
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>
@@ -41,7 +44,7 @@ struct dispatch_topk_fn {
   size_type k;
   order topk_order;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   template <typename T>
   std::unique_ptr<column> top_k()
@@ -107,7 +110,7 @@ std::unique_ptr<column> top_k(column_view const& col,
                               size_type k,
                               order topk_order,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(k >= 0, "k must be non-negative", std::invalid_argument);
   if (k == 0 || col.is_empty()) { return empty_like(col); }
@@ -136,7 +139,7 @@ std::unique_ptr<column> top_k_order(column_view const& col,
                                     size_type k,
                                     order topk_order,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_EXPECTS(k >= 0, "k must be non-negative", std::invalid_argument);
   if (k == 0 || col.is_empty()) { return make_empty_column(cudf::type_to_id<size_type>()); }
@@ -166,7 +169,7 @@ std::unique_ptr<column> top_k(column_view const& col,
                               size_type k,
                               order topk_order,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::top_k(col, k, topk_order, stream, mr);
@@ -176,7 +179,7 @@ std::unique_ptr<column> top_k_order(column_view const& col,
                                     size_type k,
                                     order topk_order,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::top_k_order(col, k, topk_order, stream, mr);

@@ -164,7 +164,7 @@ struct dispatch_from_durations_fn {
   template <cudf::concepts::duration T>
   std::unique_ptr<column> operator()(column_view const& durations,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
   {
     size_type strings_count = durations.size();
     auto column             = column_device_view::create(durations, stream);
@@ -183,7 +183,7 @@ struct dispatch_from_durations_fn {
       cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
     // build chars column
-    auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr);
+    auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
     auto d_chars    = chars_data.data();
 
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -202,7 +202,7 @@ struct dispatch_from_durations_fn {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
+                                     cudf::memory_resources) const
   {
     CUDF_FAIL("Values for from_durations function must be a duration type.");
   }
@@ -212,7 +212,7 @@ struct dispatch_from_durations_fn {
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   size_type strings_count = durations.size();
   if (strings_count == 0) return make_empty_column(type_id::STRING);

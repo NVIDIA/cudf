@@ -76,18 +76,7 @@ class PDSDSPolarsQueries(PDSDSQueries):
     q_impl = "polars_impl"
     # Queries expected to fail on GPU due to known bugs. Keys are query numbers;
     # values are reasons for the failures. These queries will be skipped in GPU runs.
-    EXPECTED_FAILURES_TPCDS: ClassVar[dict[int, str]] = {
-        4: (
-            "Falls back to the CPU: Polars casts a float ratio to Decimal(38, 2) on "
-            "both sides of a join predicate and libcudf's AST cannot cast to decimal: "
-            "https://github.com/NVIDIA/cudf/issues/24937"
-        ),
-        11: (
-            "Falls back to the CPU: Polars casts a float ratio to Decimal(38, 2) on "
-            "both sides of a join predicate and libcudf's AST cannot cast to decimal: "
-            "https://github.com/NVIDIA/cudf/issues/24937"
-        ),
-    }
+    EXPECTED_FAILURES_TPCDS: ClassVar[dict[int, str]] = {}
     # See comments for EXPECTED_CASTS and EXPECTED_CASTS_DECIMAL
     # in cudf/python/cudf_polars/cudf_polars/streaming/benchmarks/pdsh.py
     # for more details.

@@ -35,6 +35,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/span>
 #include <cuda/std/tuple>
 #include <cuda/stream>
@@ -390,7 +391,7 @@ CUDF_HOST_DEVICE constexpr inline double scale_func_k1(double quantile,
 // convert a single-row tdigest column to a scalar.
 std::unique_ptr<scalar> to_tdigest_scalar(std::unique_ptr<column>&& tdigest,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(tdigest->size() == 1,
                "Encountered invalid tdigest column when converting to scalar");
@@ -733,7 +734,7 @@ cluster_info generate_group_cluster_info(int delta,
                                          CumulativeWeight cumulative_weight,
                                          bool has_nulls,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -830,7 +831,7 @@ cluster_info generate_group_cluster_info(int delta,
     auto p_cluster_start = std::move(cinfo.cluster_start);
     // cluster_start is returned as part of the output, so make sure to use the user supplied mr
     // instead of the current resource.
-    cinfo.cluster_start = rmm::device_uvector(p_cluster_start, stream, mr);
+    cinfo.cluster_start = rmm::device_uvector(p_cluster_start, stream, mr.get_output_mr());
     cudf::detail::sync_stream(stream);
   }
 
@@ -857,7 +858,7 @@ std::unique_ptr<column> build_output_column(size_type num_rows,
                                             std::unique_ptr<column>&& max_col,
                                             bool has_nulls,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   // whether or not this weight is a stub
   auto is_stub_weight = [weights = weights->view().begin<double>()] __device__(size_type i) {
@@ -1014,7 +1015,7 @@ std::unique_ptr<column> compute_tdigests(int delta,
                                          cluster_info& cinfo,
                                          bool has_nulls,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   // the output for each group is a column of data that represents the tdigest. since we want 1 row
   // per group, each row will be a list the length of the tdigest for that group. so our output
@@ -1143,7 +1144,7 @@ struct typed_group_tdigest {
                                      size_type num_groups,
                                      int delta,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     // first, generate cluster weight information for each input group
@@ -1229,7 +1230,7 @@ struct typed_reduce_tdigest {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      int delta,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     CUDF_FUNC_RANGE();
@@ -1461,7 +1462,7 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
                                        size_type num_groups,
                                        int max_centroids,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   // generate min and max values
   auto merged_min_col = cudf::make_numeric_column(
@@ -1645,7 +1646,7 @@ std::unique_ptr<column> merge_tdigests(tdigest_column_view const& tdv,
 std::unique_ptr<scalar> reduce_tdigest(column_view const& col,
                                        int max_centroids,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   if (col.size() == 0) { return cudf::tdigest::detail::make_empty_tdigest_scalar(stream, mr); }
 
@@ -1668,7 +1669,7 @@ struct group_offsets_fn {
 std::unique_ptr<scalar> reduce_merge_tdigest(column_view const& input,
                                              int max_centroids,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   tdigest_column_view tdv(input);
 
@@ -1690,7 +1691,7 @@ std::unique_ptr<column> group_tdigest(column_view const& col,
                                       size_type num_groups,
                                       int max_centroids,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   if (col.size() == 0) { return cudf::tdigest::detail::make_empty_tdigests_column(1, stream, mr); }
 
@@ -1713,7 +1714,7 @@ std::unique_ptr<column> group_merge_tdigest(column_view const& input,
                                             size_type num_groups,
                                             int max_centroids,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   tdigest_column_view tdv(input);
 

@@ -81,7 +81,7 @@
 - Missing `[[nodiscard]]` on side-effect-free functions returning non-void results
 
 ### Code Reuse
-- New code that reimplements logic already available in CUB, Thrust, libcu++, cuco, or libcudf (public API, `cudf::detail`, `cudf_test`, or benchmark helpers) without a measured performance, build-time, or binary-size justification stated in the PR
+- New code that reimplements logic already available in CUB, Thrust, libcu++, cuco, or libcudf (public API, `cudf::detail`, `cudf_test`, or benchmark helpers) without a correctness reason or a measured performance, build-time, or binary-size justification stated in the PR
 - New code beyond what the change needs: dead code, unused parameters, template flexibility with a single user, or a second code path for a special case without a measurement
 
 ### Concurrency & Stream Safety

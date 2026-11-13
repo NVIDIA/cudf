@@ -65,7 +65,7 @@ git grep -n '<operation or symbol>' upstream/main -- <directory or package of th
 git grep -n '<operation or symbol>' upstream/main -- cpp/src cpp/include cpp/benchmarks/common python
 ```
 
-- A copy or near-copy of existing logic, and every fast path added for speed, stays only with a measured performance, build-time, or binary-size gain from an A/B of the branch with and without it (run it as the `perf-compare-cudf` skill does). No number: use the existing code.
+- A copy or near-copy of existing logic stays only when the existing code cannot give the required semantics, or with a measured performance, build-time, or binary-size gain from an A/B of the branch with and without it (run it as the `perf-compare-cudf` skill does). A fast path added for speed needs the same measurement.
 - If the existing code is private to another file, move it to a shared header or module and call it from both places.
 - Two blocks in your own diff that differ by a constant, type, or flag become one helper or one parameter. Derive each value once.
 

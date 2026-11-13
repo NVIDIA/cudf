@@ -55,7 +55,7 @@
 - Not handling edge cases (empty DataFrames, all-null columns)
 
 ### Code Reuse
-- New helpers that reimplement functionality already available in cudf, pylibcudf, cudf_polars utilities, or the underlying libcudf API without a measured performance justification
+- New helpers that reimplement functionality already available in cudf, pylibcudf, cudf_polars utilities, or the underlying libcudf API without a correctness reason or a measured performance justification
 - New code beyond what the change needs: dead code, unused parameters, speculative generality
 
 ### dask_cudf

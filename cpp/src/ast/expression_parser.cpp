@@ -256,7 +256,16 @@ cudf::size_type expression_parser::visit(operation const& expr)
     }
   });
   // Resolve expression type
-  auto const data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
+  CUDF_EXPECTS(op != ast_operator::CAST_TO_DECIMAL128,
+               "CAST_TO_DECIMAL128 is not supported by the AST interpreter.",
+               cudf::data_type_error);
+  auto data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
+  if (op == ast_operator::RESCALE) {
+    CUDF_EXPECTS(expr.get_target_scale().has_value(),
+                 "RESCALE requires target scale metadata.",
+                 std::invalid_argument);
+    data_type = cudf::data_type{data_type.id(), expr.get_target_scale().value()};
+  }
   _operators.push_back(op);
   _operator_arities.push_back(cudf::ast::detail::ast_operator_arity(op));
   // Push data reference

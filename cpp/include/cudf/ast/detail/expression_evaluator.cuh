@@ -703,8 +703,12 @@ struct expression_evaluator {
      * @param output Output data reference.
      */
     template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>
-      requires(detail::is_valid_unary_op<detail::operator_functor<op>,
-                                         possibly_null_value_t<Input, has_nulls>>)
+      requires((op == ast_operator::RESCALE &&
+                requires(detail::operator_functor<op> f,
+                         possibly_null_value_t<Input, has_nulls> v) { f(v, int32_t{}); }) ||
+               (op != ast_operator::RESCALE &&
+                detail::is_valid_unary_op<detail::operator_functor<op>,
+                                          possibly_null_value_t<Input, has_nulls>>))
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       cudf::size_type const output_row_index,
@@ -712,14 +716,22 @@ struct expression_evaluator {
       detail::device_data_reference const& output,
       IntermediateDataType<has_nulls>* thread_intermediate_storage) const
     {
-      // The output data type is the same whether or not nulls are present, so
-      // pull from the non-nullable operator.
-      using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input>;
-      this->template resolve_output<Out>(output_object,
-                                         output,
-                                         output_row_index,
-                                         thread_intermediate_storage,
-                                         detail::operator_functor<op>{}(input));
+      if constexpr (op == ast_operator::RESCALE) {
+        using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input, int32_t>;
+        this->template resolve_output<Out>(
+          output_object,
+          output,
+          output_row_index,
+          thread_intermediate_storage,
+          detail::operator_functor<op>{}(input, output.data_type.scale()));
+      } else {
+        using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input>;
+        this->template resolve_output<Out>(output_object,
+                                           output,
+                                           output_row_index,
+                                           thread_intermediate_storage,
+                                           detail::operator_functor<op>{}(input));
+      }
     }
 
     template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>

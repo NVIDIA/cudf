@@ -28,6 +28,7 @@
 #include <cooperative_groups/reduce.h>
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/copy.h>

@@ -5,20 +5,20 @@
 
 #pragma once
 
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/export.hpp>
-#include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/type_traits>
+#include <cuda/std/concepts>
 
 #include <random>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
 
-template <typename T, typename Enable = void>
-struct uniform_distribution_impl {};
 template <typename T>
-struct uniform_distribution_impl<T, std::enable_if_t<cuda::std::is_integral_v<T>>> {
+struct uniform_distribution_impl {};
+template <cuda::std::integral T>
+struct uniform_distribution_impl<T> {
   using type = std::uniform_int_distribution<T>;
 };
 
@@ -27,15 +27,14 @@ struct uniform_distribution_impl<bool> {
   using type = std::bernoulli_distribution;
 };
 
-template <typename T>
-struct uniform_distribution_impl<T, std::enable_if_t<std::is_floating_point_v<T>>> {
+template <cuda::std::floating_point T>
+struct uniform_distribution_impl<T> {
   using type = std::uniform_real_distribution<T>;
 };
 
 template <typename T>
-struct uniform_distribution_impl<
-  T,
-  std::enable_if_t<cudf::is_chrono<T>() or cudf::is_fixed_point<T>()>> {
+  requires(cudf::concepts::chrono<T> or cudf::concepts::fixed_point<T>)
+struct uniform_distribution_impl<T> {
   using type = std::uniform_int_distribution<typename T::rep>;
 };
 
@@ -94,8 +93,7 @@ class UniformRandomGenerator {
    * @param upper Upper bound of the desired range
    * @param seed  seed to initialize generator with
    */
-  template <typename TL                                                          = T,
-            std::enable_if_t<cudf::is_numeric<TL>() && !cudf::is_boolean<TL>()>* = nullptr>
+  template <cudf::concepts::arithmetic_not_bool TL = T>
   UniformRandomGenerator(T lower,
                          T upper,
                          uint64_t seed = detail::random_generator_incrementing_seed())
@@ -110,7 +108,7 @@ class UniformRandomGenerator {
    * @param upper ignored
    * @param seed  seed to initialize generator with
    */
-  template <typename TL = T, std::enable_if_t<cudf::is_boolean<TL>()>* = nullptr>
+  template <cudf::concepts::boolean TL = T>
   UniformRandomGenerator(T lower,
                          T upper,
                          uint64_t seed = detail::random_generator_incrementing_seed())
@@ -126,8 +124,8 @@ class UniformRandomGenerator {
    * @param upper Upper bound of the desired range
    * @param seed  seed to initialize generator with
    */
-  template <typename TL                                                            = T,
-            std::enable_if_t<cudf::is_chrono<TL>() or cudf::is_fixed_point<TL>()>* = nullptr>
+  template <typename TL = T>
+    requires(cudf::concepts::chrono<TL> or cudf::concepts::fixed_point<TL>)
   UniformRandomGenerator(typename TL::rep lower,
                          typename TL::rep upper,
                          uint64_t seed = detail::random_generator_incrementing_seed())
@@ -140,7 +138,7 @@ class UniformRandomGenerator {
    *
    * @return generated random number
    */
-  template <typename TL = T, std::enable_if_t<!cudf::is_timestamp<TL>()>* = nullptr>
+  template <typename TL = T>
   T generate()
   {
     return T{dist(rng)};
@@ -150,7 +148,7 @@ class UniformRandomGenerator {
    * @brief Returns the next random number.
    * @return generated random number
    */
-  template <typename TL = T, std::enable_if_t<cudf::is_timestamp<TL>()>* = nullptr>
+  template <cudf::concepts::timestamp TL = T>
   T generate()
   {
     return T{typename T::duration{dist(rng)}};

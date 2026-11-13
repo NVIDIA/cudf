@@ -93,8 +93,9 @@ if expected=$(git merge-tree --write-tree --merge-base "$fork_point" "$onto" "$p
     [[ $accept_diff == 1 ]] || die "retargeted tree differs from the PR's changes (diff above: expected -> retargeted); $kept; ask user" 5
   fi
 else
-  git diff --stat "$onto" HEAD >&2
-  [[ $accept_diff == 1 ]] || die "PR conflicts with $target, so the resolved result cannot be checked automatically; $kept; ask user to review" 5
+  # Show each original commit's patch next to its retargeted version, so the resolution can be reviewed line by line.
+  git range-diff --no-color --creation-factor=100 "$fork_point..$pr_tip" "$onto..HEAD" >&2
+  [[ $accept_diff == 1 ]] || die "PR conflicts with $target, so the resolved result cannot be checked automatically (range-diff above: original -> retargeted); $kept; ask user to review" 5
 fi
 [[ $(git merge-base HEAD "$onto") == "$onto" ]] || die "HEAD is not based on $target; $kept" 5
 [[ $(git rev-list --merges --count "$onto..HEAD") == 0 ]] || die "merge commits remain; $kept" 5

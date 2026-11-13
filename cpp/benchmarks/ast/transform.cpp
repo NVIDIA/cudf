@@ -236,3 +236,52 @@ AST_TRANSFORM_BENCHMARK_DEFINE(
 AST_STRING_COMPARE_TRANSFORM_BENCHMARK_DEFINE(ast_string_equal_logical_and,
                                               cudf::ast::ast_operator::EQUAL,
                                               cudf::ast::ast_operator::LOGICAL_AND);
+
+// Benchmarks floating-point comparisons, combined like (c0 < c1) AND (c2 < c3) AND ...
+static void ast_double_compare(nvbench::state& state)
+{
+  auto const num_rows        = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const num_comparisons = static_cast<cudf::size_type>(state.get_int64("num_comparisons"));
+  auto const engine          = engine_from_string(state.get_string("engine"));
+  auto const ordered         = state.get_string("nan_semantics") == "TOTALLY_ORDERED";
+
+  auto const num_columns  = num_comparisons * 2;
+  auto const source_table = create_random_table(
+    cycle_dtypes({cudf::type_id::FLOAT64}, num_columns), row_count{num_rows}, data_profile{});
+  auto const table = source_table->view();
+
+  cudf::ast::tree tree;
+  for (cudf::size_type i = 0; i < num_columns; ++i) {
+    tree.push(cudf::ast::column_reference(i));
+  }
+  auto compare = [&](cudf::size_type i) -> cudf::ast::expression const& {
+    return tree.push(
+      cudf::ast::operation(cudf::ast::ast_operator::LESS, tree[i * 2], tree[i * 2 + 1]));
+  };
+  auto const* expr = &compare(0);
+  for (cudf::size_type i = 1; i < num_comparisons; ++i) {
+    auto const& rhs = compare(i);
+    expr = &tree.push(cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, *expr, rhs));
+  }
+  // The root is wrapped so its setting can be changed after the tree is built
+  auto root = cudf::ast::operation(cudf::ast::ast_operator::IDENTITY, *expr);
+  if (ordered) { root.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED); }
+
+  state.add_global_memory_reads<double>(static_cast<std::size_t>(num_rows) * num_columns);
+  state.add_global_memory_writes<bool>(num_rows);
+
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    switch (engine) {
+      case engine_type::AST: cudf::compute_column(table, root); break;
+      case engine_type::JIT: cudf::compute_column_jit(table, root); break;
+      default: CUDF_FAIL("Invalid engine type");
+    }
+  });
+}
+
+NVBENCH_BENCH(ast_double_compare)
+  .set_name("ast_double_compare")
+  .add_int64_axis("num_comparisons", {1, 4, 8})
+  .add_int64_axis("num_rows", {1'000'000, 10'000'000, 100'000'000})
+  .add_string_axis("engine", {"ast", "jit"})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});

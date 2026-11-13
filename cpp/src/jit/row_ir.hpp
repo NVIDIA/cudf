@@ -511,6 +511,7 @@ struct [[nodiscard]] node {
 struct [[nodiscard]] ast_converter {
  private:
   std::vector<std::unique_ptr<row_ir::node>> output_irs_;  ///< The output IR nodes
+  nan_semantics semantics_{nan_semantics::UNORDERED};      ///< How NaN values compare
   cuda::stream_ref stream_;  ///< CUDA stream used for device memory operations and kernel launches.
   cudf::memory_resources
     mr_;  ///< Device memory resource used to allocate the returned table's device memory

@@ -203,6 +203,13 @@ struct [[nodiscard]] opcode_info {
       {"LESS", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
       {"LESS_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
       {"NULL_EQUAL", ALWAYS_VALID, true, false, {ALL, ARG0}, BOOL8},
+      {"TOTALLY_ORDERED_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"TOTALLY_ORDERED_NOT_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"TOTALLY_ORDERED_GREATER", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"TOTALLY_ORDERED_GREATER_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"TOTALLY_ORDERED_LESS", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"TOTALLY_ORDERED_LESS_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"TOTALLY_ORDERED_NULL_EQUAL", ALWAYS_VALID, true, false, {ALL, ARG0}, BOOL8},
       {"NULL_LOGICAL_AND", ALWAYS_NULLABLE, true, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
       {"NULL_LOGICAL_OR", ALWAYS_NULLABLE, true, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
       {"LOGICAL_AND", PROPAGATE, false, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
@@ -246,6 +253,24 @@ struct [[nodiscard]] opcode_info {
   }
 
   return info;
+}
+
+/**
+ * @brief Returns the `nan_semantics::TOTALLY_ORDERED` opcode for a comparison opcode, or `op`
+ * otherwise
+ */
+opcode as_totally_ordered_opcode(opcode op)
+{
+  switch (op) {
+    case opcode::EQUAL: return opcode::TOTALLY_ORDERED_EQUAL;
+    case opcode::NOT_EQUAL: return opcode::TOTALLY_ORDERED_NOT_EQUAL;
+    case opcode::GREATER: return opcode::TOTALLY_ORDERED_GREATER;
+    case opcode::GREATER_EQUAL: return opcode::TOTALLY_ORDERED_GREATER_EQUAL;
+    case opcode::LESS: return opcode::TOTALLY_ORDERED_LESS;
+    case opcode::LESS_EQUAL: return opcode::TOTALLY_ORDERED_LESS_EQUAL;
+    case opcode::NULL_EQUAL: return opcode::TOTALLY_ORDERED_NULL_EQUAL;
+    default: return op;
+  }
 }
 
 opcode as_opcode(ast::ast_operator op)
@@ -892,8 +917,12 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::operation const& e
   for (auto& operand : expr.get_operands()) {
     args.emplace_back(operand.get().accept(*this));
   }
+  auto const op = as_opcode(expr.get_operator());
   return std::make_unique<row_ir::node>(
-    as_opcode(expr.get_operator()), std::nullopt, error_policy::PROPAGATE, std::move(args));
+    semantics_ == nan_semantics::TOTALLY_ORDERED ? as_totally_ordered_opcode(op) : op,
+    std::nullopt,
+    error_policy::PROPAGATE,
+    std::move(args));
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::detail::predicate const& expr)
@@ -910,8 +939,12 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::opera
   for (auto& arg : expr.get_arguments()) {
     args.emplace_back(arg.get().accept(*this));
   }
+  auto const op = expr.get_opcode();
   return std::make_unique<row_ir::node>(
-    expr.get_opcode(), expr.get_target_scale(), expr.get_error_policy(), std::move(args));
+    semantics_ == nan_semantics::TOTALLY_ORDERED ? as_totally_ordered_opcode(op) : op,
+    expr.get_target_scale(),
+    expr.get_error_policy(),
+    std::move(args));
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_call const& expr)
@@ -993,6 +1026,10 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
   CUDF_EXPECTS(!expressions.empty(), "At least one output expression is required");
 
   for (auto& expression : expressions) {
+    // Each output expression is the root of its tree, and its setting applies to the whole tree
+    semantics_     = expression.get().get_nan_semantics() == nan_semantics::TOTALLY_ORDERED
+                       ? nan_semantics::TOTALLY_ORDERED
+                       : nan_semantics::UNORDERED;
     auto output_id = instance_.add_output();
     output_irs_.emplace_back(
       std::make_unique<row_ir::node>(output_reference{output_id}, expression.get().accept(*this)));

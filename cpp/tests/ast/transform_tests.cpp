@@ -32,6 +32,7 @@
 #include <limits>
 #include <random>
 #include <span>
+#include <string>
 #include <vector>
 
 // NOTE: each test in this file is exercised through the AST interpreter, the JIT executor, and
@@ -1852,6 +1853,117 @@ TEST_F(ComputeTableJitTest, EmptyExpressions)
   auto expressions = std::span<std::reference_wrapper<cudf::ast::expression const> const>{};
 
   EXPECT_THROW(cudf::compute_table_jit(table, expressions), cudf::logic_error);
+}
+
+TYPED_TEST(TransformTest, NanSemanticsComparisons)
+{
+  using Executor     = TypeParam;
+  auto constexpr NaN = std::numeric_limits<double>::quiet_NaN();
+  using bools        = column_wrapper<bool>;
+  using op_t         = cudf::ast::ast_operator;
+
+  auto c_0   = column_wrapper<double>{1.0, NaN, NaN, 2.0, NaN, 3.0};
+  auto c_1   = column_wrapper<double>{NaN, NaN, 1.0, 2.0, 5.0, NaN};
+  auto table = cudf::table_view{{c_0, c_1}};
+
+  auto col_ref_0 = cudf::ast::column_reference(0);
+  auto col_ref_1 = cudf::ast::column_reference(1);
+
+  struct test_case {
+    op_t op;
+    bools unordered;
+    bools ordered;
+  };
+  // With TOTALLY_ORDERED, NaNs are equal to each other and greater than every other value
+  std::vector<test_case> cases;
+  cases.push_back({op_t::EQUAL, bools{0, 0, 0, 1, 0, 0}, bools{0, 1, 0, 1, 0, 0}});
+  cases.push_back({op_t::NOT_EQUAL, bools{1, 1, 1, 0, 1, 1}, bools{1, 0, 1, 0, 1, 1}});
+  cases.push_back({op_t::LESS, bools{0, 0, 0, 0, 0, 0}, bools{1, 0, 0, 0, 0, 1}});
+  cases.push_back({op_t::GREATER, bools{0, 0, 0, 0, 0, 0}, bools{0, 0, 1, 0, 1, 0}});
+  cases.push_back({op_t::LESS_EQUAL, bools{0, 0, 0, 1, 0, 0}, bools{1, 1, 0, 1, 0, 1}});
+  cases.push_back({op_t::GREATER_EQUAL, bools{0, 0, 0, 1, 0, 0}, bools{0, 1, 1, 1, 1, 0}});
+  cases.push_back({op_t::NULL_EQUAL, bools{0, 0, 0, 1, 0, 0}, bools{0, 1, 0, 1, 0, 0}});
+
+  for (auto const& tc : cases) {
+    SCOPED_TRACE("operator " + std::to_string(static_cast<int>(tc.op)));
+    auto expression = cudf::ast::operation(tc.op, col_ref_0, col_ref_1);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      tc.unordered, Executor::compute_column(table, expression)->view(), verbosity);
+    expression.set_nan_semantics(cudf::nan_semantics::UNORDERED);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      tc.unordered, Executor::compute_column(table, expression)->view(), verbosity);
+    expression.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      tc.ordered, Executor::compute_column(table, expression)->view(), verbosity);
+  }
+}
+
+TYPED_TEST(TransformTest, NanSemanticsNullsAndLiterals)
+{
+  using Executor     = TypeParam;
+  auto constexpr NaN = std::numeric_limits<float>::quiet_NaN();
+  using bools        = column_wrapper<bool>;
+
+  auto c_0   = column_wrapper<float>{{NaN, 0.0f, 1.0f, NaN, NaN}, {1, 0, 1, 1, 1}};
+  auto c_1   = column_wrapper<float>{{NaN, 0.0f, NaN, 0.0f, 2.0f}, {1, 0, 1, 0, 1}};
+  auto table = cudf::table_view{{c_0, c_1}};
+
+  auto col_ref_0 = cudf::ast::column_reference(0);
+  auto col_ref_1 = cudf::ast::column_reference(1);
+
+  // NULL_EQUAL: nulls are equal to each other, and with TOTALLY_ORDERED so are NaNs. The
+  // interpreter returns a nullable column with no nulls, so only the values are compared.
+  auto null_equal = cudf::ast::operation(cudf::ast::ast_operator::NULL_EQUAL, col_ref_0, col_ref_1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    bools{0, 1, 0, 0, 0}, Executor::compute_column(table, null_equal)->view(), verbosity);
+  null_equal.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    bools{1, 1, 0, 0, 0}, Executor::compute_column(table, null_equal)->view(), verbosity);
+
+  // EQUAL propagates nulls; comparing with a NaN literal matches NaN rows only with TOTALLY_ORDERED
+  auto nan_scalar  = cudf::numeric_scalar<float>(NaN);
+  auto nan_literal = cudf::ast::literal(nan_scalar);
+  auto equal_nan   = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_0, nan_literal);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools{{0, 0, 0, 0, 0}, {1, 0, 1, 1, 1}},
+                                 Executor::compute_column(table, equal_nan)->view(),
+                                 verbosity);
+  equal_nan.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools{{1, 0, 0, 1, 1}, {1, 0, 1, 1, 1}},
+                                 Executor::compute_column(table, equal_nan)->view(),
+                                 verbosity);
+}
+
+TYPED_TEST(TransformTest, NanSemanticsFromRootExpression)
+{
+  using Executor     = TypeParam;
+  auto constexpr NaN = std::numeric_limits<double>::quiet_NaN();
+  using bools        = column_wrapper<bool>;
+
+  auto c_0   = column_wrapper<double>{NaN, 1.0, NaN};
+  auto c_1   = column_wrapper<double>{NaN, 2.0, 0.0};
+  auto table = cudf::table_view{{c_0, c_1}};
+
+  auto col_ref_0 = cudf::ast::column_reference(0);
+  auto col_ref_1 = cudf::ast::column_reference(1);
+
+  // (c_0 == c_0) AND (c_0 >= c_1): the setting of the root applies to both comparisons
+  auto self_equal = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_0, col_ref_0);
+  auto greater_equal =
+    cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref_0, col_ref_1);
+  auto root = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, self_equal, greater_equal);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    bools{0, 0, 0}, Executor::compute_column(table, root)->view(), verbosity);
+
+  // The settings of sub-expressions are ignored
+  self_equal.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  greater_equal.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    bools{0, 0, 0}, Executor::compute_column(table, root)->view(), verbosity);
+
+  root.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    bools{1, 0, 1}, Executor::compute_column(table, root)->view(), verbosity);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

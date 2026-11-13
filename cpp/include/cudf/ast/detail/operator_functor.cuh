@@ -7,10 +7,12 @@
 #include <cudf/ast/ast_operator.hpp>
 #include <cudf/detail/operators/operators.cuh>
 #include <cudf/strings/string_view.cuh>
+#include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/std/algorithm.min.h>
+#include <cuda/std/concepts>
 #include <cuda/std/optional>
 
 namespace CUDF_EXPORT cudf {
@@ -84,6 +86,41 @@ CUDF_AST_OPERATOR_MAP(NULL_LOGICAL_OR, null_logical_or, 2)
 #undef CUDF_AST_OPERATOR_MAP
 
 /**
+ * @brief Maps a comparison operator to its `nan_semantics::TOTALLY_ORDERED` implementation
+ *
+ * Only the operators whose result depends on how NaN values compare are specialized.
+ */
+template <ast_operator op>
+struct totally_ordered_invoker {};
+
+#define CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(OP, func_name)                                      \
+  template <>                                                                                     \
+  struct totally_ordered_invoker<ast_operator::OP> {                                              \
+    template <typename... Args>                                                                   \
+    __device__ static inline auto eval(Args... a) -> decltype(cudf::detail::ops::func_name(a...)) \
+    {                                                                                             \
+      return cudf::detail::ops::func_name(a...);                                                  \
+    }                                                                                             \
+  };
+
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(EQUAL, totally_ordered_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(NOT_EQUAL, totally_ordered_not_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(LESS, totally_ordered_less)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(GREATER, totally_ordered_greater)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(LESS_EQUAL, totally_ordered_less_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(GREATER_EQUAL, totally_ordered_greater_equal)
+CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP(NULL_EQUAL, totally_ordered_null_equal)
+
+#undef CUDF_AST_TOTALLY_ORDERED_OPERATOR_MAP
+
+/// @brief True for floating-point types and optionals of floating-point types
+template <typename T>
+constexpr bool is_floating_operand = cuda::std::floating_point<T>;
+
+template <typename T>
+constexpr bool is_floating_operand<cuda::std::optional<T>> = cuda::std::floating_point<T>;
+
+/**
  * @brief Operator functor.
  *
  * This functor is templated on an `ast_operator`, with each template specialization defining a
@@ -100,6 +137,23 @@ CUDF_AST_OPERATOR_MAP(NULL_LOGICAL_OR, null_logical_or, 2)
 template <ast_operator op>
 struct operator_functor {
   static constexpr auto arity = operator_invoker<op>::arity;
+
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare
+
+  /**
+   * @brief Evaluates a binary operator, using the TOTALLY_ORDERED comparison for floating-point
+   * operands when `semantics` is `nan_semantics::TOTALLY_ORDERED`
+   */
+  template <typename A, typename B>
+  [[nodiscard]] __device__ inline auto invoke(A a, B b) const
+  {
+    if constexpr (is_floating_operand<A> && requires { totally_ordered_invoker<op>::eval(a, b); }) {
+      if (semantics == nan_semantics::TOTALLY_ORDERED) {
+        return totally_ordered_invoker<op>::eval(a, b);
+      }
+    }
+    return operator_invoker<op>::eval(a, b);
+  }
 
   template <typename T>
   __device__ inline auto operator()(T a)
@@ -133,7 +187,7 @@ struct operator_functor {
   __device__ inline auto operator()(T a, T b)
     requires(!cudf::detail::ops::nullable<T> && requires { operator_invoker<op>::eval(a, b); })
   {
-    return operator_invoker<op>::eval(a, b);
+    return invoke(a, b);
   }
 
   template <typename T>
@@ -146,12 +200,12 @@ struct operator_functor {
     // If the operator is not defined for optional<T>, but is defined for T then it is assumed to be
     // null-propagating.
     if constexpr (requires { operator_invoker<op>::eval(a, b); }) {
-      return operator_invoker<op>::eval(a, b);
+      return invoke(a, b);
     } else {
       using result_t =
         cuda::std::optional<decltype(operator_invoker<op>::eval(a.value(), b.value()))>;
       if (a.has_value() && b.has_value()) {
-        return result_t{operator_invoker<op>::eval(a.value(), b.value())};
+        return result_t{invoke(a.value(), b.value())};
       } else {
         return result_t{};
       }

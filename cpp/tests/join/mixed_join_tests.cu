@@ -12,6 +12,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/errc.hpp>
 #include <cudf/join/conditional_join.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -34,6 +35,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <span>
@@ -2434,5 +2436,53 @@ INSTANTIATE_TEST_SUITE_P(JoinKinds,
                          ::testing::Values(cudf::join_kind::INNER_JOIN,
                                            cudf::join_kind::LEFT_JOIN,
                                            cudf::join_kind::FULL_JOIN));
+
+namespace {
+/// Returns the (left, right) index pairs of a join result, sorted
+std::vector<std::pair<cudf::size_type, cudf::size_type>> sorted_index_pairs(
+  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
+            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> const& result)
+{
+  auto const stream = cudf::get_default_stream();
+  auto const left   = cudf::detail::make_std_vector(*result.first, stream);
+  auto const right  = cudf::detail::make_std_vector(*result.second, stream);
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> pairs;
+  for (std::size_t i = 0; i < left.size(); ++i) {
+    pairs.emplace_back(left[i], right[i]);
+  }
+  std::sort(pairs.begin(), pairs.end());
+  return pairs;
+}
+}  // namespace
+
+struct MixedJoinNanSemanticsTest : public cudf::test::BaseFixture {};
+
+TEST_F(MixedJoinNanSemanticsTest, InnerJoinLessEqual)
+{
+  auto constexpr NaN = std::numeric_limits<double>::quiet_NaN();
+  auto left_keys     = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0};
+  auto right_keys    = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0};
+  auto left_col      = cudf::test::fixed_width_column_wrapper<double>{NaN, 1.0, 2.0};
+  auto right_col     = cudf::test::fixed_width_column_wrapper<double>{NaN, 3.0};
+  auto left_eq       = cudf::table_view{{left_keys}};
+  auto right_eq      = cudf::table_view{{right_keys}};
+  auto left_cond     = cudf::table_view{{left_col}};
+  auto right_cond    = cudf::table_view{{right_col}};
+
+  auto left_ref  = cudf::ast::column_reference(0, cudf::ast::table_reference::LEFT);
+  auto right_ref = cudf::ast::column_reference(0, cudf::ast::table_reference::RIGHT);
+  auto predicate = cudf::ast::operation(cudf::ast::ast_operator::LESS_EQUAL, left_ref, right_ref);
+
+  using pairs = std::vector<std::pair<cudf::size_type, cudf::size_type>>;
+  EXPECT_EQ(
+    sorted_index_pairs(cudf::mixed_inner_join(left_eq, right_eq, left_cond, right_cond, predicate)),
+    (pairs{{1, 1}, {2, 1}}));
+
+  // With TOTALLY_ORDERED, NaN equals NaN and every other value is less than NaN
+  predicate.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  EXPECT_EQ(
+    sorted_index_pairs(cudf::mixed_inner_join(left_eq, right_eq, left_cond, right_cond, predicate)),
+    (pairs{{0, 0}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}));
+}
 
 CUDF_TEST_PROGRAM_MAIN()

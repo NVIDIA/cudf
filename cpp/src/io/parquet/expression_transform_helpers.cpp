@@ -194,6 +194,11 @@ parquet_filter_normalizer::parquet_filter_normalizer(
     [](auto const& sch, auto index) { return std::make_pair(sch.name, index); });
 
   expr.value().get().accept(*this);
+  // The setting of the root expression applies to the whole tree. Copy it to every operation so the
+  // converted root has it, whichever operation that is.
+  for (auto& op : _operators) {
+    op.set_nan_semantics(expr.value().get().get_nan_semantics());
+  }
 }
 
 std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
@@ -410,8 +415,11 @@ std::reference_wrapper<ast::expression const> offset_column_references::visit(
 {
   auto const new_operands = visit_operands(expr.get_operands());
   auto const arity        = cudf::ast::detail::ast_operator_arity(expr.get_operator());
-  if (arity == 1) { return _tree.push(ast::operation{expr.get_operator(), new_operands.front()}); }
-  return _tree.push(ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()});
+  auto op                 = arity == 1
+                              ? ast::operation{expr.get_operator(), new_operands.front()}
+                              : ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()};
+  op.set_nan_semantics(expr.get_nan_semantics());
+  return _tree.push(std::move(op));
 }
 
 std::reference_wrapper<ast::expression const> offset_column_references::visit(
@@ -569,10 +577,18 @@ simplified_expression_opt parquet_expression_simplifier::simplify_negation(
 
   // Binary operation
   auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(*operation);
-  if (lhs_kind != operand_kind::COLUMN_REF or rhs_kind != operand_kind::LITERAL) {
+  if (lhs_kind != operand_kind::COLUMN_REF or rhs_kind != operand_kind::LITERAL or
+      not is_nan_safe_comparison(*col_ref)) {
     return std::nullopt;
   }
   return simplify_negated_comparison(op, *col_ref, *literal);
+}
+
+bool parquet_expression_simplifier::is_nan_safe_comparison(
+  ast::column_reference const& col_ref) const
+{
+  return _nan_semantics != nan_semantics::TOTALLY_ORDERED or
+         not cudf::is_floating_point(_output_dtypes[col_ref.get_column_index()]);
 }
 
 simplified_expression_opt parquet_expression_simplifier::combine_logical_operands(
@@ -604,8 +620,10 @@ simplified_expression_opt parquet_expression_simplifier::combine_logical_operand
 
 simplified_expression_opt parquet_expression_simplifier::simplify_expr(ast::expression const& expr)
 {
-  // Validate operands and simplify the expression
+  // Validate operands and simplify the expression. The setting of the root expression applies to
+  // the whole tree.
   validate_operands(expr);
+  _nan_semantics = expr.get_nan_semantics();
   return simplify_expr_impl(expr);
 }
 
@@ -655,6 +673,7 @@ simplified_expression_opt parquet_expression_simplifier::simplify_expr_impl(
   auto const [op, lhs_kind, rhs_kind, col_ref, literal] = extract_binary_operands(*operation);
 
   if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
+    if (not is_nan_safe_comparison(*col_ref)) { return std::nullopt; }
     return simplify_comparison(op, *col_ref, *literal);
   }
 

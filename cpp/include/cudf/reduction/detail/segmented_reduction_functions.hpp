@@ -94,6 +94,7 @@ std::unique_ptr<column> segmented_product(column_view const& col,
  * @param output_dtype Data type of the output column
  * @param null_handling Specifies how null elements are processed for each segment
  * @param init Initial value of each segment
+ * @param semantics How floating-point NaN values are ordered
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return Minimums of segments as type `output_dtype`
@@ -103,6 +104,7 @@ std::unique_ptr<column> segmented_min(column_view const& col,
                                       data_type const output_dtype,
                                       null_policy null_handling,
                                       std::optional<std::reference_wrapper<scalar const>> init,
+                                      nan_semantics semantics,
                                       cuda::stream_ref stream,
                                       cudf::memory_resources mr);
 

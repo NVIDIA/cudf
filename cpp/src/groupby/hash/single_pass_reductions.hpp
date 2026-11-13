@@ -45,7 +45,8 @@ struct reduction_context {
   data_type values_type;  ///< Type of the values, or of the keys for dictionary values
   grouped_rows const& grouped;
   size_type num_groups;
-  bool nullable;  ///< Whether the result carries a null mask
+  bool nullable;                                       ///< Whether the result carries a null mask
+  nan_semantics semantics = nan_semantics::UNORDERED;  ///< NaN ordering for MIN/ARGMIN
 
   template <typename T>
   value_accessor<T> accessor() const;

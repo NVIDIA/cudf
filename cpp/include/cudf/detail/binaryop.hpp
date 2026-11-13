@@ -27,34 +27,37 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
 
 /**
  * @copydoc cudf::binary_operation(scalar const&, column_view const&, binary_operator,
- * data_type, cuda::stream_ref, cudf::memory_resources)
+ * data_type, nan_semantics, cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> binary_operation(scalar const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
+                                         nan_semantics semantics,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::binary_operation(column_view const&, scalar const&, binary_operator,
- * data_type, cuda::stream_ref, cudf::memory_resources)
+ * data_type, nan_semantics, cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          scalar const& rhs,
                                          binary_operator op,
                                          data_type output_type,
+                                         nan_semantics semantics,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::binary_operation(column_view const&, column_view const&,
- * binary_operator, data_type, cuda::stream_ref, cudf::memory_resources)
+ * binary_operator, data_type, nan_semantics, cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
                                          binary_operator op,
                                          data_type output_type,
+                                         nan_semantics semantics,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr);
 }  // namespace detail

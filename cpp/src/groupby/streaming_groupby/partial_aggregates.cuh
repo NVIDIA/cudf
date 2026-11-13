@@ -22,12 +22,24 @@ struct merge_element_aggregator {
   __device__ void operator()(mutable_column_device_view target,
                              size_type target_index,
                              column_device_view source,
-                             size_type source_index) const noexcept
+                             size_type source_index,
+                             nan_semantics semantics) const noexcept
   {
     // Input is an aggregate result column: dictionary keys have been decoded and
     // variable-width inputs can only produce fixed-width counts.
     if constexpr (!cudf::is_fixed_width<Source>()) {
       return;
+    } else if constexpr (k == aggregation::MIN && cuda::std::is_floating_point_v<Source>) {
+      if (semantics == nan_semantics::TOTALLY_ORDERED) {
+        if (source.is_null(source_index)) { return; }
+        if (target.is_null(target_index)) { target.set_valid(target_index); }
+        cudf::detail::genericAtomicOperation(&target.element<Source>(target_index),
+                                             source.element<Source>(source_index),
+                                             cudf::DeviceMinTotallyOrdered{});
+      } else {
+        cudf::detail::element_aggregator{}.template operator()<Source, k>(
+          target, target_index, source, source_index);
+      }
     } else if constexpr (k == aggregation::COUNT_VALID || k == aggregation::COUNT_ALL) {
       // Partial counts already contain the number of input rows. COUNT's ordinary
       // element aggregator would increment by one and SUM would promote INT32.
@@ -60,6 +72,7 @@ struct merge_partial_aggs_fn {
   size_type source_groups;
   size_type source_partials_per_group;
   aggregation::Kind const* aggs;
+  nan_semantics const* semantics;
   table_device_view source_values;
   mutable_table_device_view target_values;
 
@@ -81,7 +94,8 @@ struct merge_partial_aggs_fn {
                                                 target_values.column(column),
                                                 target,
                                                 values,
-                                                source_row);
+                                                source_row,
+                                                semantics[column]);
   }
 };
 

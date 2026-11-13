@@ -96,8 +96,20 @@ struct group_scan_functor<K, T> {
                                         cuda::stream_ref stream,
                                         cudf::memory_resources mr)
   {
+    return invoke_with<cudf::detail::corresponding_operator_t<K>>(
+      values, num_groups, group_labels, stream, mr);
+  }
+
+  /// Scans with the binary operator `OpType`, e.g. `DeviceMinTotallyOrdered` for a TOTALLY_ORDERED
+  /// MIN
+  template <typename OpType>
+  static std::unique_ptr<column> invoke_with(column_view const& values,
+                                             size_type,
+                                             cudf::device_span<cudf::size_type const> group_labels,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
+  {
     using DeviceType       = device_storage_type_t<T>;
-    using OpType           = cudf::detail::corresponding_operator_t<K>;
     using ResultType       = cudf::detail::target_type_t<T, K>;
     using ResultDeviceType = device_storage_type_t<ResultType>;
 

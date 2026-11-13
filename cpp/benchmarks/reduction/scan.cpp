@@ -15,6 +15,15 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <type_traits>
+
+static cudf::nan_semantics nan_semantics_axis(nvbench::state& state)
+{
+  return state.get_string("nan_semantics") == "TOTALLY_ORDERED"
+           ? cudf::nan_semantics::TOTALLY_ORDERED
+           : cudf::nan_semantics::UNORDERED;
+}
+
 template <typename DataType>
 static void reduction_scan(nvbench::state& state, nvbench::type_list<DataType>)
 {
@@ -26,7 +35,12 @@ static void reduction_scan(nvbench::state& state, nvbench::type_list<DataType>)
     input_type, distribution_id::UNIFORM, 0, 100);
   auto const input_column = create_random_column(input_type, row_count{size}, profile);
 
-  auto agg = cudf::make_min_aggregation<cudf::scan_aggregation>();
+  auto const semantics = nan_semantics_axis(state);
+  if (semantics == cudf::nan_semantics::TOTALLY_ORDERED && !std::is_floating_point_v<DataType>) {
+    state.skip("TOTALLY_ORDERED only changes floating-point MIN");
+    return;
+  }
+  auto agg = cudf::make_min_aggregation<cudf::scan_aggregation>(semantics);
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
@@ -50,4 +64,5 @@ NVBENCH_BENCH_TYPES(reduction_scan, NVBENCH_TYPE_AXES(Types))
   .set_name("scan")
   .set_type_axes_names({"DataType"})
   .add_float64_axis("nulls", {0.0, 0.1})
-  .add_int64_axis("size", {100'000, 1'000'000, 10'000'000, 100'000'000});
+  .add_int64_axis("size", {100'000, 1'000'000, 10'000'000, 100'000'000})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});

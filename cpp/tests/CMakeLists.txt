@@ -167,6 +167,7 @@ ConfigureTest(
   groupby/merge_lists_tests.cpp
   groupby/merge_sets_tests.cpp
   groupby/min_scan_tests.cpp
+  groupby/minmax_nan_tests.cpp
   groupby/nth_element_tests.cpp
   groupby/nunique_tests.cpp
   groupby/product_scan_tests.cpp
@@ -257,6 +258,7 @@ ConfigureTest(
   reductions/ewm_tests.cpp
   reductions/host_udf_example_tests.cu
   reductions/list_rank_test.cpp
+  reductions/minmax_nan_tests.cpp
   reductions/rank_tests.cpp
   reductions/reduction_tests.cpp
   reductions/scan_tests.cpp
@@ -296,11 +298,12 @@ ConfigureTest(ROUND_TEST round/round_tests.cpp)
 # * binary tests ----------------------------------------------------------------------------------
 ConfigureTest(
   BINARYOP_TEST
-  binaryop/binop-verify-input-test.cpp
-  binaryop/binop-null-test.cpp
-  binaryop/binop-compiled-test.cpp
   binaryop/binop-compiled-fixed_point-test.cpp
+  binaryop/binop-compiled-test.cpp
   binaryop/binop-generic-ptx-test.cpp
+  binaryop/binop-nan-semantics-test.cpp
+  binaryop/binop-null-test.cpp
+  binaryop/binop-verify-input-test.cpp
   binaryop/operator_parity_test.cpp
   GPUS 1
   PERCENT 100

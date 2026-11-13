@@ -86,6 +86,20 @@ struct typed_casted_writer {
   }
 };
 
+/**
+ * @brief Constructs `BinaryOperator` with `semantics` if it compares floating-point values,
+ * otherwise default constructs it
+ */
+template <typename BinaryOperator>
+__device__ inline BinaryOperator make_binary_operator(nan_semantics semantics)
+{
+  if constexpr (requires(nan_semantics s) { BinaryOperator{s}; }) {
+    return BinaryOperator{semantics};
+  } else {
+    return BinaryOperator{};
+  }
+}
+
 // Functors to launch only defined operations.
 
 /**
@@ -100,6 +114,7 @@ struct ops_wrapper {
   column_device_view const& rhs;
   bool const& is_lhs_scalar;
   bool const& is_rhs_scalar;
+  nan_semantics semantics;
   // With bit_width, nvcc 13.3 can outline decimal128 conversions and add local memory setup
   // before type dispatch, slowing float ADD. Keep this wrapper inline to avoid that setup.
   template <typename TypeCommon>
@@ -121,23 +136,20 @@ struct ops_wrapper {
         }
       }
       auto result = [&]() {
-        if constexpr (cuda::std::is_same_v<BinaryOperator, ops::NullEquals> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullNotEquals> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullLogicalAnd> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullLogicalOr> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullMax> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullMin>) {
+        if constexpr (ops::is_null_aware_op_v<BinaryOperator>) {
           bool output_valid = false;
-          auto result       = BinaryOperator{}.template operator()<TypeCommon, TypeCommon>(
-            x,
-            y,
-            lhs.is_valid(is_lhs_scalar ? 0 : i),
-            rhs.is_valid(is_rhs_scalar ? 0 : i),
-            output_valid);
+          auto result =
+            make_binary_operator<BinaryOperator>(semantics)
+              .template operator()<TypeCommon, TypeCommon>(x,
+                                                           y,
+                                                           lhs.is_valid(is_lhs_scalar ? 0 : i),
+                                                           rhs.is_valid(is_rhs_scalar ? 0 : i),
+                                                           output_valid);
           if (out.nullable() && !output_valid) out.set_null(i);
           return result;
         } else {
-          return BinaryOperator{}.template operator()<TypeCommon, TypeCommon>(x, y);
+          return make_binary_operator<BinaryOperator>(semantics)
+            .template operator()<TypeCommon, TypeCommon>(x, y);
         }
         // To suppress nvcc warning
         return cuda::std::invoke_result_t<BinaryOperator, TypeCommon, TypeCommon>{};
@@ -163,6 +175,7 @@ struct ops2_wrapper {
   column_device_view const& rhs;
   bool const& is_lhs_scalar;
   bool const& is_rhs_scalar;
+  nan_semantics semantics;
   template <typename TypeLhs, typename TypeRhs>
   __device__ void operator()(size_type i)
   {
@@ -171,23 +184,20 @@ struct ops2_wrapper {
       TypeLhs x   = lhs.element<TypeLhs>(is_lhs_scalar ? 0 : i);
       TypeRhs y   = rhs.element<TypeRhs>(is_rhs_scalar ? 0 : i);
       auto result = [&]() {
-        if constexpr (cuda::std::is_same_v<BinaryOperator, ops::NullEquals> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullNotEquals> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullLogicalAnd> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullLogicalOr> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullMax> or
-                      cuda::std::is_same_v<BinaryOperator, ops::NullMin>) {
+        if constexpr (ops::is_null_aware_op_v<BinaryOperator>) {
           bool output_valid = false;
-          auto result       = BinaryOperator{}.template operator()<TypeLhs, TypeRhs>(
-            x,
-            y,
-            lhs.is_valid(is_lhs_scalar ? 0 : i),
-            rhs.is_valid(is_rhs_scalar ? 0 : i),
-            output_valid);
+          auto result =
+            make_binary_operator<BinaryOperator>(semantics).template operator()<TypeLhs, TypeRhs>(
+              x,
+              y,
+              lhs.is_valid(is_lhs_scalar ? 0 : i),
+              rhs.is_valid(is_rhs_scalar ? 0 : i),
+              output_valid);
           if (out.nullable() && !output_valid) out.set_null(i);
           return result;
         } else {
-          return BinaryOperator{}.template operator()<TypeLhs, TypeRhs>(x, y);
+          return make_binary_operator<BinaryOperator>(semantics)
+            .template operator()<TypeLhs, TypeRhs>(x, y);
         }
         // To suppress nvcc warning
         return cuda::std::invoke_result_t<BinaryOperator, TypeLhs, TypeRhs>{};
@@ -216,12 +226,14 @@ struct binary_op_device_dispatcher {
   column_device_view rhs;
   bool is_lhs_scalar;
   bool is_rhs_scalar;
+  nan_semantics semantics;
 
   __forceinline__ __device__ void operator()(size_type i)
   {
-    type_dispatcher(common_data_type,
-                    ops_wrapper<BinaryOperator>{out, lhs, rhs, is_lhs_scalar, is_rhs_scalar},
-                    i);
+    type_dispatcher(
+      common_data_type,
+      ops_wrapper<BinaryOperator>{out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics},
+      i);
   }
 };
 
@@ -239,13 +251,14 @@ struct binary_op_double_device_dispatcher {
   column_device_view rhs;
   bool is_lhs_scalar;
   bool is_rhs_scalar;
+  nan_semantics semantics;
 
   __forceinline__ __device__ void operator()(size_type i)
   {
     double_type_dispatcher(
       lhs.type(),
       rhs.type(),
-      ops2_wrapper<BinaryOperator>{out, lhs, rhs, is_lhs_scalar, is_rhs_scalar},
+      ops2_wrapper<BinaryOperator>{out, lhs, rhs, is_lhs_scalar, is_rhs_scalar, semantics},
       i);
   }
 };
@@ -256,6 +269,7 @@ void apply_binary_op(mutable_column_view& out,
                      column_view const& rhs,
                      bool is_lhs_scalar,
                      bool is_rhs_scalar,
+                     nan_semantics semantics,
                      cuda::stream_ref stream)
 {
   auto common_dtype = get_common_type(out.type(), lhs.type(), rhs.type());
@@ -266,18 +280,19 @@ void apply_binary_op(mutable_column_view& out,
   // Create binop functor instance
   if (common_dtype) {
     // Execute it on every element
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       cuda::counting_iterator<size_type>{0},
-                       out.size(),
-                       binary_op_device_dispatcher<BinaryOperator>{
-                         *common_dtype, *outd, *lhsd, *rhsd, is_lhs_scalar, is_rhs_scalar});
+    thrust::for_each_n(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::counting_iterator<size_type>{0},
+      out.size(),
+      binary_op_device_dispatcher<BinaryOperator>{
+        *common_dtype, *outd, *lhsd, *rhsd, is_lhs_scalar, is_rhs_scalar, semantics});
   } else {
     // Execute it on every element
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        cuda::counting_iterator<size_type>{0},
                        out.size(),
                        binary_op_double_device_dispatcher<BinaryOperator>{
-                         *outd, *lhsd, *rhsd, is_lhs_scalar, is_rhs_scalar});
+                         *outd, *lhsd, *rhsd, is_lhs_scalar, is_rhs_scalar, semantics});
   }
 }
 

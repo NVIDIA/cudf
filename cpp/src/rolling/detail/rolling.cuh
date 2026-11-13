@@ -89,13 +89,14 @@ struct rolling_preprocessor {
 };
 
 // Helper for MIN/MAX preprocessing - strings/structs use ARG variants
-template <typename MakeArgAggFn, typename MakeDirectAggFn>
+// The ARG aggregation keeps the nan_semantics, which matter for dictionary floating-point keys.
+template <typename MakeArgAggFn>
 inline std::vector<std::unique_ptr<aggregation>> preprocess_minmax(data_type col_type,
-                                                                   MakeArgAggFn make_arg_agg,
-                                                                   MakeDirectAggFn make_direct_agg)
+                                                                   aggregation const& agg,
+                                                                   MakeArgAggFn make_arg_agg)
 {
   std::vector<std::unique_ptr<aggregation>> aggs;
-  aggs.push_back(cudf::is_compound(col_type) ? make_arg_agg() : make_direct_agg());
+  aggs.push_back(cudf::is_compound(col_type) ? make_arg_agg() : agg.clone());
   return aggs;
 }
 
@@ -104,16 +105,18 @@ inline std::vector<std::unique_ptr<aggregation>> preprocess_minmax(data_type col
 // Then a second pass uses those indices to gather the final strings/structs.
 template <>
 inline std::vector<std::unique_ptr<aggregation>> rolling_preprocessor::operator()<aggregation::MIN>(
-  data_type col_type, aggregation const&) const
+  data_type col_type, aggregation const& agg) const
 {
-  return preprocess_minmax(col_type, make_argmin_aggregation<>, make_min_aggregation<>);
+  return preprocess_minmax(
+    col_type, agg, [&] { return make_argmin_aggregation(cudf::detail::get_nan_semantics(agg)); });
 }
 
 template <>
 inline std::vector<std::unique_ptr<aggregation>> rolling_preprocessor::operator()<aggregation::MAX>(
-  data_type col_type, aggregation const&) const
+  data_type col_type, aggregation const& agg) const
 {
-  return preprocess_minmax(col_type, make_argmax_aggregation<>, make_max_aggregation<>);
+  return preprocess_minmax(
+    col_type, agg, [&] { return make_argmax_aggregation(cudf::detail::get_nan_semantics(agg)); });
 }
 
 // COLLECT_LIST, COLLECT_SET, and NTH_ELEMENT aggregations do not perform a rolling operation.
@@ -471,6 +474,13 @@ struct rolling_window_launcher {
         create_rolling_operator<InputType, op>{}(min_periods, comp_generator.binop());
       return do_rolling(device_op);
     } else {  // all the remaining rolling operations
+      // TOTALLY_ORDERED only changes a floating-point MIN, so only float and double instantiate
+      // DeviceMinTotallyOrdered.
+      if constexpr (op == aggregation::MIN && cuda::std::is_floating_point_v<InputType>) {
+        if (cudf::detail::get_nan_semantics(agg) == nan_semantics::TOTALLY_ORDERED) {
+          return do_rolling(DeviceRolling<InputType, op, DeviceMinTotallyOrdered>{min_periods});
+        }
+      }
       auto const device_op = create_rolling_operator<InputType, op>{}(min_periods, agg);
       return do_rolling(device_op);
     }

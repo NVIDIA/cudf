@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <ranges>
 #include <unordered_set>
@@ -103,6 +104,13 @@ void compute_groupby(std::span<aggregation_request const> requests,
   auto const [values, agg_kinds, aggs, is_agg_intermediate, has_compound_aggs] =
     extract_hash_groupby_aggs(requests, *cache, expose_intermediates, stream);
 
+  // MIN and ARGMIN computations depend on how each aggregation orders NaN values.
+  std::vector<nan_semantics> agg_semantics;
+  agg_semantics.reserve(aggs.size());
+  std::ranges::transform(aggs, std::back_inserter(agg_semantics), [](auto const& agg) {
+    return cudf::detail::get_nan_semantics(*agg);
+  });
+
   // Counts without null filtering come directly from the group offsets.
   auto const needs_reduction = [&] {
     for (size_type i = 0; i < values.num_columns(); ++i) {
@@ -116,8 +124,13 @@ void compute_groupby(std::span<aggregation_request const> requests,
   // The helper caches the reduction schedule over its grouped rows for later callers.
   std::vector<std::unique_ptr<column>> results;
   if (needs_reduction) {
-    results = compute_single_pass_aggs(
-      values, agg_kinds, is_agg_intermediate, helper.reduction_groups(stream, mr), stream, mr);
+    results = compute_single_pass_aggs(values,
+                                       agg_kinds,
+                                       agg_semantics,
+                                       is_agg_intermediate,
+                                       helper.reduction_groups(stream, mr),
+                                       stream,
+                                       mr);
   } else {
     auto const grouped =
       grouped_rows{device_span<size_type const>{},
@@ -126,7 +139,8 @@ void compute_groupby(std::span<aggregation_request const> requests,
                    cuda::device_buffer<size_type>{stream, temp_mr},
                    cuda::device_buffer<cuda::std::array<size_type, 2>>{stream, temp_mr},
                    cuda::device_buffer<size_type>{stream, temp_mr}};
-    results = compute_single_pass_aggs(values, agg_kinds, is_agg_intermediate, grouped, stream, mr);
+    results = compute_single_pass_aggs(
+      values, agg_kinds, agg_semantics, is_agg_intermediate, grouped, stream, mr);
   }
   for (std::size_t i = 0; i < results.size(); ++i) {
     cache->add_result(values.column(i), *aggs[i], std::move(results[i]));

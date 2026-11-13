@@ -550,7 +550,7 @@ TYPED_TEST(StreamingGroupbyFloatingPointTest, MinMaxNaNAndSignedZerosInOneWarp)
   auto constexpr nan = std::numeric_limits<T>::quiet_NaN();
   cudf::test::fixed_width_column_wrapper<int32_t> input_keys{0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3};
   cudf::test::fixed_width_column_wrapper<T> input_values{
-    nan, -T{0}, T{0}, nan, T{0}, T{0}, -T{0}, -T{0}, T{-2}, -T{0}, T{0}, T{3}};
+    nan, -T{0}, T{0}, nan, T{0}, -T{0}, -T{0}, T{0}, T{-2}, -T{0}, T{0}, T{3}};
   std::vector<cudf::groupby::streaming_aggregation_request> requests;
   requests.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
   requests.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>()));
@@ -566,15 +566,109 @@ TYPED_TEST(StreamingGroupbyFloatingPointTest, MinMaxNaNAndSignedZerosInOneWarp)
       cudf::gather(cudf::table_view{{results[i].results.front()->view()}}, *order);
     EXPECT_EQ(sorted->get_column(0).null_count(), 0);
     auto const values = cudf::test::to_host<T>(sorted->view().column(0)).first;
-    // NaN/finite ties and mixed zero signs depend on atomic update order. Check the allowed
-    // results, and use uniform zero groups to verify signs without imposing an update order.
-    EXPECT_TRUE(std::isnan(values[0]) || values[0] == T{0});
+    // NaN propagates and -0 is less than +0, independent of the atomic update order:
+    // groups 1 and 2 mix zero signs, so MIN (i == 0) is -0 and MAX is +0
+    EXPECT_TRUE(std::isnan(values[0]));
     EXPECT_EQ(values[1], T{0});
-    EXPECT_FALSE(std::signbit(values[1]));
+    EXPECT_EQ(std::signbit(values[1]), i == 0);
     EXPECT_EQ(values[2], T{0});
-    EXPECT_TRUE(std::signbit(values[2]));
+    EXPECT_EQ(std::signbit(values[2]), i == 0);
     EXPECT_EQ(values[3], i == 0 ? T{-2} : T{3});
   }
+}
+
+TYPED_TEST(StreamingGroupbyFloatingPointTest, TotallyOrderedMinGrowMergeAndSelfMerge)
+{
+  using T                = TypeParam;
+  auto constexpr nan     = std::numeric_limits<T>::quiet_NaN();
+  auto constexpr ordered = cudf::nan_semantics::TOTALLY_ORDERED;
+
+  // Group 3 is all NaN; the other groups mix NaNs, nulls, and numbers
+  constexpr cudf::size_type num_rows = 65536;
+  std::vector<int32_t> key_data(num_rows);
+  std::vector<T> value_data(num_rows);
+  std::vector<bool> validity(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    key_data[i]   = i % 4;
+    value_data[i] = (i % 4 == 3 || i % 7 == 0) ? nan : static_cast<T>((i / 4) % 16 - 8);
+    validity[i]   = i % 13 != 0;
+  }
+  cudf::test::fixed_width_column_wrapper<int32_t> input_keys(key_data.begin(), key_data.end());
+  cudf::test::fixed_width_column_wrapper<T> input_values(
+    value_data.begin(), value_data.end(), validity.begin());
+  cudf::table_view const repeated_batch{{input_keys, input_values}};
+
+  // The UNORDERED and TOTALLY_ORDERED MIN on one column must keep separate results
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>()));
+  requests.push_back(make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>(ordered)));
+  requests.push_back(make_req(1, cudf::make_max_aggregation<cudf::groupby_aggregation>(ordered)));
+
+  cudf::groupby::streaming_groupby source(KEY_COL, requests, num_rows);
+  // 65,536 rows and four groups create 64 partials per group with the 256-row block size.
+  source.aggregate(repeated_batch);
+  {
+    SCOPED_TRACE("finalize multiple partials");
+    auto [keys, results] = source.finalize();
+    verify_against_groupby(keys, results, {repeated_batch}, KEY_COL, requests);
+  }
+
+  cudf::test::fixed_width_column_wrapper<int32_t> destination_keys{0, 3, 4};
+  cudf::test::fixed_width_column_wrapper<T> destination_values{nan, T{-20}, nan};
+  cudf::table_view const destination_batch{{destination_keys, destination_values}};
+  cudf::groupby::streaming_groupby destination(KEY_COL, requests, num_rows);
+  destination.aggregate(destination_batch);
+  destination.merge(source);
+  {
+    SCOPED_TRACE("merge a source with multiple partials");
+    auto [keys, results] = destination.finalize();
+    verify_against_groupby(keys, results, {destination_batch, repeated_batch}, KEY_COL, requests);
+  }
+
+  source.merge(source);
+  {
+    SCOPED_TRACE("self-merge multiple partials");
+    auto [keys, results] = source.finalize();
+    verify_against_groupby(keys, results, {repeated_batch, repeated_batch}, KEY_COL, requests);
+  }
+
+  // Growing from four to 1,024 groups collapses the old partials into a single partial per group.
+  std::vector<int32_t> new_keys(1020);
+  std::vector<T> new_values(1020);
+  for (std::size_t i = 0; i < new_keys.size(); ++i) {
+    new_keys[i]   = static_cast<int32_t>(i) + 4;
+    new_values[i] = i % 3 == 0 ? nan : static_cast<T>(static_cast<int>(i % 16) - 8);
+  }
+  cudf::test::fixed_width_column_wrapper<int32_t> growth_keys(new_keys.begin(), new_keys.end());
+  cudf::test::fixed_width_column_wrapper<T> growth_values(new_values.begin(), new_values.end());
+  cudf::table_view const growth_batch{{growth_keys, growth_values}};
+  source.aggregate(growth_batch);
+  SCOPED_TRACE("grow capacity after multiple partials");
+  EXPECT_EQ(source.distinct_keys(), 1024);
+  auto [keys, results] = source.finalize();
+  verify_against_groupby(
+    keys, results, {repeated_batch, repeated_batch, growth_batch}, KEY_COL, requests);
+}
+
+TYPED_TEST(StreamingGroupbyFloatingPointTest, MergeRejectsDifferentNanSemantics)
+{
+  using T = TypeParam;
+  cudf::test::fixed_width_column_wrapper<int32_t> input_keys{0, 1};
+  cudf::test::fixed_width_column_wrapper<T> input_values{T{1}, T{2}};
+  cudf::table_view const batch{{input_keys, input_values}};
+
+  auto make_groupby = [&](cudf::nan_semantics semantics) {
+    std::vector<cudf::groupby::streaming_aggregation_request> requests;
+    requests.push_back(
+      make_req(1, cudf::make_min_aggregation<cudf::groupby_aggregation>(semantics)));
+    auto result = std::make_unique<cudf::groupby::streaming_groupby>(
+      KEY_COL, requests, DEFAULT_MAX_DISTINCT_KEYS);
+    result->aggregate(batch);
+    return result;
+  };
+  auto unordered = make_groupby(cudf::nan_semantics::UNORDERED);
+  auto ordered   = make_groupby(cudf::nan_semantics::TOTALLY_ORDERED);
+  EXPECT_THROW(unordered->merge(*ordered), std::invalid_argument);
 }
 
 TEST_F(StreamingGroupbyTest, ProductTwoBatches)

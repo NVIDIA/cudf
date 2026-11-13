@@ -42,6 +42,42 @@ NVBENCH_BENCH(bench_groupby_sum_scan)
   .set_name("sum_scan")
   .add_int64_axis("num_rows", {100'000, 1'000'000, 10'000'000, 100'000'000});
 
+template <typename Type>
+static void bench_groupby_min_scan(nvbench::state& state, nvbench::type_list<Type>)
+{
+  auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+
+  data_profile const key_profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<int64_t>(), distribution_id::UNIFORM, 0, 100);
+  auto keys = create_random_column(cudf::type_to_id<int64_t>(), row_count{num_rows}, key_profile);
+  data_profile const val_profile = data_profile_builder().cardinality(0).no_validity().distribution(
+    cudf::type_to_id<Type>(), distribution_id::UNIFORM, 0, 100);
+  auto vals = create_random_column(cudf::type_to_id<Type>(), row_count{num_rows}, val_profile);
+
+  std::vector<cudf::groupby::scan_request> requests;
+  requests.emplace_back(cudf::groupby::scan_request());
+  requests[0].values   = vals->view();
+  auto const semantics = state.get_string("nan_semantics") == "TOTALLY_ORDERED"
+                           ? cudf::nan_semantics::TOTALLY_ORDERED
+                           : cudf::nan_semantics::UNORDERED;
+  requests[0].aggregations.push_back(
+    cudf::make_min_aggregation<cudf::groupby_scan_aggregation>(semantics));
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
+    cudf::groupby::groupby gb_obj(cudf::table_view({keys->view(), keys->view(), keys->view()}));
+    auto result = gb_obj.scan(requests);
+  });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+NVBENCH_BENCH_TYPES(bench_groupby_min_scan, NVBENCH_TYPE_AXES(nvbench::type_list<float, double>))
+  .set_name("min_scan")
+  .add_int64_axis("num_rows", {100'000, 1'000'000, 10'000'000, 100'000'000})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});
+
 static void bench_groupby_pre_sorted_sum_scan(nvbench::state& state)
 {
   auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));

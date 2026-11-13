@@ -71,6 +71,7 @@ std::unique_ptr<scalar> sum_overflow(column_view const& col,
  * @param col input column to compute minimum
  * @param output_dtype data type of return type and typecast elements of input column
  * @param init initial value of the minimum
+ * @param semantics How floating-point NaN values are ordered
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @return Minimum element as scalar of type `output_dtype`
@@ -78,6 +79,7 @@ std::unique_ptr<scalar> sum_overflow(column_view const& col,
 std::unique_ptr<scalar> min(column_view const& col,
                             data_type const output_dtype,
                             std::optional<std::reference_wrapper<scalar const>> init,
+                            nan_semantics semantics,
                             cuda::stream_ref stream,
                             cudf::memory_resources mr);
 
@@ -109,12 +111,14 @@ std::unique_ptr<scalar> max(column_view const& col,
  * @param col input column to compute reduction
  * @param dispatch_type The type to dispatch on. For dictionary columns this must be the keys type;
  *                      for all other columns it must equal `col.type()`.
+ * @param semantics How floating-point NaN values are ordered
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @return Index of the minimum element as scalar of type `output_dtype`
  */
 std::unique_ptr<scalar> argmin(column_view const& col,
                                data_type dispatch_type,
+                               nan_semantics semantics,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr);
 

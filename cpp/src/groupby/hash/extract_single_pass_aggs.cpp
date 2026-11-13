@@ -16,9 +16,10 @@
 #include <cudf/utilities/traits.hpp>
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <tuple>
-#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace cudf::groupby::detail::hash {
@@ -40,12 +41,13 @@ struct simple_aggregation_collector {
 template <>
 std::vector<std::unique_ptr<aggregation>>
 simple_aggregation_collector::operator()<aggregation::MIN>(data_type col_type,
-                                                           aggregation const&) const
+                                                           aggregation const& agg) const
 {
   std::vector<std::unique_ptr<aggregation>> aggs;
+  // Strings and nested types have no NaN values, so the ARG aggregation needs no nan_semantics.
   aggs.push_back(col_type.id() == type_id::STRING || cudf::is_nested(col_type)
                    ? make_argmin_aggregation()
-                   : make_min_aggregation());
+                   : agg.clone());
   return aggs;
 }
 
@@ -53,12 +55,13 @@ simple_aggregation_collector::operator()<aggregation::MIN>(data_type col_type,
 template <>
 std::vector<std::unique_ptr<aggregation>>
 simple_aggregation_collector::operator()<aggregation::MAX>(data_type col_type,
-                                                           aggregation const&) const
+                                                           aggregation const& agg) const
 {
   std::vector<std::unique_ptr<aggregation>> aggs;
+  // Strings and nested types have no NaN values, so the ARG aggregation needs no nan_semantics.
   aggs.push_back(col_type.id() == type_id::STRING || cudf::is_nested(col_type)
                    ? make_argmax_aggregation()
-                   : make_max_aggregation());
+                   : agg.clone());
   return aggs;
 }
 
@@ -151,19 +154,25 @@ extract_single_pass_aggs(std::span<aggregation_request const> requests,
     // - INPUT_EXTRACTED: aggregation requested by the users and has already been extracted
     // - INTERMEDIATE: extracted intermediate aggregation
     enum class aggregation_group : int8_t { INPUT_NOT_EXTRACTED, INPUT_EXTRACTED, INTERMEDIATE };
-    std::unordered_map<aggregation::Kind, aggregation_group> agg_kinds_map;
+    // MIN and ARGMIN with different nan_semantics are distinct aggregations of the same kind.
+    using agg_key     = std::pair<aggregation::Kind, nan_semantics>;
+    auto const key_of = [](aggregation const& agg) {
+      return agg_key{agg.kind, cudf::detail::get_nan_semantics(agg)};
+    };
+    std::map<agg_key, aggregation_group> agg_kinds_map;
     for (auto const& agg : input_aggs) {
-      agg_kinds_map[agg->kind] = aggregation_group::INPUT_NOT_EXTRACTED;
+      agg_kinds_map[key_of(*agg)] = aggregation_group::INPUT_NOT_EXTRACTED;
     }
 
     auto insert_agg = [&](column_view const& request_values, std::unique_ptr<aggregation>&& agg) {
-      auto const it = agg_kinds_map.find(agg->kind);
+      auto const key = key_of(*agg);
+      auto const it  = agg_kinds_map.find(key);
       auto const need_update =
         it == agg_kinds_map.end() || it->second == aggregation_group::INPUT_NOT_EXTRACTED;
       if (!need_update) { return; }
 
       auto const is_intermediate = it == agg_kinds_map.end();
-      agg_kinds_map[agg->kind] =
+      agg_kinds_map[key] =
         is_intermediate ? aggregation_group::INTERMEDIATE : aggregation_group::INPUT_EXTRACTED;
       is_agg_intermediate.push_back(static_cast<int8_t>(is_intermediate));
 

@@ -65,9 +65,6 @@ constexpr size_t MIN_STATS_SCRATCH_SIZE = sizeof(__int128_t);
 // mask to determine lane id
 constexpr uint32_t WARP_MASK = cudf::detail::warp_size - 1;
 
-// currently 64k - 1
-constexpr uint32_t MAX_GRID_Y_SIZE = (1 << 16) - 1;
-
 struct frag_init_state_s {
   parquet_column_device_view col;
   PageFragment frag;

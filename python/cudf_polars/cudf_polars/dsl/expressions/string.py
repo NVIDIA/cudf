@@ -314,6 +314,13 @@ class StringFunction(Expr):
                 raise NotImplementedError("Strptime cache is a CPU feature")
             if not exact:
                 raise NotImplementedError("Strptime does not support exact=False")
+            if format is not None and re.search(r"(?<!%)(?:%%)*%#", format):
+                # libcudf rejects chrono's "#" flag (e.g. "%#z") at evaluation
+                # time, which is too late to fall back to the CPU. Escaped
+                # "%%" pairs are skipped, so "%%#z" (a literal "%#z") is fine.
+                raise NotImplementedError(
+                    f"Strptime format {format!r} uses the unsupported '#' flag"
+                )
         elif self.name in {
             StringFunction.Name.StripChars,
             StringFunction.Name.StripCharsStart,
@@ -514,14 +521,6 @@ class StringFunction(Expr):
             child, arg = self.children
             plc_column = child.evaluate(df, context=context).obj
             plc_targets = arg.evaluate(df, context=context).obj
-            if plc_column.size() == 0:
-                # contains_multiple launches a kernel with grid_1d sized
-                # against the input rows, which asserts num_blocks > 0.
-                # Skip the kernel call on empty input.
-                return Column(
-                    make_empty_column(self.dtype, df.stream),
-                    dtype=self.dtype,
-                )
             if ascii_case_insensitive:
                 plc_column = plc.strings.case.to_lower(plc_column, stream=df.stream)
                 plc_targets = plc.strings.case.to_lower(plc_targets, stream=df.stream)

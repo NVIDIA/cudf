@@ -6,4 +6,4 @@
 # =============================================================================
 
 # rapids-pre-commit-hooks: disable-next-line[verify-hardcoded-version]
-set(CUDF_TAG main)
+set(CUDF_TAG release/26.12)

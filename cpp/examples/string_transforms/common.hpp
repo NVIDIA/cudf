@@ -25,6 +25,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <map>
 #include <numeric>
 #include <optional>
 #include <stdexcept>
@@ -97,8 +98,12 @@ int main(int argc, char const** argv)
 
   if (enable_stats) { cudf::set_current_device_resource(stats_adaptor); }
 
+  auto const string_type = cudf::data_type{cudf::type_id::STRING};
   cudf::io::csv_reader_options in_opts =
-    cudf::io::csv_reader_options::builder(cudf::io::source_info{in_csv}).header(0);
+    cudf::io::csv_reader_options::builder(cudf::io::source_info{in_csv})
+      .header(0)
+      .dtypes(std::map<std::string, cudf::data_type>{{"Country Code", string_type},
+                                                     {"Area Code", string_type}});
 
   auto in_csv_table = cudf::io::read_csv(in_opts);
   auto& input       = in_csv_table.tbl;

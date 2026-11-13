@@ -3249,9 +3249,30 @@ def test_parquet_bss_round_trip(tmp_path):
     i64_data = pa.array(list(range(num_rows)), type=pa.int64())
     f32_data = pa.array([float(i) for i in range(num_rows)], type=pa.float32())
     f64_data = pa.array([float(i) for i in range(num_rows)], type=pa.float64())
+
+    # 8- and 16-bit integers are stored as INT32. Every third value is null.
+    def narrow(pa_type, value):
+        return pa.array(
+            [None if i % 3 == 0 else value(i) for i in range(num_rows)],
+            type=pa_type,
+        )
+
+    narrow_data = {
+        "i8": narrow(pa.int8(), lambda i: i - 100),
+        "u8": narrow(pa.uint8(), lambda i: i),
+        "i16": narrow(pa.int16(), lambda i: 300 * i - 30000),
+        "u16": narrow(pa.uint16(), lambda i: 300 * i),
+    }
     padf = pa.Table.from_arrays(
-        [fixed_data, i32_data, i64_data, f32_data, f64_data],
-        names=["flba", "i32", "i64", "f32", "f64"],
+        [
+            fixed_data,
+            i32_data,
+            i64_data,
+            f32_data,
+            f64_data,
+            *narrow_data.values(),
+        ],
+        names=["flba", "i32", "i64", "f32", "f64", *narrow_data],
     )
     padf_fname = tmp_path / "padf.parquet"
     pq.write_table(
@@ -3274,13 +3295,19 @@ def test_parquet_bss_round_trip(tmp_path):
             "i64": "BYTE_STREAM_SPLIT",
             "f32": "BYTE_STREAM_SPLIT",
             "f64": "BYTE_STREAM_SPLIT",
+            "i8": "BYTE_STREAM_SPLIT",
+            "u8": "BYTE_STREAM_SPLIT",
+            "i16": "BYTE_STREAM_SPLIT",
+            "u16": "BYTE_STREAM_SPLIT",
         },
         row_group_size_rows=rows_per_rowgroup,
     )
 
-    # now read back in with pyarrow to test it was written properly by cudf
+    # now read back in with pyarrow to test it was written properly by cudf.
+    # Drop the pandas metadata that cudf writes, which would convert the
+    # nullable 8- and 16-bit columns to nullable pandas types, unlike padf2.
     padf2 = pq.read_table(padf_fname)
-    padf3 = pq.read_table(cdf_fname)
+    padf3 = pq.read_table(cdf_fname).replace_schema_metadata()
     assert_eq(padf2, padf3)
     assert_eq(padf2.schema[0].type, padf3.schema[0].type)
 

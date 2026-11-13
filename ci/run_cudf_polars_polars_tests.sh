@@ -171,8 +171,14 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            --inject-gpu-engine in-memory
 fi
 
+# Failed queries may leave the SPMD engine in a bad state, so retain fail-fast
+# outside nightly CI. Nightly shards trade possible cascading failures for a
+# fuller report: https://github.com/NVIDIA/cudf/issues/25067
 # TODO(ResourceWarning): https://github.com/NVIDIA/cudf/issues/22181
-# Fail fast (-x) rather than trying to continue because failed tests pollute the state
+SPMD_FAIL_FAST=(-x)
+if [[ ${RAPIDS_BUILD_TYPE:-} == nightly ]]; then
+    SPMD_FAIL_FAST=()
+fi
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
     configure_fallback_report spmd
     echo "Run polars tests with injected SPMD GPU engine, ${BLOCKSIZE} blocksize"
@@ -182,7 +188,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
        python -m pytest \
            --import-mode=importlib \
            --cache-clear \
-           -x \
+           "${SPMD_FAIL_FAST[@]}" \
            -m "${PYTEST_MARK_EXPR}" \
            -p cudf_polars.testing.inject_gpu_engine \
            -W ignore::ResourceWarning \

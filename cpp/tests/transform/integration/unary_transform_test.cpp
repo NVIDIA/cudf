@@ -1840,7 +1840,7 @@ __device__ cudf::errc expression (
     cudf::transform_output outputs[] = {
       {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::ALL_VALID}};
     std::unique_ptr<cudf::table> result;
-    EXPECT_NO_THROW(result = cudf::transform(cuda,
+    ASSERT_NO_THROW(result = cudf::transform(cuda,
                                              cudf::udf_source_type::CUDA,
                                              cudf::null_aware::NO,
                                              std::nullopt,

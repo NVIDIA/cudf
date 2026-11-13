@@ -23,7 +23,6 @@
 #include <cstring>
 #include <format>
 #include <functional>
-#include <iterator>
 #include <limits>
 #include <memory>
 #include <numeric>
@@ -132,6 +131,7 @@ std::vector<uint8_t> build_object(std::vector<object_field> const& fields)
       return acc + field.value.size();
     });
   int const offset_size = values_bytes > max_one_byte ? 2 : 1;
+  auto const ids        = std::views::transform(fields, &object_field::id);
   auto const values     = std::views::transform(fields, &object_field::value);
 
   // object value_header: | is_large (1) | field_id_size-1 (2) | field_offset_size-1 (2) |
@@ -140,7 +140,7 @@ std::vector<uint8_t> build_object(std::vector<object_field> const& fields)
   out.push_back(
     make_variant_header(variant_basic_type::OBJECT, static_cast<uint8_t>(offset_size - 1)));
   out.push_back(static_cast<uint8_t>(fields.size()));
-  std::ranges::copy(std::views::transform(fields, &object_field::id), std::back_inserter(out));
+  out.insert(out.end(), ids.begin(), ids.end());
 
   std::size_t running = 0;
   for (auto const& value : values) {

@@ -7,6 +7,8 @@
 
 #include <cudf/utilities/export.hpp>
 
+#include <cuda/std/concepts>
+
 #include <cstddef>
 #include <initializer_list>
 #include <iterator>
@@ -150,9 +152,8 @@ class lists_column_initializer {
    *
    * @param children Child list initializers
    */
-  template <typename NestedInit = lists_column_initializer>
+  template <cuda::std::same_as<lists_column_initializer> NestedInit = lists_column_initializer>
   lists_column_initializer(std::initializer_list<NestedInit> children)
-    requires(std::is_same_v<NestedInit, lists_column_initializer>)
     : children_{children.begin(), children.end()}, nested_{true}
   {
   }

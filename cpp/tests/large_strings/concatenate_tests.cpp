@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -64,4 +64,11 @@ TEST_F(ConcatenateTest, ManyColumns)
   auto sv     = cudf::strings_column_view(result->view());
   EXPECT_EQ(sv.size(), view.size() * multiplier);
   EXPECT_EQ(sv.offsets().type(), cudf::data_type{cudf::type_id::INT64});
+
+  // verify a sampling of the results: first, middle, and last segments
+  for (auto idx : {0, multiplier / 2, multiplier - 1}) {
+    auto const begin = idx * view.size();
+    auto sliced      = cudf::slice(result->view(), {begin, begin + view.size()});
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sliced.front(), view);
+  }
 }

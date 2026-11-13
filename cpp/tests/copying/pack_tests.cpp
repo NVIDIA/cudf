@@ -575,6 +575,16 @@ TEST_F(ExperimentalPackUnpackTest, ExistingPackedColumnsRequireMatchingLayout)
   cudf::packed_columns const packed{std::move(metadata), std::move(data)};
   EXPECT_THROW(cx::make_pack_plan_builder(packed, make_options(cx::pack_compression::cascaded)),
                std::invalid_argument);
+
+  // A quarter of the allocation ends before the second of the two padded string buffers, which
+  // planning would read.
+  cudf::test::strings_column_wrapper strings({"metadata", "past", "the", "allocation"});
+  auto const full = cudf::pack(cudf::table_view{{strings}});
+  cudf::packed_columns const truncated{
+    std::make_unique<std::vector<uint8_t>>(*full.metadata),
+    std::make_unique<rmm::device_buffer>(full.gpu_data->data(), full.gpu_data->size() / 4, stream)};
+  EXPECT_THROW(cx::make_pack_plan_builder(truncated, make_options(cx::pack_compression::cascaded)),
+               std::invalid_argument);
 }
 
 TEST_F(ExperimentalPackUnpackTest, CascadedUsesNativeTypedRegions)
@@ -940,6 +950,15 @@ TEST_F(ExperimentalPackUnpackTest, CompressedInputValidation)
   shrink(2 * sizeof(uint64_t), 64 * 1024);
   shrink(5 * sizeof(uint64_t), 1);
   EXPECT_THROW(cx::materialize({short_metadata, packed.view().payload}), cudf::logic_error);
+
+  // A block size that is not a whole number of values, with the block count it implies. The block
+  // size is the fourth field.
+  auto odd_block_metadata        = packed.result.metadata;
+  uint64_t const odd_block_bytes = 64 * 1024 + 1;
+  std::memcpy(odd_block_metadata.data() + 32 + 3 * sizeof(uint64_t),
+              &odd_block_bytes,
+              sizeof(odd_block_bytes));
+  EXPECT_THROW(cx::materialize({odd_block_metadata, packed.view().payload}), cudf::logic_error);
 
   // Shift the first block by one byte. The block offsets follow the 64-byte region entry.
   auto shifted_metadata         = packed.result.metadata;

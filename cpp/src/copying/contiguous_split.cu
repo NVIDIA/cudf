@@ -3112,6 +3112,17 @@ std::vector<packed_buffer> list_packed_buffers(packed_metadata_view const& metad
   return buffers;
 }
 
+/// Whether every buffer `metadata` describes lies within a payload of `payload_bytes` bytes.
+[[nodiscard]] bool buffers_fit_in_payload(packed_metadata_view const& metadata,
+                                          std::size_t payload_bytes)
+{
+  // String characters are followed by their offsets, so known sizes bound every buffer.
+  return std::ranges::all_of(list_packed_buffers(metadata), [&](auto const& buffer) {
+    return buffer.offset <= payload_bytes &&
+           buffer.data_bytes.value_or(0) <= payload_bytes - buffer.offset;
+  });
+}
+
 /**
  * @brief Provides device pointers into a packed payload.
  *
@@ -3333,6 +3344,11 @@ struct plan_input {
     CUDF_EXPECTS(input.metadata != nullptr && input.gpu_data != nullptr,
                  "Packed input must contain metadata and a device allocation",
                  std::invalid_argument);
+    // Planning reads the buffers, including string offsets, before the layout can be compared.
+    CUDF_EXPECTS(
+      buffers_fit_in_payload(packed_metadata_view{*input.metadata}, input.gpu_data->size()),
+      "Packed metadata does not describe the layout of the device allocation",
+      std::invalid_argument);
     auto const table =
       cudf::detail::unpack(*input.metadata, static_cast<uint8_t const*>(input.gpu_data->data()));
     state        = make_split_state(table, options, stream, mr);
@@ -4015,13 +4031,7 @@ table_view unpack_view(packed_data_view input)
       }(),
     "A zero-copy view requires a device-accessible payload");
   auto const view = cudf::detail::unpack(input.metadata, input.payload.data());
-  // String characters are followed by their offsets, so known sizes bound every buffer.
-  CUDF_EXPECTS(std::ranges::all_of(list_packed_buffers(packed_metadata_view{input.metadata}),
-                                   [&](auto const& buffer) {
-                                     return buffer.offset <= input.payload.size() &&
-                                            buffer.data_bytes.value_or(0) <=
-                                              input.payload.size() - buffer.offset;
-                                   }),
+  CUDF_EXPECTS(buffers_fit_in_payload(packed_metadata_view{input.metadata}, input.payload.size()),
                "Packed column buffer lies outside the payload");
   return view;
 }
@@ -4053,9 +4063,14 @@ namespace {
     uncompressed_end += entry.uncompressed_bytes;
     auto const compression = static_cast<pack_compression>(entry.compression);
     CUDF_EXPECTS(is_concrete_codec(compression), "Compressed region declares an unsupported codec");
+    // Whole blocks of values keep every decoder output aligned.
+    auto const max_block_bytes = compression == pack_compression::none
+                                   ? max_raw_block_bytes
+                                   : max_allowed_block_bytes(compression);
     CUDF_EXPECTS(
       entry.data_bytes <= entry.uncompressed_bytes &&
-        (entry.data_bytes == 0 || entry.block_bytes > 0) &&
+        (entry.data_bytes == 0 || entry.block_bytes > 0) && entry.block_bytes % split_align == 0 &&
+        entry.block_bytes <= max_block_bytes &&
         entry.num_blocks == (entry.data_bytes == 0 ? 0
                                                    : cudf::detail::div_rounding_up_safe(
                                                        entry.data_bytes, entry.block_bytes)) &&

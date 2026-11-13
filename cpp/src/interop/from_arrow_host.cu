@@ -41,6 +41,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace cudf {
@@ -490,11 +491,12 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   auto int64_offsets = static_cast<int64_t const*>(offsets_buffer);
   auto const offset  = int64_offsets[input->offset];
   auto const length  = int64_offsets[input->offset + input->length] - offset;
-  auto int32_offsets = std::vector<int32_t>(input->length + 1);
-  rebase_offsets(int64_offsets, input->offset, input->length, int32_offsets.data());
+  // Left uninitialized, rebase_offsets checks the bounds and then writes every entry
+  auto int32_offsets = std::make_unique_for_overwrite<int32_t[]>(input->length + 1);
+  rebase_offsets(int64_offsets, input->offset, input->length, int32_offsets.get());
 
-  offsets_buffers[fixed_width_data_buffer_idx] = int32_offsets.data();
-  offsets_array.offset                         = 0;  // already accounted for by the above transform
+  offsets_buffers[fixed_width_data_buffer_idx] = int32_offsets.get();
+  offsets_array.offset                         = 0;  // already accounted for by rebase_offsets
   auto result = dispatch_copy_from_arrow_host{stream, mr}.template operator()<int32_t>(
     schema, &offsets_array, data_type(type_id::INT32), true);
   cudf::detail::sync_stream(stream);

@@ -72,17 +72,16 @@ std::unique_ptr<column> gather_argminmax(hash_compound_agg_finalizer const& fina
   return std::move(result->release()[0]);
 }
 
-// Helper for MIN/MAX finalization - shared logic for compound types (e.g., strings)
+// Helper for MIN/MAX finalization. A MIN/MAX result missing from the cache was computed through
+// ARGMIN/ARGMAX (e.g. for strings), so gather it from that result.
 template <typename MakeArgAggFn>
 void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& finalizer,
                                         aggregation const& agg,
                                         MakeArgAggFn make_arg_agg)
 {
   if (finalizer.cache->has_result(finalizer.col, agg)) { return; }
-  if (finalizer.input_type.id() == type_id::STRING || cudf::is_nested(finalizer.input_type)) {
-    auto transformed_agg = make_arg_agg();
-    finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
-  }  // else: no-op, since this is only relevant for compound aggregations
+  auto transformed_agg = make_arg_agg();
+  finalizer.cache->add_result(finalizer.col, agg, gather_argminmax(finalizer, *transformed_agg));
 }
 
 // Specialization for MIN aggregation

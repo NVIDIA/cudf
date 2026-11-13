@@ -33,7 +33,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <unordered_map>
 #include <utility>
 
 namespace cudf {
@@ -138,13 +137,10 @@ auto column_view_with_common_nulls(column_view const& column_0,
 }  // namespace
 
 /**
- * @brief Functor to dispatch aggregation with
+ * @brief Functor to compute groupby aggregations with `aggregation_dispatcher`
  *
- * This functor is to be used with `aggregation_dispatcher` to compute the
- * appropriate aggregation. If the values on which to run the aggregation are
- * unchanged, then this functor should be re-used. This is because it stores
- * memoised sorted and/or grouped values and re-using will save on computation
- * of these values.
+ * Reuse one instance for every aggregation on the same values so that they share the memoized
+ * grouped and sorted values.
  */
 struct aggregate_result_functor final : store_result_functor {
   aggregate_result_functor(column_view const& values,

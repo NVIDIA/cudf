@@ -21,6 +21,7 @@
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/structs/struct_view.hpp>
+#include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -204,36 +205,35 @@ struct group_scan_functor<K, cudf::struct_view> {
     scan_struct_argminmax(
       values, group_labels, gather_map.data(), K == aggregation::MIN, stream, mr);
 
-    //
-    // Gather the children elements of the prefix min/max struct elements first.
-    //
-    // Typically, we should use `get_sliced_child` for each child column to properly handle the
-    // input if it is a sliced view. However, since the input to this function is just generated
-    // from groupby internal APIs which is never a sliced view, we just use `child_begin` and
-    // `child_end` iterators for simplicity.
-    auto scanned_children =
-      cudf::detail::gather(
-        table_view(std::vector<column_view>{values.child_begin(), values.child_end()}),
-        gather_map,
-        cudf::out_of_bounds_policy::DONT_CHECK,
-        cudf::negative_index_policy::NOT_ALLOWED,
-        stream,
-        mr)
-        ->release();
+    // Gather the children elements of the prefix min/max struct elements first. Presorted values
+    // may be a sliced view, so gather from the children sliced like the parent.
+    auto const structs_values = structs_column_view{values};
+    auto sliced_children      = std::vector<column_view>{};
+    for (size_type i = 0; i < values.num_children(); ++i) {
+      sliced_children.push_back(structs_values.get_sliced_child(i, stream));
+    }
+    auto scanned_children = cudf::detail::gather(table_view(sliced_children),
+                                                 gather_map,
+                                                 cudf::out_of_bounds_policy::DONT_CHECK,
+                                                 cudf::negative_index_policy::NOT_ALLOWED,
+                                                 stream,
+                                                 mr)
+                              ->release();
 
     // After gathering the children elements, we need to push down nulls from the root structs
-    // column to them.
+    // column to them. The copied null mask starts at the first row of a sliced view.
+    auto null_mask = cudf::detail::copy_bitmask(values, stream, mr.get_output_mr());
     if (values.has_nulls()) {
       for (std::unique_ptr<column>& child : scanned_children) {
         child = structs::detail::superimpose_and_sanitize_nulls(
-          values.null_mask(), values.null_count(), std::move(child), stream, mr.get_output_mr());
+          null_mask.data(), values.null_count(), std::move(child), stream, mr.get_output_mr());
       }
     }
 
     return create_structs_hierarchy(values.size(),
                                     std::move(scanned_children),
                                     values.null_count(),
-                                    cudf::detail::copy_bitmask(values, stream, mr.get_output_mr()),
+                                    std::move(null_mask),
                                     stream,
                                     mr.get_output_mr());
   }

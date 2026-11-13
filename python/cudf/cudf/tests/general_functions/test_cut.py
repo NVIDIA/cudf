@@ -325,3 +325,19 @@ def test_cut_right_false_preserves_cupy_input():
 
     assert_eq(expected, actual)
     cupy.testing.assert_array_equal(x, original)
+
+
+@pytest.mark.parametrize("bin_type", [list, tuple])
+@pytest.mark.parametrize("edges", [(0, 2, 4), (0, 2, 2, 4)])
+def test_cut_include_lowest_does_not_modify_bins(bin_type, edges):
+    bins = bin_type(edges)
+    original = bin_type(edges)
+    values = [0, 1, 2, 4]
+
+    expected = pd.CategoricalIndex(
+        pd.cut(values, bins=bins, include_lowest=True, duplicates="drop")
+    )
+    actual = cut(values, bins=bins, include_lowest=True, duplicates="drop")
+
+    assert_eq(expected, actual)
+    assert bins == original

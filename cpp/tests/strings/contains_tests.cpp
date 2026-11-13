@@ -1508,8 +1508,8 @@ TEST_F(StringsContainsTests, SlicedWithNulls)
     cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 2, 0, 0, 1, 0}, nulls);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_count);
 
-  prog                  = cudf::strings::regex_program::create("[a-c]\\d+");
+  prog                  = cudf::strings::regex_program::create("[a-d]\\d+");
   results               = cudf::strings::matches_re(sv, *prog);
-  auto expected_matches = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 0, 0}, nulls);
+  auto expected_matches = cudf::test::fixed_width_column_wrapper<bool>({0, 1, 0, 0, 1, 0}, nulls);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_matches);
 }

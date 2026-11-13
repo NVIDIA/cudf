@@ -219,6 +219,7 @@ TYPED_TEST(groupby_shift_fixed_width_test, VeryLargeBackwardOffset)
   test_groupby_shift_fixed_width_single<K, V>(key, val, offset, *slr, expected);
 }
 
+// dummy conflicting line
 struct groupby_shift_string_test : public cudf::test::BaseFixture {};
 
 template <typename K>

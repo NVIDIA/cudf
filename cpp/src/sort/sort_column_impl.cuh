@@ -10,6 +10,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/indexalator.cuh>
+#include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -22,8 +23,10 @@
 
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/buffer>
+#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/execution>
+#include <cuda/std/optional>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/gather.h>
@@ -305,23 +308,35 @@ struct column_sorted_order_fn {
     // Now, sort the ordered indices to get their ordered positions (very fast integer sort)
     ordered_indices = cudf::detail::sorted_order<method>(
       ordered_indices->view(), order::ASCENDING, null_precedence, stream, {temp_mr, temp_mr});
-    // And use the result as a map over the dictionary indices
+    // And use the result as a map over the dictionary indices.
+    // The annotated indices include the input's offset and null mask; null rows are not
+    // used to access the map since their index values are undefined (and the keys may be empty)
     auto map = ordered_indices->view().template data<size_type>();
-    auto itr = cudf::detail::indexalator_factory::make_input_iterator(
-      dictionary_column_view(input).indices());
+    auto itr = cudf::detail::indexalator_factory::make_input_optional_iterator(
+      dictionary_column_view(input).get_indices_annotated());
     auto mapped_indices =
       cuda::device_buffer<size_type>(stream, temp_mr, input.size(), cuda::no_init);
-    thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
-                   itr,
-                   itr + input.size(),
-                   map,
-                   mapped_indices.begin());
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                      itr,
+                      itr + input.size(),
+                      mapped_indices.begin(),
+                      cuda::proclaim_return_type<size_type>(
+                        [map] __device__(cuda::std::optional<size_type> const& idx) -> size_type {
+                          return idx.has_value() ? map[idx.value()] : size_type{0};
+                        }));
+
+    // The mapped values begin at offset 0 so the null mask of a sliced input must be copied
+    // to align with them
+    auto const null_mask   = (input.offset() > 0 && input.nullable())
+                               ? cudf::detail::copy_bitmask(input, stream, {temp_mr, temp_mr})
+                               : cuda::device_buffer<bitmask_type>(stream, temp_mr, 0, cuda::no_init);
+    auto const d_null_mask = null_mask.size() > 0 ? null_mask.data() : input.null_mask();
 
     // Finally, sort-order the dictionary indices using mapped values
     auto mapped_view = column_view(data_type{type_to_id<size_type>()},
                                    input.size(),
                                    mapped_indices.data(),
-                                   input.null_mask(),
+                                   d_null_mask,
                                    input.null_count());
     // these should be very fast since they are sorting integers
     if (input.has_nulls()) {

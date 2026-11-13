@@ -9,6 +9,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/quantiles.hpp>
 #include <cudf/table/table_view.hpp>
@@ -20,7 +21,6 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <memory>
 #include <stdexcept>
@@ -34,7 +34,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  std::vector<double> const& q,
                                  interpolation interp,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto quantile_idx_lookup = cuda::proclaim_return_type<size_type>(
     [sortmap, interp, size = input.num_rows()] __device__(double q) {
@@ -43,7 +43,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
     });
 
   auto const q_device =
-    cudf::detail::make_device_uvector_async(q, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::make_device_buffer_async(q, stream, cudf::get_current_device_resource_ref());
 
   auto quantile_idx_iter = cuda::transform_iterator(q_device.begin(), quantile_idx_lookup);
 
@@ -62,7 +62,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   if (q.empty()) { return empty_like(input); }
 
@@ -91,7 +91,7 @@ std::unique_ptr<table> quantiles(table_view const& input,
                                  std::vector<order> const& column_order,
                                  std::vector<null_order> const& null_precedence,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::quantiles(

@@ -5,7 +5,7 @@
 
 """cuDF health checks for rapids doctor. Docs https://github.com/rapidsai/rapids-cli"""
 
-_INSTALL_DOCS = "https://docs.rapids.ai/install/"
+_INSTALL_DOCS = "https://docs.nvidia.com/datascience/install/"
 
 
 def import_check(verbose=False, **kwargs):

@@ -6,7 +6,6 @@ from enum import IntEnum
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 from pylibcudf.column import Column
-from pylibcudf.expressions import Expression
 from pylibcudf.table import Table
 from pylibcudf.types import NanEquality, NullEquality
 from pylibcudf.utils import CudaStreamLike
@@ -80,13 +79,6 @@ def stable_distinct(
     keep: DuplicateKeepOption,
     nulls_equal: NullEquality,
     nans_equal: NanEquality,
-    stream: CudaStreamLike | None = None,
-    mr: DeviceMemoryResource | None = None,
-) -> Table: ...
-def filter(
-    predicate_table: Table,
-    predicate_expr: Expression,
-    filter_table: Table,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
 ) -> Table: ...

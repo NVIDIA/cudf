@@ -78,8 +78,11 @@ auto build_column_from_host_data(cudf::host_span<T const> host_data,
   rmm::device_buffer buffer{num_rows * sizeof(T), stream, mr};
   cudf::detail::cuda_memcpy<T>(
     cudf::device_span<T>{static_cast<T*>(buffer.data()), num_rows}, host_data, stream);
-  return std::make_unique<cudf::column>(
-    cudf::data_type{data_type}, num_rows, std::move(buffer), rmm::device_buffer{}, 0);
+  return std::make_unique<cudf::column>(cudf::data_type{data_type},
+                                        num_rows,
+                                        std::move(buffer),
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                        0);
 }
 
 /**
@@ -358,7 +361,9 @@ void test_read_parquet_and_apply_mask(
   };
 
   test_chunked_table_with_deletion_vector(512, 2048);
-  test_chunked_table_with_deletion_vector(1024, 10240);
+  // Both small limit pairs split these fixtures at row-group boundaries. Cover the
+  // second pair once rather than repeating the same splits for every source count.
+  if constexpr (num_concat == 1) { test_chunked_table_with_deletion_vector(1024, 10240); }
   test_chunked_table_with_deletion_vector(10240, 102400);
   test_chunked_table_with_deletion_vector(102400, 0);
   test_chunked_table_with_deletion_vector(0, 0);

@@ -12,6 +12,7 @@
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/concatenate.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
@@ -24,11 +25,11 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/utility>
@@ -106,12 +107,12 @@ struct compute_children_offsets_fn {
    * The sizes of each child (keys and indices) of the individual columns
    * are used to create the offsets.
    *
-   * @param stream Stream used for allocating the output rmm::device_uvector.
-   * @param mr Device memory resource used to allocate the returned device vector.
+   * @param stream Stream used for allocating the output device buffer.
+   * @param mr Device memory resource used to allocate the returned device buffer.
    * @return Vector of offsets_pair objects for keys and indices.
    */
-  rmm::device_uvector<offsets_pair> create_children_offsets(cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr)
+  cuda::device_buffer<offsets_pair> create_children_offsets(cuda::stream_ref stream,
+                                                            cudf::memory_resources mr)
   {
     auto offsets = cudf::detail::make_host_vector<offsets_pair>(columns_ptrs.size(), stream);
     thrust::transform_exclusive_scan(
@@ -127,7 +128,7 @@ struct compute_children_offsets_fn {
       [](auto lhs, auto rhs) {
         return offsets_pair{lhs.first + rhs.first, lhs.second + rhs.second};
       });
-    return cudf::detail::make_device_uvector(offsets, stream, mr);
+    return cudf::detail::make_device_buffer(offsets, stream, mr);
   }
 
  private:
@@ -164,7 +165,7 @@ struct map_indices_fn {
 
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   // exception here is the same behavior as in cudf::concatenate
   CUDF_EXPECTS(not columns.empty(), "Unexpected empty list of columns to concatenate.");
@@ -213,13 +214,15 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   auto policy = rmm::exec_policy_nosync(stream, temp_mr);
   auto iota   = cuda::counting_iterator<size_type>{0};
 
-  auto d_indices  = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  auto d_indices = cuda::device_buffer<size_type>(stream, temp_mr, all_keys->size(), cuda::no_init);
   auto d_all_keys = column_device_view::create(all_keys->view(), stream, temp_mr);
   thrust::transform(
     policy, iota, iota + all_keys->size(), d_indices.begin(), insert_keys_fn{set_ref, *d_all_keys});
-  auto keys_indices = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
-  auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
-  keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
+  auto keys_indices_storage =
+    cuda::device_buffer<size_type>(stream, temp_mr, all_keys->size(), cuda::no_init);
+  auto keys_end     = set.retrieve_all(keys_indices_storage.begin(), stream);
+  auto keys_indices = cudf::device_span<size_type>(
+    keys_indices_storage.data(), cuda::std::distance(keys_indices_storage.begin(), keys_end));
 
   // use keys_indices to retrieve the keys (gather)
   auto const oob_policy   = cudf::out_of_bounds_policy::DONT_CHECK;
@@ -231,11 +234,13 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
 
   // build an all_keys_remap: abs position in all_keys to new key index
   // use scatter to assign new index values: all_keys_remap[keys_indices[i]] = i
-  auto all_keys_remap = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  auto all_keys_remap =
+    cuda::device_buffer<size_type>(stream, temp_mr, all_keys->size(), cuda::no_init);
   thrust::scatter(
     policy, iota, iota + keys_indices.size(), keys_indices.begin(), all_keys_remap.begin());
   // use gather to propagate new indices values to all duplicate positions
-  auto final_remap = rmm::device_uvector<size_type>(all_keys->size(), stream, temp_mr);
+  auto final_remap =
+    cuda::device_buffer<size_type>(stream, temp_mr, all_keys->size(), cuda::no_init);
   thrust::gather(
     policy, d_indices.begin(), d_indices.end(), all_keys_remap.begin(), final_remap.begin());
 
@@ -284,7 +289,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
   // finally, frankenstein that dictionary column together
   return make_dictionary_column(std::move(keys_column),
                                 std::move(indices_column),
-                                std::move(*(contents.null_mask.release())),
+                                std::move(*(contents.null_mask)),
                                 null_count);
 }
 

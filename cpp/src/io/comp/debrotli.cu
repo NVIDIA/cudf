@@ -52,7 +52,11 @@ THE SOFTWARE.
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
+#include <cuda/std/algorithm.min.h>
+#include <cuda/std/bit>
 #include <cuda/stream>
 
 namespace cudf::io::detail {
@@ -74,11 +78,6 @@ inline __device__ uint32_t brotli_distance_alphabet_size(uint8_t npostfix,
                                                          uint32_t maxnbits)
 {
   return brotli_num_distance_short_codes + ndirect + (maxnbits << (npostfix + 1));
-}
-
-inline __device__ uint32_t brev8(uint32_t x)
-{
-  return (__brev(x) >> 24u);  // kReverseBits[x]
 }
 
 #define CONSTANT static const __device__ __constant__
@@ -187,8 +186,6 @@ struct debrotli_state_s {
   uint32_t mtf[65];
   __align__(8) char heap[local_heap_size];
 };
-
-inline __device__ uint32_t Log2Floor(uint32_t value) { return 32 - __clz(value); }
 
 /// @brief Safely read up to 4 bytes with bounds checking, handling end-of-buffer cases
 inline __device__ uint32_t safe_load_u32(uint8_t const* p, uint8_t const* end)
@@ -613,7 +610,7 @@ static __device__ void BuildCodeLengthsHuffmanTable(huff_scratch_s* hs)
     for (int bits_count = hs->code_length_histo[bits]; bits_count != 0; --bits_count) {
       int end     = table_size;
       code        = huffcode(bits, hs->sorted[symbol++]);
-      uint16_t* p = &hs->lenvlctab[brev8(key)];
+      uint16_t* p = &hs->lenvlctab[cuda::std::bit_reverse(static_cast<uint8_t>(key))];
       do {
         end -= step;
         p[end] = code;
@@ -685,7 +682,7 @@ static __device__ uint32_t BuildHuffmanTable(uint16_t* root_lut,
     for (int bits_count = count[bits]; bits_count != 0; --bits_count) {
       symbol      = symbol_lists[symbol];
       code        = huffcode(bits, symbol);
-      uint16_t* p = &lut[brev8(key)];
+      uint16_t* p = &lut[cuda::std::bit_reverse(static_cast<uint8_t>(key))];
       int end     = table_size;
       do {
         end -= step;
@@ -715,7 +712,7 @@ static __device__ uint32_t BuildHuffmanTable(uint16_t* root_lut,
         table_bits = NextTableBitSize(count, len, root_bits);
         table_size = 1 << table_bits;
         total_size += table_size;
-        sub_key = brev8(key);
+        sub_key = cuda::std::bit_reverse(static_cast<uint8_t>(key));
         key += key_step;
         root_lut[sub_key] =
           huffcode(table_bits + root_bits, (((size_t)(lut - root_lut)) - sub_key));
@@ -723,7 +720,7 @@ static __device__ uint32_t BuildHuffmanTable(uint16_t* root_lut,
       }
       symbol      = symbol_lists[symbol];
       code        = huffcode(len - root_bits, symbol);
-      uint16_t* p = &lut[brev8(sub_key)];
+      uint16_t* p = &lut[cuda::std::bit_reverse(static_cast<uint8_t>(sub_key))];
       int end     = table_size;
       do {
         end -= step;
@@ -902,7 +899,7 @@ static __device__ uint32_t DecodeHuffmanTree(debrotli_state_s* s,
   if (prefix_code_type == 1) {
     // Simple prefix Code
     uint32_t nsym          = getbits(s, 2);
-    uint32_t alphabet_bits = Log2Floor(alphabet_size - 1);
+    uint32_t alphabet_bits = cuda::std::bit_width(alphabet_size - 1);
     for (uint32_t n = 0; n <= nsym; n++) {
       uint32_t v = getbits(s, alphabet_bits);
       if (v >= max_symbol) {
@@ -2083,11 +2080,15 @@ size_t get_gpu_debrotli_scratch_size(int max_num_inputs)
 void gpu_debrotli(device_span<device_span<uint8_t const> const> inputs,
                   device_span<device_span<uint8_t> const> outputs,
                   device_span<codec_exec_result> results,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   // Scratch memory for decompressing
-  rmm::device_uvector<uint8_t> scratch(
-    cudf::io::detail::get_gpu_debrotli_scratch_size(inputs.size()), stream);
+  cuda::device_buffer<uint8_t> scratch(
+    stream,
+    mr.get_temporary_mr(),
+    cudf::io::detail::get_gpu_debrotli_scratch_size(inputs.size()),
+    cuda::no_init);
 
   auto const count = inputs.size();
   dim3 dim_block(block_size, 1);

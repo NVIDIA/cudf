@@ -6,9 +6,11 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/copy.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -59,6 +61,38 @@ TEST_F(HasNonEmptyNullsTest, SlicedInputTest)
     EXPECT_FALSE(cudf::has_nonempty_nulls(col));
   }
 }
+
+struct HasNonEmptyNullsMemoryResourceTest : public HasNonEmptyNullsTest,
+                                            public ::testing::WithParamInterface<bool> {};
+
+TEST_P(HasNonEmptyNullsMemoryResourceTest, MemoryResources)
+{
+  auto const stream             = cudf::get_default_stream();
+  auto const has_nonempty_nulls = GetParam();
+  auto strings = cudf::test::strings_column_wrapper{{"", "a", "b"}, null_at(0)}.release();
+  if (has_nonempty_nulls) {
+    cudf::set_null_mask(strings->mutable_view().null_mask(), 1, 2, false, stream);
+    strings->set_null_count(2);
+  }
+  auto resources = cudf::test::memory_resource_test_harness{};
+  cudf::test::expect_api_uses_memory_resources(
+    resources,
+    [&](cudf::memory_resources mr) {
+      return cudf::detail::has_nonempty_nulls(strings->view(), stream, mr);
+    },
+    [](bool) { return 0; },
+    [has_nonempty_nulls](bool result) { EXPECT_EQ(result, has_nonempty_nulls); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+}
+
+INSTANTIATE_TEST_SUITE_P(NullRowContents,
+                         HasNonEmptyNullsMemoryResourceTest,
+                         ::testing::Bool(),
+                         [](auto const& info) {
+                           return info.param ? "NonEmptyNullRows" : "EmptyNullRows";
+                         });
 
 struct PurgeNonEmptyNullsTest : public cudf::test::BaseFixture {
   /// Helper to run gather() on a single column, and extract the single column from the result.
@@ -143,10 +177,7 @@ TEST_F(PurgeNonEmptyNullsTest, SingleLevelList)
     // Test when gather selects unsanitized row specifically.
     auto const results            = gather(input->view(), {2});
     auto const results_lists_view = cudf::lists_column_view(*results);
-    auto const expected           = LCW<T>{{
-                                   LCW<T>{}  // NULL.
-                                 },
-                                           null_at(0)};
+    auto const expected           = LCW<T>{{{}}, null_at(0)};
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->view(), expected);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_lists_view.offsets(), offsets_col_t{0, 0});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(results_lists_view.child(), values_col_t{});
@@ -184,8 +215,8 @@ TEST_F(PurgeNonEmptyNullsTest, TwoLevelList)
     auto const results_lists_view = cudf::lists_column_view(*results);
 
     auto const expected = LCW<T>{{
-                                   LCW<T>{},  // NULL, because of out of bounds.
-                                   LCW<T>{},  // NULL, because input row was null.
+                                   {},  // NULL, because of out of bounds.
+                                   {},  // NULL, because input row was null.
                                    {{1, 2, 3}, {4, 5, 6, 7}, {8}, {9, 1}, {2}},  // i.e. input[0]
                                    {{11, 12}, {13, 14, 15}, {16, 17, 18}, {19}}  // i.e. input[1]
                                  },
@@ -239,8 +270,8 @@ TEST_F(PurgeNonEmptyNullsTest, ThreeLevelList)
 
     auto const expected = LCW<T>{
       {
-        LCW<T>{},  // NULL, because of out of bounds.
-        LCW<T>{},  // NULL, because input row was null.
+        {},  // NULL, because of out of bounds.
+        {},  // NULL, because input row was null.
         {{{1, 2}, {3}}, {{4, 5}, {6, 7}}, {{8, 8}, {}}, {{9, 1}}, {{2, 3}}},  // i.e. input[0]
         {{{11, 12}}, {{13}, {14, 15}}, {{16, 17, 18}}, {{19, 19}, {}}}        // i.e. input[1]
       },
@@ -443,7 +474,7 @@ TEST_F(PurgeNonEmptyNullsTest, StructOfList)
     auto const result          = gather(structs_input->view(), gather_map);
     auto const expected_result = [] {
       auto child = LCW<T>{{{5},
-                           LCW<T>{},  //<--- Now, sanitized.
+                           {},  //<--- Now, sanitized.
                            {{1, 2, 3, 4}, null_at(2)},
                            {8, 9, 10}},
                           null_at(1)};

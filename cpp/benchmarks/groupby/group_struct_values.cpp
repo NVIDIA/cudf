@@ -41,7 +41,10 @@ static void bench_groupby_min_struct(nvbench::state& state)
 
   auto const keys_view = data_cols.front()->view();
   auto const values =
-    cudf::make_structs_column(keys_view.size(), std::move(data_cols), 0, rmm::device_buffer());
+    cudf::make_structs_column(keys_view.size(),
+                              std::move(data_cols),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto gb_obj   = cudf::groupby::groupby(cudf::table_view({keys_view}));
   auto requests = std::vector<cudf::groupby::aggregation_request>();
@@ -71,7 +74,10 @@ static void bench_groupby_min_struct_scan(nvbench::state& state)
 
   auto const keys_view = data_cols.front()->view();
   auto const values =
-    cudf::make_structs_column(keys_view.size(), std::move(data_cols), 0, rmm::device_buffer());
+    cudf::make_structs_column(keys_view.size(),
+                              std::move(data_cols),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto requests = std::vector<cudf::groupby::scan_request>();
   requests.emplace_back(cudf::groupby::scan_request());

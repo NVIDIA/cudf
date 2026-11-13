@@ -10,6 +10,7 @@
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -79,7 +80,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
                            test_timestamps_D.size() * sizeof(test_timestamps_D.front()),
                            cudf::get_default_stream()},
 
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::TIMESTAMP_SECONDS:
       return cudf::column(
@@ -88,7 +89,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_timestamps_s.data(),
                            test_timestamps_s.size() * sizeof(test_timestamps_s.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::TIMESTAMP_MILLISECONDS:
       return cudf::column(
@@ -97,7 +98,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_timestamps_ms.data(),
                            test_timestamps_ms.size() * sizeof(test_timestamps_ms.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::TIMESTAMP_MICROSECONDS:
       return cudf::column(
@@ -106,7 +107,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_timestamps_us.data(),
                            test_timestamps_us.size() * sizeof(test_timestamps_us.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::TIMESTAMP_NANOSECONDS:
       return cudf::column(
@@ -115,7 +116,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_timestamps_ns.data(),
                            test_timestamps_ns.size() * sizeof(test_timestamps_ns.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::DURATION_DAYS:
       return cudf::column(
@@ -124,7 +125,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_durations_D.data(),
                            test_durations_D.size() * sizeof(test_durations_D.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::DURATION_SECONDS:
       return cudf::column(
@@ -133,7 +134,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_durations_s.data(),
                            test_durations_s.size() * sizeof(test_durations_s.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::DURATION_MILLISECONDS:
       return cudf::column(
@@ -142,7 +143,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_durations_ms.data(),
                            test_durations_ms.size() * sizeof(test_durations_ms.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::DURATION_MICROSECONDS:
       return cudf::column(
@@ -151,7 +152,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_durations_us.data(),
                            test_durations_us.size() * sizeof(test_durations_us.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     case cudf::type_id::DURATION_NANOSECONDS:
       return cudf::column(
@@ -160,7 +161,7 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
         rmm::device_buffer{test_durations_ns.data(),
                            test_durations_ns.size() * sizeof(test_durations_ns.front()),
                            cudf::get_default_stream()},
-        rmm::device_buffer{},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
         0);
     default: CUDF_FAIL("Unsupported type_id");
   }
@@ -1005,19 +1006,27 @@ TYPED_TEST(FixedPointTests, ValidateCastRescalePrecision)
   // division are more visible.
   constexpr auto min_scale = -cuda::std::numeric_limits<RepType>::digits10;
   for (int input_scale = 0; input_scale >= min_scale; --input_scale) {
+    RepType input_value = 1;
+    for (int k = 0; k > input_scale; --k) {
+      input_value *= 10;
+    }
+    auto const input = fp_wrapper{{input_value}, scale_type{input_scale}};
     for (int result_scale = 0; result_scale >= min_scale; --result_scale) {
-      RepType input_value = 1;
-      for (int k = 0; k > input_scale; --k) {
-        input_value *= 10;
-      }
+      SCOPED_TRACE(::testing::Message()
+                   << "input_scale=" << input_scale << ", result_scale=" << result_scale);
       RepType result_value = 1;
       for (int k = 0; k > result_scale; --k) {
         result_value *= 10;
       }
-      auto const input    = fp_wrapper{{input_value}, scale_type{input_scale}};
-      auto const expected = fp_wrapper{{result_value}, scale_type{result_scale}};
-      auto const result   = cudf::cast(input, make_fixed_point_data_type<decimalXX>(result_scale));
-      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+      auto const result_type = make_fixed_point_data_type<decimalXX>(result_scale);
+      auto const result      = cudf::cast(input, result_type);
+      ASSERT_EQ(result->type(), result_type);
+      ASSERT_EQ(result->size(), 1);
+      EXPECT_EQ(result->null_count(), 0);
+      // Comparing the single stored integer avoids allocating an expected device column
+      // and launching GPU comparison kernels for every scale pair.
+      auto const [values, mask] = cudf::test::to_host<RepType>(result->view());
+      EXPECT_EQ(values.front(), result_value);
     }
   }
 }

@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -18,7 +19,12 @@ from cudf_polars.engine.hardware_binding import HardwareBindingPolicy
 from cudf_polars.utils.config import RayContext
 
 ray = pytest.importorskip("ray")
-from cudf_polars.engine.ray import RayEngine  # noqa: E402
+from cudf_polars.engine.ray import (  # noqa: E402
+    RayEngine,
+    _wait_for_actor_shutdown,
+)
+
+_TEST_TIMEOUT_SECONDS = 5
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -30,6 +36,37 @@ pytestmark = [
         reason="RayEngine must not be created from within an rrun cluster",
     ),
 ]
+
+
+@ray.remote(num_cpus=0)
+class _ShutdownActor:
+    def __ray_shutdown__(self, error: str) -> None:
+        if error == "timeout":
+            raise ray.exceptions.GetTimeoutError("Actor shutdown timed out")
+        ray.actor.exit_actor()
+
+    def ping(self) -> None:
+        time.sleep(_TEST_TIMEOUT_SECONDS)
+
+
+@pytest.mark.usefixtures("ray_engine")
+def test_wait_for_actor_shutdown_force_kills_timeout() -> None:
+    actor = cast("Any", _ShutdownActor).remote()
+    ref = actor.__ray_shutdown__.remote("timeout")
+
+    with pytest.raises(ray.exceptions.GetTimeoutError):
+        _wait_for_actor_shutdown(actor, ref, time.monotonic() + _TEST_TIMEOUT_SECONDS)
+
+    with pytest.raises(ray.exceptions.RayActorError):
+        ray.get(actor.ping.remote(), timeout=_TEST_TIMEOUT_SECONDS)
+
+
+@pytest.mark.usefixtures("ray_engine")
+def test_wait_for_actor_shutdown_ignores_actor_error() -> None:
+    actor = cast("Any", _ShutdownActor).remote()
+    ref = actor.__ray_shutdown__.remote("actor")
+
+    _wait_for_actor_shutdown(actor, ref, time.monotonic() + _TEST_TIMEOUT_SECONDS)
 
 
 # ---------------------------------------------------------------------------
@@ -148,12 +185,12 @@ def test_reset_keeps_actors_alive(reset_engine: RayEngine) -> None:
 
     reset_engine._reset(
         executor_options={"max_rows_per_partition": 7},
-        engine_options={"allow_gpu_sharing": True},
     )
 
     actors_after = list(reset_engine.rank_actors)
     pids_after = reset_engine._run(os.getpid)
 
+    assert reset_engine._allow_gpu_sharing is True
     # The Python ``ActorHandle`` objects are the same instances …
     assert all(a is b for a, b in zip(actors_before, actors_after, strict=True))
     # … and the actors are running in the same OS processes.
@@ -186,14 +223,15 @@ def test_reset_collects_after_options_change(reset_engine: RayEngine) -> None:
 
 
 def test_reset_after_shutdown_raises(
-    ray_num_ranks: int,
     ray_init_options: dict[str, Any],
 ) -> None:
     """``shutdown`` is idempotent; ``_reset`` after shutdown raises every time."""
     engine = RayEngine(
         executor_options={"max_rows_per_partition": 10},
         engine_options={"allow_gpu_sharing": True},
-        num_ranks=ray_num_ranks,
+        # This test covers a closed engine's client-side state only; it does
+        # not exercise collective shutdown, so one actor is sufficient.
+        num_ranks=1,
         ray_init_options=ray_init_options,
     )
     engine.shutdown()
@@ -237,14 +275,14 @@ def test_reset_rejects_construction_time_engine_options(
 
 
 def test_shutdown_skips_when_ray_not_initialized(
-    ray_num_ranks: int,
     ray_init_options: dict[str, Any],
 ) -> None:
     """``shutdown`` short-circuits if ``ray.is_initialized()`` is ``False``."""
     engine = RayEngine(
         executor_options={"max_rows_per_partition": 10},
         engine_options={"allow_gpu_sharing": True},
-        num_ranks=ray_num_ranks,
+        # The no-auto-init guard is independent of rank count.
+        num_ranks=1,
         ray_init_options=ray_init_options,
     )
     try:
@@ -260,35 +298,36 @@ def test_shutdown_skips_when_ray_not_initialized(
 
 
 def test_gathers_are_in_rank_order(ray_init_options: dict[str, Any]) -> None:
-    for _ in range(3):  # a single run can agree by luck
-        engine = RayEngine(
-            executor_options={"max_rows_per_partition": 10},
-            engine_options={"allow_gpu_sharing": True},
-            num_ranks=4,
-            ray_init_options=ray_init_options,
-        )
-        try:
-            # Each actor's own view: (rank, info) in actor order.
-            actors = engine.rank_actors
-            reported = ray.get([actor.get_info.remote() for actor in actors])
-            assert sorted(rank for rank, _ in reported) == [0, 1, 2, 3]
+    # Two ranks are sufficient to prove that the methods order by rank rather
+    # than actor-list position. The explicit reversal makes this deterministic,
+    # so additional engine constructions only repeat the same assertion.
+    engine = RayEngine(
+        executor_options={"max_rows_per_partition": 10},
+        engine_options={"allow_gpu_sharing": True},
+        num_ranks=2,
+        ray_init_options=ray_init_options,
+    )
+    try:
+        # Each actor's own view: (rank, info) in actor order.
+        actors = engine.rank_actors
+        reported = ray.get([actor.get_info.remote() for actor in actors])
+        assert sorted(rank for rank, _ in reported) == [0, 1]
 
-            # Actor positions that put the ranks in ascending order.
-            ascending = sorted(range(len(actors)), key=lambda i: reported[i][0])
+        # Actor positions that put the ranks in ascending order.
+        ascending = sorted(range(len(actors)), key=lambda i: reported[i][0])
 
-            # What the gathers must return: the infos in rank order.
-            expected = [reported[i][1].pid for i in ascending]
+        # What the gathers must return: the infos in rank order.
+        expected = [reported[i][1].pid for i in ascending]
 
-            # Hold the actors in *descending* rank order, so position and rank
-            # are guaranteed to disagree. Whether they happen to disagree on
-            # their own depends on the connection race, so without this the
-            # test can pass against a gather that orders by position.
-            engine._rank_actors = [actors[i] for i in reversed(ascending)]
+        # Hold the actors in descending rank order, so position and rank are
+        # guaranteed to disagree. Without this, a position-ordered gather can
+        # agree with rank order by luck.
+        engine._rank_actors = [actors[i] for i in reversed(ascending)]
 
-            assert [info.pid for info in engine.gather_cluster_info()] == expected
+        assert [info.pid for info in engine.gather_cluster_info()] == expected
 
-            # `_run` reaches the same actor for a given rank, so its pids line
-            # up with the cluster info once both are in rank order.
-            assert engine._run(os.getpid) == expected
-        finally:
-            engine.shutdown()
+        # `_run` reaches the same actor for a given rank, so its pids line up
+        # with the cluster info once both are in rank order.
+        assert engine._run(os.getpid) == expected
+    finally:
+        engine.shutdown()

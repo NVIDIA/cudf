@@ -167,8 +167,9 @@ class DataFrame:
             if isinstance(column.dtype.polars_type, (pl.Array, pl.Time, pl.Null))
         }
         if cast_dtypes:
-            # Null columns are stored as all-null INT8 (see DataType).
-            # TODO: Remove the other casts when:
+            # Null columns are stored as INT8 (see DataType), so they always
+            # need this cast.
+            # TODO: Remove the Array and Time casts when:
             # 1. libcudf can export Arrow fixed-size lists.
             # 2. libcudf natively supports TIME64 type
             df = df.cast(pl.Schema(cast_dtypes), strict=True)

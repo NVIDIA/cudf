@@ -239,8 +239,8 @@ def _from_polars(dtype: pl.DataType) -> plc.DataType:
         return plc.DataType(plc.TypeId.DECIMAL128, scale=-dtype.scale)
     elif isinstance(dtype, pl.Null):
         # libcudf supports almost no operations on EMPTY columns, so a
-        # Null column is stored as an all-null INT8 column, as in cuDF
-        # Python. DataFrame.to_polars casts it back to Null.
+        # Null column is stored as an all-null INT8 column.
+        # DataFrame.to_polars casts it back to Null.
         return plc.DataType(plc.TypeId.INT8)
     elif isinstance(dtype, (pl.Enum, pl.Categorical)):
         return plc.DataType(plc.TypeId.DICTIONARY32)

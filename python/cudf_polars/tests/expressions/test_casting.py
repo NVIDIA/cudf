@@ -62,6 +62,33 @@ def test_cast_unsupported(engine: pl.GPUEngine, tests):
     )
 
 
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize("to_bool", [False, True])
+@pytest.mark.parametrize(
+    "values",
+    [[1, 2, 3], [1, None, 3], [None, None, None], []],
+    ids=["valid", "mixed", "null", "empty"],
+)
+def test_cast_to_null(engine: pl.GPUEngine, values, strict, to_bool):
+    # Null is stored as INT8, so this must not become an INT8 -> INT8 cast.
+    expr = pl.col("a").cast(pl.Null, strict=strict)
+    if to_bool:
+        expr = expr.cast(pl.Boolean)
+    query = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Int8)}).select(expr)
+    if strict and any(value is not None for value in values):
+        message = "conversion from `i8` to `null` failed"
+        with pytest.raises(pl.exceptions.InvalidOperationError, match=message):
+            query.collect()
+        if is_streaming_engine(engine):
+            with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+                query.collect(engine=engine)
+        else:
+            with pytest.raises(pl.exceptions.InvalidOperationError, match=message):
+                query.collect(engine=engine)
+    else:
+        assert_gpu_result_equal(query, engine=engine)
+
+
 def test_allow_double_cast(engine: pl.GPUEngine):
     df = pl.LazyFrame({"c0": [1000]})
     query = df.select(pl.col("c0").cast(pl.Boolean).cast(pl.Int8))

@@ -1949,7 +1949,9 @@ def _(
         )
 
     # Push casts into literals so we can handle Cast(Literal(Null))
-    if isinstance(inner, expr.Literal):
+    if isinstance(inner, expr.Literal) and not (
+        isinstance(dtype.polars_type, pl.Null) and inner.value is not None
+    ):
         if dtype.id() == plc.TypeId.LIST:
             # TODO: Remove once pylibcudf.Scalar supports lists
             if inner.value is not None:  # pragma: no cover; polars rejects this cast

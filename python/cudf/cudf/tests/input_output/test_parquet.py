@@ -5502,3 +5502,77 @@ def test_parquet_pyarrow_engine_native_filesystem(tmp_path):
     )
 
     assert_eq(cudf.read_parquet(tmp_path), df, check_index_type=False)
+
+
+def test_dataset_writer_closes_rotated(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    for _ in range(4):
+        writer.write_table(df)
+
+    # Writers from earlier appends were closed once their files rotated out
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert len(open_writers) == 1
+
+    # Footer metadata of early-closed writers is still returned
+    meta = writer.close(return_metadata=True)
+    assert pq.ParquetFile(BytesIO(meta)).metadata.num_rows == 4 * len(df)
+    expect = cudf.concat([df] * 4).sort_values("x").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)
+
+
+def test_dataset_writer_stale_partition(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+    df0 = df[df["centroid"] == 0]
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    writer.write_table(df)
+    for _ in range(3):
+        writer.write_table(df0)
+
+    # Partitions 1..15 never rotate, so the first writer stays open until
+    # close(); writers holding only partition 0 are closed as it rotates
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert writer._chunked_writers[0] is not None
+    assert len(open_writers) == 2
+
+    writer.close()
+    expect = (
+        cudf.concat([df, df0, df0, df0])
+        .sort_values("x")
+        .reset_index(drop=True)
+    )
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)

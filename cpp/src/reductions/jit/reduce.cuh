@@ -177,10 +177,6 @@ __device__ State block_combine(State local, Merge&& merge)
   return local;
 }
 
-template <bool NullAware, typename A>
-using accessor_element = cuda::std::
-  conditional_t<NullAware, cuda::std::optional<typename A::element_type>, typename A::element_type>;
-
 template <typename T>
 CUDF_HOST_DEVICE constexpr T& deref_value(T& value)
 {
@@ -213,7 +209,13 @@ __device__ void finalize(State const& state,
                          Context&&... context)
 {
   Outputs::map([&]<typename... A> {
-    auto values = cuda::std::tuple<accessor_element<NullAware, A>...>{};
+    auto values = [&] {
+      if constexpr (NullAware) {
+        return cuda::std::tuple{A::nullable_output_arg(outputs, 0)...};
+      } else {
+        return cuda::std::tuple{A::output_arg(outputs, 0)...};
+      }
+    }();
 
     auto const err = [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
       return finalize(

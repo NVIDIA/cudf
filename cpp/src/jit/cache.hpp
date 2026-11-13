@@ -4,6 +4,7 @@
  */
 
 #pragma once
+#include <cudf/udf.hpp>
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/stream>

@@ -185,7 +185,6 @@ std::pair<std::vector<value_reflection>, std::string> reflect_inputs(
       {jit::reflect_input_value_type(input, true), jit::reflect_input_value_type(input, false)});
     accessors.push_back(rtcx::reflect_template("::cudf::jit::column_accessor",
                                                rtcx::reflect(i),
-                                               "::cudf::column_device_view_core",
                                                type,
                                                rtcx::reflect(scalar),
                                                rtcx::reflect(reduction_table_index)));
@@ -206,8 +205,8 @@ std::pair<std::vector<value_reflection>, std::string> reflect_outputs(
     accessors.push_back(rtcx::reflect_template(
       "::cudf::jit::column_accessor",
       rtcx::reflect(i),
-      jit::reflect_output_column(transform_output_spec{.type = outputs[i].id()}),
-      type,
+      outputs[i].id() == type_id::STRING ? rtcx::reflect_template("cudf::repr_element", type)
+                                         : type,
       rtcx::reflect(false),
       rtcx::reflect(reduction_table_index)));
   }
@@ -341,8 +340,7 @@ callback_reflection reflect_callback(std::string_view stage,
                                      std::vector<value_reflection> parameters,
                                      std::string_view symbol)
 {
-  auto udf_params =
-    detail::string_join(parameters.begin(), parameters.end(), ", ", &value_reflection::physical);
+  auto udf_params = detail::string_join(parameters, &value_reflection::physical, ", ");
   return {.stage            = stage,
           .target           = target,
           .udf_params_macro = udf_params_macro,
@@ -446,15 +444,15 @@ std::optional<rtcx::blob> compile_udf_dispatcher(std::span<callback_reflection c
     // The early return handles only all-default callbacks. For mixed default/custom symbols,
     // skip matching callbacks to avoid duplicate definitions and wrappers that call themselves.
     if (callback.symbol == callback.target) { continue; }
-    auto const parameter_types = detail::string_join(
-      callback.parameters.begin(), callback.parameters.end(), ", ", &value_reflection::logical);
-    auto const indices = std::views::iota(size_t{0}, callback.parameters.size());
-    auto const declarations =
-      detail::string_join(indices.begin(), indices.end(), ", ", [&](size_t i) {
-        return std::format("{} arg{}", callback.parameters[i].logical, i);
-      });
-    auto const arguments = detail::string_join(
-      indices.begin(), indices.end(), ", ", [](size_t i) { return std::format("arg{}", i); });
+    auto const parameter_types =
+      detail::string_join(callback.parameters, &value_reflection::logical, ", ");
+    auto const indices      = std::views::iota(size_t{0}, callback.parameters.size());
+    auto const declarations = detail::string_join(
+      indices,
+      [&](size_t i) { return std::format("{} arg{}", callback.parameters[i].logical, i); },
+      ", ");
+    auto const arguments =
+      detail::string_join(indices, [](size_t i) { return std::format("arg{}", i); }, ", ");
     source = std::format(
       R"CUDA({}
 
@@ -488,9 +486,11 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
   // and entry-point names occur only in the independently cached dispatcher fragment.
 
   auto const callbacks_defines = detail::string_join(
-    callbacks.begin(), callbacks.end(), "\n", [](callback_reflection const& callback) {
+    callbacks,
+    [](callback_reflection const& callback) {
       return std::format("#define {} {}", callback.udf_params_macro, callback.udf_params);
-    });
+    },
+    "\n");
 
   auto source = std::format(
     R"CUDA(

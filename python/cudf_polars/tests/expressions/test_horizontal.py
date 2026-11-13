@@ -159,6 +159,27 @@ def test_min_horizontal_string_literal(engine: pl.GPUEngine) -> None:
 
 
 @pytest.mark.parametrize("fn", [pl.min_horizontal, pl.max_horizontal])
+def test_min_max_horizontal_string_empty_and_null(
+    engine: pl.GPUEngine, fn: Callable[..., pl.Expr]
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "empty": ["", "", ""],
+            "null": [None, None, None],
+            "mixed": ["", None, "a"],
+        },
+        schema={"empty": pl.String, "null": pl.String, "mixed": pl.String},
+    )
+    q = df.select(
+        fn("empty", "null").alias("empty_null"),
+        fn("empty", "empty").alias("empty_empty"),
+        fn("null", "null").alias("null_null"),
+        fn("mixed", "empty").alias("mixed_empty"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("fn", [pl.min_horizontal, pl.max_horizontal])
 def test_min_max_horizontal_unsupported_dtype(
     engine: pl.GPUEngine, fn: Callable[..., pl.Expr]
 ) -> None:

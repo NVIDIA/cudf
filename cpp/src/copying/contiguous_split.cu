@@ -2733,7 +2733,7 @@ struct buffer_copy {
 };
 
 /// Copies every buffer with one kernel, where per-buffer memcpy calls cost microseconds each.
-void copy_buffers(std::span<buffer_copy const> copies,
+void copy_buffers(host_span<buffer_copy const> copies,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
 {
@@ -3293,11 +3293,11 @@ std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
   auto columns = materialize_columns(metadata, selection, source, stream, mr);
   sync_on_throw(stream, [&] {
     loader.load(stream, mr);
-    std::vector<buffer_copy> copies;
+    auto copies =
+      cudf::detail::make_pinned_vector_async<buffer_copy>(payload_ranges.size(), stream);
     for (std::size_t i = 0; i < payload_ranges.size(); ++i) {
-      copies.push_back({loader.device_pointer(payload_ranges[i].data()),
-                        destinations[i],
-                        payload_ranges[i].size()});
+      copies[i] = {
+        loader.device_pointer(payload_ranges[i].data()), destinations[i], payload_ranges[i].size()};
     }
     copy_buffers(copies, stream, mr);
   });
@@ -3588,14 +3588,21 @@ class pack_plan::impl {
       }
     };
 
-    std::vector<uint64_t> table(num_blocks, 0);
+    auto table = cudf::detail::make_pinned_vector_async<uint64_t>(num_blocks, stream);
+    std::ranges::fill(table, 0);
     std::vector<uint64_t> block_offsets(num_blocks, 0);
     auto payload_bytes = table_bytes;
     // The asynchronous uploads read these until the stream synchronizes on the next window's
     // results.
-    std::vector<uint8_t const*> sources;
-    std::vector<uint8_t*> targets;
-    std::vector<std::size_t> copy_bytes;
+    auto const max_window_blocks =
+      std::accumulate(windows.begin(), windows.end(), std::size_t{0}, [](auto max, auto const& w) {
+        return std::max(max, w.end_item - w.first_item);
+      });
+    auto sources =
+      cudf::detail::make_pinned_vector_async<uint8_t const*>(max_window_blocks, stream);
+    auto targets = cudf::detail::make_pinned_vector_async<uint8_t*>(max_window_blocks, stream);
+    auto copy_bytes =
+      cudf::detail::make_pinned_vector_async<std::size_t>(max_window_blocks, stream);
     sync_on_throw(stream, [&] {
       for (std::size_t window_idx = 0; window_idx < windows.size(); ++window_idx) {
         auto const& window = windows[window_idx];
@@ -3604,10 +3611,8 @@ class pack_plan::impl {
           device_span<codec_exec_result const>{results}.subspan(
             window.first_item, window.end_item - window.first_item),
           stream);
-        auto const window_begin = payload_bytes;
-        sources.clear();
-        targets.clear();
-        copy_bytes.clear();
+        auto const window_begin  = payload_bytes;
+        auto const window_blocks = window.end_item - window.first_item;
         for (auto block_idx = window.first_item; block_idx < window.end_item; ++block_idx) {
           auto const& block        = blocks[block_idx];
           auto const& region       = regions[block.region];
@@ -3618,18 +3623,21 @@ class pack_plan::impl {
                                                       is_raw ? sizeof(uint64_t) : region.alignment);
           block_offsets[block_idx] = payload_bytes;
           table[block_idx]         = is_raw ? (raw_block_flag | bytes) : bytes;
-          sources.push_back(is_raw ? block.input_in(slots) : slots + block.window_offset);
-          targets.push_back(to_host ? compacted + (payload_bytes - window_begin)
-                                    : destination.data() + payload_bytes);
-          copy_bytes.push_back(bytes);
+          auto const i             = block_idx - window.first_item;
+          sources[i]               = is_raw ? block.input_in(slots) : slots + block.window_offset;
+          targets[i]               = to_host ? compacted + (payload_bytes - window_begin)
+                                             : destination.data() + payload_bytes;
+          copy_bytes[i]            = bytes;
           payload_bytes += bytes;
         }
-        auto const d_sources = cudf::detail::make_device_uvector_async(sources, stream, temp_mr);
-        auto const d_targets = cudf::detail::make_device_uvector_async(targets, stream, temp_mr);
-        auto const d_copy_bytes =
-          cudf::detail::make_device_uvector_async(copy_bytes, stream, temp_mr);
+        auto const d_sources = cudf::detail::make_device_uvector_async(
+          host_span<uint8_t const* const>{sources}.subspan(0, window_blocks), stream, temp_mr);
+        auto const d_targets = cudf::detail::make_device_uvector_async(
+          host_span<uint8_t* const>{targets}.subspan(0, window_blocks), stream, temp_mr);
+        auto const d_copy_bytes = cudf::detail::make_device_uvector_async(
+          host_span<std::size_t const>{copy_bytes}.subspan(0, window_blocks), stream, temp_mr);
         cudf::detail::batched_memcpy_async(
-          d_sources.begin(), d_targets.begin(), d_copy_bytes.begin(), d_sources.size(), stream, mr);
+          d_sources.begin(), d_targets.begin(), d_copy_bytes.begin(), window_blocks, stream, mr);
         if (to_host) {
           CUDF_CUDA_TRY(cudf::detail::memcpy_async(
             destination.data() + window_begin, compacted, payload_bytes - window_begin, stream));
@@ -4207,12 +4215,16 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
 
   // Descriptors for all codecs go up in one copy and their results come back in one copy.
   std::vector<std::size_t> task_offsets{0};
-  std::vector<device_span<uint8_t const>> inputs;
-  std::vector<device_span<uint8_t>> outputs;
   for (auto const& task : tasks) {
-    inputs.insert(inputs.end(), task.inputs.begin(), task.inputs.end());
-    outputs.insert(outputs.end(), task.outputs.begin(), task.outputs.end());
-    task_offsets.push_back(inputs.size());
+    task_offsets.push_back(task_offsets.back() + task.inputs.size());
+  }
+  auto inputs =
+    cudf::detail::make_pinned_vector_async<device_span<uint8_t const>>(task_offsets.back(), stream);
+  auto outputs =
+    cudf::detail::make_pinned_vector_async<device_span<uint8_t>>(task_offsets.back(), stream);
+  for (std::size_t i = 0; i < tasks.size(); ++i) {
+    std::ranges::copy(tasks[i].inputs, inputs.begin() + task_offsets[i]);
+    std::ranges::copy(tasks[i].outputs, outputs.begin() + task_offsets[i]);
   }
   auto const h_results = sync_on_throw(stream, [&] {
     loader.load(stream, mr);

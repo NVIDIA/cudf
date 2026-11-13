@@ -36,12 +36,14 @@ table_with_metadata read_csv(std::unique_ptr<cudf::io::datasource>&& source,
  * @param column_names Column names for the output CSV
  * @param options Settings for controlling behavior
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations
  */
 void write_csv(data_sink* sink,
                table_view const& table,
                host_span<std::string const> column_names,
                csv_writer_options const& options,
-               cuda::stream_ref stream);
+               cuda::stream_ref stream,
+               cudf::memory_resources mr);
 
 }  // namespace io::detail::csv
 }  // namespace cudf

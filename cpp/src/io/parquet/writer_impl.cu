@@ -25,6 +25,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/linked_column.hpp>
@@ -1131,10 +1132,10 @@ void init_row_group_fragments(cudf::detail::hostdevice_2dvector<PageFragment>& f
                               host_span<partition_info const> partitions,
                               device_span<int const> part_frag_offset,
                               uint32_t fragment_size,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
-  auto d_partitions = cudf::detail::make_device_buffer_async(
-    partitions, stream, cudf::get_current_device_resource_ref());
+  auto d_partitions = cudf::detail::make_device_buffer_async(partitions, stream, mr.as_temporary());
   InitRowGroupFragments(frag, col_desc, d_partitions, part_frag_offset, fragment_size, stream);
   frag.device_to_host(stream);
 }
@@ -1151,10 +1152,10 @@ void init_row_group_fragments(cudf::detail::hostdevice_2dvector<PageFragment>& f
  */
 void calculate_page_fragments(device_span<PageFragment> frag,
                               host_span<size_type const> frag_sizes,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
-  auto d_frag_sz = cudf::detail::make_device_buffer_async(
-    frag_sizes, stream, cudf::get_current_device_resource_ref());
+  auto d_frag_sz = cudf::detail::make_device_buffer_async(frag_sizes, stream, mr.as_temporary());
   CalculatePageFragments(frag, d_frag_sz, stream);
 }
 
@@ -1169,10 +1170,11 @@ void calculate_page_fragments(device_span<PageFragment> frag,
 void gather_fragment_statistics(device_span<statistics_chunk> frag_stats,
                                 device_span<PageFragment const> frags,
                                 bool int96_timestamps,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   cuda::device_buffer<statistics_group> frag_stats_group(
-    stream, cudf::get_current_device_resource_ref(), frag_stats.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), frag_stats.size(), cuda::no_init);
 
   InitFragmentStatistics(frag_stats_group, frags, stream);
   detail::calculate_group_statistics<detail::io_file_format::PARQUET>(
@@ -1188,7 +1190,8 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                      bool write_v2_headers,
                      bool write_page_stats,
                      compression_type compression,
-                     cuda::stream_ref stream)
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
   if (chunks.is_empty()) { return cudf::detail::hostdevice_vector<size_type>{}; }
 
@@ -1227,8 +1230,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
 
   // Now that we know the number of pages, allocate an array to hold per page size and get it
   // populated
-  cudf::detail::hostdevice_vector<size_type> page_sizes(
-    num_pages, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<size_type> page_sizes(num_pages, stream, mr.as_temporary());
   InitEncoderPages(chunks,
                    {},
                    page_sizes,
@@ -1252,8 +1254,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
   page_sizes.device_to_host(stream);
 
   // Get per-page max compressed size
-  cudf::detail::hostdevice_vector<size_type> comp_page_sizes(
-    num_pages, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<size_type> comp_page_sizes(num_pages, stream, mr.as_temporary());
   std::transform(
     page_sizes.begin(), page_sizes.end(), comp_page_sizes.begin(), [compression](auto page_size) {
       return max_compressed_size(compression, page_size);
@@ -1304,7 +1305,8 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
                          compression_type compression,
                          dictionary_policy dict_policy,
                          size_t max_dict_size,
-                         cuda::stream_ref stream)
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr)
 {
   // At this point, we know all chunks and their sizes. We want to allocate dictionaries for each
   // chunk that can have dictionary
@@ -1446,11 +1448,11 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
   for (auto& chunk : h_chunks) {
     if (not chunk.use_dictionary) { continue; }
 
-    size_t dict_data_size    = std::min(MAX_DICT_SIZE, chunk.dict_map_size);
-    auto& inserted_dict_data = dict_data.emplace_back(
-      stream, cudf::get_current_device_resource_ref(), dict_data_size, cuda::no_init);
-    auto& inserted_dict_index = dict_index.emplace_back(
-      stream, cudf::get_current_device_resource_ref(), chunk.num_values, cuda::no_init);
+    size_t dict_data_size = std::min(MAX_DICT_SIZE, chunk.dict_map_size);
+    auto& inserted_dict_data =
+      dict_data.emplace_back(stream, mr.get_temporary_mr(), dict_data_size, cuda::no_init);
+    auto& inserted_dict_index =
+      dict_index.emplace_back(stream, mr.get_temporary_mr(), chunk.num_values, cuda::no_init);
     chunk.dict_data  = inserted_dict_data.data();
     chunk.dict_index = inserted_dict_index.data();
   }
@@ -1494,10 +1496,11 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                         size_type max_page_size_rows,
                         bool write_v2_headers,
                         bool write_page_stats,
-                        cuda::stream_ref stream)
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr)
 {
   cuda::device_buffer<statistics_merge_group> page_stats_mrg(
-    stream, cudf::get_current_device_resource_ref(), num_stats_bfr, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_stats_bfr, cuda::no_init);
   kernel_error error_code(stream);
   chunks.host_to_device_async(stream);
   InitEncoderPages(chunks,
@@ -1564,7 +1567,8 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                   int32_t column_index_truncate_length,
                   bool write_v2_headers,
                   bool page_level_compression,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   auto const num_pages = pages.size();
   auto pages_stats     = (page_stats != nullptr)
@@ -1574,19 +1578,18 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
   uint32_t max_comp_pages = (compression != compression_type::NONE) ? num_pages : 0;
 
   cuda::device_buffer<device_span<uint8_t const>> comp_in(
-    stream, cudf::get_current_device_resource_ref(), max_comp_pages, cuda::no_init);
+    stream, mr.get_temporary_mr(), max_comp_pages, cuda::no_init);
   cuda::device_buffer<device_span<uint8_t>> comp_out(
-    stream, cudf::get_current_device_resource_ref(), max_comp_pages, cuda::no_init);
+    stream, mr.get_temporary_mr(), max_comp_pages, cuda::no_init);
   cuda::device_buffer<codec_exec_result> comp_res(
-    stream, cudf::get_current_device_resource_ref(), max_comp_pages, cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    stream, mr.get_temporary_mr(), max_comp_pages, cuda::no_init);
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                comp_res.begin(),
                comp_res.end(),
                codec_exec_result{0, codec_status::FAILURE});
 
-  EncodePages(pages, write_v2_headers, comp_in, comp_out, comp_res, stream);
-  compress(
-    compression, comp_in, comp_out, comp_res, stream, cudf::get_current_device_resource_ref());
+  EncodePages(pages, write_v2_headers, comp_in, comp_out, comp_res, stream, mr);
+  compress(compression, comp_in, comp_out, comp_res, stream, mr.as_temporary());
 
   // TBD: Not clear if the official spec actually allows dynamically turning off compression at the
   // chunk-level
@@ -1607,7 +1610,7 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
   chunks.device_to_host_async(stream);
 
   if (comp_stats.has_value()) {
-    comp_stats.value() += collect_compression_statistics(comp_in, comp_res, stream);
+    comp_stats.value() += collect_compression_statistics(comp_in, comp_res, stream, mr);
   }
   stream.sync();
 }
@@ -1758,7 +1761,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   // Initialize column description
   cudf::detail::hostdevice_vector<parquet_column_device_view> col_desc(
-    parquet_columns.size(), stream, cudf::get_current_device_resource_ref());
+    parquet_columns.size(), stream, mr.as_temporary());
   std::transform(
     parquet_columns.begin(), parquet_columns.end(), col_desc.host_ptr(), [&](auto const& pcol) {
       return pcol.get_device_view(stream);
@@ -1824,8 +1827,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   // Create table_device_view so that corresponding column_device_view data
   // can be written into col_desc members
   auto parent_column_table_device_view = table_device_view::create(single_streams_table, stream);
-  auto leaf_column_views               = cuda::device_buffer<column_device_view>(
-    stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
+  auto leaf_column_views =
+    cuda::device_buffer<column_device_view>(stream, mr.get_temporary_mr(), 0, cuda::no_init);
   auto d_col_desc =
     device_span<parquet_column_device_view const>(col_desc.device_ptr(), col_desc.size());
 
@@ -1837,8 +1840,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   auto part_frag_offset =
     cudf::detail::make_empty_pinned_vector<int>(partitions.size() + 1, stream);
-  auto row_group_fragments = cudf::detail::hostdevice_2dvector<PageFragment>(
-    0, 0, stream, cudf::get_current_device_resource_ref());
+  auto row_group_fragments =
+    cudf::detail::hostdevice_2dvector<PageFragment>(0, 0, stream, mr.as_temporary());
 
   // A fragment always ends up in a single page, so shrink the fragment row span and re-measure
   // until every fragment fits within the maximum page size.
@@ -1862,23 +1865,24 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
     if (num_fragments == 0) { break; }
 
-    auto d_part_frag_offset = cudf::detail::make_device_buffer_async(
-      part_frag_offset, stream, cudf::get_current_device_resource_ref());
+    auto d_part_frag_offset =
+      cudf::detail::make_device_buffer_async(part_frag_offset, stream, mr.as_temporary());
 
     row_group_fragments = cudf::detail::hostdevice_2dvector<PageFragment>(
-      num_columns, num_fragments, stream, cudf::get_current_device_resource_ref());
+      num_columns, num_fragments, stream, mr.as_temporary());
 
     // Move column info to device
     col_desc.host_to_device_async(stream);
     leaf_column_views = create_leaf_column_device_views<parquet_column_device_view>(
-      col_desc, *parent_column_table_device_view, stream);
+      col_desc, *parent_column_table_device_view, stream, mr.as_temporary());
 
     init_row_group_fragments(row_group_fragments,
                              d_col_desc,
                              partitions,
                              d_part_frag_offset,
                              max_page_fragment_size,
-                             stream);
+                             stream,
+                             mr);
 
     // Compute a smaller fragment size if any fragment is too large
     auto const smaller_fragment_size =
@@ -2003,8 +2007,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   // Initialize row groups and column chunks
   auto const num_chunks = num_rowgroups * num_columns;
-  hostdevice_2dvector<EncColumnChunk> chunks(
-    num_rowgroups, num_columns, stream, cudf::get_current_device_resource_ref());
+  hostdevice_2dvector<EncColumnChunk> chunks(num_rowgroups, num_columns, stream, mr.as_temporary());
 
   // total fragments per column (in case they are non-uniform)
   std::vector<size_type> frags_per_column(num_columns, 0);
@@ -2067,8 +2070,14 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   }
 
   row_group_fragments.host_to_device_async(stream);
-  [[maybe_unused]] auto dict_info_owner = build_chunk_dictionaries(
-    chunks, col_desc, row_group_fragments, compression, dict_policy, max_dictionary_size, stream);
+  [[maybe_unused]] auto dict_info_owner = build_chunk_dictionaries(chunks,
+                                                                   col_desc,
+                                                                   row_group_fragments,
+                                                                   compression,
+                                                                   dict_policy,
+                                                                   max_dictionary_size,
+                                                                   stream,
+                                                                   mr);
 
   // The code preceding this used a uniform fragment size for all columns. Now recompute
   // fragments with a (potentially) varying number of fragments per column.
@@ -2079,10 +2088,9 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   size_type const total_frags =
     frags_per_column.empty() ? 0 : frag_offsets.back() + frags_per_column.back();
 
-  cuda::device_buffer<statistics_chunk> frag_stats(
-    stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init);
+  cuda::device_buffer<statistics_chunk> frag_stats(stream, mr.get_temporary_mr(), 0, cuda::no_init);
   cudf::detail::hostdevice_vector<PageFragment> page_fragments(
-    total_frags, stream, cudf::get_current_device_resource_ref());
+    total_frags, stream, mr.as_temporary());
 
   // update fragments and/or prepare for fragment statistics calculation if necessary
   if (total_frags != 0) {
@@ -2122,14 +2130,15 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
     // re-initialize page fragments
     page_fragments.host_to_device_async(stream);
-    calculate_page_fragments(page_fragments, column_frag_size, stream);
+    calculate_page_fragments(page_fragments, column_frag_size, stream, mr);
 
     // and gather fragment statistics
     if (not frag_stats.empty()) {
       gather_fragment_statistics(frag_stats,
                                  {page_fragments.device_ptr(), static_cast<size_t>(total_frags)},
                                  int96_timestamps,
-                                 stream);
+                                 stream,
+                                 mr);
     }
   }
 
@@ -2142,7 +2151,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                                          write_v2_headers,
                                          stats_granularity == statistics_freq::STATISTICS_PAGE,
                                          compression,
-                                         stream);
+                                         stream,
+                                         mr);
 
   // Find which partition a rg belongs to
   std::vector<int> rg_to_part;
@@ -2193,38 +2203,35 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
   // Required by `gpuGatherPages`.
   cuda::device_buffer<std::uint8_t> uncomp_bfr(
     stream,
-    cudf::get_current_device_resource_ref(),
+    mr.get_temporary_mr(),
     cudf::detail::round_up_safe(max_uncomp_bfr_size, BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
   cuda::device_buffer<std::uint8_t> comp_bfr(
     stream,
-    cudf::get_current_device_resource_ref(),
+    mr.get_temporary_mr(),
     cudf::detail::round_up_safe(max_comp_bfr_size, BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
 
   cuda::device_buffer<std::uint8_t> col_idx_bfr(
-    stream, cudf::get_current_device_resource_ref(), column_index_bfr_size, cuda::no_init);
-  cuda::device_buffer<EncPage> pages(
-    stream, cudf::get_current_device_resource_ref(), num_pages, cuda::no_init);
+    stream, mr.get_temporary_mr(), column_index_bfr_size, cuda::no_init);
+  cuda::device_buffer<EncPage> pages(stream, mr.get_temporary_mr(), num_pages, cuda::no_init);
   cuda::device_buffer<uint32_t> def_level_histogram(
-    stream, cudf::get_current_device_resource_ref(), def_histogram_bfr_size, cuda::no_init);
+    stream, mr.get_temporary_mr(), def_histogram_bfr_size, cuda::no_init);
   cuda::device_buffer<uint32_t> rep_level_histogram(
-    stream, cudf::get_current_device_resource_ref(), rep_histogram_bfr_size, cuda::no_init);
+    stream, mr.get_temporary_mr(), rep_histogram_bfr_size, cuda::no_init);
 
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    def_level_histogram.begin(),
-    def_level_histogram.end(),
-    0);
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    rep_level_histogram.begin(),
-    rep_level_histogram.end(),
-    0);
+  thrust::uninitialized_fill(cudf::detail::exec_policy_nosync(stream, mr),
+                             def_level_histogram.begin(),
+                             def_level_histogram.end(),
+                             0);
+  thrust::uninitialized_fill(cudf::detail::exec_policy_nosync(stream, mr),
+                             rep_level_histogram.begin(),
+                             rep_level_histogram.end(),
+                             0);
 
   // This contains stats for both the pages and the rowgroups. TODO: make them separate.
   cuda::device_buffer<statistics_chunk> page_stats(
-    stream, cudf::get_current_device_resource_ref(), num_stats_bfr, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_stats_bfr, cuda::no_init);
   auto bfr_i = col_idx_bfr.data();
   auto bfr_r = rep_level_histogram.data();
   auto bfr_d = def_level_histogram.data();
@@ -2273,7 +2280,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                        max_page_size_rows,
                        write_v2_headers,
                        stats_granularity == statistics_freq::STATISTICS_PAGE,
-                       stream);
+                       stream,
+                       mr);
 
     // Now that page boundaries are finalized and dictionary indices have been materialized, compute
     // minimum required RLE bit width for each data page
@@ -2301,7 +2309,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
       column_index_truncate_length,
       write_v2_headers,
       page_level_compression,
-      stream);
+      stream,
+      mr);
 
     bool need_sync{false};
 
@@ -2448,8 +2457,10 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
                    parquet_writer_options const& options,
                    single_write_mode mode,
-                   cuda::stream_ref stream)
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr)
   : _stream(stream),
+    _mr(std::move(mr)),
     _compression(options.get_compression()),
     _max_row_group_size{options.get_row_group_size_bytes()},
     _max_row_group_rows{options.get_row_group_size_rows()},
@@ -2489,8 +2500,10 @@ writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
 writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
                    chunked_parquet_writer_options const& options,
                    single_write_mode mode,
-                   cuda::stream_ref stream)
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr)
   : _stream(stream),
+    _mr(std::move(mr)),
     _compression(options.get_compression()),
     _max_row_group_size{options.get_row_group_size_bytes()},
     _max_row_group_rows{options.get_row_group_size_rows()},
@@ -2557,9 +2570,6 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
   if (not _table_meta) { _table_meta = std::make_unique<table_input_metadata>(input); }
   fill_table_meta(*_table_meta);
 
-  // The writer has no caller-provided resource; everything it allocates is temporary.
-  cudf::memory_resources const mrs{cudf::get_current_device_resource_ref()};
-
   // All kinds of memory allocation and data compressions/encoding are performed here.
   // If any error occurs, such as out-of-memory exception, the internal state of the current
   // writer is still intact.
@@ -2598,7 +2608,7 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
                                   _write_arrow_schema,
                                   _out_sink,
                                   _stream,
-                                  mrs.as_temporary());
+                                  _mr.as_temporary());
 
   // Compression/encoding were all successful. Now write the intermediate results.
   write_parquet_data_to_sink(updated_agg_meta,
@@ -2832,16 +2842,18 @@ std::unique_ptr<std::vector<uint8_t>> writer::impl::close(
 writer::writer(std::vector<std::unique_ptr<data_sink>> sinks,
                parquet_writer_options const& options,
                single_write_mode mode,
-               cuda::stream_ref stream)
-  : _impl(std::make_unique<impl>(std::move(sinks), options, mode, stream))
+               cuda::stream_ref stream,
+               cudf::memory_resources mr)
+  : _impl(std::make_unique<impl>(std::move(sinks), options, mode, stream, std::move(mr)))
 {
 }
 
 writer::writer(std::vector<std::unique_ptr<data_sink>> sinks,
                chunked_parquet_writer_options const& options,
                single_write_mode mode,
-               cuda::stream_ref stream)
-  : _impl(std::make_unique<impl>(std::move(sinks), options, mode, stream))
+               cuda::stream_ref stream,
+               cudf::memory_resources mr)
+  : _impl(std::make_unique<impl>(std::move(sinks), options, mode, stream, std::move(mr)))
 {
 }
 

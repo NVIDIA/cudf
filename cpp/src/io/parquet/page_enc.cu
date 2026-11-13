@@ -3477,11 +3477,11 @@ void EncodePages(device_span<EncPage> pages,
                  device_span<device_span<uint8_t const>> comp_in,
                  device_span<device_span<uint8_t>> comp_out,
                  device_span<codec_exec_result> comp_results,
-                 cuda::stream_ref stream)
+                 cuda::stream_ref stream,
+                 cudf::memory_resources mr)
 {
   auto num_pages = pages.size();
 
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // determine which kernels to invoke
   auto kernel_mask = cudf::detail::transform_reduce(pages.begin(),
                                                     pages.end(),

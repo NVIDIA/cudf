@@ -1342,18 +1342,19 @@ void encode_stripe_dictionaries(stripe_dictionary const* stripes,
 
 void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
                               device_2dspan<encoder_chunk_streams> enc_streams,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   auto const num_rowgroups = enc_streams.size().second;
   auto const num_streams   = strm_desc.size().second;
   auto const num_stripes   = strm_desc.size().first;
   auto const num_chunks    = num_rowgroups * num_streams;
-  auto srcs                = cudf::detail::make_zeroed_device_buffer_async<uint8_t*>(
-    num_chunks, stream, cudf::get_current_device_resource_ref());
-  auto dsts = cudf::detail::make_zeroed_device_buffer_async<uint8_t*>(
-    num_chunks, stream, cudf::get_current_device_resource_ref());
-  auto lengths = cudf::detail::make_zeroed_device_buffer_async<size_t>(
-    num_chunks, stream, cudf::get_current_device_resource_ref());
+  auto srcs =
+    cudf::detail::make_zeroed_device_buffer_async<uint8_t*>(num_chunks, stream, mr.as_temporary());
+  auto dsts =
+    cudf::detail::make_zeroed_device_buffer_async<uint8_t*>(num_chunks, stream, mr.as_temporary());
+  auto lengths =
+    cudf::detail::make_zeroed_device_buffer_async<size_t>(num_chunks, stream, mr.as_temporary());
 
   auto const num_blocks =
     cuda::ceil_div(num_stripes, compact_streams_block_size) * strm_desc.size().second;
@@ -1362,12 +1363,8 @@ void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // Copy streams in a batched manner.
-  cudf::detail::batched_memcpy_async(srcs.begin(),
-                                     dsts.begin(),
-                                     lengths.begin(),
-                                     lengths.size(),
-                                     stream,
-                                     cudf::get_current_device_resource_ref());
+  cudf::detail::batched_memcpy_async(
+    srcs.begin(), dsts.begin(), lengths.begin(), lengths.size(), stream, mr.as_temporary());
 }
 
 std::optional<writer_compression_statistics> compress_orc_data_streams(
@@ -1381,12 +1378,13 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
   device_2dspan<stripe_stream> strm_desc,
   device_2dspan<encoder_chunk_streams> enc_streams,
   device_span<codec_exec_result> comp_res,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   cuda::device_buffer<device_span<uint8_t const>> comp_in(
-    stream, cudf::get_current_device_resource_ref(), num_compressed_blocks, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_compressed_blocks, cuda::no_init);
   cuda::device_buffer<device_span<uint8_t>> comp_out(
-    stream, cudf::get_current_device_resource_ref(), num_compressed_blocks, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_compressed_blocks, cuda::no_init);
 
   size_t const num_blocks = strm_desc.size().first * strm_desc.size().second;
   init_compression_blocks_kernel<<<num_blocks, 256, 0, stream.get()>>>(strm_desc,
@@ -1400,15 +1398,14 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
                                                                        comp_block_align);
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  cudf::io::detail::compress(
-    compression, comp_in, comp_out, comp_res, stream, cudf::get_current_device_resource_ref());
+  cudf::io::detail::compress(compression, comp_in, comp_out, comp_res, stream, mr.as_temporary());
 
   compact_compressed_blocks_kernel<<<num_blocks, 1024, 0, stream.get()>>>(
     strm_desc, comp_in, comp_out, comp_res, compressed_data, comp_blk_size, max_comp_blk_size);
   CUDF_CUDA_TRY(cudaGetLastError());
 
   if (collect_statistics) {
-    return cudf::io::detail::collect_compression_statistics(comp_in, comp_res, stream);
+    return cudf::io::detail::collect_compression_statistics(comp_in, comp_res, stream, mr);
   } else {
     return std::nullopt;
   }
@@ -1416,7 +1413,8 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
 
 void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
                               std::map<uint32_t, cuda::device_buffer<uint32_t>>& elem_sizes,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   if (rg_bounds.count() == 0) return;
 
@@ -1429,7 +1427,7 @@ void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
 
   // Copy the vector of views to the device so that we can pass it to the kernel
   auto d_sizes = cudf::detail::make_device_buffer_async<decimal_column_element_sizes>(
-    h_sizes, stream, cudf::get_current_device_resource_ref());
+    h_sizes, stream, mr.as_temporary());
 
   constexpr int block_size = 256;
   // number of rowgroups * number of decimal columns

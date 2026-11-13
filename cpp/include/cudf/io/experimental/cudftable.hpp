@@ -198,9 +198,11 @@ class cudftable_reader_options_builder {
  *
  * @param options Options specifying the sink and table to write
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
 void write_cudftable(cudftable_writer_options const& options,
-                     cuda::stream_ref stream = cudf::get_default_stream());
+                     cuda::stream_ref stream   = cudf::get_default_stream(),
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 /**

@@ -136,11 +136,13 @@ class writer {
    * @param options Settings for controlling writing behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
   explicit writer(std::unique_ptr<cudf::io::data_sink> sink,
                   orc_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  cuda::stream_ref stream);
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr);
 
   /**
    * @brief Constructor with chunked writer options.
@@ -149,11 +151,13 @@ class writer {
    * @param options Settings for controlling writing behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
   explicit writer(std::unique_ptr<cudf::io::data_sink> sink,
                   chunked_orc_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  cuda::stream_ref stream);
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr);
 
   /**
    * @brief Destructor explicitly declared to avoid inlining in header

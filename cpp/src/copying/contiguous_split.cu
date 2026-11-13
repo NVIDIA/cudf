@@ -31,6 +31,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -2204,12 +2205,12 @@ struct contiguous_split_state {
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            std::span<size_type const> splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
-  // `temp_mr` is the same as `mr` for contiguous_split as it allocates all
-  // of its memory from the default memory resource in cuDF
-  auto temp_mr = mr;
-  auto state   = contiguous_split_state(input, splits, stream, mr, temp_mr);
+  // contiguous_split allocates its temporaries from the output resource, as it did before
+  // `cudf::memory_resources`; using `mr.get_temporary_mr()` is left to a follow-up.
+  auto temp_mr = mr.get_output_mr();
+  auto state   = contiguous_split_state(input, splits, stream, mr.get_output_mr(), temp_mr);
   return state.contiguous_split();
 }
 
@@ -2218,7 +2219,7 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            std::span<size_type const> splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contiguous_split(input, splits, stream, mr);
@@ -2227,14 +2228,14 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            std::vector<size_type> const& splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   return cudf::contiguous_split(input, std::span<size_type const>{splits}, stream, mr);
 }
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
                                            std::initializer_list<size_type> splits,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   return cudf::contiguous_split(
     input, std::span<size_type const>{splits.begin(), splits.size()}, stream, mr);

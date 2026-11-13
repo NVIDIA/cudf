@@ -475,7 +475,7 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
                      host_span<PageInfo> subpass_pages,
                      host_span<bool const> subpass_page_mask,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr)
+                     cudf::memory_resources mr)
 {
   cudf::memory_resources mrs{mr};
   CUDF_FUNC_RANGE();
@@ -527,13 +527,13 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
   // Buffer needs to be padded, required by `gpuDecodePageData`.
   cuda::device_buffer<std::uint8_t> pass_decomp_pages(
     stream,
-    mr,
+    mr.get_output_mr(),
     cudf::detail::round_up_safe(total_pass_output_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
   auto const total_subpass_output_size = total_output_size - total_pass_output_size;
   cuda::device_buffer<std::uint8_t> subpass_decomp_pages(
     stream,
-    mr,
+    mr.get_output_mr(),
     cudf::detail::round_up_safe(total_subpass_output_size,
                                 cudf::io::detail::BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
@@ -960,9 +960,10 @@ cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
                                                         size_t skip_rows,
                                                         size_t num_rows,
                                                         cuda::stream_ref stream,
-                                                        rmm::device_async_resource_ref mr)
+                                                        cudf::memory_resources mr)
 {
-  cuda::device_buffer<size_t> string_offset_sizes(stream, mr, pages.size(), cuda::no_init);
+  cuda::device_buffer<size_t> string_offset_sizes(
+    stream, mr.get_output_mr(), pages.size(), cuda::no_init);
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     pages.begin(),
@@ -979,9 +980,10 @@ cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
                                                        size_t skip_rows,
                                                        size_t num_rows,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cudf::memory_resources mr)
 {
-  cuda::device_buffer<size_t> level_decode_sizes(stream, mr, pages.size(), cuda::no_init);
+  cuda::device_buffer<size_t> level_decode_sizes(
+    stream, mr.get_output_mr(), pages.size(), cuda::no_init);
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     pages.begin(),

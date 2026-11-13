@@ -5,6 +5,8 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/structs/structs_column_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -76,7 +78,7 @@ std::unique_ptr<column> merge_m2(column_view const& values,
                                  device_span<size_type const> group_offsets,
                                  size_type num_groups,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   auto result_counts = make_numeric_column(
     data_type(type_to_id<count_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
@@ -90,9 +92,10 @@ std::unique_ptr<column> merge_m2(column_view const& values,
                             result_means->mutable_view().template data<result_type>(),
                             result_M2s->mutable_view().template data<result_type>());
 
-  auto const count_valid = values.child(0);
-  auto const mean_values = values.child(1);
-  auto const M2_values   = values.child(2);
+  auto const partials    = structs_column_view{values};
+  auto const count_valid = partials.get_sliced_child(0, stream);
+  auto const mean_values = partials.get_sliced_child(1, stream);
+  auto const M2_values   = partials.get_sliced_child(2, stream);
   auto const iter        = cuda::counting_iterator<size_type>{0};
 
   auto const fn = merge_fn<count_type>{group_offsets.data(),
@@ -124,7 +127,7 @@ std::unique_ptr<column> group_merge_m2(column_view const& values,
                                        device_span<size_type const> group_offsets,
                                        size_type num_groups,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_EXPECTS(values.type().id() == type_id::STRUCT,
                "Input to `group_merge_m2` must be a structs column.");

@@ -15,14 +15,6 @@ mkdir -p "${RAPIDS_TESTS_DIR}" "${RAPIDS_COVERAGE_DIR}"
 export JUPYTER_PLATFORM_DIRS=1
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
-CUDA_CORE_UV_ARGS=()
-if [[ "${RAPIDS_CUDA_VERSION%%.*}" == "12" ]]; then
-    # cuda-core is not a cuDF dependency, but it's currently required to
-    # in the install command to ensure we get a compatible version of
-    # cuda-bindings and cuda-core via numba-cuda-mlir.
-    # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
-    CUDA_CORE_UV_ARGS=("cuda-core[cu12]")
-fi
 
 # Download the cudf, libcudf, and pylibcudf built in the previous step
 source rapids-prompt-local-repo-config
@@ -42,7 +34,6 @@ rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt
 rapids-uv-pip install \
     --constraint ./constraints.txt \
     --constraint "${PIP_CONSTRAINT}" \
-    "${CUDA_CORE_UV_ARGS[@]}" \
     "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \
     "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
     "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
@@ -119,7 +110,6 @@ for version in "${versions[@]}"; do
     rapids-uv-pip install \
         --constraint ./constraints.txt \
         --constraint "${PIP_CONSTRAINT}" \
-        "${CUDA_CORE_UV_ARGS[@]}" \
         "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \
         "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
         "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \

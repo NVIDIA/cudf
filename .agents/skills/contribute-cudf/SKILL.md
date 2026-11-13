@@ -79,7 +79,7 @@ git grep -n '<function under test>' upstream/main -- cpp/tests python
 - For each branch or result the diff adds or changes (not code it only moves), name the test that would fail if it were wrong. If an existing test already does, add nothing.
 - Otherwise add a row, type, or parameter to an existing `TYPED_TEST_SUITE`, `INSTANTIATE_TEST_SUITE_P`, or `@pytest.mark.parametrize` list before writing a new test function. `cpp/doxygen/developer_guide/TESTING.md` lists the edge cases and the stream test new code must have; those are not repeats.
 - Keep one test per branch and kind of input. Drop a new test or row that repeats an existing test, another new one, or a lower layer's test (gtest, pylibcudf, cudf, cudf.pandas) while checking nothing of its own layer.
-- A bug fix or behavior change needs a test that fails without it. Commit, restore the changed source files to the base (`git restore -s $BASE -- <source files>`), rebuild, run the test, then restore them (`git restore -s HEAD -- <source files>`). A test that passes both ways gets inputs that tell the two apart, or is deleted.
+- A bug fix or behavior change needs at least one test that fails without it. Check by committing, restoring the changed source files to the base (`git restore -s $BASE -- <source files>`), rebuilding, and running the test, then restore them (`git restore -s HEAD -- <source files>`). Other new tests need their own reason: a control case or a missing edge case.
 
 ## 4. Cut the diff down
 

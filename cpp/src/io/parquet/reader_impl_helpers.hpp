@@ -462,20 +462,19 @@ class aggregate_reader_metadata {
 
  protected:
   /**
-   * @brief Computes a boolean mask indicating if an output column is a timestamp whose precision in
-   * any source differs from the output precision
+   * @brief Computes a boolean mask indicating if an output column's bloom filters cannot be queried
+   * with a literal of its output type
    *
-   * A column is flagged if its Parquet timestamp logical type requires rescaling to the output
-   * clock rate in any source, as sources are not required to store a column with the same
-   * precision.
+   * A column is flagged if, in any source, it is a timestamp whose Parquet logical type requires
+   * rescaling to the output clock rate, or a FIXED_LEN_BYTE_ARRAY decimal narrowed to a storage type
+   * shorter than its byte length.
    *
    * @param output_dtypes Output column data types
    * @param output_column_schemas Output column schema indices
    *
-   * @return Boolean vector indicating if the output column is a timestamp with mismatched precision
-   * in any source
+   * @return Boolean vector indicating if the output column cannot use bloom filters
    */
-  [[nodiscard]] thrust::host_vector<bool> calc_mismatched_timestamp_mask(
+  [[nodiscard]] thrust::host_vector<bool> calc_bloom_mismatch_mask(
     std::span<data_type const> output_dtypes, std::span<int const> output_column_schemas) const;
 
   /**

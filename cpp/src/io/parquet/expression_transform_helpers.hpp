@@ -418,12 +418,12 @@ class equality_literals_collector : public parquet_expression_simplifier {
    *
    * @param expr Filter expression to collect from
    * @param output_dtypes Output data types of the table columns
-   * @param mismatched_timestamp_mask Boolean span indicating if output columns are timestamps
-   * with mismatched precision in any source, or empty to skip the check
+   * @param bloom_mismatch_mask Boolean span indicating if output columns cannot use bloom filters,
+   * or empty to skip the check
    */
   equality_literals_collector(ast::expression const& expr,
                               std::span<cudf::data_type const> output_dtypes,
-                              std::span<bool const> mismatched_timestamp_mask = {});
+                              std::span<bool const> bloom_mismatch_mask = {});
 
   /**
    * @brief Returns vectors of collected literals and their comparison operators in the AST
@@ -448,7 +448,7 @@ class equality_literals_collector : public parquet_expression_simplifier {
    * @brief Constructs a collector without walking for derived classes
    */
   equality_literals_collector(std::span<cudf::data_type const> output_dtypes,
-                              std::span<bool const> mismatched_timestamp_mask);
+                              std::span<bool const> bloom_mismatch_mask);
 
   /**
    * @brief Simplifies `expr` and collects literals and operators from it
@@ -478,7 +478,7 @@ class equality_literals_collector : public parquet_expression_simplifier {
    */
   void collect_surviving_predicates(ast::expression const& simplified_expr);
 
-  std::span<bool const> _mismatched_timestamp_mask;
+  std::span<bool const> _bloom_mismatch_mask;
   bool _can_filter{false};
 };
 

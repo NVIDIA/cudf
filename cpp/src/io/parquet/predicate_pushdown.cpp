@@ -173,15 +173,15 @@ aggregate_reader_metadata::filter_row_groups(
                                                ? stats_filtered_row_groups.value()
                                                : input_row_group_indices;
 
-  // Timestamp columns stored with another precision in any source cannot use bloom filters
-  auto const mismatched_timestamp_mask =
-    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
+  // Mismatched timestamp and narrowed decimal columns cannot use bloom filters
+  auto const bloom_mismatch_mask =
+    calc_bloom_mismatch_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column for bloom filtering
   auto literals_collector = equality_literals_collector{
     filter.get(),
     output_dtypes,
-    std::span{mismatched_timestamp_mask.data(), mismatched_timestamp_mask.size()}};
+    std::span{bloom_mismatch_mask.data(), bloom_mismatch_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter.
   if (not literals_collector.can_filter()) {

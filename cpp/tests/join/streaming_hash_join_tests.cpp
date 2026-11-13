@@ -13,9 +13,11 @@
 // across partitions, and constructor argument validation.
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/byte_literals.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/large_memory.hpp>
 
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
@@ -35,7 +37,6 @@
 #include <algorithm>
 #include <atomic>
 #include <exception>
-#include <limits>
 #include <memory>
 #include <numeric>
 #include <stdexcept>
@@ -50,6 +51,10 @@ template <typename T>
 using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
 using join_match = std::tuple<size_type, size_type, size_type>;
+
+// The slot table holds at most 2^32 slots in a prime number of 8-slot buckets, and 2^29 - 3 is the
+// largest prime below 2^29, so this is the most rows it accepts at the default load factor of 0.5.
+constexpr size_type max_rows_at_default_load_factor = 2'147'483'636;
 
 std::vector<join_match> to_sorted_host_matches(cudf::device_span<size_type const> left_indices,
                                                cudf::device_span<size_type const> batch_indices,
@@ -655,10 +660,38 @@ TEST_F(StreamingHashJoinTest, ConstructorValidatesArguments)
 
   EXPECT_THROW(cudf::streaming_hash_join(single_schema,
                                          single_key,
-                                         std::numeric_limits<size_type>::max(),
+                                         max_rows_at_default_load_factor + 1,
                                          /*max_num_batches=*/1,
                                          cudf::nullable_join::NO,
-                                         cudf::null_equality::EQUAL,
-                                         /*load_factor=*/0.25),
+                                         cudf::null_equality::EQUAL),
                std::overflow_error);
+}
+
+TEST_F(StreamingHashJoinTest, LargestSlotTable)
+{
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(20_GiB);
+
+  auto const stream = cudf::test::get_default_stream();
+  std::vector<int32_t> keys(1000);
+  std::iota(keys.begin(), keys.end(), 0);
+  column_wrapper<int32_t> right(keys.begin(), keys.end());
+  cudf::table_view const right_view{{right}};
+
+  cudf::streaming_hash_join joiner{right_view,
+                                   std::vector<size_type>{0},
+                                   max_rows_at_default_load_factor,
+                                   /*max_num_batches=*/1,
+                                   cudf::nullable_join::NO,
+                                   cudf::null_equality::EQUAL};
+  joiner.insert(right_view, stream);
+
+  auto [left_indices, right_indices] = joiner.inner_join(right_view, {}, stream);
+  auto& [batch_indices, row_indices] = right_indices;
+  auto const actual = to_sorted_host_matches(*left_indices, *batch_indices, *row_indices, stream);
+  std::vector<join_match> expected;
+  for (size_type row = 0; row < right_view.num_rows(); ++row) {
+    expected.emplace_back(row, 0, row);
+  }
+  EXPECT_EQ(actual, expected);
 }

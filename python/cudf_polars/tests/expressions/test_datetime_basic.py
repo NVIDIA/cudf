@@ -1319,7 +1319,7 @@ _OFFSET_BY_NAIVE_ONLY = ["1d", "-1d1h", "1w", "2w3d"]
     [
         *(
             (pl.Datetime(time_unit, time_zone="America/New_York"), by)
-            for time_unit in ["ms", "ns"]
+            for time_unit in cast("list[Literal['ms', 'ns']]", ["ms", "ns"])
             for by in _OFFSET_BY_FIXED
         ),
         *((pl.Datetime("us"), by) for by in _OFFSET_BY_NAIVE_ONLY),

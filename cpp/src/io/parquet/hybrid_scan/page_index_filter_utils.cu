@@ -36,7 +36,8 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>

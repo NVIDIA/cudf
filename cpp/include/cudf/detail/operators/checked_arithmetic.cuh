@@ -11,6 +11,7 @@
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/numeric>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/concepts>
 #include <cuda/std/expected>
 #include <cuda/std/limits>

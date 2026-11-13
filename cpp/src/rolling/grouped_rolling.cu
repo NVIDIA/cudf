@@ -20,6 +20,7 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/std/functional>
 #include <cuda/stream>
@@ -345,7 +346,7 @@ std::unique_ptr<table> grouped_range_rolling_window(table_view const& group_keys
   column_view const& orderby,
   order order,
   device_span<size_type const> offsets,
-  rmm::device_uvector<size_type> const& per_group_nulls,
+  cuda::device_buffer<size_type> const& per_group_nulls,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
@@ -454,7 +455,8 @@ std::unique_ptr<column> grouped_range_rolling_window(table_view const& group_key
         order_by_column.has_nulls()
           ? detail::nulls_per_group(
               order_by_column, offsets, stream, cudf::get_current_device_resource_ref())
-          : rmm::device_uvector<size_type>{0, stream};
+          : cuda::device_buffer<size_type>{
+              stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
       detail::rolling::preprocessed_group_info grouping{labels, offsets, per_group_nulls};
       auto null_order = deduce_null_order(order_by_column,
                                           order,

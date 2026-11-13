@@ -36,7 +36,8 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -740,6 +741,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   //   min(col[i])     = segment_views[i * stats_cols_per_column + 0]
   //   max(col[i])     = segment_views[i * stats_cols_per_column + 1]
   //   is_null(col[i]) = segment_views[i * stats_cols_per_column + 2]
+  //   has_nan(col[i]) = segment_views[i * stats_cols_per_column + 3]
   std::vector<std::unique_ptr<column>> segment_columns;
   segment_columns.reserve(stats_cols_per_column * inputs.size());
   std::vector<column_view> segment_views(stats_cols_per_column * num_columns,

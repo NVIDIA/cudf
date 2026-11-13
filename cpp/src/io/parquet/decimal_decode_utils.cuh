@@ -8,7 +8,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
 #include <cuda/std/cstring>

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Benchmarks of DataFrame methods."""
@@ -250,6 +250,28 @@ def bench_iloc_getitem_mask(benchmark, dataframe, frac):
     mask = numpy.zeros(len(dataframe), dtype=bool)
     mask[values] = True
     benchmark(dataframe.iloc.__getitem__, mask)
+
+
+@pytest.mark.parametrize("num_cols", NUM_COLS)
+@pytest.mark.parametrize(
+    "num_rows, mask_kind",
+    [(0, "empty")]
+    + [
+        (num_rows, mask_kind)
+        for num_rows in NUM_ROWS
+        for mask_kind in ["all-false", "sparse", "dense"]
+    ],
+)
+def bench_loc_setitem_scalar_mask(benchmark, num_rows, num_cols, mask_kind):
+    dataframe = cudf.DataFrame(
+        {i: cupy.zeros(num_rows, dtype="int64") for i in range(num_cols)}
+    )
+    mask = cupy.zeros(num_rows, dtype=bool)
+    if mask_kind == "sparse":
+        mask[::100] = True
+    elif mask_kind == "dense":
+        mask[:] = True
+    benchmark(dataframe.loc.__setitem__, mask, 1)
 
 
 @benchmark_with_object(cls="dataframe", dtype="int")

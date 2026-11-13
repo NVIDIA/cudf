@@ -120,6 +120,22 @@ def test_no_fallback_in_get_shape(dataframe):
     df.shape
 
 
+@pytest.mark.parametrize("mixed_dtypes", [False, True])
+@pytest.mark.parametrize(
+    "key", [[], [False, False], slice(0, -1), np.array([])]
+)
+def test_loc_setitem_empty_selection(key, mixed_dtypes):
+    data = {"a": [1, 2]}
+    if mixed_dtypes:
+        data["b"] = ["x", "y"]
+    df = pd.DataFrame(data)
+    expected = df.copy()
+
+    df.loc[key] = 1.5
+
+    pd.testing.assert_frame_equal(df, expected, check_exact=True)
+
+
 def test_no_fallback_in_array_ufunc_op(array):
     np.add(array, array)
 

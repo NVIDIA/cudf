@@ -166,10 +166,12 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
   CUDF_EXPECTS(histogram_cv.type().id() == type_id::STRUCT && histogram_cv.num_children() == 2,
                "The input column has invalid histograms structure.",
                std::invalid_argument);
-  CUDF_EXPECTS(
-    cudf::is_integral(histogram_cv.child(1).type()) && !histogram_cv.child(1).has_nulls(),
-    "The input column has invalid histograms structure.",
-    std::invalid_argument);
+  auto const structs_cv   = structs_column_view{histogram_cv};
+  auto const input_values = structs_cv.get_sliced_child(0, stream);
+  auto const input_counts = structs_cv.get_sliced_child(1, stream);
+  CUDF_EXPECTS(cudf::is_integral(input_counts.type()) && !input_counts.has_nulls(),
+               "The input column has invalid histograms structure.",
+               std::invalid_argument);
 
   cudf::memory_resources mrs(mr);
   auto temp_mr = mrs.get_temporary_mr();
@@ -191,10 +193,6 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
                                key_labels.end(),
                                stream,
                                mrs.as_temporary());
-
-  auto const structs_cv   = structs_column_view{histogram_cv};
-  auto const input_values = structs_cv.get_sliced_child(0, stream);
-  auto const input_counts = structs_cv.get_sliced_child(1, stream);
 
   return build_histogram(input_values, key_labels, input_counts, num_groups, stream, mr);
 }

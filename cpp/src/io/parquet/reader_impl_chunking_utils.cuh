@@ -16,6 +16,8 @@
 
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>

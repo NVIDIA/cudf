@@ -24,6 +24,7 @@
 #include <cudf/logger.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -1456,7 +1457,7 @@ aggregate_reader_metadata::get_column_chunk_metadata() const
 std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   std::span<std::string const> column_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_EXPECTS(column_names.empty() or not per_file_metadata.empty(),
                "Cannot decode parquet column-chunk bounds without source metadata",
@@ -1484,10 +1485,10 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   columns.push_back(std::move(file_indices));
   columns.push_back(std::move(row_group_indices));
 
-  row_group_stats_caster const stats_col{.total_row_groups     = total_row_groups,
-                                         .per_file_metadata    = per_file_metadata,
-                                         .row_group_indices    = input_row_group_indices,
-                                         .has_is_null_operator = false};
+  row_group_stats_caster const stats_col{.total_row_groups        = total_row_groups,
+                                         .per_file_metadata       = per_file_metadata,
+                                         .row_group_indices       = input_row_group_indices,
+                                         .with_null_and_nan_stats = false};
 
   for (auto const& column_name : column_names) {
     auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());

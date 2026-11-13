@@ -159,3 +159,16 @@ def test_concat_feeding_sampling_over(streaming_engine_factory):
     b = pl.LazyFrame({"g": [i % 5 for i in range(n)], "x": list(range(n, 2 * n))})
     q = pl.concat([a, b]).with_columns(pl.col("x").shift(1).over("g").alias("y"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_join_against_union_of_duplicated_streams(streaming_engine_factory):
+    # Both union children are small aggregates, so every rank holds a full
+    # copy of each and the union output is duplicated across ranks. The join
+    # broadcasts the union side without a gather, so every rank must emit
+    # the full union.
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=10))
+    left = pl.LazyFrame({"k": range(100)})
+    lf1 = pl.LazyFrame({"k": [1, 2, 3, 98]}).unique()
+    lf2 = pl.LazyFrame({"k": [4, 5, 97, 99]}).unique()
+    q = left.join(pl.concat([lf1, lf2]), on="k")
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

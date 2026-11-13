@@ -27,7 +27,7 @@ namespace io::detail::avro {
 table_with_metadata read_avro(std::unique_ptr<cudf::io::datasource>&& source,
                               avro_reader_options const& options,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 }  // namespace io::detail::avro
 }  // namespace cudf

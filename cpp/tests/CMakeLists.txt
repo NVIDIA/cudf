@@ -186,6 +186,7 @@ ConfigureTest(
   groupby/topk_tests.cpp
   groupby/var_tests.cpp
 )
+ConfigureTest(DIRECT_GROUPBY_TEST groupby/direct_groupby_tests.cpp)
 
 # ##################################################################################################
 # * join tests ------------------------------------------------------------------------------------

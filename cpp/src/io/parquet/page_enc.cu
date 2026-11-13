@@ -578,6 +578,7 @@ CUDF_KERNEL void __launch_bounds__(128)
 
   // Max page header size excluding statistics
   auto const max_data_page_hdr_size = write_v2_headers ? MAX_V2_HDR_SIZE : MAX_V1_HDR_SIZE;
+  auto const aligned = [page_align](auto value) { return cuda::round_up(value, page_align); };
 
   if (t == 0) {
     col_g  = col_desc[blockIdx.x];
@@ -636,7 +637,7 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.max_lvl_size    = 0;
         page_g.comp_data_size  = 0;
         page_g.is_compressed   = false;
-        page_g.max_hdr_size    = cuda::round_up<uint32_t>(MAX_V1_HDR_SIZE, page_align);
+        page_g.max_hdr_size    = aligned(static_cast<uint32_t>(MAX_V1_HDR_SIZE));
         page_g.max_data_size   = ck_g.uniq_data_size;
         page_g.data_size       = ck_g.uniq_data_size;
         page_g.start_row       = cur_row;
@@ -644,11 +645,10 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.num_leaf_values = ck_g.num_dict_entries;
         page_g.num_values      = ck_g.num_dict_entries;  // TODO: shouldn't matter for dict page
         page_g.dict_rle_bits   = ck_g.dict_rle_bits;     // TODO: shouldn't matter for dict page
-        page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
+        page_offset += aligned(page_g.max_hdr_size + page_g.max_data_size);
         if (not comp_page_sizes.empty()) {
           // Pad to `page_align` so the next page's compressor output stays aligned
-          comp_page_offset +=
-            cuda::round_up(page_g.max_hdr_size + comp_page_sizes[ck_g.first_page], page_align);
+          comp_page_offset += aligned(page_g.max_hdr_size + comp_page_sizes[ck_g.first_page]);
           page_g.comp_data_size = comp_page_sizes[ck_g.first_page + num_pages];
         }
         page_headers_size += page_g.max_hdr_size;
@@ -757,7 +757,7 @@ CUDF_KERNEL void __launch_bounds__(128)
             }
             page_g.max_hdr_size += stats_hdr_len;
           }
-          page_g.max_hdr_size = cuda::round_up(page_g.max_hdr_size, page_align);
+          page_g.max_hdr_size = aligned(page_g.max_hdr_size);
           page_g.page_data    = ck_g.uncompressed_bfr + page_offset;
           if (not comp_page_sizes.empty()) {
             page_g.compressed_data = ck_g.compressed_bfr + comp_page_offset;
@@ -772,9 +772,8 @@ CUDF_KERNEL void __launch_bounds__(128)
           auto const rep_level_size = max_RLE_page_size(col_g.num_rep_level_bits(), values_in_page);
           // V2 headers keep the level data outside the page payload, so it is padded out to
           // `page_align`. Store in a local size_t until page size has been validated below.
-          size_t const lvl_size =
-            write_v2_headers ? cuda::round_up<size_t>(def_level_size + rep_level_size, page_align)
-                             : def_level_size + rep_level_size;
+          size_t const lvl_size = write_v2_headers ? aligned(def_level_size + rep_level_size)
+                                                   : def_level_size + rep_level_size;
           // get a different bound if using delta encoding
           if (is_use_delta) {
             auto const delta_len = delta_data_len(
@@ -799,7 +798,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_g.max_data_size    = static_cast<uint32_t>(max_data_size);
           pagestats_g.start_chunk = ck_g.first_fragment + page_start;
           pagestats_g.num_chunks  = page_g.num_fragments;
-          page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
+          page_offset += aligned(page_g.max_hdr_size + page_g.max_data_size);
           // if encoding delta_byte_array, need to allocate some space for scratch data.
           // if there are leaf nulls, we need space for a mapping array:
           //   sizeof(size_type) * num_leaf_values
@@ -819,9 +818,8 @@ CUDF_KERNEL void __launch_bounds__(128)
             // V2 does not include level data in compressed size estimate. The max compressed size
             // need not be a multiple of `page_align`, so pad it to keep the compressor output of
             // the next page or column chunk aligned.
-            comp_page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_lvl_size +
-                                                 comp_page_sizes[ck_g.first_page + num_pages],
-                                               page_align);
+            comp_page_offset += aligned(page_g.max_hdr_size + page_g.max_lvl_size +
+                                        comp_page_sizes[ck_g.first_page + num_pages]);
           }
           page_headers_size += page_g.max_hdr_size;
           max_page_data_size = max(max_page_data_size, page_g.max_data_size);
@@ -875,7 +873,7 @@ CUDF_KERNEL void __launch_bounds__(128)
     __syncwarp();
     if (!t) {
       if (ck_g.ck_stat_size == 0 && ck_g.stats) {
-        uint32_t ck_stat_size = cuda::round_up(48 + 2 * ck_max_stats_len, page_align);
+        uint32_t ck_stat_size = aligned(48 + 2 * ck_max_stats_len);
         page_offset += ck_stat_size;
         comp_page_offset += ck_stat_size;
         ck_g.ck_stat_size = ck_stat_size;

@@ -29,7 +29,7 @@
 #include <cub/warp/warp_scan.cuh>
 #include <cuda/buffer>
 #include <cuda/cmath>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/stream>
 
 namespace cudf {

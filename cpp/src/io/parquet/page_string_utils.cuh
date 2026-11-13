@@ -11,6 +11,8 @@
 
 #include <cuda/atomic>
 #include <cuda/cmath>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 
 namespace cudf::io::parquet::detail {

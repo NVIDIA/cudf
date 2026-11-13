@@ -96,7 +96,7 @@
 
 Before commenting, ask:
 1. Is this actually wrong/risky, or just different?
-2. Would this cause a real problem (crash, leak, wrong results, API break)?
+2. Would this cause a real problem (crash, leak, wrong results, API break), or leave code or tests the repository does not need (dead code, or a copy of an existing helper or test that you can name)?
 3. Does this comment add unique value?
 
 **If no to any: Skip the comment.**

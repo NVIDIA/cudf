@@ -42,6 +42,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/climits>
 #include <cuda/std/limits>
 #include <cuda/std/optional>

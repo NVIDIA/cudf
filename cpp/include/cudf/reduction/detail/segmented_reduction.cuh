@@ -18,7 +18,7 @@
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/buffer>
-#include <cuda/execution>
+#include <cuda/execution.tune.h>
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>

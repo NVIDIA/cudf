@@ -7,6 +7,7 @@
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -882,15 +883,17 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
   }
 }
 
-TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
+TEST_F(HybridScanFiltersTest, IncompletePageStats)
 {
-  auto const input = cudf::test::fixed_width_column_wrapper<double>{{3.0, 0.0, 1.0, 0.0},
-                                                                    {true, false, true, false}};
-  auto const table = cudf::table_view{{input}};
-  auto buffer      = std::vector<char>{};
+  auto const input = cudf::test::fixed_width_column_wrapper<double>{
+    {3.0, 0.0, 1.0, 0.0, 2.0, 0.0}, {true, false, true, false, true, false}};
+  auto const payload = cudf::test::fixed_width_column_wrapper<int32_t>{10, 20, 30, 40, 50, 60};
+  auto const table   = cudf::table_view{{input, payload}};
+  auto buffer        = std::vector<char>{};
 
   auto metadata = cudf::io::table_input_metadata{table};
   metadata.column_metadata[0].set_name("col");
+  metadata.column_metadata[1].set_name("payload");
   auto writer_options =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
       .metadata(std::move(metadata))
@@ -917,7 +920,7 @@ TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
   auto row_mask = reader.build_row_mask_with_page_index_stats(row_groups, options, stream, mr);
 
   ASSERT_EQ(row_mask->size(), table.num_rows());
-  ASSERT_EQ(row_mask->null_count(), table.num_rows());
+  ASSERT_EQ(row_mask->null_count(), 0);
 
   auto const byte_ranges = reader.filter_column_chunks_byte_ranges(row_groups, options);
   auto [column_buffers, column_data, read_tasks] =
@@ -925,7 +928,10 @@ TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
       *datasource, byte_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
   read_tasks.get();
 
-  auto row_mask_view = row_mask->mutable_view();
+  // Input row mask excludes row 1 (false) and row 3 (null) out of the rows passing the filter
+  auto input_row_mask = cudf::test::fixed_width_column_wrapper<bool>{
+    {true, false, true, true, true, true}, {true, true, true, false, true, true}};
+  auto row_mask_view = static_cast<cudf::mutable_column_view>(input_row_mask);
   auto result =
     reader.materialize_filter_columns(row_groups,
                                       column_data,
@@ -935,8 +941,32 @@ TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
                                       stream,
                                       mr);
 
-  auto const expected = cudf::test::fixed_width_column_wrapper<double>{{0.0, 0.0}, {false, false}};
+  auto const expected = cudf::test::fixed_width_column_wrapper<double>{{0.0}, {false}};
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view{{expected}}, result.tbl->view());
+
+  auto const expected_row_mask =
+    cudf::test::fixed_width_column_wrapper<bool>{false, false, false, false, false, true};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_row_mask, row_mask_view);
+  EXPECT_EQ(row_mask_view.null_count(), 0);
+
+  // Payload columns select the same rows as the filter columns
+  auto const payload_ranges = reader.payload_column_chunks_byte_ranges(row_groups, options);
+  auto [payload_buffers, payload_data, payload_tasks] =
+    cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource, payload_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
+  payload_tasks.get();
+
+  auto payload_result =
+    reader.materialize_payload_columns(row_groups,
+                                       payload_data,
+                                       row_mask_view,
+                                       cudf::io::parquet::experimental::use_data_page_mask::YES,
+                                       options,
+                                       stream,
+                                       mr);
+
+  auto const expected_payload = cudf::test::fixed_width_column_wrapper<int32_t>{60};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view{{expected_payload}}, payload_result.tbl->view());
 }
 
 TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)

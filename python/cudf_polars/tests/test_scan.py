@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import zstandard as zstd
 from werkzeug import Response
@@ -266,6 +268,23 @@ def test_scan_parquet_insert_missing_columns_raises(engine: pl.GPUEngine, tmp_pa
     pl.DataFrame({"a": [5, 6]}).write_parquet(tmp_path / "1.parquet")
     q = pl.scan_parquet(tmp_path / "*.parquet", missing_columns="insert")
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("tz", [None, "UTC"])
+def test_scan_parquet_timestamps_from_different_writers(
+    engine: pl.GPUEngine, tmp_path, tz
+):
+    # pyarrow also writes the deprecated converted type, polars does not
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    pq.write_table(
+        pa.table({"t": pa.array([t], pa.timestamp("us", tz))}),
+        tmp_path / "0.parquet",
+    )
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+        tmp_path / "1.parquet"
+    )
+    q = pl.scan_parquet(tmp_path / "*.parquet")
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_scan_ndjson_nrows_notimplemented(engine: pl.GPUEngine, tmp_path, df):

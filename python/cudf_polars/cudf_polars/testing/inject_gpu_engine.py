@@ -421,62 +421,6 @@ def pytest_report_header(config: pytest.Config) -> str:
     return f"injected GPU engine: {cls.__module__}.{cls.__name__}"
 
 
-# https://github.com/NVIDIA/cudf/issues/25021
-# libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs
-# polars) that differ only in the legacy converted_type. Which of these tests
-# hit this depends on the engine and blocksize (some pass with the streaming
-# engine), so they are marked as non-strict xfails: neither a failure nor an
-# unexpected pass fails the run.
-ICEBERG_MIXED_WRITER_REASON = (
-    "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) "
-    "that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021"
-)
-
-ICEBERG_MIXED_WRITER_TESTS: tuple[str, ...] = (
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate1]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate2]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate3]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate6]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate7]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate8]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate9]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate12]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate17]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate18]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate27]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]",
-)
-
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
     "tests/unit/io/test_io_plugin.py::test_datetime_io_predicate_pushdown_21790": "cudf-polars validates the IO source schema exactly and does not coerce datetime time units (us vs ns)",
@@ -1010,7 +954,3 @@ def pytest_mark_and_shard_items(
             item.add_marker(pytest.mark.skip(reason=skip_reason))
         elif (xfail_reason := xfails.get(item.nodeid)) is not None:
             item.add_marker(pytest.mark.xfail(reason=xfail_reason))
-        elif item.nodeid in ICEBERG_MIXED_WRITER_TESTS:
-            item.add_marker(
-                pytest.mark.xfail(reason=ICEBERG_MIXED_WRITER_REASON, strict=False)
-            )

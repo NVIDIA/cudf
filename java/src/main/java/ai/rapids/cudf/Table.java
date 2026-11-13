@@ -587,6 +587,9 @@ public final class Table implements AutoCloseable {
   private static native long[] innerDistinctJoinGatherMaps(long leftKeys, long rightKeys,
                                                            boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] directInnerJoinGatherMaps(long leftKeysColumn, long rightKeysColumn,
+                                                         long capacity) throws CudfException;
+
   private static native long[] innerDistinctHashJoinGatherMaps(long table,
                                                                long distinctHashJoin) throws CudfException;
 
@@ -3211,6 +3214,38 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         innerDistinctHashJoinGatherMaps(getNativeView(), rightHash.getNativeView());
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Computes the gather maps that can be used to manifest the result of an inner equi-join between
+   * two key columns whose values directly determine the matched row index. The right keys are
+   * treated as a perfect hash of the right rows: a lookup table of {@code capacity} entries maps
+   * each key value to its row index, and each left key probes that table directly. No hashing or
+   * key comparison is performed. Left keys that do not occur in the right keys produce no output
+   * pair. Two {@link GatherMap} instances will be returned that can be used to gather the left and
+   * right tables, respectively, to produce the result of the inner join.
+   *
+   * Behavior is undefined if any key value, interpreted as unsigned, is not less than
+   * {@code capacity}, or if the right keys contain duplicates.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param leftKeys left join key column of type {@link DType#UINT32}, without nulls,
+   *                 containing pre-hashed keys in {@code [0, capacity)}
+   * @param rightKeys right join key column of type {@link DType#UINT32}, without nulls,
+   *                  containing distinct pre-hashed keys in {@code [0, capacity)}
+   * @param capacity number of entries in the lookup table; must not be less than the number of
+   *                 right keys
+   * @return left and right table gather maps
+   */
+  public static GatherMap[] directInnerJoinGatherMaps(ColumnView leftKeys, ColumnView rightKeys,
+                                                      long capacity) {
+    if (capacity < 0) {
+      throw new IllegalArgumentException("capacity must not be negative: " + capacity);
+    }
+    long[] gatherMapData =
+        directInnerJoinGatherMaps(leftKeys.getNativeView(), rightKeys.getNativeView(), capacity);
     return buildJoinGatherMaps(gatherMapData);
   }
 

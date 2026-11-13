@@ -8,6 +8,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/host_staging_resource.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/strings.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -17,6 +18,7 @@
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_layout.hpp>
+#include <cudf/utilities/pinned_memory.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -519,34 +521,24 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
   return get_lto_linked_kernel(path, {}, fragments);
 }
 
-struct input_arguments {
+// Own all staging and device storage until output metadata has been read back.
+struct scope_t {
   using handle = std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>;
 
   std::vector<handle> handles;
-  cuda::device_buffer<column_device_view_core> views;
-
-  input_arguments(std::span<reduce_input const> inputs,
-                  cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
-    : views(stream, mr, inputs.size(), cuda::no_init)
-  {
-    auto host = detail::make_empty_pinned_vector<column_device_view_core>(inputs.size(), stream);
-
-    for (auto const& input : inputs) {
-      auto device = column_device_view::create(as_column_view(input), stream, mr);
-      host.push_back(*device);
-      handles.push_back(std::move(device));
-    }
-
-    // Synchronous transfer keeps the pinned staging array alive until the copy completes.
-    detail::cuda_memcpy<column_device_view_core>(views, host, stream);
-  }
-};
-
-struct output_arguments {
-  std::vector<std::unique_ptr<column>> columns;
-  cuda::device_buffer<mutable_column_device_view_core> views;
-  size_type num_segments;
+  cuda::device_buffer<column_device_view_core> input_views;
+  cuda::device_buffer<mutable_column_device_view_core> output_views;
+  std::vector<std::unique_ptr<column>> outputs;
+  cuda::host_buffer<column_device_view_core> host_inputs;
+  cuda::host_buffer<mutable_column_device_view_core> host_outputs;
+  cuda::host_buffer<bitmask_type> host_masks;
+  cuda::host_buffer<string_view> host_strings;
+  cuda::host_buffer<errc> host_errors;
+  cuda::device_buffer<errc> errors;
+  cuda::device_buffer<std::byte> partials;
+  cuda::device_buffer<std::byte> result;
+  cuda::device_buffer<std::byte> scratch;
+  size_t filter_offset;
 
   static std::unique_ptr<column> allocate_output(data_type type,
                                                  bool nullable,
@@ -590,60 +582,87 @@ struct output_arguments {
       1, std::move(offsets_column), std::move(chars), nulls, std::move(*contents.null_mask));
   }
 
-  output_arguments(std::span<data_type const> types,
-                   size_type num_segments,
-                   bool nullable,
-                   cuda::stream_ref stream,
-                   memory_resources mr)
-    : views(stream, mr.get_temporary_mr(), num_segments * types.size(), cuda::no_init),
-      num_segments(num_segments)
+  scope_t(std::span<reduce_input const> inputs,
+          std::span<reduce_input const> filter_inputs,
+          std::span<data_type const> types,
+          size_type num_segments,
+          bool nullable,
+          cuda::stream_ref stream,
+          memory_resources mr)
+    : input_views(
+        stream, mr.get_temporary_mr(), inputs.size() + filter_inputs.size(), cuda::no_init),
+      output_views(stream, mr.get_temporary_mr(), num_segments * types.size(), cuda::no_init),
+      host_inputs(stream, detail::host_staging_resource{}, input_views.size(), cuda::no_init),
+      host_outputs(stream, detail::host_staging_resource{}, output_views.size(), cuda::no_init),
+      host_masks(
+        stream, get_pinned_memory_resource(), nullable ? output_views.size() : 0, cuda::no_init),
+      host_strings(
+        stream,
+        get_pinned_memory_resource(),
+        std::ranges::any_of(types, [](auto type) { return type.id() == type_id::STRING; })
+          ? output_views.size()
+          : 0,
+        cuda::no_init),
+      host_errors(stream, get_pinned_memory_resource(), num_segments, cuda::no_init),
+      errors(stream, mr.get_temporary_mr(), num_segments, cuda::no_init),
+      partials(stream, mr.get_temporary_mr()),
+      result(stream, mr.get_temporary_mr()),
+      scratch(stream, mr.get_temporary_mr()),
+      filter_offset(inputs.size())
   {
-    columns.reserve(num_segments * types.size());
-    auto host =
-      detail::make_empty_pinned_vector<mutable_column_device_view_core>(views.size(), stream);
+    auto append_inputs = [&](auto values, size_t offset) {
+      for (auto const i : std::views::iota(size_t{0}, values.size())) {
+        auto device =
+          column_device_view::create(as_column_view(values[i]), stream, mr.get_temporary_mr());
+        host_inputs.data()[offset + i] = *device;
+        handles.push_back(std::move(device));
+      }
+    };
+    append_inputs(inputs, 0);
+    append_inputs(filter_inputs, filter_offset);
+    outputs.reserve(output_views.size());
 
     for (size_type segment = 0; segment < num_segments; ++segment) {
       for (auto type : types) {
         auto output     = allocate_output(type, nullable, stream, mr);
         auto const view = output->mutable_view();
-        host.push_back(mutable_column_device_view::create(
-          type, 1, view.head(), view.null_mask(), 0, nullptr, 0));
-        columns.push_back(std::move(output));
+        host_outputs.data()[outputs.size()] =
+          mutable_column_device_view::create(type, 1, view.head(), view.null_mask(), 0, nullptr, 0);
+        outputs.push_back(std::move(output));
       }
     }
 
-    if (!host.empty()) {
-      detail::cuda_memcpy<mutable_column_device_view_core>(views, host, stream);
-    }
+    // Staging belongs to this execution, so transfers can remain asynchronous.
+    detail::cuda_memcpy_async<column_device_view_core>(
+      input_views,
+      host_span<column_device_view_core const>{host_inputs.data(), host_inputs.size(), true},
+      stream);
+    detail::cuda_memcpy_async<mutable_column_device_view_core>(
+      output_views,
+      host_span<mutable_column_device_view_core const>{
+        host_outputs.data(), host_outputs.size(), true},
+      stream);
   }
 
-  std::vector<std::unique_ptr<column>> finalize(errc const* errors,
-                                                cuda::stream_ref stream,
+  std::vector<std::unique_ptr<column>> finalize(cuda::stream_ref stream,
                                                 rmm::device_async_resource_ref mr)
   {
-    auto const nullable = !columns.empty() && columns.front()->nullable();
-    auto host_masks =
-      detail::make_pinned_vector_async<bitmask_type>(nullable ? columns.size() : 0, stream);
-    auto const has_strings = std::ranges::any_of(
-      columns, [](auto const& col) { return col->type().id() == type_id::STRING; });
-    auto host_strings =
-      detail::make_pinned_vector_async<string_view>(has_strings ? columns.size() : 0, stream);
+    detail::cuda_memcpy_async<errc>(host_span<errc>{host_errors.data(), host_errors.size(), true},
+                                    device_span<errc const>{errors.data(), errors.size()},
+                                    stream);
 
-    auto host_errors = detail::make_pinned_vector_async(
-      device_span<errc const>{errors, static_cast<size_t>(num_segments)}, stream);
-
-    for (size_t col = 0; col < columns.size(); ++col) {
-      if (columns[col]->nullable()) {
+    for (auto const col : std::views::iota(size_t{0}, outputs.size())) {
+      if (outputs[col]->nullable()) {
         detail::cuda_memcpy_async<bitmask_type>(
-          host_span<bitmask_type>{host_masks.data() + col, 1},
-          device_span<bitmask_type const>{columns[col]->view().null_mask(), 1},
+          host_span<bitmask_type>{host_masks.data() + col, 1, true},
+          device_span<bitmask_type const>{outputs[col]->view().null_mask(), 1},
           stream);
       }
-      if (columns[col]->type().id() == type_id::STRING) {
+      if (outputs[col]->type().id() == type_id::STRING) {
         detail::cuda_memcpy_async<string_view>(
-          host_span<string_view>{host_strings.data() + col, 1},
+          host_span<string_view>{host_strings.data() + col, 1, true},
           device_span<string_view const>{
-            static_cast<string_view const*>(columns[col]->view().head()), 1},
+            static_cast<string_view const*>(outputs[col]->view().head()), 1},
           stream);
       }
     }
@@ -651,32 +670,29 @@ struct output_arguments {
     // Synchronize to ensure all asynchronous copies are complete before proceeding.
     detail::sync_stream(stream);
 
-    auto const error = *std::max_element(host_errors.begin(), host_errors.end());
+    auto const error =
+      *std::max_element(host_errors.data(), host_errors.data() + host_errors.size());
+    CUDF_EXPECTS(error == errc::SUCCESS,
+                 std::format("Reduction UDF evaluation failed with error `{}`", to_string(error)),
+                 evaluation_error,
+                 error);
 
-    if (error != errc::SUCCESS) {
-      throw evaluation_error(
-        error, std::format("Reduction UDF evaluation failed with error `{}`", to_string(error)));
-    }
-
-    for (size_t col = 0; col < columns.size(); ++col) {
-      size_type const nulls = columns[col]->nullable() && host_masks[col] == 0;
-      columns[col]->set_null_count(nulls);
-      if (columns[col]->type().id() == type_id::STRING) {
-        columns[col] = finalize_string_output(*columns[col], host_strings[col], stream, mr);
+    for (auto const col : std::views::iota(size_t{0}, outputs.size())) {
+      size_type const nulls = outputs[col]->nullable() && host_masks.data()[col] == 0;
+      outputs[col]->set_null_count(nulls);
+      if (outputs[col]->type().id() == type_id::STRING) {
+        outputs[col] = finalize_string_output(*outputs[col], host_strings.data()[col], stream, mr);
       }
     }
 
-    return std::move(columns);
+    return std::move(outputs);
   }
 };
 
 void launch_reduce(kernel_ref kernel,
                    reduction_launch_config config,
                    size_type num_rows,
-                   column_device_view_core const* inputs,
-                   column_device_view_core const* filter_inputs,
-                   mutable_column_device_view_core const* outputs,
-                   errc* error,
+                   scope_t& scope,
                    cuda::stream_ref stream,
                    rmm::device_async_resource_ref mr)
 {
@@ -703,9 +719,10 @@ void launch_reduce(kernel_ref kernel,
   // Empty inputs still need one block to initialize and finalize the identity state.
   grid = std::max(1, grid);
 
-  cuda::device_buffer<std::byte> partials(stream, mr, grid * config.state_bytes, cuda::no_init);
-  cuda::device_buffer<std::byte> result(stream, mr, config.state_bytes, cuda::no_init);
-  cuda::device_buffer<std::byte> scratch(
+  scope.partials =
+    cuda::device_buffer<std::byte>(stream, mr, grid * config.state_bytes, cuda::no_init);
+  scope.result  = cuda::device_buffer<std::byte>(stream, mr, config.state_bytes, cuda::no_init);
+  scope.scratch = cuda::device_buffer<std::byte>(
     stream,
     mr,
     config.warp_reduce ? 0 : config.state_bytes * grid * config.block_size,
@@ -723,20 +740,20 @@ void launch_reduce(kernel_ref kernel,
                        stream,
                        phase,
                        rows,
-                       inputs,
-                       filter_inputs,
-                       outputs,
+                       scope.input_views.data(),
+                       scope.input_views.data() + scope.filter_offset,
+                       scope.output_views.data(),
                        source,
                        destination,
-                       scratch.data(),
-                       error,
+                       scope.scratch.data(),
+                       scope.errors.data(),
                        finalize);
   };
 
-  launch(jit::reduce::phase::REDUCE, num_rows, grid, nullptr, partials.data(), grid == 1);
+  launch(jit::reduce::phase::REDUCE, num_rows, grid, nullptr, scope.partials.data(), grid == 1);
 
   if (grid > 1) {
-    launch(jit::reduce::phase::MERGE, grid, 1, partials.data(), result.data(), true);
+    launch(jit::reduce::phase::MERGE, grid, 1, scope.partials.data(), scope.result.data(), true);
   }
 }
 
@@ -763,23 +780,16 @@ std::vector<std::unique_ptr<column>> reduce(reduce_udf const& udf,
   auto instance = reflect_reduce_kernel(spec, optional_values);
   auto compiled = compile(spec, udf, instance);
 
-  input_arguments in(inputs, stream, mr.get_temporary_mr());
-  input_arguments predicate_inputs(filter_inputs, stream, mr.get_temporary_mr());
-  output_arguments out(types, 1, true, stream, mr);
-
-  cuda::device_buffer<errc> error(stream, mr.get_temporary_mr(), 1, cuda::no_init);
+  scope_t scope(inputs, filter_inputs, types, 1, true, stream, mr);
 
   launch_reduce(compiled.get(),
                 {spec.block_size, spec.state_layout.size, spec.warp_reduce},
                 rows,
-                in.views.data(),
-                predicate_inputs.views.data(),
-                out.views.data(),
-                error.data(),
+                scope,
                 stream,
                 mr.get_temporary_mr());
 
-  return out.finalize(error.data(), stream, mr.get_output_mr());
+  return scope.finalize(stream, mr.get_output_mr());
 }
 
 }  // namespace cudf

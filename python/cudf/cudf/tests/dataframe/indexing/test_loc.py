@@ -9,6 +9,7 @@ import cupy as cp
 import numpy as np
 import pandas as pd
 import pytest
+from numba import cuda
 
 import cudf
 from cudf.testing import assert_eq
@@ -753,7 +754,6 @@ def test_dataframe_setitem_loc(key, value):
     assert_eq(pdf, gdf)
 
 
-@pytest.mark.parametrize("pandas_compatible", [False, True])
 @pytest.mark.parametrize("mixed_dtypes", [False, True])
 @pytest.mark.parametrize(
     "key",
@@ -769,59 +769,87 @@ def test_dataframe_setitem_loc(key, value):
         ),
     ],
 )
-def test_dataframe_setitem_loc_empty_selection(
-    key, mixed_dtypes, pandas_compatible
-):
+def test_dataframe_setitem_loc_empty_selection(key, mixed_dtypes):
     data = {"a": [1, 2]}
     if mixed_dtypes:
         data["b"] = ["x", "y"]
     pdf = pd.DataFrame(data)
     expected = pdf.copy()
 
-    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
-        gdf = cudf.from_pandas(pdf)
-        pdf.loc[key] = 1.5
-        gdf.loc[key] = 1.5
+    gdf = cudf.from_pandas(pdf)
+    pdf.loc[key] = 1.5
+    gdf.loc[key] = 1.5
 
-        assert_eq(expected, pdf, check_dtype=True)
-        assert_eq(expected, gdf, check_dtype=True)
+    assert_eq(expected, pdf, check_dtype=True)
+    assert_eq(expected, gdf, check_dtype=True)
 
 
 @pytest.mark.parametrize(
-    "key", [np.array([], dtype=bool), (np.array([], dtype=bool), "a")]
+    "array_type", [np.asarray, cp.asarray, cuda.to_device]
 )
-def test_dataframe_setitem_loc_empty_frame_boolean_mask(key):
-    pdf = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+@pytest.mark.parametrize("mixed_dtypes", [False, True])
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param(np.array([]), id="empty-array"),
+        pytest.param(np.array([False, False]), id="false-mask"),
+    ],
+)
+def test_dataframe_setitem_loc_empty_array_selection(
+    key, mixed_dtypes, array_type
+):
+    data = {"a": [1, 2]}
+    if mixed_dtypes:
+        data["b"] = ["x", "y"]
+    pdf = pd.DataFrame(data)
     gdf = cudf.from_pandas(pdf)
     expected = pdf.copy()
 
     pdf.loc[key] = 1.5
-    gdf.loc[key] = 1.5
+    gdf.loc[array_type(key)] = 1.5
 
     assert_eq(expected, pdf)
     assert_eq(expected, gdf)
 
 
-@pytest.mark.parametrize("pandas_compatible", [False, True])
-@pytest.mark.parametrize("mask_values", [[False, False], [False, pd.NA]])
-def test_dataframe_setitem_loc_empty_boolean_series(
-    mask_values, pandas_compatible
+@pytest.mark.parametrize(
+    "array_type", [np.asarray, cp.asarray, cuda.to_device]
+)
+@pytest.mark.parametrize("column_key", [None, "a"])
+def test_dataframe_setitem_loc_empty_frame_boolean_mask(
+    array_type, column_key
 ):
+    pdf = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+    pkey = np.array([], dtype=bool)
+    gkey = array_type(pkey)
+    if column_key is not None:
+        pkey = (pkey, column_key)
+        gkey = (gkey, column_key)
+
+    pdf.loc[pkey] = 1.5
+    gdf.loc[gkey] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
+
+
+@pytest.mark.parametrize("mask_values", [[False, False], [False, pd.NA]])
+def test_dataframe_setitem_loc_empty_boolean_series(mask_values):
     pdf = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
     expected = pdf.copy()
     pmask = pd.Series(mask_values, index=[1, 0], dtype="boolean")
 
-    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
-        gdf = cudf.from_pandas(pdf)
-        gmask = cudf.from_pandas(pmask)
-        pdf.loc[pmask] = 1.5
-        gdf.loc[gmask] = 1.5
+    gdf = cudf.from_pandas(pdf)
+    gmask = cudf.from_pandas(pmask)
+    pdf.loc[pmask] = 1.5
+    gdf.loc[gmask] = 1.5
 
-        assert_eq(expected, pdf, check_dtype=True)
-        assert_eq(expected, gdf, check_dtype=True)
+    assert_eq(expected, pdf, check_dtype=True)
+    assert_eq(expected, gdf, check_dtype=True)
 
 
-@pytest.mark.parametrize("pandas_compatible", [False, True])
 @pytest.mark.parametrize(
     "key, error",
     [
@@ -831,18 +859,16 @@ def test_dataframe_setitem_loc_empty_boolean_series(
         pytest.param([4], KeyError, id="missing-row"),
     ],
 )
-def test_dataframe_setitem_loc_invalid_indexer(key, error, pandas_compatible):
+def test_dataframe_setitem_loc_invalid_indexer(key, error):
     pdf = pd.DataFrame({"a": [1, 2]})
-    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
-        gdf = cudf.from_pandas(pdf)
-        for frame in (pdf, gdf):
-            with pytest.raises(error):
-                frame.loc[key] = 1.5
+    gdf = cudf.from_pandas(pdf)
+    for frame in (pdf, gdf):
+        with pytest.raises(error):
+            frame.loc[key] = 1.5
 
-        assert_eq(pdf, gdf, check_dtype=True)
+    assert_eq(pdf, gdf, check_dtype=True)
 
 
-@pytest.mark.parametrize("pandas_compatible", [False, True])
 @pytest.mark.parametrize(
     "key",
     [
@@ -855,15 +881,14 @@ def test_dataframe_setitem_loc_invalid_indexer(key, error, pandas_compatible):
         ),
     ],
 )
-def test_dataframe_setitem_loc_incompatible_scalar(key, pandas_compatible):
+def test_dataframe_setitem_loc_incompatible_scalar(key):
     pdf = pd.DataFrame({"a": [1, 2]})
-    with cudf.option_context("mode.pandas_compatible", pandas_compatible):
-        gdf = cudf.from_pandas(pdf)
-        for frame in (pdf, gdf):
-            with pytest.raises(TypeError, match="Invalid value"):
-                frame.loc[key] = 1.5
+    gdf = cudf.from_pandas(pdf)
+    for frame in (pdf, gdf):
+        with pytest.raises(TypeError, match="Invalid value"):
+            frame.loc[key] = 1.5
 
-        assert_eq(pdf, gdf, check_dtype=True)
+    assert_eq(pdf, gdf, check_dtype=True)
 
 
 @pytest.mark.parametrize(
@@ -879,6 +904,58 @@ def test_dataframe_setitem_loc_empty_df(key, value):
     pdf.loc[key] = value
     gdf.loc[key] = value
     assert_eq(pdf, gdf, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "selection", ["zero-column-frame", "all-zero-columns", "empty-columns"]
+)
+@pytest.mark.parametrize(
+    "mask", [[False], [False, False, False], np.array([], dtype=bool)]
+)
+def test_dataframe_setitem_loc_no_columns_invalid_mask(selection, mask):
+    pdf = (
+        pd.DataFrame({"a": [1, 2]})
+        if selection == "empty-columns"
+        else pd.DataFrame(index=range(2))
+    )
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+    if selection == "zero-column-frame":
+        key = mask
+    else:
+        key = (mask, [] if selection == "empty-columns" else slice(None))
+
+    with pytest.raises(IndexError, match="Boolean index has wrong length"):
+        pdf.loc[key] = 1.5
+    with pytest.raises(IndexError, match="not suitable as a boolean mask"):
+        gdf.loc[key] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
+
+
+@pytest.mark.parametrize(
+    "selection", ["zero-column-frame", "all-zero-columns", "empty-columns"]
+)
+@pytest.mark.parametrize("mask", [[False, False], [True, False]])
+def test_dataframe_setitem_loc_no_columns_valid_mask(selection, mask):
+    pdf = (
+        pd.DataFrame({"a": [1, 2]})
+        if selection == "empty-columns"
+        else pd.DataFrame(index=range(2))
+    )
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+    if selection == "zero-column-frame":
+        key = mask
+    else:
+        key = (mask, [] if selection == "empty-columns" else slice(None))
+
+    pdf.loc[key] = 1.5
+    gdf.loc[key] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
 
 
 def test_sliced_indexing():

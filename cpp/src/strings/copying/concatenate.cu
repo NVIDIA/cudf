@@ -178,7 +178,7 @@ CUDF_KERNEL void fused_concatenate_string_offset_kernel(
 CUDF_KERNEL void fused_concatenate_string_chars_kernel(column_device_view const* input_views,
                                                        size_t const* partition_offsets,
                                                        size_type const num_input_views,
-                                                       size_type const output_size,
+                                                       int64_t const output_size,
                                                        char* output_data)
 {
   auto output_index = cudf::detail::grid_1d::global_thread_id();
@@ -278,7 +278,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
       kernel<<<num_blocks, block_size, 0, stream.get()>>>(d_views,
                                                           d_partition_offsets.data(),
                                                           static_cast<size_type>(columns.size()),
-                                                          total_bytes,
+                                                          static_cast<int64_t>(total_bytes),
                                                           d_new_chars);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {

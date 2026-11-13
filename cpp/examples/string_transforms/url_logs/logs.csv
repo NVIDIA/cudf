@@ -1,0 +1,46 @@
+Timestamp,Host,Source,Level,LogLine
+2026-07-31T09:14:00.000Z,edge-proxy-02,envoy,INFO,level=info service=edge method=GET status=200 url=https://api.example.com/v1/orders/123?expand=items&locale=en-GB#summary latency_ms=12
+2026-07-31T09:14:00.173Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:00.346Z,app-worker-07,checkout-worker,WARN,WARN checkout retry scheduled attempt=2 queue=payments
+2026-07-31T09:14:00.519Z,identity-03,identity-api,INFO,ts=2026-07-31T09:14:00Z service=identity trace=0af765 client=198.51.100.24 target=https://login.example.com:8443/oauth2/callback?code=redacted&state=abc status=302
+2026-07-31T09:14:00.692Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:00.865Z,edge-proxy-02,envoy,INFO,edge[731]: cache=hit region=us-west-2 object=https://cdn.example.net/assets/app.8f31c2.js status=304
+2026-07-31T09:14:01.038Z,control-01,scheduler,DEBUG,level=debug component=scheduler queue_depth=0 workers=32
+2026-07-31T09:14:01.211Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:01.384Z,search-06,search-api,INFO,service=search region=ap-southeast-2 url=https://search.example.org/query?q=gpu+dataframes&page=2#results method=GET status=200
+2026-07-31T09:14:01.557Z,app-worker-07,checkout-worker,WARN,WARN checkout retry scheduled attempt=2 queue=payments
+2026-07-31T09:14:01.730Z,realtime-04,realtime-gateway,INFO,INFO websocket connected client=203.0.113.71 endpoint=wss://stream.example.com/socket?token=redacted shard=4
+2026-07-31T09:14:01.903Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:02.076Z,node-17,prometheus-agent,INFO,host=node-17 process=metrics destination=http://metrics.internal.example:9090/api/v1/query?query=up result=success
+2026-07-31T09:14:02.249Z,app-api-12,inventory-api,ERROR,level=error service=inventory msg=upstream_timeout attempt=3
+2026-07-31T09:14:02.422Z,control-01,scheduler,DEBUG,level=debug component=scheduler queue_depth=0 workers=32
+2026-07-31T09:14:02.595Z,graphql-02,graphql-api,INFO,request completed trace=4bf92f service=graphql method=POST url=https://api.example.com/graphql?operation=Checkout status=200 latency_ms=66
+2026-07-31T09:14:02.768Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:02.941Z,edge-proxy-02,envoy,INFO,cdn event status=206 bytes=1048576 resource=https://media.example.net/video/launch.mp4?start=120&quality=1080p region=us-west-2
+2026-07-31T09:14:03.114Z,app-worker-07,checkout-worker,WARN,WARN checkout retry scheduled attempt=2 queue=payments
+2026-07-31T09:14:03.287Z,edge-proxy-01,redirector,INFO,level=info service=redirector status=301 location=http://example.com latency_ms=2
+2026-07-31T09:14:03.460Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:03.633Z,admin-01,auditd,INFO,audit actor=alice action=view target=https://admin.example.com/users/8675309#permissions result=allow
+2026-07-31T09:14:03.806Z,control-01,scheduler,DEBUG,level=debug component=scheduler queue_depth=0 workers=32
+2026-07-31T09:14:03.979Z,mesh-sidecar-19,service-mesh,INFO,proxy upstream selected cluster=orders endpoint=http://orders.default.svc.cluster.local:8080/health retry=0
+2026-07-31T09:14:04.152Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:04.325Z,billing-05,billing-api,INFO,billing request tenant=42 invoice=2026-07 url=https://billing.example.com/invoices/2026-07?download=true status=200
+2026-07-31T09:14:04.498Z,app-api-12,inventory-api,ERROR,level=error service=inventory msg=upstream_timeout attempt=3
+2026-07-31T09:14:04.671Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:04.844Z,docs-01,nginx,INFO,docs access ref=homepage destination=https://docs.example.org/guides/url-parsing#query-parameters status=200
+2026-07-31T09:14:05.017Z,app-worker-07,checkout-worker,WARN,WARN checkout retry scheduled attempt=2 queue=payments
+2026-07-31T09:14:05.190Z,ingest-08,event-ingest,INFO,event accepted batch=842 source=mobile callback=https://events.example.com/v3/batch?source=mobile&sdk=6.4.1 status=202
+2026-07-31T09:14:05.363Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:05.536Z,control-01,scheduler,DEBUG,level=debug component=scheduler queue_depth=0 workers=32
+2026-07-31T09:14:05.709Z,legacy-02,legacy-api,INFO,legacy request client=198.51.100.159 url=http://192.0.2.200:8000/v1/status?format=json method=GET status=200
+2026-07-31T09:14:05.882Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:06.055Z,app-worker-07,checkout-worker,WARN,WARN checkout retry scheduled attempt=2 queue=payments
+2026-07-31T09:14:06.228Z,download-03,artifact-service,INFO,download complete artifact=cudf target=https://downloads.example.com/releases/package.tar.gz?signature=redacted#sha256 bytes=48234412
+2026-07-31T09:14:06.401Z,app-api-12,inventory-api,ERROR,level=error service=inventory msg=upstream_timeout attempt=3
+2026-07-31T09:14:06.574Z,k8s-worker-03,kubelet,INFO,level=info service=kube-probe msg=healthy status=200
+2026-07-31T09:14:06.747Z,control-01,scheduler,DEBUG,level=debug component=scheduler queue_depth=0 workers=32
+2026-07-31T09:14:06.920Z,edge-proxy-03,rfc-fixture,INFO,"rfc authority test url=https://user:pass@example.com:8443/a,b;c?x=/a?b#frag?part result=ok"
+2026-07-31T09:14:07.093Z,directory-01,rfc-fixture,INFO,rfc ip-literal target=ldap://[2001:db8::7]/c=GB?objectClass?one result=ok
+2026-07-31T09:14:07.266Z,future-net-01,rfc-fixture,INFO,rfc ipvfuture endpoint=https://[v1.fe80::a]:9443/resource result=ok
+2026-07-31T09:14:07.439Z,node-17,rfc-fixture,INFO,rfc empty-authority resource=file:///etc/hosts result=ok
+2026-07-31T09:14:07.612Z,edge-proxy-03,rfc-fixture,INFO,rfc pct-encoded-host url=https://example%2Ecom/a%20b result=ok

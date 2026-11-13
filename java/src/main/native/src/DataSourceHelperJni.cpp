@@ -221,10 +221,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_DataSourceHelper_destroyWrapperDataSo
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    if (handle != 0) {
-      auto source = reinterpret_cast<cudf::jni::jni_datasource*>(handle);
-      delete (source);
-    }
+    cudf::jni::safe_delete<cudf::jni::jni_datasource>(handle);
   }
   JNI_CATCH(env, );
 }

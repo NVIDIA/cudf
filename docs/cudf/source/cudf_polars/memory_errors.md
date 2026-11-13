@@ -85,18 +85,21 @@ spilling to start earlier, leaving more headroom for those peaks.
 
 ## Pinned memory and transfer speed
 
-By default, host memory used for spilling is *pageable*. The operating system may
-swap it to disk, and GPU-to-host transfers must go through an extra copy. *Pinned*
-(page-locked) memory bypasses this: the GPU DMA engine can transfer directly to and
-from it, significantly increasing bandwidth.
+*Pageable* host memory may be swapped to disk by the operating system, and
+GPU-to-host transfers to it must go through an extra copy. *Pinned* (page-locked)
+memory bypasses this: the GPU DMA engine can transfer directly to and from it,
+significantly increasing bandwidth.
 
-The trade-off is that registering pinned memory with the driver has a substantial
-up-front cost. Pinned memory also reduces the amount of host memory available for
-other work on the system: pinned pages cannot be swapped out or migrated by the
-operating system. These costs are therefore only worthwhile if spilling is a clear
-bottleneck in your workflow, or if you are executing many queries in the same session.
-Consequently, if we want to spill to pinned memory we must explicitly opt in when
-constructing the GPU engine for queries.
+The streaming engines spill to pinned host memory by default on systems that support
+it (CUDA 12.6+ with async memory pool support), and fall back to pageable memory
+otherwise. The pinned memory pool starts empty and grows on demand, up to 80% of the
+host memory per GPU.
+
+Pinned memory reduces the amount of host memory available for other work on the
+system: pinned pages cannot be swapped out or migrated by the operating system. To
+spill to pageable memory instead, set `pinned_memory=False` in
+{class}`~cudf_polars.engine.options.StreamingOptions` or set
+`RAPIDSMPF_PINNED_MEMORY=false`.
 
 ## Configuration reference
 
@@ -105,9 +108,11 @@ constructing the GPU engine for queries.
 | `target_partition_size` (executor option or `CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE`) | 1.5 GB or 2.5% of smallest GPU | Target chunk size in bytes. Smaller values reduce peak memory at some cost to compute efficiency. |
 | `max_concurrent_io_tasks` (executor option or `CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS`) | auto | Number of concurrent IO producer tasks for each scan node. Larger values may improve high-latency IO throughput but increase memory pressure. |
 | `RAPIDSMPF_SPILL_DEVICE_LIMIT` | `80%` | GPU memory fraction at which spilling begins. Lower values give more headroom for peaks. |
-| `RAPIDSMPF_PINNED_MEMORY` | disabled | Set to `true` to enable pinned host memory for spill buffers. |
-| `RAPIDSMPF_PINNED_INITIAL_POOL_SIZE` | (none) | Size of the pinned memory pool to pre-allocate (e.g. `32GB`). |
+| `RAPIDSMPF_PINNED_MEMORY` | enabled if supported | Set to `false` to spill to pageable host memory instead of pinned host memory. |
+| `RAPIDSMPF_PINNED_INITIAL_POOL_SIZE` | `0` | Size of the pinned memory pool to pre-allocate (e.g. `32GB`). |
 
 For the full list of engine configuration options, including `target_partition_size`
 and `max_concurrent_io_tasks`, see {doc}`options`. For the full list of memory
-and spill configuration options see the [RapidsMPF configuration reference](https://docs.rapids.ai/api/rapidsmpf/stable/configuration/#general).
+and spill configuration options see the [RapidsMPF configuration reference][rapidsmpf-config].
+
+[rapidsmpf-config]: inv:rapidsmpf:std:label:#configuration:general

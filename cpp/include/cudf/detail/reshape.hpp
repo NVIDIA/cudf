@@ -22,14 +22,14 @@ namespace detail {
 std::unique_ptr<table> tile(table_view const& input,
                             size_type count,
                             cuda::stream_ref,
-                            rmm::device_async_resource_ref mr);
+                            cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::interleave_columns
  */
 std::unique_ptr<column> interleave_columns(table_view const& input,
                                            cuda::stream_ref,
-                                           rmm::device_async_resource_ref mr);
+                                           cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::table_to_array

@@ -96,7 +96,7 @@ std::unique_ptr<column> pad(strings_column_view const& input,
                             side_type side,
                             std::string_view fill_char,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
   CUDF_EXPECTS(!fill_char.empty(), "fill_char parameter must not be empty");
@@ -178,7 +178,7 @@ struct zfill_fn {
 std::unique_ptr<column> zfill(strings_column_view const& input,
                               size_type width,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   if (input.is_empty()) return make_empty_column(type_id::STRING);
 
@@ -196,7 +196,7 @@ std::unique_ptr<column> zfill(strings_column_view const& input,
 std::unique_ptr<column> zfill_by_widths(strings_column_view const& input,
                                         column_view const& widths,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   CUDF_EXPECTS(widths.size() == input.size(),
@@ -225,7 +225,7 @@ std::unique_ptr<column> pad(strings_column_view const& input,
                             side_type side,
                             std::string_view fill_char,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::pad(input, width, side, fill_char, stream, mr);
@@ -234,7 +234,7 @@ std::unique_ptr<column> pad(strings_column_view const& input,
 std::unique_ptr<column> zfill(strings_column_view const& input,
                               size_type width,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::zfill(input, width, stream, mr);
@@ -243,7 +243,7 @@ std::unique_ptr<column> zfill(strings_column_view const& input,
 std::unique_ptr<column> zfill_by_widths(strings_column_view const& input,
                                         column_view const& widths,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::zfill_by_widths(input, widths, stream, mr);

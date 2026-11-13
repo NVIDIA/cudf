@@ -15,6 +15,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/detail/codec.hpp>
@@ -23,9 +24,8 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/device_buffer.hpp>
 
 #include <cuda/iterator>
 
@@ -49,10 +49,9 @@ namespace {
 /**
  * @brief Create a list column with `num_rows` rows of `rows_per_row` values each.
  */
-template <typename T>
+template <cudf::concepts::integral_not_bool T>
 std::unique_ptr<cudf::column> make_wide_list_column(cudf::size_type num_rows,
                                                     cudf::size_type rows_per_row)
-  requires(cudf::is_integral_not_bool<T>())
 {
   // Compute in int64_t and validate before narrowing to cudf::size_type to avoid overflow
   auto const total_values = static_cast<int64_t>(num_rows) * static_cast<int64_t>(rows_per_row);
@@ -72,7 +71,7 @@ std::unique_ptr<cudf::column> make_wide_list_column(cudf::size_type num_rows,
       .release(),
     std::move(child),
     0,
-    rmm::device_buffer{});
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 // Only the `Nvcomp` instantiation requires device GZIP support (nvCOMP 5.3+). The host
@@ -244,7 +243,7 @@ TEST_F(ParquetWriterTest, BufferSource)
 
   // device buffer
   {
-    auto const d_input = cudf::detail::make_device_uvector(
+    auto const d_input = cudf::detail::make_device_buffer(
       cudf::host_span<uint8_t const>{reinterpret_cast<uint8_t const*>(out_buffer.data()),
                                      out_buffer.size()},
       cudf::get_default_stream(),
@@ -642,9 +641,13 @@ TEST_F(ParquetWriterTest, EmptyList)
                                     cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)),
                                     cudf::make_empty_column(cudf::data_type{cudf::type_id::INT64}),
                                     0,
-                                    {});
-  auto L0 = cudf::make_lists_column(
-    3, cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(), std::move(L1), 0, {});
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto L0 =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(),
+                            std::move(L1),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto filepath = temp_env->get_temp_filepath("EmptyList.parquet");
   cudf::io::write_parquet(cudf::io::parquet_writer_options_builder(cudf::io::sink_info(filepath),
@@ -665,11 +668,18 @@ TEST_F(ParquetWriterTest, DeepEmptyList)
                                     cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)),
                                     cudf::make_empty_column(cudf::data_type{cudf::type_id::INT64}),
                                     0,
-                                    {});
-  auto L1 = cudf::make_lists_column(
-    0, cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)), std::move(L2), 0, {});
-  auto L0 = cudf::make_lists_column(
-    3, cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(), std::move(L1), 0, {});
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto L1 = cudf::make_lists_column(0,
+                                    cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)),
+                                    std::move(L2),
+                                    0,
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto L0 =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(),
+                            std::move(L1),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto filepath = temp_env->get_temp_filepath("DeepEmptyList.parquet");
   cudf::io::write_parquet(cudf::io::parquet_writer_options_builder(cudf::io::sink_info(filepath),
@@ -687,15 +697,23 @@ TEST_F(ParquetWriterTest, EmptyListWithStruct)
                                     cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)),
                                     cudf::make_empty_column(cudf::data_type{cudf::type_id::INT64}),
                                     0,
-                                    {});
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto children = std::vector<std::unique_ptr<cudf::column>>{};
   children.push_back(std::move(L2));
-  auto S2 = cudf::make_structs_column(0, std::move(children), 0, {});
-  auto L1 = cudf::make_lists_column(
-    0, cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)), std::move(S2), 0, {});
-  auto L0 = cudf::make_lists_column(
-    3, cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(), std::move(L1), 0, {});
+  auto S2 = cudf::make_structs_column(
+    0, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto L1 = cudf::make_lists_column(0,
+                                    cudf::make_empty_column(cudf::data_type(cudf::type_id::INT32)),
+                                    std::move(S2),
+                                    0,
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto L0 =
+    cudf::make_lists_column(3,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0}.release(),
+                            std::move(L1),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto filepath = temp_env->get_temp_filepath("EmptyListWithStruct.parquet");
   cudf::io::write_parquet(cudf::io::parquet_writer_options_builder(cudf::io::sink_info(filepath),
@@ -1419,8 +1437,11 @@ TEST_F(ParquetWriterTest, DictionaryEntryLimitListTest)
       0, [vals_per_row](auto i) { return static_cast<cudf::size_type>(i * vals_per_row); });
     cudf::test::fixed_width_column_wrapper<cudf::size_type> offsets(offset_values,
                                                                     offset_values + num_rows + 1);
-    return cudf::make_lists_column(
-      num_rows, offsets.release(), leaves.release(), 0, rmm::device_buffer{});
+    return cudf::make_lists_column(num_rows,
+                                   offsets.release(),
+                                   leaves.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   };
 
   constexpr cudf::size_type max_dict_entries = max_dict_size / sizeof(int32_t);
@@ -1593,6 +1614,27 @@ TEST_F(ParquetWriterTest, DictionaryAlwaysTest)
   };
   EXPECT_TRUE(used_dict(0));
   EXPECT_TRUE(used_dict(1));
+}
+
+TEST_F(ParquetWriterTest, DISABLED_DictionaryMoreColumnsThanMaxGridY)
+{
+  // More columns than the CUDA grid y-dimension limit (65535)
+  constexpr cudf::size_type num_cols = 70'000;
+
+  auto const col      = cudf::test::strings_column_wrapper({"a", "b", "a", "c"});
+  auto const expected = table_view{std::vector<cudf::column_view>(num_cols, col)};
+
+  auto const filepath = temp_env->get_temp_filepath("DictionaryMoreColumnsThanMaxGridY.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto const result = cudf::io::read_parquet(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
 TEST_F(ParquetWriterTest, DictionaryPageSizeEst)
@@ -1813,6 +1855,41 @@ TEST_P(ParquetCompressionTest, SkipCompression)
             cudf::io::parquet::Compression::UNCOMPRESSED);
   EXPECT_NE(fmd.row_groups[0].columns[1].meta_data.codec,
             cudf::io::parquet::Compression::UNCOMPRESSED);
+}
+
+TEST_P(ParquetCompressionTest, V2AllNullPages)
+{
+  auto const compression_type = std::get<1>(GetParam());
+  SKIP_IF_NVCOMP_GZIP_UNSUPPORTED();
+
+  // One-row V2 pages, so that pages with no data to compress are followed by pages of the same
+  // column chunk and of the next one
+  column_wrapper<double> all_nulls_col({1., 2.}, cudf::test::iterators::all_nulls());
+  column_wrapper<double> first_null_col({1., 2.}, cudf::test::iterators::null_at(0));
+  // A repeated value, so that ALWAYS writes a dictionary page
+  column_wrapper<double> repeated_col({3., 3.});
+  table_view expected({all_nulls_col, first_null_col, repeated_col});
+
+  for (auto const dict_policy :
+       {cudf::io::dictionary_policy::NEVER, cudf::io::dictionary_policy::ALWAYS}) {
+    SCOPED_TRACE(dict_policy == cudf::io::dictionary_policy::NEVER ? "NEVER" : "ALWAYS");
+    std::vector<char> buffer;
+    cudf::io::parquet_writer_options out_opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .compression(compression_type)
+        .write_v2_headers(true)
+        .dictionary_policy(dict_policy)
+        .max_page_size_rows(1)
+        .max_page_fragment_size(1);
+    cudf::io::write_parquet(out_opts);
+
+    cudf::io::parquet_reader_options in_opts = cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}});
+    auto result = cudf::io::read_parquet(in_opts);
+
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  }
 }
 
 INSTANTIATE_TEST_CASE_P(Nvcomp,
@@ -2203,15 +2280,27 @@ TEST_F(ParquetWriterTest, ListElementFieldIds)
   auto simple_values  = cudf::test::fixed_width_column_wrapper<int64_t>{1, 2, 3};
   auto simple_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3};
   auto simple_list =
-    cudf::make_lists_column(2, simple_offsets.release(), simple_values.release(), 0, {});
+    cudf::make_lists_column(2,
+                            simple_offsets.release(),
+                            simple_values.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto nested_values  = cudf::test::fixed_width_column_wrapper<int32_t>{10, 11, 12, 13};
   auto nested_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 4};
   auto inner_list =
-    cudf::make_lists_column(3, nested_offsets.release(), nested_values.release(), 0, {});
+    cudf::make_lists_column(3,
+                            nested_offsets.release(),
+                            nested_values.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto outer_offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3};
   auto nested_list =
-    cudf::make_lists_column(2, outer_offsets.release(), std::move(inner_list), 0, {});
+    cudf::make_lists_column(2,
+                            outer_offsets.release(),
+                            std::move(inner_list),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const expected = cudf::table_view{{*simple_list, *nested_list}};
 
@@ -2361,22 +2450,35 @@ make_byte_stream_split_table(bool as_struct)
   auto col1_data = random_values<int64_t>(num_rows);
   auto col2_data = random_values<float>(num_rows);
   auto col3_data = random_values<double>(num_rows);
+  auto col4_data = random_values<int8_t>(num_rows);
+  auto col5_data = random_values<int16_t>(num_rows);
+  auto col6_data = random_values<uint8_t>(num_rows);
+  auto col7_data = random_values<uint16_t>(num_rows);
 
   column_wrapper<int32_t> col0{col0_data.begin(), col0_data.end(), no_nulls()};
   column_wrapper<int64_t> col1{col1_data.begin(), col1_data.end(), no_nulls()};
   column_wrapper<float> col2{col2_data.begin(), col2_data.end(), no_nulls()};
   column_wrapper<double> col3{col3_data.begin(), col3_data.end(), no_nulls()};
+  // 8- and 16-bit integers are stored as INT32
+  column_wrapper<int8_t> col4{col4_data.begin(), col4_data.end(), no_nulls()};
+  column_wrapper<int16_t> col5{col5_data.begin(), col5_data.end(), no_nulls()};
+  column_wrapper<uint8_t> col6{col6_data.begin(), col6_data.end(), no_nulls()};
+  column_wrapper<uint16_t> col7{col7_data.begin(), col7_data.end(), no_nulls()};
 
   // throw in a list to make sure both decoders are working
-  auto col4 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
+  auto col8 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
 
   std::vector<std::unique_ptr<cudf::column>> columns;
-  columns.reserve(5);
+  columns.reserve(9);
   columns.push_back(col0.release());
   columns.push_back(col1.release());
   columns.push_back(col2.release());
   columns.push_back(col3.release());
-  columns.push_back(std::move(col4));
+  columns.push_back(col4.release());
+  columns.push_back(col5.release());
+  columns.push_back(col6.release());
+  columns.push_back(col7.release());
+  columns.push_back(std::move(col8));
 
   return [&]() -> std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata> {
     auto const encoding = cudf::io::column_encoding::BYTE_STREAM_SPLIT;
@@ -2401,11 +2503,15 @@ make_byte_stream_split_table(bool as_struct)
       expected_metadata.column_metadata[0].child(1).set_name("int64s");
       expected_metadata.column_metadata[0].child(2).set_name("floats");
       expected_metadata.column_metadata[0].child(3).set_name("doubles");
-      expected_metadata.column_metadata[0].child(4).set_name("int32list");
-      for (int idx = 0; idx <= 3; idx++) {
+      expected_metadata.column_metadata[0].child(4).set_name("int8s");
+      expected_metadata.column_metadata[0].child(5).set_name("int16s");
+      expected_metadata.column_metadata[0].child(6).set_name("uint8s");
+      expected_metadata.column_metadata[0].child(7).set_name("uint16s");
+      expected_metadata.column_metadata[0].child(8).set_name("int32list");
+      for (int idx = 0; idx <= 7; idx++) {
         expected_metadata.column_metadata[0].child(idx).set_encoding(encoding);
       }
-      expected_metadata.column_metadata[0].child(4).child(1).set_encoding(encoding);
+      expected_metadata.column_metadata[0].child(8).child(1).set_encoding(encoding);
 
       return {std::move(tbl), expected_metadata};
     }
@@ -2419,12 +2525,16 @@ make_byte_stream_split_table(bool as_struct)
     expected_metadata.column_metadata[1].set_name("int64s");
     expected_metadata.column_metadata[2].set_name("floats");
     expected_metadata.column_metadata[3].set_name("doubles");
-    expected_metadata.column_metadata[4].set_name("int32list");
-    for (int idx = 0; idx <= 3; idx++) {
+    expected_metadata.column_metadata[4].set_name("int8s");
+    expected_metadata.column_metadata[5].set_name("int16s");
+    expected_metadata.column_metadata[6].set_name("uint8s");
+    expected_metadata.column_metadata[7].set_name("uint16s");
+    expected_metadata.column_metadata[8].set_name("int32list");
+    for (int idx = 0; idx <= 7; idx++) {
       expected_metadata.column_metadata[idx].set_encoding(encoding);
     }
 
-    expected_metadata.column_metadata[4].child(1).set_encoding(encoding);
+    expected_metadata.column_metadata[8].child(1).set_encoding(encoding);
     return {std::move(tbl), expected_metadata};
   }();
 }
@@ -2533,7 +2643,11 @@ TEST_F(ParquetWriterTest, WriteFixedLenByteArray)
 
   auto data_child = cudf::test::fixed_width_column_wrapper<uint8_t>(data.begin(), data.end());
   auto off_child  = cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
-  auto col = cudf::make_lists_column(num_rows, off_child.release(), data_child.release(), 0, {});
+  auto col        = cudf::make_lists_column(num_rows,
+                                     off_child.release(),
+                                     data_child.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto expected = table_view{{*col, *col, *col, *col}};
   cudf::io::table_input_metadata expected_metadata(expected);
@@ -2816,136 +2930,69 @@ TYPED_TEST(ParquetWriterTimestampTypeTest, TimestampsByteStreamSplit)
 // Base test fixture for "stress" tests
 struct ParquetWriterStressTest : public cudf::test::BaseFixture {};
 
-TEST_F(ParquetWriterStressTest, LargeTableWeakCompression)
+// Keep row groups aligned with the default 5,000-row page-fragment size.
+constexpr cudf::size_type stress_rows_per_row_group = 65'000;
+constexpr cudf::size_type stress_num_row_groups     = 4;
+constexpr cudf::size_type stress_num_rows = stress_rows_per_row_group * stress_num_row_groups;
+
+template <bool supports_device_writes>
+void write_stress_table(std::unique_ptr<cudf::table> const& expected)
 {
   std::vector<char> mm_buf;
   mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<false> custom_sink(&mm_buf);
+  custom_test_memmap_sink<supports_device_writes> custom_sink(&mm_buf);
 
-  // exercises multiple rowgroups
-  srand(31337);
-  auto expected = create_random_fixed_table<int>(16, 4 * 1024 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
+  // Exercise multiple row groups without depending on the default row-group size.
   cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected)
+      .row_group_size_rows(stress_rows_per_row_group);
   cudf::io::write_parquet(args);
 
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
+  auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}};
+  EXPECT_EQ(cudf::io::read_parquet_metadata(source).num_rowgroups(), stress_num_row_groups);
+
+  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(source);
+  auto custom_tbl                              = cudf::io::read_parquet(custom_args);
   CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+}
+
+TEST_F(ParquetWriterStressTest, LargeTableWeakCompression)
+{
+  srand(31337);
+  write_stress_table<false>(create_random_fixed_table<int>(16, stress_num_rows, false));
 }
 
 TEST_F(ParquetWriterStressTest, LargeTableGoodCompression)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<false> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 128 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<false>(
+    create_compressible_fixed_table<int>(16, stress_num_rows, 128 * 1024, false));
 }
 
 TEST_F(ParquetWriterStressTest, LargeTableWithValids)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<false> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 6, true);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<false>(create_compressible_fixed_table<int>(16, stress_num_rows, 6, true));
 }
 
 TEST_F(ParquetWriterStressTest, DeviceWriteLargeTableWeakCompression)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<true> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_random_fixed_table<int>(16, 4 * 1024 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<true>(create_random_fixed_table<int>(16, stress_num_rows, false));
 }
 
 TEST_F(ParquetWriterStressTest, DeviceWriteLargeTableGoodCompression)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<true> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 128 * 1024, false);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<true>(
+    create_compressible_fixed_table<int>(16, stress_num_rows, 128 * 1024, false));
 }
 
 TEST_F(ParquetWriterStressTest, DeviceWriteLargeTableWithValids)
 {
-  std::vector<char> mm_buf;
-  mm_buf.reserve(4 * 1024 * 1024 * 16);
-  custom_test_memmap_sink<true> custom_sink(&mm_buf);
-
-  // exercises multiple rowgroups
   srand(31337);
-  auto expected = create_compressible_fixed_table<int>(16, 4 * 1024 * 1024, 6, true);
-
-  // write out using the custom sink (which uses device writes)
-  cudf::io::parquet_writer_options args =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&custom_sink}, *expected);
-  cudf::io::write_parquet(args);
-
-  cudf::io::parquet_reader_options custom_args = cudf::io::parquet_reader_options::builder(
-    cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(mm_buf.data()), mm_buf.size()}});
-  auto custom_tbl = cudf::io::read_parquet(custom_args);
-  CUDF_TEST_EXPECT_TABLES_EQUAL(custom_tbl.tbl->view(), expected->view());
+  write_stress_table<true>(create_compressible_fixed_table<int>(16, stress_num_rows, 6, true));
 }
 
 TEST_F(ParquetWriterTest, ReturnedFooterMetadata)

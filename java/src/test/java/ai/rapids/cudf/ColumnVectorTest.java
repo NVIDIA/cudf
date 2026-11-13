@@ -205,6 +205,25 @@ public class ColumnVectorTest extends CudfTestBase {
   }
 
   @Test
+  void testTransformVectorDecimal64Output() {
+    String udf = "__device__ inline void f(" +
+        "numeric::decimal64* output," +
+        "int input" +
+        "){" +
+        "*output = numeric::decimal64{numeric::scaled_integer<int64_t>{" +
+        "static_cast<int64_t>(input) * 100, numeric::scale_type{-2}}};" +
+        "}";
+    DType decimalType = DType.create(DType.DTypeEnum.DECIMAL64, -2);
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, null, -3);
+         ColumnVector result = cv.transform(udf, false, decimalType);
+         ColumnVector expected = ColumnVector.decimalFromBoxedLongs(-2, 200L, null, -300L)) {
+      assertEquals(decimalType, result.getType());
+      assertEquals(-2, result.getType().getScale());
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
   void testTransformVectorRejectsNonFixedWidthOutput() {
     try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3)) {
       IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->

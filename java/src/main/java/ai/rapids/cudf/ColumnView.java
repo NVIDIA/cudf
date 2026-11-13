@@ -1129,11 +1129,15 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Transform a vector using a custom function, producing a column of the given type.  Be careful
    * this is not simple to do.  You need to be positive you know what type of data you are
-   * processing and how the data is laid out.  This also only works on fixed length types.
+   * processing and how the data is laid out.  Only fixed-width output types are supported.
+   * The type is not checked against the UDF; with PTX, the store must be exactly the width of
+   * outputType.  For DECIMAL outputs the CUDA output parameter is a
+   * {@code numeric::decimal32/64/128} pointer; only its unscaled value is stored, so the UDF must
+   * produce it at outputType's scale.
    * @param udf This function will be applied to every element in the vector
    * @param isPtx is the code of the function ptx? true or C/C++ false.
    * @param outputType the type of the output column. The type of the UDF's output parameter
-   *                   must match it. Only fixed-width types are supported.
+   *                   must match it.
    * @throws IllegalArgumentException if outputType is not a fixed-width type
    */
   public final ColumnVector transform(String udf, boolean isPtx, DType outputType) {

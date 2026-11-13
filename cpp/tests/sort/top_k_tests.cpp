@@ -794,10 +794,11 @@ TEST_F(TopK, NullsTiesAtKth)
   // Which tied rows are returned is unspecified, but the returned keys are not
   auto const input = cudf::test::fixed_width_column_wrapper<int32_t>({5, 1, 5, 5, 9, 5, 0, 5},
                                                                      {1, 1, 1, 1, 1, 1, 0, 1});
-  auto expected    = cudf::test::fixed_width_column_wrapper<int32_t>({1, 5, 5});
+  // The result is gathered from a nullable input, so it is nullable (with no nulls selected)
+  auto expected = cudf::test::fixed_width_column_wrapper<int32_t>({1, 5, 5}, {1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
                                  sorted(cudf::top_k(input, 3, cudf::order::ASCENDING))->view());
-  expected = cudf::test::fixed_width_column_wrapper<int32_t>({5, 5, 9});
+  expected = cudf::test::fixed_width_column_wrapper<int32_t>({5, 5, 9}, {1, 1, 1});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, sorted(cudf::top_k(input, 3))->view());
 }
 

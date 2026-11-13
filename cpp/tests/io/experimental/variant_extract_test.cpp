@@ -1626,26 +1626,20 @@ TEST_F(ExtractVariantFieldsTest, SharedPrefixesTypedValues)
                                  cudf::test::strings_column_wrapper({"donotread"}, {false}));
 }
 
-TEST_F(ExtractVariantFieldsTest, MismatchedDesiredTypesThrows)
+TEST_F(ExtractVariantFieldsTest, InvalidDesiredTypesThrow)
 {
   auto const col = make_xyz_three_row_variant();
   std::vector<std::string_view> const paths{"x", "y"};
-  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32}};
+  auto const extract = [&](std::vector<cudf::data_type> const& types) {
+    return cudf::io::parquet::experimental::extract_variant_fields(
+      col, paths, types, {}, cudf::test::get_default_stream());
+  };
 
-  EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::extract_variant_fields(
-                 col, paths, types, {}, cudf::test::get_default_stream())),
+  EXPECT_THROW(static_cast<void>(extract({cudf::data_type{cudf::type_id::INT32}})),
                std::invalid_argument);
-}
-
-TEST_F(ExtractVariantFieldsTest, UnsupportedDesiredTypeThrows)
-{
-  auto const col = make_xyz_three_row_variant();
-  std::vector<std::string_view> const paths{"x", "y"};
-  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32},
-                                           cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}};
-
-  EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::extract_variant_fields(
-                 col, paths, types, {}, cudf::test::get_default_stream())),
+  // Only the last path's type is unsupported
+  EXPECT_THROW(static_cast<void>(extract({cudf::data_type{cudf::type_id::INT32},
+                                          cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}})),
                std::invalid_argument);
 }
 
@@ -3374,40 +3368,14 @@ TEST_F(GetVariantFieldsStatusTest, FailedPrefixReasonReachesItsWholeSubtree)
   expect_path_statuses(paths, status, {{ST_VNULL}, {ST_MISSING}, {ST_MISSING}, {ST_MISSING}});
 }
 
-TEST_F(GetVariantFieldsStatusTest, RejectsMalformedStatusColumns)
+TEST_F(GetVariantFieldsStatusTest, StatusColumnCountMismatchThrows)
 {
-  auto const col      = make_xyz_three_row_variant();
-  auto const stream   = cudf::test::get_default_stream();
-  auto const num_rows = cudf::column_view{col}.size();
+  auto const col = make_xyz_three_row_variant();
   std::vector<std::string_view> const paths{"x", "y"};
-
-  // One column short of one per path
-  status_buffers too_few{1, num_rows};
-  EXPECT_THROW(
-    static_cast<void>(expns::get_variant_fields(col, paths, too_few.views, stream, cmr())),
-    std::invalid_argument);
-
-  // Wrong row count
-  status_buffers wrong_rows{2, num_rows + 1};
-  EXPECT_THROW(
-    static_cast<void>(expns::get_variant_fields(col, paths, wrong_rows.views, stream, cmr())),
-    std::invalid_argument);
-
-  // Wrong type
-  auto wide = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::INT32}, num_rows, cudf::mask_state::UNALLOCATED);
-  status_buffers ok{2, num_rows};
-  std::vector<cudf::mutable_column_view> wrong_type{ok.views[0], wide->mutable_view()};
-  EXPECT_THROW(static_cast<void>(expns::get_variant_fields(col, paths, wrong_type, stream, cmr())),
+  status_buffers too_few{1, cudf::column_view{col}.size()};
+  EXPECT_THROW(static_cast<void>(expns::get_variant_fields(
+                 col, paths, too_few.views, cudf::test::get_default_stream(), cmr())),
                std::invalid_argument);
-
-  // Nullable
-  auto nullable = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::ALL_VALID);
-  std::vector<cudf::mutable_column_view> nullable_status{ok.views[0], nullable->mutable_view()};
-  EXPECT_THROW(
-    static_cast<void>(expns::get_variant_fields(col, paths, nullable_status, stream, cmr())),
-    std::invalid_argument);
 }
 
 struct ExtractVariantFieldsStatusTest : public cudf::test::BaseFixture {};

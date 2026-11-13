@@ -516,6 +516,39 @@ TEST_F(ParquetChunkedReaderTest, TestChunkedReadWithString)
   }
 }
 
+TEST_F(ParquetChunkedReaderTest, TestChunkedReadDeltaByteArrayMidPage)
+{
+  auto constexpr num_rows = 100'000;
+
+  // Short strings sharing a prefix, so that a DELTA_BYTE_ARRAY page holds thousands of rows
+  auto const dba_values = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+                            return "shared_prefix_" + std::to_string(i);
+                          });
+  // Wide strings, so that a page holds a few hundred rows. Output chunks end at the page
+  // boundaries of any column, so most of them start in the middle of a DELTA_BYTE_ARRAY page.
+  auto const wide_values =
+    std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+      return std::string(100, static_cast<char>('a' + i % 26)) + std::to_string(i);
+    });
+  auto const dba_strings  = strings_col(dba_values.begin(), dba_values.begin() + num_rows);
+  auto const wide_strings = strings_col(wide_values.begin(), wide_values.begin() + num_rows);
+  auto const expected     = cudf::table_view{{dba_strings, wide_strings}};
+
+  auto input_metadata = cudf::io::table_input_metadata{expected};
+  input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+  auto const filepath = temp_env->get_temp_filepath("chunked_read_dba_mid_page.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(input_metadata)
+      .max_page_size_bytes(32 * 1024)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .build());
+
+  auto const [result, num_chunks] = chunked_read(filepath, 200'000);
+  EXPECT_GT(num_chunks, 1);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
+}
+
 // Regression test for an out-of-bounds write in the Parquet string-offset preprocessing
 // (preprocess_string_offsets_kernel / compute_page_offset_count). For plain-encoded (non-
 // dictionary) list<string> columns, a single list row can span multiple data pages, producing

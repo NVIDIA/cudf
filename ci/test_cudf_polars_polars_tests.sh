@@ -45,6 +45,8 @@ rapids-logger "Install polars test requirements"
 sed -i '/^polars-cloud$/d' polars/py-polars/requirements-dev.txt
 # Pin pyarrow to avoid FutureWarning https://github.com/pola-rs/polars/pull/28323.
 sed -i 's/^pyarrow$/pyarrow<25/' polars/py-polars/requirements-dev.txt
+# torch-tests are currently excluded from the cudf-polars test selection.
+sed -i '/^torch$/d' polars/py-polars/requirements-ci.txt
 
 # notes:
 #

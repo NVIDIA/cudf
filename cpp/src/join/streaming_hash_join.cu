@@ -199,13 +199,15 @@ cuda::std::uint32_t bucket_count(size_type rows, double load_factor)
   auto const slots =
     std::max(static_cast<long double>(rows) + 1,
              std::ceil(static_cast<long double>(rows) / checked_load_factor(load_factor)));
-  // Double hashing over a prime number of buckets visits every bucket.
-  auto buckets =
-    std::max(std::uint64_t{2}, static_cast<std::uint64_t>(std::ceil(slots / bucket_size)));
+  auto const max_buckets = std::numeric_limits<cuda::std::uint32_t>::max() / bucket_size;
+  // Double hashing over a prime number of buckets visits every bucket. Clamp before converting so
+  // that a count beyond the integer range still fails the capacity check.
+  auto buckets = static_cast<std::uint64_t>(
+    std::clamp(std::ceil(slots / bucket_size), 2.0L, max_buckets + 1.0L));
   while (!is_prime(buckets)) {
     ++buckets;
   }
-  CUDF_EXPECTS(buckets <= std::numeric_limits<cuda::std::uint32_t>::max() / bucket_size,
+  CUDF_EXPECTS(buckets <= max_buckets,
                "streaming_hash_join slot table capacity is not representable",
                std::overflow_error);
   return static_cast<cuda::std::uint32_t>(buckets);

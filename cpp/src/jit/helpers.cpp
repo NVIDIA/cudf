@@ -11,6 +11,7 @@
 #include <cuda/iterator>
 
 #include <jit/cache.hpp>
+#include <jit/parser.hpp>
 #include <rtcx/rtcx.hpp>
 
 #include <algorithm>
@@ -88,6 +89,41 @@ kernel get_udf_kernel(std::string const& source_file,
       {.data = fragment.data, .type = as_rtcx_binary_type(fragment.type), .name = nullptr});
   }
   return get_lto_linked_kernel(source_file, {}, fragments);
+}
+
+kernel get_lto_udf_kernel(std::string const& source_file,
+                          std::span<uint8_t const> kernel_fragment,
+                          lto_binary_type kernel_fragment_type,
+                          std::string const& kernel_fragment_id,
+                          std::span<uint8_t const> udf,
+                          lto_binary_type udf_type,
+                          cudf::lto_fragments link_fragments)
+{
+  // nvJitLink consumes PTX as a NUL-terminated string.
+  std::string ptx;
+  if (udf_type == lto_binary_type::PTX) {
+    ptx = parse_single_function_ptx(reinterpret_cast<char const*>(udf.data()));
+    udf = {reinterpret_cast<uint8_t const*>(ptx.c_str()), ptx.size() + 1};
+  }
+
+  std::vector<rtcx::memory_fragment> memory_fragments = {
+    {
+      .data = kernel_fragment,
+      .type = as_rtcx_binary_type(kernel_fragment_type),
+      .name = kernel_fragment_id.c_str(),
+    },
+    {
+      .data = udf,
+      .type = as_rtcx_binary_type(udf_type),
+      .name = nullptr  // nullptr = unnamed fragment: the binary will be used to hash the UDF
+    }};
+
+  for (auto const& fragment : link_fragments) {
+    memory_fragments.push_back(
+      {.data = fragment.data, .type = as_rtcx_binary_type(fragment.type), .name = nullptr});
+  }
+
+  return get_lto_linked_kernel(source_file, {}, memory_fragments);
 }
 
 std::string define_operation(std::string const& cuda_source,

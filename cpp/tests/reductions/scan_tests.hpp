@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -43,23 +44,20 @@ struct TypeParam_to_host_type<numeric::decimal128> {
   using type = numeric::decimal128::rep;
 };
 
-template <typename TypeParam, typename T>
+template <cudf::concepts::string_view TypeParam, typename T>
 thrust::host_vector<std::string> make_vector(std::initializer_list<T> const& init)
-  requires(std::is_same_v<TypeParam, cudf::string_view>)
 {
   return cudf::test::make_type_param_vector<std::string, T>(init);
 }
 
-template <typename TypeParam, typename T>
+template <cudf::concepts::fixed_point TypeParam, typename T>
 thrust::host_vector<typename TypeParam::rep> make_vector(std::initializer_list<T> const& init)
-  requires(cudf::is_fixed_point<TypeParam>())
 {
   return cudf::test::make_type_param_vector<typename TypeParam::rep, T>(init);
 }
 
 template <typename TypeParam, typename T>
 thrust::host_vector<TypeParam> make_vector(std::initializer_list<T> const& init)
-  requires(not(std::is_same_v<TypeParam, cudf::string_view> || cudf::is_fixed_point<TypeParam>()))
 {
   return cudf::test::make_type_param_vector<TypeParam, T>(init);
 }

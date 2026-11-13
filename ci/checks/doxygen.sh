@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 ###############################
 # cuDF doxygen warnings check #
@@ -14,11 +14,11 @@ fi
 # Utility to return version as number for comparison
 function version { echo "$@" | awk -F. '{ printf("%d%03d%03d%03d\n", $1,$2,$3,$4); }'; }
 
-# doxygen supported version 1.9.1
+# doxygen supported version 1.18.0
 DOXYGEN_VERSION=$(doxygen --version)
-if [ ! "$(version "$DOXYGEN_VERSION")" -eq "$(version "1.9.1")" ] ; then
+if [ ! "$(version "$DOXYGEN_VERSION")" -eq "$(version "1.18.0")" ] ; then
   echo -e "warning: Unsupported doxygen version $DOXYGEN_VERSION"
-  echo -e "Expecting doxygen version 1.9.1"
+  echo -e "Expecting doxygen version 1.18.0"
   exit 0
 fi
 

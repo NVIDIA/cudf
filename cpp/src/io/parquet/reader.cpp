@@ -13,7 +13,7 @@ reader::reader(std::vector<std::unique_ptr<datasource>>&& sources,
                std::vector<FileMetaData>&& parquet_metadatas,
                parquet_reader_options const& options,
                cuda::stream_ref stream,
-               rmm::device_async_resource_ref mr)
+               cudf::memory_resources mr)
   : _impl(std::make_unique<reader_impl>(
       std::move(sources), std::move(parquet_metadatas), options, stream, mr))
 {
@@ -29,7 +29,7 @@ chunked_reader::chunked_reader(std::size_t chunk_read_limit,
                                std::vector<FileMetaData>&& parquet_metadatas,
                                parquet_reader_options const& options,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   _impl = std::make_unique<reader_impl>(chunk_read_limit,
                                         pass_read_limit,

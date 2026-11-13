@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Benchmarks of Series methods."""
@@ -38,3 +38,20 @@ def bench_to_cupy(benchmark, series):
 @benchmark_with_object(cls="series", dtype="int", nulls=False)
 def bench_series_values(benchmark, series):
     benchmark(lambda: series.values)
+
+
+@pytest.mark.parametrize("N", NUM_ROWS)
+@pytest.mark.parametrize(
+    "start, stop",
+    [
+        pytest.param(1, 3, id="positive-bounds"),
+        pytest.param(-3, None, id="negative-start"),
+        pytest.param(-4, -1, id="negative-bounds"),
+        pytest.param(4, 1, id="reversed-bounds"),
+    ],
+)
+@pytest.mark.parametrize("repl", ["", "!!"])
+def bench_string_slice_replace(benchmark, N, start, stop, repl):
+    values = ["abcdefghij", "accénted", "a", "", None]
+    series = cudf.Series((values * ((N + 4) // 5))[:N])
+    benchmark(series.str.slice_replace, start, stop, repl)

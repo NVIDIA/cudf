@@ -89,6 +89,21 @@ def test_replace_invalid_scalar_repl():
         ser.str.replace("1", 2)
 
 
+@pytest.mark.parametrize("flags", [re.IGNORECASE, re.MULTILINE, re.DOTALL])
+@pytest.mark.parametrize("pattern_flags", [0, re.IGNORECASE])
+def test_contains_compiled_pattern_with_flags(flags, pattern_flags):
+    ps = pd.Series(["foo", "bar", "Baz"])
+    gs = cudf.from_pandas(ps)
+    pattern = re.compile("ba.", pattern_flags)
+
+    assert_exceptions_equal(
+        lfunc=gs.str.contains,
+        rfunc=ps.str.contains,
+        lfunc_args_and_kwargs=((pattern,), {"flags": flags}),
+        rfunc_args_and_kwargs=((pattern,), {"flags": flags}),
+    )
+
+
 def test_string_methods_setattr():
     ser = cudf.Series(["ab", "cd", "ef"])
     pser = ser.to_pandas()
@@ -2515,6 +2530,23 @@ def test_string_join(ps_gs, sep):
     assert_eq(expect, got)
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        ["ab", "", None, "c"],
+        ["", ""],
+        ["", None],
+        ["x", None, "", "yz", None],
+    ],
+)
+def test_string_join_empty_strings(data):
+    gs = cudf.Series(data)
+    ps = gs.to_pandas()
+
+    assert_eq(ps.str.join("-"), gs.str.join("-"))
+    assert_eq(ps[1:].str.join("-"), gs[1:].str.join("-"))
+
+
 @pytest.mark.parametrize("pat", [r"(a)", r"(f)", r"([a-z])", r"([A-Z])"])
 @pytest.mark.parametrize("expand", [True, False])
 @pytest.mark.parametrize(
@@ -2613,21 +2645,27 @@ def _assert_string_index_cat(
 
 
 @pytest.mark.parametrize(
-    "data, sep, na_rep, name",
+    "data, others, sep, na_rep, name",
     [
-        pytest.param(["1", "2", "3", "4", "5"], None, None, None),
-        pytest.param(["a", "b", "c", "d", "e"], "", None, "index name"),
-        pytest.param(["a", "b", "c", "d", "e"], " ", None, None),
-        pytest.param(["a", "b", "c", "d", "e"], ",", None, None),
-        pytest.param(["a", "b", "c", "d", "e"], "|", None, None),
-        pytest.param(["a", "b", "c", "d", "e"], "|||", None, None),
-        pytest.param(["a", None, "c", None, "e"], "|", "", None),
-        pytest.param(["a", None, "c", None, "e"], "|", "null", None),
-        pytest.param(["a", None, "c", None, "e"], "|", "a", None),
+        (["1", "2", "3", "4", "5"], None, None, None, None),
+        (
+            ["a", "b", "c", "d", "e"],
+            ["f", "g", "h", "i", "j"],
+            "",
+            None,
+            "index name",
+        ),
+        (["a", "b", "c", "d", "e"], None, " ", None, None),
+        (["a", "b", "c", "d", "e"], None, ",", None, None),
+        (["a", "b", "c", "d", "e"], None, "|", None, None),
+        (["a", "b", "c", "d", "e"], None, "|||", None, None),
+        (["a", None, "c", None, "e"], None, "|", "", None),
+        (["a", None, "c", None, "e"], None, "|", "null", None),
+        (["a", None, "c", None, "e"], None, "|", "a", None),
     ],
 )
-def test_string_index_str_cat_join(data, sep, na_rep, name):
-    _assert_string_index_cat(data, None, sep, na_rep, name)
+def test_string_index_str_cat_join(data, others, sep, na_rep, name):
+    _assert_string_index_cat(data, others, sep, na_rep, name)
 
 
 def _assert_string_cat(data, others, sep, na_rep, index=None):
@@ -2650,14 +2688,21 @@ def _assert_string_cat(data, others, sep, na_rep, index=None):
 @pytest.mark.parametrize(
     "data, sep, na_rep",
     [
-        pytest.param(["AbC", "de", "FGHI", "j", "kLm"], None, None),
-        pytest.param(["AbC", "de", "FGHI", "j", "kLm"], "", None),
-        pytest.param(["AbC", "de", "FGHI", "j", "kLm"], "|", None),
-        pytest.param(["AbC", "de", "FGHI", "j", "kLm"], "|||", None),
-        pytest.param(["nOPq", None, "RsT", None, "uVw"], "|", None),
-        pytest.param(["nOPq", None, "RsT", None, "uVw"], "|", ""),
-        pytest.param(["nOPq", None, "RsT", None, "uVw"], "|", "null"),
-        pytest.param([None, None, None, None, None], "|", "null"),
+        (["AbC", "de", "FGHI", "j", "kLm"], None, None),
+        (["AbC", "de", "FGHI", "j", "kLm"], "", None),
+        (["AbC", "de", "FGHI", "j", "kLm"], "|", None),
+        (["AbC", "de", "FGHI", "j", "kLm"], "|||", None),
+        (["nOPq", None, "RsT", None, "uVw"], "|", None),
+        (["nOPq", None, "RsT", None, "uVw"], "|", ""),
+        (["nOPq", None, "RsT", None, "uVw"], "|", "null"),
+        ([None, None, None, None, None], "|", "null"),
+        (["x", None], "|", None),
+        (["x", None], "<>", None),
+        (["x", None], "|", "-"),
+        (["x", "y", None], "|", None),
+        (["x", None, None], "|", None),
+        ([None, None, "z"], "|", None),
+        ([None, "x", None, "z", None], "|", None),
     ],
 )
 def test_string_cat_join(data, sep, na_rep):

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -79,13 +79,13 @@ __device__ auto div(A a, B b) -> decltype(a / b)
  * @param a Dividend.
  * @param b Divisor.
  */
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ auto floor_div(A a, B b) -> decltype(cudf::detail::integral_floor_div(a, b))
 {
   return cudf::detail::integral_floor_div(a, b);
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ auto floor_div(A a, B b) -> decltype(cuda::std::floor(a / b))
 {
   return cuda::std::floor(a / b);
@@ -105,7 +105,7 @@ __device__ auto mod(A a, B b) -> decltype(a % b)
   return a % b;
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ auto mod(A a, B b) -> decltype(cuda::std::fmod(a, b))
 {
   return cuda::std::fmod(a, b);
@@ -125,7 +125,7 @@ __device__ auto pymod(A a, B b) -> decltype((a % b + b) % b)
   return (a % b + b) % b;
 }
 
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ auto pymod(A a, B b) -> decltype(cuda::std::fmod(cuda::std::fmod(a, b) + b, b))
 {
   return cuda::std::fmod(cuda::std::fmod(a, b) + b, b);

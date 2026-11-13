@@ -8,7 +8,8 @@
 #include <cudf/detail/join/join.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/join/join.hpp>
 #include <cudf/reduction/bloom_filter.cuh>
 #include <cudf/table/table_view.hpp>
@@ -189,11 +190,13 @@ class mark_join {
             cuda::stream_ref stream,
             cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
-    cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(cudf::table_view const& right,
+                                                                  cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr);
 
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
-    cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(cudf::table_view const& right,
+                                                                  cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr);
 
  private:
   using primitive_row_hasher =
@@ -216,7 +219,7 @@ class mark_join {
     cudf::table_view const& right,
     join_kind kind,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   template <typename Comparator>
   cudf::size_type mark_probe_without_prefilter(storage_ref_type storage_ref,
@@ -224,7 +227,8 @@ class mark_join {
                                                right_key_type const* right_rows,
                                                cudf::size_type num_right_rows,
                                                bitmask_type const* right_row_bitmask,
-                                               cuda::stream_ref stream);
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr);
 
   template <typename Comparator>
   cudf::size_type mark_probe_with_prefilter(storage_ref_type storage_ref,
@@ -233,7 +237,7 @@ class mark_join {
                                             cudf::size_type num_right_rows,
                                             bitmask_type const* right_row_bitmask,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cudf::memory_resources mr);
 
   template <typename Comparator>
   std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_probe_and_retrieve(
@@ -242,7 +246,7 @@ class mark_join {
     join_kind kind,
     Comparator comparator,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+    cudf::memory_resources mr);
 
   void clear_marks(cuda::stream_ref stream);
 };

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,7 +31,7 @@ TEST_F(StringsFilterTest, Translate)
 
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> translate_table{
     make_entry("b", nullptr), make_entry("a", "A"), make_entry(" ", "_")};
-  cudf::strings::translate(view, translate_table, cudf::test::get_default_stream());
+  cudf::strings::translate(view, std::span{translate_table}, cudf::test::get_default_stream());
 }
 
 TEST_F(StringsFilterTest, Filter)
@@ -63,4 +63,13 @@ TEST_F(StringsFilterTest, FilterTypes)
   auto const space_types = cudf::strings::string_character_types::SPACE;
   cudf::strings::filter_characters_of_type(
     view, all_types, repl, space_types, cudf::test::get_default_stream());
+}
+
+TEST_F(StringsFilterTest, CharacterTables)
+{
+  // The character flags/cases/special-case tables are lazily copied to the
+  // device on first use using the supplied stream.
+  cudf::strings::get_character_flags_table(cudf::test::get_default_stream());
+  cudf::strings::get_character_cases_table(cudf::test::get_default_stream());
+  cudf::strings::get_special_case_mapping_table(cudf::test::get_default_stream());
 }

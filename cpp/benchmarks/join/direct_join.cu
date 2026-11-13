@@ -5,15 +5,17 @@
 
 #include "join_common.hpp"
 
+#include <benchmarks/common/memory_stats.hpp>
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/join/direct_join.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
 
+#include <cuda/std/random>
 #include <thrust/execution_policy.h>
 #include <thrust/functional.h>
-#include <thrust/random.h>
 #include <thrust/sequence.h>
 #include <thrust/shuffle.h>
 #include <thrust/tabulate.h>
@@ -43,7 +45,7 @@ void nvbench_direct_inner_join(nvbench::state& state)
   thrust::shuffle(thrust::device,
                   right->mutable_view().begin<std::uint32_t>(),
                   right->mutable_view().end<std::uint32_t>(),
-                  thrust::default_random_engine{12345});
+                  cuda::std::philox4x32{12345});
 
   // Left keys cycle through [0, capacity), then shuffled
   auto left = cudf::make_numeric_column(
@@ -55,7 +57,7 @@ void nvbench_direct_inner_join(nvbench::state& state)
   thrust::shuffle(thrust::device,
                   left->mutable_view().begin<std::uint32_t>(),
                   left->mutable_view().end<std::uint32_t>(),
-                  thrust::default_random_engine{67890});
+                  cuda::std::philox4x32{67890});
 
   auto const left_view  = left->view();
   auto const right_view = right->view();
@@ -66,6 +68,8 @@ void nvbench_direct_inner_join(nvbench::state& state)
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(input_bytes, "input_bytes");
   state.add_global_memory_reads<nvbench::int8_t>(input_bytes);
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   if (algorithm == "hash") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
@@ -95,7 +99,11 @@ void nvbench_direct_inner_join(nvbench::state& state)
     });
   } else {
     state.skip("unknown algorithm");
+    return;
   }
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(nvbench_direct_inner_join)

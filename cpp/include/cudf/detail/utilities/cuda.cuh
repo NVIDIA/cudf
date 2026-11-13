@@ -11,7 +11,7 @@
 
 #include <cudf/utilities/default_stream.hpp>
 
-#include <cub/cub.cuh>
+#include <cub/warp/warp_reduce.cuh>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 

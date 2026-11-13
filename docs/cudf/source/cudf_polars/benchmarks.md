@@ -9,7 +9,7 @@ The steps below reproduce the PDS-H benchmark results using the Polars GPU engin
 ### Setup
 
 Install `cudf-polars` following the
-[RAPIDS installation guide](https://docs.rapids.ai/install/). For nightly wheels, install with
+[NVIDIA CUDA-X installation guide](https://docs.nvidia.com/datascience/install/#install-rapids). For nightly wheels, install with
 the `ray` extra (required for multi-GPU benchmarking):
 
 ```bash
@@ -23,7 +23,7 @@ the highest Polars version the GPU engine currently supports, which may not be t
 Polars release.
 
 <!-- TODO: consider adding a [benchmark] pip extra to cudf-polars that includes tpchgen-cli
-     (and possibly structlog) so benchmark dependencies can be installed in one step:
+     so benchmark dependencies can be installed in one step:
      pip install "cudf-polars-cu${CUDA_MAJOR}[ray,benchmark]>=0.0.0a0"
      Requires changes to pyproject.toml and dependencies.yaml. -->
 
@@ -125,4 +125,4 @@ The commands above use default settings, which gives a realistic baseline withou
 | `--target-partition-size` | Target IO chunk size in bytes fed to the GPU. The most impactful lever; tune this first if query performance is below expectations. Default: `min(2.5% of smallest GPU memory, 1.5GB)`. |
 | `--broadcast-limit` | Maximum table size in bytes for broadcast joins instead of shuffle. Increasing this can significantly speed up join-heavy queries. Default: `min(15% of smallest GPU memory, 16GB)`. |
 | `--spill-device-limit` | GPU memory usage percentage before spilling to host. Lower this if hitting out-of-memory errors. Default: `80%`. |
-| `--pinned-memory` / `--pinned-initial-pool-size` | Enable a pinned host memory pool for faster CPU-to-GPU transfers. Off by default. When enabled, the pool starts empty and grows up to 80% of host memory per GPU; set `--pinned-initial-pool-size` (bytes) to pre-allocate capacity upfront. |
+| `--pinned-memory` / `--pinned-initial-pool-size` | Enable a pinned host memory pool for faster CPU-to-GPU transfers. On by default for the `spmd`, `ray`, and `dask` frontends on systems that support it; pass `--no-pinned-memory` to disable. When enabled, the pool starts empty and grows up to 80% of host memory per GPU; set `--pinned-initial-pool-size` (bytes) to pre-allocate capacity upfront. |

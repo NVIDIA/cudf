@@ -140,7 +140,7 @@ __device__ uint64_t cast_to_uint64(T a)
  */
 template <typename T>
 __device__ float cast_to_float32(T a)
-  requires(cuda::std::is_integral_v<T> || cuda::std::is_floating_point_v<T>)
+  requires(cuda::std::integral<T> || cuda::std::floating_point<T>)
 {
   return static_cast<float>(a);
 }
@@ -159,7 +159,7 @@ __device__ float cast_to_float32(numeric::decimal<R> a)
  */
 template <typename T>
 __device__ double cast_to_float64(T a)
-  requires(cuda::std::is_integral_v<T> || floating_point<T> || fixed_point<T>)
+  requires(cuda::std::integral<T> || cuda::std::floating_point<T>)
 {
   return static_cast<double>(a);
 }
@@ -231,7 +231,7 @@ __device__ numeric::decimal128 cast_to_decimal128(numeric::decimal<R> a)
  * @param a Input value.
  * @param new_scale Target decimal scale.
  */
-template <typename R, signed_integer Scale>
+template <typename R, cuda::std::signed_integral Scale>
 __device__ numeric::decimal<R> rescale(numeric::decimal<R> a, Scale new_scale)
   requires(sizeof(Scale) <= sizeof(int32_t))
 {

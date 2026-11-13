@@ -103,7 +103,10 @@ rapidsmpf::streaming::Actor bloom_filter::build(
     auto [res, _] = br->reserve(rapidsmpf::MemoryType::DEVICE, 0, rapidsmpf::AllowOverbooking::YES);
     storage       = br->move_to_device_buffer(std::move(result.second), res);
   }
-  co_await ch_out->send(rapidsmpf::streaming::Message{0, std::move(storage), {}, {}});
+  co_await ch_out->send(rapidsmpf::streaming::Message{0,
+                                                      std::move(storage),
+                                                      rapidsmpf::ContentDescription{},
+                                                      rapidsmpf::streaming::Message::Callbacks{}});
   co_await ch_out->drain(ctx_->executor());
 }
 
@@ -118,7 +121,7 @@ rapidsmpf::streaming::Actor bloom_filter::apply(
   auto storage = (co_await bloom_filter->receive()).release<rmm::device_buffer>();
   RAPIDSMPF_EXPECTS((co_await bloom_filter->receive()).empty(),
                     "Bloom filter channel contained more than one message");
-  auto stream = cuda::stream_ref{storage.stream().get()};
+  auto stream = storage.stream();
   rapidsmpf::CudaEvent event;
   auto filter = cudf_streaming::detail::device_bloom_filter(filter_size_, seed_, storage.data());
   auto meta   = co_await ch_in->receive_metadata();

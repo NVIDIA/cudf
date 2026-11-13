@@ -27,11 +27,11 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/for_each.h>
 #include <thrust/merge.h>
 #include <thrust/transform.h>
 
@@ -386,7 +386,7 @@ CUDF_KERNEL void multibyte_converter_kernel(convert_char_fn converter,
 std::unique_ptr<column> convert_case(strings_column_view const& input,
                                      character_flags_table_type case_flag,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   if (input.size() == input.null_count()) {
     return std::make_unique<column>(input.parent(), stream, mr);
@@ -447,7 +447,8 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
   // This will use a warp-parallel algorithm to compute the output sizes for each string
   // note: tried to use segmented-reduce approach instead here and it was consistently slower
   auto [offsets, bytes] = [&] {
-    rmm::device_uvector<size_type> sizes(input.size(), stream);
+    cuda::device_buffer<size_type> sizes(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
     constexpr thread_index_type warp_size = cudf::detail::warp_size;
     auto grid = cudf::detail::grid_1d(input.size() * warp_size, block_size);
     count_bytes_kernel<bytes_per_thread>
@@ -455,14 +456,17 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
         ccfn, *d_strings, sizes.data());
     CUDF_CUDA_TRY(cudaGetLastError());
     // convert sizes to offsets
-    return cudf::strings::detail::make_offsets_child_column(sizes, stream, mr);
+    return cudf::strings::detail::make_offsets_child_column(
+      device_span<size_type const>{sizes}, stream, mr);
   }();
 
   // build sub-offsets
   auto const sub_count = chars_size / LS_SUB_BLOCK_SIZE;
-  auto tmp_offsets     = rmm::device_uvector<int64_t>(sub_count + input.size() + 1, stream);
+  auto tmp_offsets     = cuda::device_buffer<int64_t>(
+    stream, cudf::get_current_device_resource_ref(), sub_count + input.size() + 1, cuda::no_init);
   {
-    rmm::device_uvector<int64_t> sub_offsets(sub_count, stream);
+    cuda::device_buffer<int64_t> sub_offsets(
+      stream, cudf::get_current_device_resource_ref(), sub_count, cuda::no_init);
     auto const count_itr = cuda::counting_iterator<int64_t>{0};
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       count_itr,
@@ -498,7 +502,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
 
 std::unique_ptr<column> to_lower(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   character_flags_table_type case_flag = IS_UPPER(0xFF);  // convert only upper case characters
   return convert_case(strings, case_flag, stream, mr);
@@ -507,7 +511,7 @@ std::unique_ptr<column> to_lower(strings_column_view const& strings,
 //
 std::unique_ptr<column> to_upper(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   character_flags_table_type case_flag = IS_LOWER(0xFF);  // convert only lower case characters
   return convert_case(strings, case_flag, stream, mr);
@@ -516,7 +520,7 @@ std::unique_ptr<column> to_upper(strings_column_view const& strings,
 //
 std::unique_ptr<column> swapcase(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   // convert only upper or lower case characters
   character_flags_table_type case_flag = IS_LOWER(0xFF) | IS_UPPER(0xFF);
@@ -529,7 +533,7 @@ std::unique_ptr<column> swapcase(strings_column_view const& strings,
 
 std::unique_ptr<column> to_lower(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_lower(strings, stream, mr);
@@ -537,7 +541,7 @@ std::unique_ptr<column> to_lower(strings_column_view const& strings,
 
 std::unique_ptr<column> to_upper(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_upper(strings, stream, mr);
@@ -545,7 +549,7 @@ std::unique_ptr<column> to_upper(strings_column_view const& strings,
 
 std::unique_ptr<column> swapcase(strings_column_view const& strings,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::swapcase(strings, stream, mr);

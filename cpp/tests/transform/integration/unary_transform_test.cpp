@@ -325,19 +325,19 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
   // ```py
   //
   // from numba import cuda, int32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
   // @cuda.jit(device=True)
   // def op(a):
-  //         return a * a - a
+  //         return int32(a * a - a)
   //
   // # Define argument types for the function
   // arg_types = (int32, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 0))
   //
   //
   // # Print the PTX code
@@ -357,8 +357,8 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
 // Based on NVVM 7.0.1
 //
 
-.version 9.1
-.target sm_86
+.version 6.3
+.target sm_70
 .address_size 64
 
 	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEi
@@ -378,7 +378,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
 	cvt.s64.s32 	%rd2, %r1;
 	mul.wide.s32 	%rd3, %r1, %r1;
 	sub.s64 	%rd4, %rd3, %rd2;
-	st.u64 	[%rd1], %rd4;
+	st.u32 	[%rd1], %rd4;
 	mov.u32 	%r2, 0;
 	st.param.b32 	[func_retval0+0], %r2;
 	ret;
@@ -418,19 +418,19 @@ __device__ inline void f(
   // ```py
   //
   // from numba import cuda, int8
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
   // @cuda.jit(device=True)
   // def op(a):
-  //         return (a - 32) if (a > 96 and a < 123) else a
+  //         return int8((a - 32) if (a > 96 and a < 123) else a)
   //
   // # Define argument types for the function
   // arg_types = (int8, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 0))
   //
   //
   // # Print the PTX code
@@ -450,8 +450,8 @@ __device__ inline void f(
 // Based on NVVM 7.0.1
 //
 
-.version 9.1
-.target sm_86
+.version 6.3
+.target sm_70
 .address_size 64
 
 	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEa
@@ -480,11 +480,11 @@ __device__ inline void f(
 
 $L__BB0_2:
 	add.s64 	%rd4, %rd1, -32;
-	st.u64 	[%rd2], %rd4;
+	st.u8 	[%rd2], %rd4;
 	bra.uni 	$L__BB0_3;
 
 $L__BB0_1:
-	st.u64 	[%rd2], %rd1;
+	st.u8 	[%rd2], %rd1;
 
 $L__BB0_3:
 	mov.u32 	%r1, 0;
@@ -604,7 +604,7 @@ __device__ inline void decode(float * output, float input){
   // ```py
   //
   // from numba import cuda, float32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -616,7 +616,7 @@ __device__ inline void decode(float * output, float input){
   // arg_types = (float32, )
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 0))
   //
   //
   // # Print the PTX code
@@ -635,8 +635,8 @@ __device__ inline void decode(float * output, float input){
 // Based on NVVM 7.0.1
 //
 
-.version 9.2
-.target sm_86
+.version 6.3
+.target sm_70
 .address_size 64
 
 	// .globl	_ZN8__main__3opxB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEf
@@ -829,7 +829,7 @@ __device__ inline void transform(
   // ```py
   //
   // from numba import cuda, float32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -841,7 +841,7 @@ __device__ inline void transform(
   // arg_types = (float32, float32, float32)
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 0))
   //
   //
   // # Print the PTX code
@@ -861,8 +861,8 @@ __device__ inline void transform(
 // Based on NVVM 7.0.1
 //
 
-.version 8.7
-.target sm_86
+.version 6.3
+.target sm_70
 .address_size 64
 
 	// .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEfff
@@ -1176,6 +1176,33 @@ TEST_F(StringOperationTest, Output)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_empty, result_empty->view());
 }
 
+TEST_F(StringOperationTest, OutputNullAware)
+{
+  auto input            = cudf::test::strings_column_wrapper{{"alpha", "", "ignored", "omega"},
+                                                             {true, true, false, true}};
+  std::string const udf = R"***(
+    __device__ void transform(cuda::std::optional<cudf::string_view>* output,
+                              cuda::std::optional<cudf::string_view> input)
+    {
+      *output = input;
+    }
+  )***";
+
+  cudf::transform_input inputs[]   = {input};
+  cudf::transform_output outputs[] = {
+    {cudf::data_type{cudf::type_id::STRING}, cudf::output_nullability::PRESERVE}};
+  auto result = cudf::transform(udf,
+                                cudf::udf_source_type::CUDA,
+                                cudf::null_aware::YES,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
+}
+
 TEST_F(StringOperationTest, OutputOffsetted)
 {
   auto a = cudf::test::strings_column_wrapper{"x", "xx", "xxx", "xxxx", "xxxxx", "xxxxxx"};
@@ -1291,8 +1318,10 @@ TEST_F(StringOperationTest, StringConcat)
     "John", "Mia", "Abd", "Mendes", "Arya", "John", "François", "José", "Søren", "张"};
   auto last_name = cudf::test::strings_column_wrapper{
     "Doe", "Folk", "Louis", "Xi", "Serenity", "Scott", "Ольга", "Łukasz", "Zoë", "伟"};
-  rmm::device_buffer scratch(100 * static_cast<cudf::column_view>(first_name).size(),
-                             cudf::get_default_stream());
+  cuda::device_buffer<char> scratch(cudf::get_default_stream(),
+                                    cudf::get_current_device_resource_ref(),
+                                    100 * static_cast<cudf::column_view>(first_name).size(),
+                                    cuda::no_init);
   auto scratch_sizes = cudf::test::fixed_width_column_wrapper<int32_t>{100};
 
   std::string cuda = R"***(
@@ -1464,7 +1493,7 @@ struct NullTest : public cudf::test::BaseFixture {
   // ```py
   //
   // from numba import cuda, float32
-  // from numba.cuda import compile_ptx_for_current_device
+  // from numba.cuda import compile_ptx
   //
   // # Define a CUDA device function
   //
@@ -1476,7 +1505,7 @@ struct NullTest : public cudf::test::BaseFixture {
   // arg_types = (float32, float32, float32)
   //
   // # Compile the device function as relocatable
-  // ptx, _ = cuda.compile_ptx_for_current_device(op, arg_types, device=True)
+  // ptx, _ = compile_ptx(op, arg_types, device=True, cc=(7, 0))
   //
   //
   // # Print the PTX code
@@ -1496,8 +1525,8 @@ struct NullTest : public cudf::test::BaseFixture {
 // Based on NVVM 7.0.1
 //
 
-.version 8.8
-.target sm_86
+.version 6.3
+.target sm_70
 .address_size 64
 
 // .globl	_ZN8__main__2opB2v1B96cw51cXTLSUwv1sCUt9Ww0FEw09RRQPKiLTj0gIGIFp_2b2oLQFEYYkHSQB1OQAk0Bynm21OizQ1K0UoIGvDpQE8oxrNQE_3dEfff
@@ -1811,7 +1840,7 @@ __device__ cudf::errc expression (
     cudf::transform_output outputs[] = {
       {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::ALL_VALID}};
     std::unique_ptr<cudf::table> result;
-    EXPECT_NO_THROW(result = cudf::transform(cuda,
+    ASSERT_NO_THROW(result = cudf::transform(cuda,
                                              cudf::udf_source_type::CUDA,
                                              cudf::null_aware::NO,
                                              std::nullopt,

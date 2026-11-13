@@ -984,8 +984,10 @@ constexpr std::size_t max_global_scratch_bytes = std::size_t{32} * 1024 * 1024;
 // Dynamic shared memory up to this size needs no opt-in on any supported architecture
 constexpr std::size_t max_shared_trie_bytes = std::size_t{48} * 1024;
 
-// Pairs per batched copy call, which caps its temporary memory at about 96 MiB (24 B per pair)
-constexpr std::size_t max_pairs_per_copy = std::size_t{1} << 22;
+// Temporary memory CUB's batched copy reserves per (path, row) pair
+constexpr std::size_t copy_temp_bytes_per_pair = 24;
+// Pairs per batched copy call, to cap its temporary memory
+constexpr std::size_t max_pairs_per_copy = std::size_t{96} * 1024 * 1024 / copy_temp_bytes_per_pair;
 
 // Index of `row` of path `path` in the per-path outputs, which are stored one path after another
 CUDF_HOST_DEVICE constexpr int64_t flat_index(size_type path, size_type row, size_type num_rows)

@@ -50,8 +50,10 @@ namespace {
  */
 [[nodiscard]] nz_map_kind classify_nz_map_kind(PageInfo const& page, ColumnChunkDesc const& chunk)
 {
-  // DELTA_BINARY_PACKED is the only encoding with an nz map consumer today.
-  bool const has_consumer = BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0;
+  // The encodings with an nz map consumer.
+  bool const has_consumer =
+    BitAnd(page.kernel_mask,
+           BitOr(decode_kernel_mask::DELTA_BINARY, decode_kernel_mask::DELTA_LENGTH_BA)) != 0;
   if (!has_consumer) { return nz_map_kind::NONE; }
 
   // Only flat (depth-1, non-repeated) columns have a consumer today. Lists and structs of delta

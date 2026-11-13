@@ -188,14 +188,14 @@ inline std::vector<uint8_t> encode_delta_binary_packed(std::vector<int64_t> cons
 // raw DELTA_BINARY_PACKED header only (block/mini-block geometry, value count, first value), for
 // negative tests that need a geometry encode_delta_binary_packed would reject. The reader validates
 // the geometry in init_binary_block before decoding any deltas, so no mini-block data follows.
-inline std::vector<uint8_t> encode_delta_binary_header(int block_size,
-                                                       int mini_block_count,
+inline std::vector<uint8_t> encode_delta_binary_header(uint64_t block_size,
+                                                       uint64_t mini_block_count,
                                                        int64_t value_count,
                                                        int64_t first_value)
 {
   std::vector<uint8_t> out;
-  append_uleb128(out, static_cast<uint64_t>(block_size));
-  append_uleb128(out, static_cast<uint64_t>(mini_block_count));
+  append_uleb128(out, block_size);
+  append_uleb128(out, mini_block_count);
   append_uleb128(out, static_cast<uint64_t>(value_count));
   append_zigzag128(out, first_value);
   return out;

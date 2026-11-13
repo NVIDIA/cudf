@@ -751,6 +751,7 @@ Quent's names.
 | `IR.do_evaluate` | `Evaluate` | Synchronous host-side evaluation of an IR node. |
 | rapidsmpf streaming actor | `Actor` | Actor lifetime and aggregate chunk/byte statistics. |
 | worker I/O or rank link | `DataChannel` | A concrete resource used for data transfer. |
+| sampled memory resource reading | `MemoryResourceSampler` | One FSM per query and worker; each `sampling` transition is a reading of live allocated device bytes, held as a `SampledMemoryResource` usage until the next transition. See [Sampled memory resource](#sampled-memory-resource). |
 
 
 [Quent]: https://github.com/rapidsai/quent

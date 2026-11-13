@@ -19,6 +19,7 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/utility>
 #include <thrust/transform_scan.h>
 

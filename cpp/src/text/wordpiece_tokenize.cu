@@ -44,6 +44,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/functional>

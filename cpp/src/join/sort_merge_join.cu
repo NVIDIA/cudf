@@ -39,7 +39,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>

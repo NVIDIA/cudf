@@ -18,6 +18,7 @@
 #include <cuco/static_map_ref.cuh>
 #include <cuda/atomic>
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/bit>
 
 namespace cudf::io::parquet::detail {

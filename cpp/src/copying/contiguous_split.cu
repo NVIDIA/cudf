@@ -31,6 +31,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
 #include <cuda/stream>

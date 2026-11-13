@@ -1034,23 +1034,24 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
   // Nothing is allocated on the forked streams; freeing memory on several streams slows later
   // allocations from a CUDA async memory pool.
   auto const streams = cudf::detail::fork_streams(stream, group_offsets.size() - 1);
-  for (size_t i = 0; i < streams.size(); ++i) {
+  // Groups already launched must be joined before a failure throws and frees their arguments.
+  auto status = nvcompStatus_t::nvcompSuccess;
+  for (size_t i = 0; i < streams.size() && status == nvcompStatus_t::nvcompSuccess; ++i) {
     auto const begin = group_offsets[i];
-    auto const status =
-      nvcompBatchedCascadedDecompressAsync(args.input_data_ptrs.data() + begin,
-                                           args.input_data_sizes.data() + begin,
-                                           args.output_data_sizes.data() + begin,
-                                           actual_sizes.data() + begin,
-                                           group_offsets[i + 1] - begin,
-                                           nullptr,
-                                           0,
-                                           args.output_data_ptrs.data() + begin,
-                                           nvcompBatchedCascadedDecompressDefaultOpts,
-                                           statuses.data() + begin,
-                                           streams[i].get());
-    CHECK_NVCOMP_STATUS(status);
+    status           = nvcompBatchedCascadedDecompressAsync(args.input_data_ptrs.data() + begin,
+                                                  args.input_data_sizes.data() + begin,
+                                                  args.output_data_sizes.data() + begin,
+                                                  actual_sizes.data() + begin,
+                                                  group_offsets[i + 1] - begin,
+                                                  nullptr,
+                                                  0,
+                                                  args.output_data_ptrs.data() + begin,
+                                                  nvcompBatchedCascadedDecompressDefaultOpts,
+                                                  statuses.data() + begin,
+                                                  streams[i].get());
   }
   cudf::detail::join_streams(streams, stream);
+  CHECK_NVCOMP_STATUS(status);
 
   update_compression_results(statuses, actual_sizes, results, stream, {temp_mr, temp_mr});
 }

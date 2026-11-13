@@ -14,7 +14,9 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/partitioning.hpp>
 #include <cudf/sorting.hpp>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/unary.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -402,6 +404,15 @@ TEST_F(PartitionTestNotTyped, UniformPartitionColumns)
   fixed_width_column_wrapper<int32_t> null_numbers(values.begin(), values.end(), invalid.begin());
   strings_column_wrapper null_strings(text.begin(), text.end(), invalid.begin());
   strings_column_wrapper empty_strings(empty.begin(), empty.end());
+  cudf::strings_column_view const null_strings_view{null_strings};
+  auto offsets64 = cudf::cast(null_strings_view.offsets(), cudf::data_type{cudf::type_id::INT64});
+  cudf::column_view const null_strings64{cudf::data_type{cudf::type_id::STRING},
+                                         rows,
+                                         nullptr,
+                                         null_strings_view.null_mask(),
+                                         rows,
+                                         0,
+                                         {offsets64->view()}};
   std::vector<std::string> slice_values(rows + 2, "");
   slice_values.front() = "prefix";
   slice_values.back()  = "suffix";
@@ -416,6 +427,7 @@ TEST_F(PartitionTestNotTyped, UniformPartitionColumns)
     std::partial_sum(expected.begin(), expected.end(), expected.begin());
     fixed_width_column_wrapper<int32_t> map(assignments.begin(), assignments.end());
     for (auto const& input : {cudf::table_view{{null_numbers, null_strings}},
+                              cudf::table_view{{null_numbers, null_strings64}},
                               cudf::table_view{{null_numbers, null_strings, empty_strings}},
                               cudf::table_view{{empty_strings}},
                               cudf::table_view{{empty_strings, empty_strings, empty_strings}},

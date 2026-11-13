@@ -848,7 +848,7 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_par
   }
   auto const rows    = input.num_rows();
   auto const uniform = std::all_of(input.begin(), input.end(), [](auto const& col) {
-    return cudf::detail::partition_identity::is_uniform(col);
+    return cudf::detail::partition_identity::is_flat_and_all_null(col);
   });
   if (!cudf::detail::partition_policy::use_trivial(rows, num_partitions, uniform)) {
     return std::nullopt;

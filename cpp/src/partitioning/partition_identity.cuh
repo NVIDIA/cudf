@@ -5,7 +5,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/null_mask.hpp>
-#include <cudf/strings/utilities.hpp>
+#include <cudf/strings/detail/utilities.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -19,7 +19,7 @@
  */
 namespace cudf::detail::partition_identity {
 /**
- * @brief Determine whether column metadata identifies a supported uniform column
+ * @brief Determine whether a column is fixed-width or STRING and contains only nulls
  *
  * Recognizes all-null fixed-width or STRING columns using host metadata only. Columns containing
  * valid values, including empty strings, are not recognized as uniform.
@@ -27,7 +27,7 @@ namespace cudf::detail::partition_identity {
  * @param input Column whose type, size and null count are inspected
  * @return Whether the column can be reconstructed by `uniform_column` without reading its values
  */
-inline bool is_uniform(column_view const& input)
+inline bool is_flat_and_all_null(column_view const& input)
 {
   bool const flat = is_fixed_width(input.type()) || input.type().id() == type_id::STRING;
   return flat && input.null_count() == input.size();
@@ -39,7 +39,7 @@ inline bool is_uniform(column_view const& input)
  * Creates an all-null fixed-width or STRING column. STRING offsets are initialized to zero and
  * the character buffer is empty. Row permutation leaves these logical values unchanged.
  *
- * @pre `is_uniform(input)` is true
+ * @pre `is_flat_and_all_null(input)` is true
  *
  * @param input Supported uniform column whose logical type, size and null count are preserved
  * @param stream CUDA stream used for device operations and memory allocation
@@ -53,12 +53,12 @@ inline std::unique_ptr<column> uniform_column(column_view const& input,
   auto const rows = input.size();
   if (input.type().id() != type_id::STRING)
     return make_fixed_width_column(input.type(), rows, mask_state::ALL_NULL, stream, mr);
-  auto offsets =
-    make_numeric_column(data_type{type_id::INT32}, rows + 1, mask_state::UNALLOCATED, stream, mr);
-  CUDF_CUDA_TRY(cudaMemsetAsync(offsets->mutable_view().data<size_type>(),
-                                0,
-                                (static_cast<std::size_t>(rows) + 1) * sizeof(size_type),
-                                stream.get()));
+  auto offsets = cudf::strings::detail::create_offsets_child_column(0, rows + 1, stream, mr);
+  CUDF_CUDA_TRY(
+    cudaMemsetAsync(offsets->mutable_view().head(),
+                    0,
+                    static_cast<std::size_t>(offsets->size()) * size_of(offsets->type()),
+                    stream.get()));
   return make_strings_column(
     rows,
     std::move(offsets),

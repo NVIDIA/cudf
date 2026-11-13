@@ -607,6 +607,8 @@ TESTS_TO_SKIP: dict[str, str] = {
     "tests/unit/lazyframe/test_query_monitoring.py::test_metrics_handle_snapshot": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_unknown_outer_size_not_restricted": "Asserts that the polars streaming engine stops reading an IO source early after a LIMIT; the GPU engine reads the whole source",
     "tests/unit/io/test_delta.py::test_scan_delta_loads_aws_profile_endpoint_url": "Does not use the GPU engine; fails whenever AWS_DEFAULT_REGION is set, as in CI",
+    "tests/unit/io/test_delta.py::test_scan_delta_timestamp_version": "deltalake 1.6.6 excludes a commit whose log mtime exactly equals the requested timestamp",
+    "tests/unit/io/test_delta.py::test_read_delta_timestamp_version": "deltalake 1.6.6 excludes a commit whose log mtime exactly equals the requested timestamp",
     # CI has shown two different failure modes across runs (a PanicException on
     # an invalid datetime, and garbage/uninitialized-looking datetime values),
     # suggesting a real non-deterministic bug in CSV datetime fallback parsing

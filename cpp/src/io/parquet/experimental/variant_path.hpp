@@ -56,8 +56,7 @@ struct variant_path_trie {
   std::vector<size_type> slot_depth;  ///< Depth of each slot; 0 starts from the value blob
 
   std::vector<size_type> path_offsets;  ///< Size `num_slots + 1`; CSR offsets into `path_indices`
-  std::vector<size_type>
-    path_indices;  ///< Indices of the input paths each slot's value is output for
+  std::vector<size_type> path_indices;  ///< Indices of the input paths that each slot outputs
 };
 
 /**

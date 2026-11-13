@@ -85,21 +85,21 @@ void emit_slots(std::vector<trie_builder_node> const& nodes,
                 variant_path_trie& trie,
                 std::vector<size_type>& slot_of_node)
 {
-  std::vector<std::string> child_pending;
-  auto* chain = &pending;
   // The root is the value blob itself and never becomes a slot
-  if (node != 0 && nodes[node].needs_slot()) {
+  bool const is_slot = node != 0 && nodes[node].needs_slot();
+  if (is_slot) {
     slot_of_node[node] = static_cast<size_type>(trie.slot_depth.size());
     trie.steps.insert(trie.steps.end(), pending.begin(), pending.end());
     trie.slot_steps.push_back(static_cast<size_type>(trie.steps.size()));
     trie.slot_depth.push_back(depth);
     ++depth;
-    chain = &child_pending;
   }
+  std::vector<std::string> child_pending;
+  auto& chain = is_slot ? child_pending : pending;
   for (auto const& [step, child] : nodes[node].children) {
-    chain->push_back(step);
-    emit_slots(nodes, child, depth, *chain, trie, slot_of_node);
-    chain->pop_back();
+    chain.push_back(step);
+    emit_slots(nodes, child, depth, chain, trie, slot_of_node);
+    chain.pop_back();
   }
 }
 

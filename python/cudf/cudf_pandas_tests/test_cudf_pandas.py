@@ -2234,3 +2234,34 @@ def test_numpy_random_permutation_string(storage, na_value, box):
             data, dtype=xpd.StringDtype(storage=storage, na_value=na_value)
         ),
     )
+
+
+@pytest.mark.parametrize("scalar_type", [np.int64, np.int32, np.float32])
+def test_numpy_scalar_cast_proxy_array(scalar_type):
+    # https://github.com/NVIDIA/cudf/issues/24899
+    # NumPy scalar types (e.g. np.int64(proxy)) create a new ndarray
+    # subclass with the target dtype; the wrapped array must reflect that dtype.
+    df = xpd.DataFrame({"c0": [1.0, 2.0]})
+    left = scalar_type(df["c0"].values)
+    expected_dtype = np.dtype(scalar_type)
+    assert left.dtype == expected_dtype
+    assert_eq(left, df["c0"].values.astype(expected_dtype))
+
+    # Downstream ufuncs expecting matching integer types should succeed
+    right = df["c0"].values.astype("int64")
+    int_left = np.int64(df["c0"].values)
+    result = np.lcm(int_left, right)
+    assert_eq(result, np.array([1, 2], dtype="int64"))
+
+
+def test_numpy_vectorize_proxy_array():
+    df = xpd.DataFrame({"c0": [1, 2]})
+    result = np.vectorize(lambda x: x + 1)(df["c0"].values)
+    assert_eq(result, np.array([2, 3]))
+
+
+def test_numpy_longdouble_scalar_cast_proxy_array():
+    df = xpd.DataFrame({"c0": [1.5, 2.5]})
+    result = np.longdouble(df["c0"].values)
+    expected = df["c0"].values.astype(np.longdouble)
+    assert_eq(result, expected)

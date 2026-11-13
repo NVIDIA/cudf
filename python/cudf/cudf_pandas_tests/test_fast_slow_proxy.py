@@ -1086,3 +1086,63 @@ def test_setattr_fsproxy_no_mirror_monkeypatch_roundtrip(monkeypatch):
     monkeypatch.undo()
     assert Pxy.__dict__["existing"] is custom
     assert Slow.__dict__["existing"] is original_slow
+
+
+def test_proxy_ndarray_base_scalar_cast():
+    from cudf.pandas.proxy_base import ProxyNDarrayBase
+
+    class DummyArray:
+        def __init__(self, data, dtype=None):
+            self.data = np.array(data, dtype=dtype)
+            self.dtype = self.data.dtype
+
+        def astype(self, dtype):
+            return DummyArray(self.data.astype(dtype), dtype=dtype)
+
+    proxy = np.asarray([1.0, 2.0], dtype=np.float64).view(ProxyNDarrayBase)
+    proxy._fsproxy_wrapped = DummyArray([1.0, 2.0], dtype=np.float64)
+
+    cast = np.int64(proxy)
+    assert super(ProxyNDarrayBase, cast).dtype == np.dtype("int64")
+    assert cast._fsproxy_wrapped.dtype == np.dtype("int64")
+    assert isinstance(cast._fsproxy_wrapped, DummyArray)
+
+    # original_slow with differing dtype is not retained
+    proxy._fsproxy_original_slow = np.array([1.0, 2.0], dtype=np.float64)
+    cast = np.int64(proxy)
+    assert not hasattr(cast, "_fsproxy_original_slow")
+
+
+def test_proxy_ndarray_base_unsupported_dtype_fallback():
+    from cudf.pandas.proxy_base import ProxyNDarrayBase
+
+    class DummyCuPyArray:
+        def __init__(self, data, dtype=None):
+            self.data = np.array(data, dtype=dtype)
+            self.dtype = self.data.dtype
+
+        def astype(self, dtype):
+            dtype = np.dtype(dtype)
+            if dtype == np.dtype("O"):
+                raise ValueError("Unsupported dtype object")
+            return DummyCuPyArray(self.data.astype(dtype), dtype=dtype)
+
+        def get(self):
+            return np.array(self.data)
+
+    proxy = np.asarray([1.0, 2.0], dtype=np.float64).view(ProxyNDarrayBase)
+    proxy._fsproxy_wrapped = DummyCuPyArray([1.0, 2.0], dtype=np.float64)
+
+    # np.vectorize creates an object-dtype intermediate array invoking __array_finalize__
+    @np.vectorize
+    def add_one(x):
+        return x + 1
+
+    result = add_one(proxy)
+    assert_eq(result, np.array([2.0, 3.0], dtype=np.float64))
+
+    # Direct cast to an unsupported dtype falls back to CPU numpy.ndarray
+    cast_obj = proxy.astype(object)
+    assert super(ProxyNDarrayBase, cast_obj).dtype == np.dtype("O")
+    assert isinstance(cast_obj._fsproxy_wrapped, np.ndarray)
+    assert cast_obj._fsproxy_wrapped.dtype == np.dtype("O")

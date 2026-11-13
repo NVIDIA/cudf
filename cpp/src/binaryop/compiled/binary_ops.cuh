@@ -100,14 +100,26 @@ struct ops_wrapper {
   column_device_view const& rhs;
   bool const& is_lhs_scalar;
   bool const& is_rhs_scalar;
+  // With bit_width, nvcc 13.3 can outline decimal128 conversions and add local memory setup
+  // before type dispatch, slowing float ADD. Keep this wrapper inline to avoid that setup.
   template <typename TypeCommon>
-  __device__ void operator()(size_type i)
+  __forceinline__ __device__ void operator()(size_type i)
   {
     if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
       TypeCommon x =
         type_dispatcher(lhs.type(), type_casted_accessor<TypeCommon>{}, i, lhs, is_lhs_scalar);
       TypeCommon y =
         type_dispatcher(rhs.type(), type_casted_accessor<TypeCommon>{}, i, rhs, is_rhs_scalar);
+      if constexpr (cuda::std::is_same_v<BinaryOperator, ops::TrueDiv> and
+                    cuda::std::is_same_v<TypeCommon, float>) {
+        // TrueDiv divides in double. When the result is stored as float anyway, a float division
+        // is bit-identical (double rounding is innocuous for division because 53 >= 2 * 24 + 2)
+        // and avoids the low-throughput fp64 division sequence.
+        if (out.type().id() == type_id::FLOAT32) {
+          out.element<float>(i) = x / y;
+          return;
+        }
+      }
       auto result = [&]() {
         if constexpr (cuda::std::is_same_v<BinaryOperator, ops::NullEquals> or
                       cuda::std::is_same_v<BinaryOperator, ops::NullNotEquals> or

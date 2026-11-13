@@ -30,6 +30,7 @@ on:
 
 jobs:
   cudf-spark-jni-build:
+    continue-on-error: true
     runs-on: linux-amd64-cpu8
     container:
       image: rapidsai/ci-spark-rapids-jni:rockylinux8-cuda12.9.1

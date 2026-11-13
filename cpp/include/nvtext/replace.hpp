@@ -71,7 +71,7 @@ namespace CUDF_EXPORT nvtext {
  * @param delimiter Characters used to separate each string into tokens.
  *                  The default of empty string will identify tokens using whitespace.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New strings column with replaced strings
  */
 std::unique_ptr<cudf::column> replace_tokens(
@@ -80,7 +80,7 @@ std::unique_ptr<cudf::column> replace_tokens(
   cudf::strings_column_view const& replacements,
   cudf::string_scalar const& delimiter = cudf::string_scalar{""},
   cuda::stream_ref stream              = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr    = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr            = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Removes tokens whose lengths are less than a specified number of characters.
@@ -120,7 +120,7 @@ std::unique_ptr<cudf::column> replace_tokens(
  * @param delimiter Characters used to separate each string into tokens.
  *                  The default of empty string will identify tokens using whitespace.
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return New strings column of filtered strings
  */
 std::unique_ptr<cudf::column> filter_tokens(
@@ -129,7 +129,7 @@ std::unique_ptr<cudf::column> filter_tokens(
   cudf::string_scalar const& replacement = cudf::string_scalar{""},
   cudf::string_scalar const& delimiter   = cudf::string_scalar{""},
   cuda::stream_ref stream                = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr              = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

@@ -29,7 +29,7 @@ template <typename Op>
 std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        bitmask_type const* mask,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cudf::memory_resources mr);
 
 }  // namespace strings::detail
 }  // namespace cudf

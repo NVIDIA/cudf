@@ -74,8 +74,10 @@ def scan_query(tmp_path: Path) -> pl.LazyFrame:
     return pl.scan_parquet(path)
 
 
-def test_io_summary(engine: StreamingEngine, scan_query: pl.LazyFrame) -> None:
-    """gather_io_summary reports what each rank read."""
+def test_io_summary_lifecycle(
+    engine: StreamingEngine, scan_query: pl.LazyFrame
+) -> None:
+    """I/O summaries report a scan and ``clear=True`` starts a new span."""
     scan_query.collect(engine=engine)
 
     # Statistics are enabled on this fixture, so every rank is counting.
@@ -89,13 +91,6 @@ def test_io_summary(engine: StreamingEngine, scan_query: pl.LazyFrame) -> None:
     # kvikio owns Summary and its invariants, so the only thing to check here is
     # that each rank handed back one intact.
     assert all(isinstance(s, kvikio.Summary) for s in summaries)
-
-
-def test_io_summary_clear_starts_a_new_span(
-    engine: StreamingEngine, scan_query: pl.LazyFrame
-) -> None:
-    """clear=True returns the totals so far and restarts the span."""
-    scan_query.collect(engine=engine)
 
     before = engine.gather_io_summary(clear=True).values()
     assert sum(s.num_ops for s in before) > 0

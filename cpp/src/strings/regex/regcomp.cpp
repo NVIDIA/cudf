@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "strings/regex/regcomp.h"
+#include "strings/regex/regcomp.hpp"
 
 #include <cudf/strings/detail/utf8.hpp>
 #include <cudf/utilities/error.hpp>
@@ -16,6 +16,7 @@
 #include <clocale>
 #include <cwctype>
 #include <numeric>
+#include <ranges>
 #include <stack>
 #include <string>
 #include <tuple>
@@ -167,7 +168,8 @@ class regex_parser {
   char32_t const* const _pattern_begin;
   char32_t const* _expr_ptr;
   bool _lex_done{false};
-  regex_flags const _flags;
+  regex_flags _flags;                    // current flags; may be modified by inline flags
+  std::stack<regex_flags> _flags_stack;  // flags to restore at the end of each group
   capture_groups const _capture;
 
   int32_t _id_cclass_w{-1};  // alphanumeric [a-zA-Z0-9_]
@@ -274,7 +276,8 @@ class regex_parser {
       ranges.push_back({'_', '_'});
     } else {
       ranges.back().last = 'A' - 1;
-      ranges.push_back({'Z' + 1, 'a' - 1});  // {'_'-1, '_' + 1}
+      ranges.push_back({'Z' + 1, '_' - 1});
+      ranges.push_back({'_' + 1, 'a' - 1});
       ranges.push_back({'z' + 1, MAX_REGEX_CHAR});
     }
   }
@@ -405,7 +408,7 @@ class regex_parser {
                      });
     }
     // sort the ranges to help with detecting overlapping entries
-    std::sort(ranges.begin(), ranges.end(), [](auto l, auto r) {
+    std::ranges::sort(ranges, [](auto l, auto r) {
       return l.first == r.first ? l.last < r.last : l.first < r.first;
     });
     // combine overlapping entries: [a-f][c-g] => [a-g]
@@ -419,17 +422,60 @@ class regex_parser {
       }
     }
     // remove any duplicates
-    auto const end = std::unique(
-      ranges.rbegin(), ranges.rend(), [](auto l, auto r) { return l.first == r.first; });
-    ranges.erase(ranges.begin(), ranges.begin() + std::distance(end, ranges.rend()));
+    auto const duplicates = std::ranges::unique(std::views::reverse(ranges),
+                                                [](auto l, auto r) { return l.first == r.first; });
+    ranges.erase(ranges.begin(), ranges.begin() + std::ranges::distance(duplicates));
 
     _cclass_id = _prog.add_class(reclass{builtins, std::move(ranges)});
     return type;
   }
 
-  int32_t lex(int32_t dot_type)
+  /**
+   * @brief Parses inline flags `(?ims)` or `(?ims:` at the current expression position
+   *
+   * The current position is expected to be just after the '('.
+   * Only the IGNORECASE (i), MULTILINE (m), and DOTALL (s) flags are supported.
+   * If found, the expression position is moved past the closing ')' or ':'.
+   *
+   * @return The flags and the terminating character (')' or ':') or 0 if no inline flags found
+   */
+  std::pair<regex_flags, char32_t> parse_inline_flags()
+  {
+    if (*_expr_ptr != '?') { return {regex_flags::DEFAULT, 0}; }
+    auto ptr   = _expr_ptr + 1;
+    auto flags = static_cast<uint32_t>(regex_flags::DEFAULT);
+    for (; *ptr != 0; ++ptr) {
+      switch (*ptr) {
+        case 'i': flags |= regex_flags::IGNORECASE; continue;
+        case 'm': flags |= regex_flags::MULTILINE; continue;
+        case 's': flags |= regex_flags::DOTALL; continue;
+      }
+      break;
+    }
+    if ((ptr == _expr_ptr + 1) || (*ptr != ')' && *ptr != ':')) {
+      return {regex_flags::DEFAULT, 0};
+    }
+    _expr_ptr = ptr + 1;
+    return {static_cast<regex_flags>(flags), *ptr};
+  }
+
+  int32_t lex()
   {
     _chr = 0;
+
+    // consume any flag-only groups: (?i) applies to the remainder of the enclosing group
+    bool found_flags = false;
+    while (!_lex_done && *_expr_ptr == '(') {
+      auto const expr_ptr_save        = _expr_ptr++;
+      auto const [inline_flags, term] = parse_inline_flags();
+      if (term != ')') {
+        _expr_ptr = expr_ptr_save;  // not a flag-only group
+        break;
+      }
+      _flags = static_cast<regex_flags>(_flags | inline_flags);
+      _prog.add_flags(inline_flags);
+      found_flags = true;
+    }
 
     auto [is_quoted, chr] = next_char();
     if (is_quoted) {
@@ -492,8 +538,8 @@ class regex_parser {
           } else {
             if (_id_cclass_s < 0) { _id_cclass_s = _prog.add_class(cclass_s); }
             _cclass_id = _id_cclass_s;
-            return NCCLASS;
           }
+          return NCCLASS;
         }
         case 'd': {
           if (is_ascii(_flags)) {
@@ -533,9 +579,8 @@ class regex_parser {
         }
         default: {
           // let valid escapable chars fall through as literal CHAR
-          if (chr &&
-              (std::find(escapable_chars.begin(), escapable_chars.end(), static_cast<char>(chr)) !=
-               escapable_chars.end())) {
+          if (chr && (std::ranges::find(escapable_chars, static_cast<char>(chr)) !=
+                      escapable_chars.end())) {
             break;
           }
           // anything else is a bad escape so throw an error
@@ -550,7 +595,16 @@ class regex_parser {
     // handle regex characters
     switch (chr) {
       case 0: return END;
-      case '(':
+      case '(': {
+        // flags set inside this group are restored at its closing ')'
+        _flags_stack.push(_flags);
+        // flag-only groups (?i) are consumed above so only the scoped (?i:...) is found here
+        auto const [inline_flags, term] = parse_inline_flags();
+        if (term == ':') {
+          _flags = static_cast<regex_flags>(_flags | inline_flags);
+          _prog.add_flags(inline_flags);
+          return LBRA_NC;
+        }
         if (*_expr_ptr == '?' && *(_expr_ptr + 1) == ':')  // non-capturing group
         {
           _expr_ptr += 2;
@@ -558,7 +612,13 @@ class regex_parser {
         }
         return (_capture == capture_groups::NON_CAPTURE) ? static_cast<int32_t>(LBRA_NC)
                                                          : static_cast<int32_t>(LBRA);
-      case ')': return RBRA;
+      }
+      case ')':
+        if (!_flags_stack.empty()) {
+          _flags = _flags_stack.top();
+          _flags_stack.pop();
+        }
+        return RBRA;
       case '^': {
         if (is_ext_newline(_flags)) {
           _chr = is_multiline(_flags) ? 'S' : 'N';
@@ -578,12 +638,11 @@ class regex_parser {
       case '[': return build_cclass();
       case '.': {
         _chr = is_ext_newline(_flags) ? 'N' : chr;
-        return dot_type;
+        return is_dotall(_flags) ? ANYNL : ANY;
       }
     }
 
-    if (std::find(quantifiers.begin(), quantifiers.end(), static_cast<char>(chr)) ==
-        quantifiers.end()) {
+    if (std::ranges::find(quantifiers, static_cast<char>(chr)) == quantifiers.end()) {
       if (is_ignorecase(_flags)) {
         auto const swap_chr = swap_case(chr);
         _cclass_id =
@@ -609,12 +668,13 @@ class regex_parser {
     // If the previous item is a capture group, we need to check items inside the
     // capture group can be used with quantifiers too.
     // (Note that capture groups can be nested).
-    auto previous_type = _items.back().type;
+    // a flag-only group (?i) cannot be quantified
+    auto previous_type = found_flags ? static_cast<int32_t>(END) : _items.back().type;
     if (previous_type == RBRA) {  // previous item is a capture group
       // look for matching LBRA
       auto nested_count = 1;
       auto lbra_itr =
-        std::find_if(_items.rbegin(), _items.rend(), [nested_count](auto const& item) mutable {
+        std::ranges::find_if(std::views::reverse(_items), [nested_count](auto const& item) mutable {
           auto const is_closing = (item.type == RBRA);
           auto const is_opening = (item.type == LBRA || item.type == LBRA_NC);
           nested_count += is_closing - is_opening;
@@ -631,9 +691,8 @@ class regex_parser {
       previous_type = (first_valid == lbra_itr) ? (--lbra_itr)->type : first_valid->type;
     }
 
-    if (std::find(valid_preceding_inst_types.begin(),
-                  valid_preceding_inst_types.end(),
-                  previous_type) == valid_preceding_inst_types.end()) {
+    if (std::ranges::find(valid_preceding_inst_types, previous_type) ==
+        valid_preceding_inst_types.end()) {
       CUDF_FAIL("invalid regex pattern: nothing to repeat at position " +
                 std::to_string(_expr_ptr - _pattern_begin - 1));
     }
@@ -816,10 +875,8 @@ class regex_parser {
                reprog& prog)
     : _prog(prog), _pattern_begin(pattern), _expr_ptr(pattern), _flags(flags), _capture(capture)
   {
-    auto const dot_type = is_dotall(_flags) ? ANYNL : ANY;
-
     int32_t type = 0;
-    while ((type = lex(dot_type)) != END) {
+    while ((type = lex()) != END) {
       auto const item = [type, chr = _chr, cid = _cclass_id, n = _min_count, m = _max_count] {
         if (type == CCLASS || type == NCCLASS) return Item{type, cid};
         if (type == COUNTED || type == COUNTED_LAZY) return Item{type, n, m};
@@ -996,8 +1053,7 @@ class regex_compiler {
     if (token != RBRA) { push_operator(token, subid); }
 
     static std::vector<int> const tokens{STAR, STAR_LAZY, QUEST, QUEST_LAZY, PLUS, PLUS_LAZY, RBRA};
-    _last_was_and =
-      std::any_of(tokens.cbegin(), tokens.cend(), [token](auto t) { return t == token; });
+    _last_was_and = std::ranges::any_of(tokens, [token](auto t) { return t == token; });
   }
 
   void handle_operand(int token, int subid = 0, char32_t yy = 0, int class_id = 0)
@@ -1081,6 +1137,8 @@ reprog reprog::create_from(std::string_view pattern,
 
 reprog::reprog(regex_flags flags) : _flags{flags} {}
 
+void reprog::add_flags(regex_flags flags) { _flags = static_cast<regex_flags>(_flags | flags); }
+
 void reprog::optimize() { collapse_nops(); }
 
 void reprog::finalize() { build_start_ids(); }
@@ -1088,7 +1146,7 @@ void reprog::finalize() { build_start_ids(); }
 void reprog::collapse_nops()
 {
   // treat non-capturing LBRAs/RBRAs as NOP
-  std::transform(_insts.begin(), _insts.end(), _insts.begin(), [](auto inst) {
+  std::ranges::transform(_insts, _insts.begin(), [](auto inst) {
     if ((inst.type == LBRA || inst.type == RBRA) && (inst.u1.subid < 1)) { inst.type = NOP; }
     return inst;
   });
@@ -1102,7 +1160,7 @@ void reprog::collapse_nops()
   };
 
   // create new routes around NOP chains
-  std::transform(_insts.begin(), _insts.end(), _insts.begin(), [find_next_op](auto inst) {
+  std::ranges::transform(_insts, _insts.begin(), [find_next_op](auto inst) {
     if (inst.type != NOP) {
       inst.u2.next_id = find_next_op(inst.u2.next_id);
       if (inst.type == OR) { inst.u1.right_id = find_next_op(inst.u1.right_id); }
@@ -1122,11 +1180,11 @@ void reprog::collapse_nops()
     });
 
   // remove the NOP instructions
-  auto end = std::remove_if(_insts.begin(), _insts.end(), [](auto i) { return i.type == NOP; });
-  _insts.resize(std::distance(_insts.begin(), end));
+  auto const nops = std::ranges::remove_if(_insts, [](auto i) { return i.type == NOP; });
+  _insts.erase(nops.begin(), nops.end());
 
   // fix up the ids on the remaining instructions using the id_map
-  std::transform(_insts.begin(), _insts.end(), _insts.begin(), [id_map](auto inst) {
+  std::ranges::transform(_insts, _insts.begin(), [id_map](auto inst) {
     inst.u2.next_id = id_map[inst.u2.next_id];
     if (inst.type == OR) { inst.u1.right_id = id_map[inst.u1.right_id]; }
     return inst;

@@ -10,30 +10,81 @@
 #include "runtime/context.hpp"
 #include "synthetic_column_helpers.hpp"
 
+#include <cudf/detail/gather.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/sequence.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <cuda/stream>
 
+#include <algorithm>
 #include <bitset>
+#include <functional>
+#include <iterator>
 #include <limits>
 #include <numeric>
+#include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <utility>
 
 namespace cudf::io::parquet::detail {
+
+namespace {
+
+/**
+ * @brief Recursively cast decimal columns, including nested ones, to the specified type
+ *
+ * @param col Column to cast
+ * @param decimal_width Target decimal type id
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return The cast column
+ */
+std::unique_ptr<column> cast_decimals_to_width(std::unique_ptr<column>&& col,
+                                               cudf::type_id decimal_width,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
+{
+  auto const col_type = col->type();
+  if (cudf::is_fixed_point(col_type)) {
+    if (col_type.id() == decimal_width) { return col; }
+    return cudf::cast(
+      col->view(), data_type{decimal_width, col_type.scale()}, stream, mr.get_output_mr());
+  }
+  if (col_type.id() != type_id::LIST and col_type.id() != type_id::STRUCT) { return col; }
+
+  auto const size       = col->size();
+  auto const null_count = col->null_count();
+  auto contents         = col->release();
+  for (auto& child : contents.children) {
+    child = cast_decimals_to_width(std::move(child), decimal_width, stream, mr);
+  }
+  return std::make_unique<column>(col_type,
+                                  size,
+                                  std::move(*contents.data),
+                                  std::move(*contents.null_mask),
+                                  null_count,
+                                  std::move(contents.children));
+}
+
+}  // namespace
 
 void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows)
 {
@@ -71,10 +122,9 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
     // Check for overflow in cumulative column string sizes of this pass so that the page string
     // offsets of overflowing (large) string columns are treated as 64-bit.
-    auto const threshold         = static_cast<size_t>(strings::detail::get_offset64_threshold());
-    auto const has_large_strings = std::any_of(col_string_sizes.cbegin(),
-                                               col_string_sizes.cend(),
-                                               [=](std::size_t sz) { return sz > threshold; });
+    auto const threshold = static_cast<size_t>(strings::detail::get_offset64_threshold());
+    auto const has_large_strings =
+      std::ranges::any_of(col_string_sizes, [=](std::size_t sz) { return sz > threshold; });
     if (has_large_strings and not strings::detail::is_large_strings_enabled()) {
       CUDF_FAIL("String column exceeds the column size limit", std::overflow_error);
     }
@@ -91,11 +141,12 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   // to store all per-chunk pointers to nested data/nullmask. `chunk_offsets[i]` will store the
   // offset into `chunk_nested_data`/`chunk_nested_valids` for the array of pointers for chunk `i`
   auto chunk_nested_valids =
-    cudf::detail::hostdevice_vector<bitmask_type*>(sum_max_depths, _stream);
-  auto chunk_nested_data = cudf::detail::hostdevice_vector<void*>(sum_max_depths, _stream);
-  auto chunk_offsets     = std::vector<size_t>();
-  auto chunk_nested_str_data =
-    cudf::detail::hostdevice_vector<void*>(has_strings ? sum_max_depths : 0, _stream);
+    cudf::detail::hostdevice_vector<bitmask_type*>(sum_max_depths, _stream, _mr.as_temporary());
+  auto chunk_nested_data =
+    cudf::detail::hostdevice_vector<void*>(sum_max_depths, _stream, _mr.as_temporary());
+  auto chunk_offsets         = std::vector<size_t>();
+  auto chunk_nested_str_data = cudf::detail::hostdevice_vector<void*>(
+    has_strings ? sum_max_depths : 0, _stream, _mr.as_temporary());
 
   // Update chunks with pointers to column data.
   for (size_t c = 0, chunk_off = 0; c < pass.chunks.size(); c++) {
@@ -181,7 +232,8 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // Create an empty device vector to store the initial str offset for large string columns from for
   // string decoders.
-  auto initial_str_offsets = rmm::device_uvector<size_t>{0, _stream, _mr};
+  auto initial_str_offsets =
+    cuda::device_buffer<size_t>{_stream, _mr.get_temporary_mr(), 0, cuda::no_init};
 
   pass.chunks.host_to_device_async(_stream);
   chunk_nested_valids.host_to_device_async(_stream);
@@ -190,19 +242,57 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
     // Host vector to initialize the initial string offsets
     auto host_offsets_vector =
       cudf::detail::make_pinned_vector_async<size_t>(_input_columns.size(), _stream);
-    std::fill(
-      host_offsets_vector.begin(), host_offsets_vector.end(), std::numeric_limits<size_t>::max());
+    std::ranges::fill(host_offsets_vector, std::numeric_limits<size_t>::max());
     // Initialize the initial string offsets vector from the host vector
-    initial_str_offsets = cudf::detail::make_device_uvector(host_offsets_vector, _stream, _mr);
+    initial_str_offsets =
+      cudf::detail::make_device_buffer(host_offsets_vector, _stream, _mr.as_temporary());
     chunk_nested_str_data.host_to_device_async(_stream);
   }
 
   // create this before we fork streams
   kernel_error error_code(_stream);
 
-  // get the number of streams we need from the pool and tell them to wait on the H2D copies
+  // Compute the routing masks in one walk over the pages. `mapped_kernel_mask` ORs the kernel masks
+  // of pages with a map, so each consumer is launched only if its encoding has one;
+  // `unmapped_kernel_mask` does the same for pages without, which the level-decoding kernels take.
+  // Each launcher passes its encoding's mapped bit to both kernels, so the consumer's launch and
+  // the level-decoding kernel's per-page skip agree, and no page is decoded by neither.
+  auto has_flat_nz_map               = false;
+  std::uint32_t mapped_kernel_mask   = 0;
+  std::uint32_t unmapped_kernel_mask = 0;
+  std::for_each(subpass.pages.host_begin(), subpass.pages.host_end(), [&](PageInfo const& page) {
+    auto const mapped = _nz_map_enabled && page.has_nz_map(nz_map_kind::DELTA_FLAT);
+    has_flat_nz_map |= mapped;
+    (mapped ? mapped_kernel_mask : unmapped_kernel_mask) |=
+      static_cast<std::uint32_t>(page.kernel_mask);
+  });
+
+  // The producer gets its own stream, so the other decoders overlap with it.
   int const nkernels = std::bitset<32>(kernel_mask).count();
-  auto streams       = cudf::detail::fork_streams(_stream, nkernels);
+  auto streams       = cudf::detail::fork_streams(_stream, nkernels + (has_flat_nz_map ? 1 : 0));
+  // Only forked when there is a map to produce. Without one there is nothing to order, and the
+  // launchers ignore the consumer streams below, so `_stream` stands in rather than aliasing a
+  // decoder's stream.
+  auto const nz_map_stream = has_flat_nz_map ? streams.back() : _stream;
+
+  if (has_flat_nz_map) {
+    precompute_flat_nz_map(subpass.pages,
+                           pass.chunks,
+                           subpass_page_mask_span(),
+                           skip_rows,
+                           num_rows,
+                           level_type_size,
+                           nz_map_stream);
+  }
+
+  // Each consumer gets a stream forked from the producer's, so it runs after the producer while the
+  // consumers overlap with each other and with the level-decoding kernels.
+  constexpr std::size_t num_consumers = 2;
+  auto const consumer_streams         = has_flat_nz_map
+                                          ? cudf::detail::fork_streams(nz_map_stream, num_consumers)
+                                          : std::vector<cuda::stream_ref>(num_consumers, _stream);
+  auto const dlba_consumer_stream     = consumer_streams[0];
+  auto const delta_consumer_stream    = consumer_streams[1];
 
   int s_idx = 0;
 
@@ -285,27 +375,40 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // launch delta length byte array decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0) {
+    auto const dlba_stream = streams[s_idx++];
+    auto const needs_levels =
+      BitAnd(unmapped_kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0;
+    auto const has_map = BitAnd(mapped_kernel_mask, decode_kernel_mask::DELTA_LENGTH_BA) != 0;
     decode_delta_length_byte_array(subpass.pages,
                                    pass.chunks,
                                    num_rows,
                                    skip_rows,
                                    level_type_size,
                                    subpass_page_mask_span(),
+                                   has_map,
+                                   needs_levels,
                                    initial_str_offsets,
                                    error_code.data(),
-                                   streams[s_idx++]);
+                                   dlba_stream,
+                                   dlba_consumer_stream);
   }
 
   // launch delta binary decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0) {
+    auto const delta_stream = streams[s_idx++];
+    auto const needs_levels = BitAnd(unmapped_kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0;
+    auto const has_map      = BitAnd(mapped_kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0;
     decode_delta_binary(subpass.pages,
                         pass.chunks,
                         num_rows,
                         skip_rows,
                         level_type_size,
                         subpass_page_mask_span(),
+                        has_map,
+                        needs_levels,
                         error_code.data(),
-                        streams[s_idx++]);
+                        delta_stream,
+                        delta_consumer_stream);
   }
 
   // launch byte stream split decoder
@@ -394,9 +497,11 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // synchronize the streams
   cudf::detail::join_streams(streams, _stream);
+  if (has_flat_nz_map) { cudf::detail::join_streams(consumer_streams, _stream); }
 
   // the delta_temp_buf in the subpass struct can be freed now
-  subpass.delta_temp_buf.release();
+  subpass.delta_temp_buf = cuda::device_buffer<uint8_t>(
+    _stream, subpass.delta_temp_buf.memory_resource(), 0, cuda::no_init);
 
   subpass.pages.device_to_host_async(_stream);
   page_nesting.device_to_host_async(_stream);
@@ -496,13 +601,18 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   _stream.sync();
 }
 
-reader_impl::reader_impl() : _stream{cudaStream_t{cudaStreamDefault}}, _options{} {}
+reader_impl::reader_impl()
+  : _stream{cudaStream_t{cudaStreamDefault}},
+    _mr{cudf::get_current_device_resource_ref()},
+    _options{}
+{
+}
 
 reader_impl::reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                          std::vector<FileMetaData>&& parquet_metadatas,
                          parquet_reader_options const& options,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cudf::memory_resources mr)
   : reader_impl(0 /*chunk_read_limit*/,
                 0 /*input_pass_read_limit*/,
                 std::forward<std::vector<std::unique_ptr<cudf::io::datasource>>>(sources),
@@ -519,7 +629,7 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
                          std::vector<FileMetaData>&& file_metadatas,
                          parquet_reader_options const& options,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cudf::memory_resources mr)
   : _stream{std::move(stream)},
     _mr{std::move(mr)},
     _options{options.get_timestamp_type(),
@@ -587,11 +697,10 @@ reader_impl::reader_impl(std::size_t chunk_read_limit,
     select_column_names, filter_only_columns_names, make_column_selection_options(options));
 
   // Save the states of the output buffers for reuse in `chunk_read()`.
-  std::transform(
-    _output_buffers.begin(),
-    _output_buffers.end(),
-    std::back_inserter(_output_buffers_template),
-    [](auto const& buff) { return cudf::io::detail::inline_column_buffer::empty_like(buff); });
+  std::ranges::transform(
+    _output_buffers, std::back_inserter(_output_buffers_template), [](auto const& buff) {
+      return cudf::io::detail::inline_column_buffer::empty_like(buff);
+    });
 
   // Save the normalized output filter for `preprocess_file()` and `finalize_output()`.
   table_metadata metadata;
@@ -624,7 +733,8 @@ void reader_impl::populate_metadata(table_metadata& out_metadata)
     auto const& schema               = _metadata->get_schema(_output_column_schemas[i]);
     out_metadata.schema_info[i].name = schema.name;
     out_metadata.schema_info[i].is_nullable =
-      schema.repetition_type != FieldRepetitionType::REQUIRED;
+      schema.repetition_type != FieldRepetitionType::REQUIRED or
+      _metadata->is_nullable_across_sources(_output_column_schemas[i]);
   }
 
   // Return user metadata
@@ -679,6 +789,9 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
 {
   CUDF_FUNC_RANGE();
 
+  // The filter copies the surviving rows to the output, so columns are temporary until then
+  auto const mr = _expr_conv.get_converted_expr().has_value() ? _mr.as_temporary() : _mr;
+
   // If `_output_metadata` has been constructed, just copy it over.
   auto out_metadata = _output_metadata ? table_metadata{*_output_metadata} : table_metadata{};
   out_metadata.schema_info.resize(_output_buffers.size());
@@ -705,7 +818,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
       std::vector<size_t>(_file_itm_data.num_rows_per_source.size(), 0);
 
     // Finalize output
-    return finalize_output(mode, out_metadata, out_columns);
+    return finalize_output(mode, out_metadata, out_columns, mr);
   }
 
   auto& pass            = *_pass_itm_data;
@@ -738,26 +851,14 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   preprocess_chunk_strings(mode, read_info);
 
   // Allocate memory buffers for the output columns.
-  allocate_columns(mode, read_info.skip_rows, read_info.num_rows);
+  allocate_columns(mode, read_info.skip_rows, read_info.num_rows, mr);
 
   // Parse data into the output buffers.
   decode_page_data(mode, read_info.skip_rows, read_info.num_rows);
 
   // Create the final output cudf columns.
   for (size_t i = 0; i < _output_buffers.size(); ++i) {
-    auto metadata           = _reader_column_schema.has_value()
-                                ? std::make_optional<reader_column_schema>((*_reader_column_schema)[i])
-                                : std::nullopt;
-    auto const& schema      = _metadata->get_schema(_output_column_schemas[i]);
-    auto const logical_type = schema.logical_type.value_or(LogicalType{});
-    // FIXED_LEN_BYTE_ARRAY never read as string.
-    // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY as
-    // binary and not strings, this test needs to change.
-    if (schema.type == Type::FIXED_LEN_BYTE_ARRAY and logical_type.type != LogicalType::DECIMAL) {
-      metadata = std::make_optional<reader_column_schema>();
-      metadata->set_convert_binary_to_strings(false);
-      metadata->set_type_length(schema.type_length);
-    }
+    auto const metadata = output_column_schema(i);
     // Only construct `out_metadata` if `_output_metadata` has not been cached.
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
@@ -773,8 +874,8 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   // remaps indices to the unified keys child.
   assemble_dict_transcoded_columns(out_columns);
 
-  out_columns =
-    cudf::structs::detail::enforce_null_consistency(std::move(out_columns), _stream, _mr);
+  out_columns = cudf::structs::detail::enforce_null_consistency(
+    std::move(out_columns), _stream, mr.get_output_mr());
 
   // Compute the output number of rows per source
   if (mode == read_mode::CHUNKED_READ) {
@@ -786,7 +887,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   }
 
   // Add empty columns if needed. Filter output columns based on filter.
-  return finalize_output(mode, out_metadata, out_columns);
+  return finalize_output(mode, out_metadata, out_columns, mr);
 }
 
 std::vector<size_t> reader_impl::calculate_output_num_rows_per_source(size_t const chunk_start_row,
@@ -812,9 +913,8 @@ std::vector<size_t> reader_impl::calculate_output_num_rows_per_source(size_t con
   auto const& partial_sum_nrows_source = _file_itm_data.exclusive_sum_num_rows_per_source;
 
   // Binary search start_row and end_row in exclusive_sum_num_rows_per_source vector
-  auto const start_iter =
-    std::upper_bound(partial_sum_nrows_source.cbegin(), partial_sum_nrows_source.cend(), start_row);
-  auto const end_iter = std::lower_bound(start_iter, partial_sum_nrows_source.cend(), end_row);
+  auto const start_iter = std::ranges::upper_bound(partial_sum_nrows_source, start_row);
+  auto const end_iter   = std::lower_bound(start_iter, partial_sum_nrows_source.cend(), end_row);
 
   // Compute the array offset index for both iterators
   auto const start_idx   = std::distance(partial_sum_nrows_source.cbegin(), start_iter);
@@ -889,17 +989,53 @@ std::optional<std::vector<std::string>> reader_impl::get_column_projection(
   return std::nullopt;
 }
 
-void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>& out_columns)
+bool reader_impl::is_intermediate_column(cudf::io::detail::inline_column_buffer const& buffer,
+                                         std::optional<size_t> top_level_index) const
+{
+  auto const type = buffer.type;
+  // Check if we need to cast decimal columns
+  auto const will_cast_decimals = _options.decimal_width != type_id::EMPTY and
+                                  cudf::is_fixed_point(type) and
+                                  type.id() != _options.decimal_width;
+  auto const is_string = type.id() == type_id::STRING;
+  // Check if a top-level STRING buffer is returned as binary (LIST<UINT8>). See
+  // output_column_schema
+  auto const is_binary = is_string and top_level_index.has_value() and
+                         (buffer.string_as_binary or not output_column_schema(*top_level_index)
+                                                           .value_or(reader_column_schema{})
+                                                           .is_enabled_convert_binary_to_strings());
+  // Check if we need to encode strings as dictionaries
+  auto const will_dict_encode_strings =
+    is_string and not is_binary and _options.output_dict_columns and top_level_index.has_value();
+  return will_cast_decimals or will_dict_encode_strings;
+}
+
+std::optional<reader_column_schema> reader_impl::output_column_schema(size_t index) const
+{
+  auto const& schema      = _metadata->get_schema(_output_column_schemas[index]);
+  auto const logical_type = schema.logical_type.value_or(LogicalType{});
+  // Non-decimal FIXED_LEN_BYTE_ARRAY columns are always read as binary
+  // TODO: if we ever decide that the default reader behavior is to treat unannotated BINARY as
+  // binary and not strings, this test needs to change.
+  if (schema.type == Type::FIXED_LEN_BYTE_ARRAY and logical_type.type != LogicalType::DECIMAL) {
+    auto metadata = std::make_optional<reader_column_schema>();
+    metadata->set_convert_binary_to_strings(false);
+    metadata->set_type_length(schema.type_length);
+    return metadata;
+  }
+  return _reader_column_schema.has_value()
+           ? std::make_optional<reader_column_schema>((*_reader_column_schema)[index])
+           : std::nullopt;
+}
+
+void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>& out_columns,
+                                           cudf::memory_resources mr)
 {
   // TODO: Instead of casting the columns after the read is done, we should
   // be able to decode data directly into the target decimal type buffer.
   if (_options.decimal_width == type_id::EMPTY) { return; }
   for (auto& col : out_columns) {
-    auto const col_type = col->type();
-    if (cudf::is_fixed_point(col_type) && col_type.id() != _options.decimal_width) {
-      col =
-        cudf::cast(col->view(), data_type{_options.decimal_width, col_type.scale()}, _stream, _mr);
-    }
+    col = cast_decimals_to_width(std::move(col), _options.decimal_width, _stream, mr);
   }
 }
 
@@ -930,38 +1066,30 @@ column_selection_options reader_impl::make_column_selection_options(
 
 table_with_metadata reader_impl::finalize_output(read_mode mode,
                                                  table_metadata& out_metadata,
-                                                 std::vector<std::unique_ptr<column>>& out_columns)
+                                                 std::vector<std::unique_ptr<column>>& out_columns,
+                                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   // Create empty columns as needed (this can happen if we've ended up with no actual data to read)
   for (size_t i = out_columns.size(); i < _output_buffers.size(); ++i) {
+    auto const buffer_mr =
+      is_intermediate_column(_output_buffers[i], i) ? mr.get_temporary_mr() : mr.get_output_mr();
     if (!_output_metadata) {
       column_name_info& col_name = out_metadata.schema_info[i];
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], &col_name, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], &col_name, _stream, buffer_mr));
     } else {
-      out_columns.emplace_back(io::detail::empty_like(_output_buffers[i], nullptr, _stream, _mr));
+      out_columns.emplace_back(
+        io::detail::empty_like(_output_buffers[i], nullptr, _stream, buffer_mr));
     }
   }
 
-  apply_decimal_width_cast(out_columns);
+  apply_decimal_width_cast(out_columns, mr);
 
-  // Encode any remaining flat STRING columns to DICTIONARY32 via a post-hoc
-  // `dictionary::detail::encode`: columns not produced by the direct transcode fast path, or all of
-  // them when the fast path was disabled (e.g. under a filter). This is applied to the FINAL output
-  // table below -- after any filter is evaluated -- so the filter still operates on STRING columns
-  // and the dictionary is built over only the surviving rows.
-  auto const encode_output_dict_columns =
-    [&](std::unique_ptr<table> tbl) -> std::unique_ptr<table> {
-    if (not _options.output_dict_columns) { return tbl; }
-    auto columns = tbl->release();
-    for (auto& col : columns) {
-      if (col and col->type().id() == type_id::STRING) {
-        col =
-          cudf::dictionary::detail::encode(col->view(), data_type{type_id::INT32}, _stream, _mr);
-      }
-    }
-    return std::make_unique<table>(std::move(columns));
+  // Check if a column is to be dictionary encoded
+  auto const is_dict_encoded = [&](column_view const& col) {
+    return _options.output_dict_columns and col.type().id() == type_id::STRING;
   };
 
   if (!_output_metadata) {
@@ -992,14 +1120,14 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     if (_options.prepend_row_index_column) {
       out_columns.emplace(
         out_columns.begin(),
-        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, _mr));
+        synthesize_row_index_column(_file_itm_data.row_groups, read_info, _stream, mr));
       out_metadata.schema_info.emplace(out_metadata.schema_info.begin(),
                                        column_name_info{.name = "row_index", .is_nullable = false});
     }
     if (_options.prepend_source_index_column) {
       out_columns.emplace(
         out_columns.begin(),
-        synthesize_source_index_column(out_metadata.num_rows_per_source, _stream, _mr));
+        synthesize_source_index_column(out_metadata.num_rows_per_source, _stream, mr));
       out_metadata.schema_info.emplace(
         out_metadata.schema_info.begin(),
         column_name_info{.name = "source_index", .is_nullable = false});
@@ -1012,36 +1140,92 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
 
   // check if the output filter AST expression (= _expr_conv.get_converted_expr()) exists
   if (final_filter_expr.has_value()) {
+    auto const output_count = out_columns.size() - _num_filter_only_columns;
     auto read_table         = std::make_unique<table>(std::move(out_columns));
     auto counting_it        = cuda::counting_iterator<std::size_t>{0};
-    auto const output_count = read_table->num_columns() - _num_filter_only_columns;
-    auto only_output        = read_table->select(counting_it, counting_it + output_count);
+    // Exclude columns present in filter only in output.
+    auto only_output = read_table->select(counting_it, counting_it + output_count);
 
     if (_num_filter_only_columns > 0) { out_metadata.schema_info.resize(output_count); }
 
     // Clear the number of rows per source as it is not valid after filtering
     out_metadata.num_rows_per_source.clear();
 
-    bool use_jit = cudf::get_context().use_jit() || _options.use_jit_filter;
+    auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
+    auto predicate =
+      use_jit ? cudf::compute_column_jit(read_table->view(),
+                                         final_filter_expr.value().get(),
+                                         {},
+                                         _stream,
+                                         _mr.get_temporary_mr())
+              : cudf::detail::compute_column(
+                  *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
 
-    if (!use_jit) {
-      auto predicate =
-        cudf::detail::compute_column(*read_table, final_filter_expr.value().get(), _stream, _mr);
-      CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
-                   "Predicate filter should return a boolean");
-      // Exclude columns present in filter only in output
-      auto output_table = cudf::detail::apply_mask(
-        only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr);
-      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
+    CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
+                 "Predicate filter should return a boolean");
+
+    // Check if a STRING column is to be dictionary encoded
+    auto const is_dict_encoded_index = [&](size_type index) {
+      return is_dict_encoded(only_output.column(index));
+    };
+
+    // Separate the STRING columns to be dictionary encoded from the other columns
+    auto const column_indices = std::views::iota(0, only_output.num_columns());
+    auto dict_indices         = column_indices | std::views::filter(is_dict_encoded_index);
+    auto non_dict_indices = column_indices | std::views::filter(std::not_fn(is_dict_encoded_index));
+
+    // No STRING columns are to be dictionary encoded
+    if (std::ranges::empty(dict_indices)) {
+      out_columns = cudf::detail::apply_mask(
+                      only_output, *predicate, cudf::detail::mask_type::RETENTION, _stream, _mr)
+                      ->release();
     } else {
-      auto output_table = cudf::filter(
-        read_table->view(), final_filter_expr.value().get(), only_output, _stream, _mr);
+      // Gather map of the surviving rows, computed once for both subsets
+      auto const row_indices = cudf::detail::sequence(read_table->num_rows(),
+                                                      numeric_scalar<size_type>(0, true, _stream),
+                                                      _stream,
+                                                      _mr.get_temporary_mr());
+      auto const gather_map =
+        cudf::detail::apply_mask(table_view{std::vector<column_view>{row_indices->view()}},
+                                 *predicate,
+                                 cudf::detail::mask_type::RETENTION,
+                                 _stream,
+                                 _mr.as_temporary());
 
-      return {encode_output_dict_columns(std::move(output_table)), std::move(out_metadata)};
+      // Helper to gather a subset of columns
+      auto const gather_rows = [&](auto&& indices, cudf::memory_resources gather_mr) {
+        return cudf::detail::gather(only_output.select(indices.begin(), indices.end()),
+                                    gather_map->get_column(0).view(),
+                                    out_of_bounds_policy::DONT_CHECK,
+                                    negative_index_policy::NOT_ALLOWED,
+                                    _stream,
+                                    gather_mr)
+          ->release();
+      };
+
+      // STRING columns to be dictionary encoded go to the temporary resource
+      auto dict_columns     = gather_rows(dict_indices, _mr.as_temporary());
+      auto non_dict_columns = gather_rows(non_dict_indices, _mr);
+
+      // Restore the column order
+      out_columns.clear();
+      std::ranges::transform(
+        column_indices,
+        std::back_inserter(out_columns),
+        [&, dict = dict_columns.begin(), non_dict = non_dict_columns.begin()](
+          size_type index) mutable {
+          return std::move(is_dict_encoded_index(index) ? *dict++ : *non_dict++);
+        });
     }
   }
-  return {encode_output_dict_columns(std::make_unique<table>(std::move(out_columns))),
-          std::move(out_metadata)};
+
+  // Encode STRING columns to DICTIONARY32
+  std::ranges::for_each(out_columns, [&](auto& col) {
+    if (is_dict_encoded(col->view())) {
+      col = cudf::dictionary::detail::encode(col->view(), data_type{type_id::INT32}, _stream, _mr);
+    }
+  });
+  return {std::make_unique<table>(std::move(out_columns)), std::move(out_metadata)};
 }
 
 table_with_metadata reader_impl::read()
@@ -1095,9 +1279,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
   CUDF_EXPECTS(pages.size() == page_mask.size(), "Page mask size mismatch");
 
   // Return early if page mask is empty or all pages are required
-  if (page_mask.empty() or std::all_of(page_mask.begin(), page_mask.end(), std::identity{})) {
-    return;
-  }
+  if (page_mask.empty() or std::ranges::all_of(page_mask, std::identity{})) { return; }
 
   auto page_and_mask_begin =
     cuda::make_zip_iterator(cuda::std::make_tuple(pages.host_begin(), page_mask.begin()));
@@ -1180,7 +1362,7 @@ void reader_impl::update_output_nullmasks_for_pruned_pages(cudf::host_span<bool 
   // Bulk update the nullmasks if the number of pages is above the threshold
   if (pinned_null_masks.size() >= min_nullmasks_for_bulk_update) {
     auto pinned_valids = cudf::detail::make_pinned_vector<bool>(pinned_null_masks.size(), _stream);
-    std::fill(pinned_valids.begin(), pinned_valids.end(), false);
+    std::ranges::fill(pinned_valids, false);
     cudf::set_null_masks_safe(
       pinned_null_masks, pinned_begin_bits, pinned_end_bits, pinned_valids, _stream);
     _stream.sync();
@@ -1217,7 +1399,7 @@ parquet_column_schema walk_schema(aggregate_reader_metadata const* mt, int idx)
 }
 }  // namespace
 
-parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> const> sources)
+parquet_metadata read_parquet_metadata(std::span<std::unique_ptr<datasource> const> sources)
 {
   // Do not use arrow schema when only reading the parquet footer metadata.
   constexpr auto use_arrow_schema = false;
@@ -1244,22 +1426,16 @@ parquet_metadata read_parquet_metadata(host_span<std::unique_ptr<datasource> con
 std::vector<parquet::FileMetaData> read_parquet_footers(
   std::span<std::unique_ptr<datasource> const> sources)
 {
-  // Do not use arrow schema when only reading the parquet metadata.
-  constexpr auto use_arrow_schema = false;
-
-  // Do not select any columns when only reading the parquet metadata.
-  constexpr auto has_column_projection = false;
+  // Empty sources
+  if (sources.empty()) { return {}; }
 
   // Read page indexes if available here since we will want to reuse the raw metadata for later use.
   constexpr auto read_page_indexes = true;
 
-  // Parse the source dataset metadata
-  return aggregate_reader_metadata(
-           host_span<std::unique_ptr<datasource> const>{sources.data(), sources.size()},
-           use_arrow_schema,
-           has_column_projection,
-           read_page_indexes)
-    .get_parquet_metadatas();
+  // Parse sources into FileMetaData objects
+  return parallel_construct_metadatas(sources, [](auto const& source) {
+    return FileMetaData{metadata{source.get(), read_page_indexes}};
+  });
 }
 
 }  // namespace cudf::io::parquet::detail

@@ -1,12 +1,16 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
 
 package ai.rapids.cudf;
 
+/**
+ * Options that control how {@link ColumnView#getJSONObject(Scalar, GetJsonObjectOptions)}
+ * parses JSON.
+ */
 public final class GetJsonObjectOptions {
 
     public static GetJsonObjectOptions DEFAULT = new GetJsonObjectOptions.Builder().build();

@@ -1,9 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
+
+#include "jni_utils.hpp"
 
 #include <cuda/memory_resource>
 
@@ -24,7 +26,7 @@ inline cuda::mr::any_resource<cuda::mr::device_accessible>& get_resource(jlong h
 
 inline void delete_jni_resource(jlong handle)
 {
-  delete reinterpret_cast<cuda::mr::any_resource<cuda::mr::device_accessible>*>(handle);
+  safe_delete<cuda::mr::any_resource<cuda::mr::device_accessible>>(handle);
 }
 
 }  // namespace cudf::jni

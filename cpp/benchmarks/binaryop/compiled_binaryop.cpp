@@ -79,6 +79,7 @@ BINARYOP_BENCHMARK_DEFINE(duration_s,   int64_t,      MUL,                  dura
 BINARYOP_BENCHMARK_DEFINE(int64_t,      int64_t,      DIV,                  int64_t);
 BINARYOP_BENCHMARK_DEFINE(duration_ms,  int32_t,      DIV,                  duration_ms);
 BINARYOP_BENCHMARK_DEFINE(int64_t,      int64_t,      TRUE_DIV,             int64_t);
+BINARYOP_BENCHMARK_DEFINE(float,        float,        TRUE_DIV,             float);
 BINARYOP_BENCHMARK_DEFINE(int64_t,      int64_t,      FLOOR_DIV,            int64_t);
 BINARYOP_BENCHMARK_DEFINE(double,       double,       MOD,                  double);
 BINARYOP_BENCHMARK_DEFINE(duration_ms,  int64_t,      MOD,                  duration_ms);
@@ -177,6 +178,8 @@ __device__ void transform(float* out, float a, float b) {
   state.add_global_memory_reads<TypeRhs>(num_rows);
   state.add_global_memory_writes<TypeOut>(num_rows);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     [[maybe_unused]] auto result = use_lto ? cudf::transform_lto(udf,
                                                                  cudf::lto_binary_type::FATBIN,
@@ -195,6 +198,9 @@ __device__ void transform(float* out, float a, float b) {
                                                              {},
                                                              std::nullopt);
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define BM_JIT_BINARYOP_BENCHMARK_DEFINE(name, lhs, rhs, bop, tout)                    \

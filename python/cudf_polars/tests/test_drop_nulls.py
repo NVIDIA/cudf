@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 import polars as pl
@@ -34,6 +36,83 @@ def null_data(request):
 def test_drop_null(engine: pl.GPUEngine, null_data):
     q = null_data.select(pl.col("a").drop_nulls())
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.fixture(params=[False, True], ids=["ascending", "descending"])
+def descending(request):
+    return request.param
+
+
+@pytest.fixture(params=["first", "last", "all", "one_null", "none"])
+def nulls(request):
+    return request.param
+
+
+def sorted_null_frame(*, descending: bool, nulls: str) -> pl.LazyFrame:
+    columns: dict[str, tuple[pl.DataType, list[Any]]] = {
+        "i": (pl.Int64(), [1, 2, 3]),
+        "f": (pl.Float64(), [1.0, 2.0, float("nan")]),
+        "s": (pl.String(), ["x", "y", "z"]),
+    }
+    frame = {}
+    for name, (dtype, ascending_values) in columns.items():
+        values = ascending_values[::-1] if descending else ascending_values
+        data = {
+            "first": [None, None, *values],
+            "last": [*values, None, None],
+            "all": [None, None, None],
+            "one_null": [None],
+            "none": values,
+        }[nulls]
+        frame[name] = pl.Series(data, dtype=dtype)
+    return pl.LazyFrame(frame)
+
+
+@pytest.mark.parametrize("column", ["i", "f", "s"])
+def test_drop_nulls_sorted(engine: pl.GPUEngine, descending, nulls, column):
+    q = sorted_null_frame(descending=descending, nulls=nulls).select(
+        pl.col(column).set_sorted(descending=descending).drop_nulls()
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_drop_nulls_sorted_then_reuse_null_mask(
+    engine: pl.GPUEngine, descending, nulls
+):
+    q = sorted_null_frame(descending=descending, nulls=nulls).select(
+        pl.col("i").set_sorted(descending=descending).drop_nulls().is_finite(),
+        pl.col("f").set_sorted(descending=descending).drop_nulls().is_finite(),
+        pl.col("s").set_sorted(descending=descending).drop_nulls().str.contains(""),
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("column", ["i", "f", "s"])
+def test_drop_nulls_sorted_keeps_sorted_flag(
+    in_memory_engine: pl.GPUEngine, descending, nulls, column
+):
+    q = sorted_null_frame(descending=descending, nulls=nulls).select(
+        pl.col(column).set_sorted(descending=descending).drop_nulls()
+    )
+    got = q.collect(engine=in_memory_engine)[column]
+    expected = q.collect()[column]
+    assert got.flags == expected.flags
+
+
+def test_drop_nulls_after_unordered_unique(engine: pl.GPUEngine):
+    n = 1_000
+    q = (
+        pl.LazyFrame(
+            {
+                "a": pl.Series([None] * 5 + list(range(n)), dtype=pl.Int64()),
+                "b": list(range(n + 5))[::-1],
+            }
+        )
+        .with_columns(pl.col("a").set_sorted())
+        .unique()
+        .select(pl.col("a").drop_nulls())
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
 @pytest.mark.parametrize(

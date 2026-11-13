@@ -41,71 +41,54 @@ enum class phase : int8_t {
   FINALIZE = 2   ///< Finalize an already reduced state into output columns.
 };
 
-/** @brief Default row filter used when no filter callback is supplied. */
-struct select_all {
-  template <typename... T>
-  __device__ errc operator()(size_type, bool* selected, T const&...) const
-  {
-    *selected = true;
-    return errc::SUCCESS;
-  }
-
-  template <typename... T>
-  __device__ errc operator()(size_type, size_type row, bool* selected, T const&... values) const
-  {
-    return (*this)(row, selected, values...);
-  }
-};
-
-/** @brief Load a row once, evaluate its filter, and update the state only on a successful match. */
+/** @brief Evaluate the filter before loading values for the update callback. */
 template <bool NullAware,
           typename Inputs,
+          typename FilterInputs,
           typename State,
           typename Filter,
           typename Update,
           typename... Context>
 __device__ void update_row(State& state,
                            column_device_view_core const* inputs,
+                           column_device_view_core const* filter_inputs,
                            size_type row,
                            Filter&& filter,
                            Update&& update,
                            Context... context)
 {
-  Inputs::map([&]<typename... A> {
-    // TODO: we could potentially optimize this to prevent loading values that the predicate
-    // rejects. The non-null-aware path always loads the null-masks to check validity first.
-    if constexpr (!NullAware) {
-      if (!(A::is_valid(inputs, row) && ... && true)) { return; }
+  if constexpr (!NullAware) {
+    auto const valid = [&]<typename... A> { return (A::is_valid(inputs, row) && ... && true); };
+    if (!Inputs::map(valid)) { return; }
+  }
+
+  auto load = [&]<typename Accessor>(column_device_view_core const* columns) {
+    if constexpr (NullAware) {
+      return Accessor::nullable_element(columns, row);
+    } else {
+      return Accessor::element(columns, row);
     }
+  };
 
-    auto load = [&]<typename Accessor> {
-      if constexpr (NullAware) {
-        return Accessor::nullable_element(inputs, row);
-      } else {
-        return Accessor::element(inputs, row);
-      }
-    };
-
-    auto values   = cuda::std::tuple { load.template operator()<A>()... };
-    bool selected = false;
-
-    auto const filter_error = cuda::std::apply(
-      [&](auto const&... value) { return filter(context..., row, &selected, value...); }, values);
-
-    state.error = cuda::std::max(state.error, filter_error);
-
-    if (filter_error != errc::SUCCESS || !selected) { return; }
-
-    auto const update_error = cuda::std::apply(
-      [&](auto const&... value) {
-        return [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
-          return update(context..., row, &cuda::std::get<I>(state.values)..., value...);
-        }(State::types::indexed);
-      },
-      values);
-
-    state.error = cuda::std::max(state.error, update_error);
+  bool selected           = false;
+  auto const filter_error = FilterInputs::map([&]<typename... A> {
+    if constexpr (!NullAware) {
+      if (!(A::is_valid(filter_inputs, row) && ... && true)) { return errc::SUCCESS; }
+    }
+    return filter(context..., row, &selected, load.template operator()<A>(filter_inputs)...);
   });
+  state.error             = cuda::std::max(state.error, filter_error);
+  if (filter_error != errc::SUCCESS || !selected) { return; }
+
+  auto const update_error = Inputs::map([&]<typename... A> {
+    return [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
+      return update(context...,
+                    row,
+                    &cuda::std::get<I>(state.values)...,
+                    load.template operator()<A>(inputs)...);
+    }(State::types::indexed);
+  });
+  state.error             = cuda::std::max(state.error, update_error);
 }
 
 template <typename State, typename Merge, typename... Context>
@@ -252,6 +235,7 @@ __device__ void finalize(State const& state,
  *
  * @tparam NullAware Whether callbacks receive nullable input/output values
  * @tparam Inputs Type list of input accessors in update-parameter order
+ * @tparam FilterInputs Type list of input accessors in filter-parameter order
  * @tparam Outputs Type list of output accessors in finalization-parameter order
  * @tparam BlockSize Number of threads per block
  * @tparam UseWarpReduce Use warp shuffles and shared warp leaders; otherwise use global scratch
@@ -264,7 +248,8 @@ __device__ void finalize(State const& state,
  *
  * @param phase Reduction phase to execute
  * @param num_rows Count of input rows
- * @param inputs Device input views consumed by the input accessors in `REDUCE`
+ * @param inputs Device input views consumed by the update accessors in `REDUCE`
+ * @param filter_inputs Device input views consumed by the filter accessors in `REDUCE`
  * @param outputs Device array of `Outputs::size` single-row views, used only during finalization
  * @param partials Source states for `MERGE`, or one final state for `FINALIZE`
  * @param results Writable array of `gridDim.x` states
@@ -275,6 +260,7 @@ __device__ void finalize(State const& state,
  */
 template <bool NullAware,
           typename Inputs,
+          typename FilterInputs,
           typename Outputs,
           int BlockSize,
           bool UseWarpReduce,
@@ -288,6 +274,7 @@ template <bool NullAware,
 __device__ void reduce_kernel(reduce::phase phase,
                               size_type num_rows,
                               column_device_view_core const* __restrict__ inputs,
+                              column_device_view_core const* __restrict__ filter_inputs,
                               mutable_column_device_view_core const* __restrict__ outputs,
                               State const* __restrict__ partials,
                               State* __restrict__ results,
@@ -324,7 +311,8 @@ __device__ void reduce_kernel(reduce::phase phase,
       continue;
     }
 
-    reduce::update_row<NullAware, Inputs>(local, inputs, row, filter, update);
+    reduce::update_row<NullAware, Inputs, FilterInputs>(
+      local, inputs, filter_inputs, row, filter, update);
   }
 
   if constexpr (UseWarpReduce) {

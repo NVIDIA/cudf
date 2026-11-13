@@ -9,6 +9,9 @@
 
 namespace CUDF_EXPORT cudf {
 
+/// @brief Opaque pointer type for user-defined data.
+using voidptr_t = void*;
+
 /**
  * @brief A non-owning pointer to user-defined data passed to a UDF.
  *
@@ -19,7 +22,7 @@ namespace CUDF_EXPORT cudf {
  * all operations using it have completed on the execution stream.
  */
 struct user_data {
-  void* ptr = nullptr;  ///< User-defined data pointer; may be null.
+  voidptr_t ptr = nullptr;  ///< User-defined data pointer; may be null.
 };
 
 }  // namespace CUDF_EXPORT cudf

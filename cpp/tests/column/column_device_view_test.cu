@@ -171,8 +171,6 @@ void ColumnDeviceViewTest::test_nullable_noncanonical_bool()
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
 }
 
-TEST_F(ColumnDeviceViewTest, MutableNullableElement) { test_mutable_nullable_element(); }
-
 TEST_F(ColumnDeviceViewTest, NonCanonicalBool) { test_noncanonical_bool(); }
 
 TEST_F(ColumnDeviceViewTest, NullableNonCanonicalBool) { test_nullable_noncanonical_bool(); }

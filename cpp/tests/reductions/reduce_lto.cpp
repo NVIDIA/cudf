@@ -21,7 +21,7 @@
 #include <cuda/std/tuple>
 #include <cuda_runtime_api.h>
 
-#include <cudf_reduce_lto_test_fragments.hpp>
+#include <cudf_reduce_test_embed.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -45,14 +45,6 @@ data_type const state_types[]{data_type{type_id::INT64}, data_type{type_id::INT6
 
 data_type const output_types[]{state_types[0], state_types[1], data_type{type_id::FLOAT64}};
 
-cudf::compiled_fragment cuda_fragments()
-{
-  auto const range = cudf_reduce_test_embed::file_ranges[cudf_reduce_test_embed::udf_cuda];
-  auto const bytes = cudf_reduce_test_embed::files.subspan(range[0], range[1]);
-  std::string const source(bytes.begin(), bytes.end());
-  return cudf::compile_cuda_to_lto_ir(source.c_str(), {}, {}, {});
-}
-
 cudf::lto_fragments lto_fragments()
 {
   auto const range = cudf_reduce_test_embed::file_ranges[cudf_reduce_test_embed::fragment];
@@ -75,66 +67,83 @@ void expect_sum_count_avg(std::span<std::unique_ptr<cudf::column> const> result,
 
 }  // namespace
 
-struct ReduceLto : cudf::test::BaseFixture {
+struct ReduceUdf : cudf::test::BaseFixture {
   void SetUp() override { CUDF_CUDA_TRY(cudaSetDevice(rmm::get_current_cuda_device().value())); }
 };
 
-TEST_F(ReduceLto, EmptyStateAndOutputs)
+TEST_F(ReduceUdf, EmptyStateAndOutputs)
 {
-  cudf::reduce_udf udf{
-    lto_fragments(), "empty_init", "empty_update", "empty_merge", "empty_finalize"};
+  cudf::reduce_udf udf{.fragments     = lto_fragments(),
+                       .init          = "empty_init",
+                       .update        = "empty_update",
+                       .merge         = "empty_merge",
+                       .finalize      = "empty_finalize",
+                       .is_null_aware = cudf::null_aware::NO};
   for (int32_t rows : {0, 100'003}) {
     SCOPED_TRACE(rows);
     std::vector<int32_t> values(rows, 1);
     wrapper<int32_t> input(values.begin(), values.end());
     cudf::reduce_input const inputs[]{input};
-    auto result = cudf::reduce_lto(udf, cudf::null_aware::NO, inputs, {}, {});
+    auto result = cudf::reduce(udf, inputs, {}, {});
     EXPECT_TRUE(result.empty());
   }
   udf.finalize = "empty_finalize_error";
   try {
-    auto result = cudf::reduce_lto(udf, cudf::null_aware::NO, {}, {}, {});
+    auto result = cudf::reduce(udf, {}, {}, {});
     FAIL() << "Finalization errors must propagate even without state or outputs";
   } catch (cudf::evaluation_error const& error) {
     EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
   }
 }
 
-TEST_F(ReduceLto, ScalarOnly)
+TEST_F(ReduceUdf, ScalarOnly)
 {
   wrapper<int32_t> value{7};
   cudf::reduce_input const inputs[]{cudf::scalar_column_view{value}};
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "sum_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "sum_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+  auto result = cudf::reduce(udf, inputs, state_types, output_types);
   expect_sum_count_avg(result, 0, 0);
+
+  // A filter column determines the row count when update inputs are all broadcast.
+  wrapper<bool> keep{true, false, true};
+  cudf::reduce_input const filter_inputs[]{keep};
+  auto filtered   = udf;
+  filtered.filter = "boolean_filter";
+  result          = cudf::reduce(filtered, inputs, state_types, output_types, filter_inputs);
+  expect_sum_count_avg(result, 14, 2);
 }
 
-TEST_F(ReduceLto, WideOptionalState)
+TEST_F(ReduceUdf, WideOptionalState)
 {
   constexpr int32_t fields      = 32;
   constexpr int64_t sum_weights = fields * (fields + 1) / 2;
   std::vector<cudf::data_type> states(fields, cudf::data_type{type_id::INT64});
   cudf::data_type const outputs[]{cudf::data_type{type_id::INT64}};
-  cudf::reduce_udf const udf{
-    lto_fragments(), "wide_init", "wide_update", "wide_merge", "wide_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "wide_init",
+                             .update        = "wide_update",
+                             .merge         = "wide_merge",
+                             .finalize      = "wide_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
   for (int32_t rows : {0, 257, 100'003}) {
     SCOPED_TRACE(rows);
     std::vector<int32_t> values(rows, 1);
     wrapper<int32_t> input(values.begin(), values.end());
     cudf::reduce_input const inputs[]{input};
-    auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, states, outputs);
+    auto result = cudf::reduce(udf, inputs, states, outputs);
     ASSERT_EQ(result.size(), 1);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0], (wrapper<int64_t>{{rows * sum_weights}, {true}}));
   }
 }
 
-TEST_F(ReduceLto, NullHandling)
+TEST_F(ReduceUdf, NullHandling)
 {
   wrapper<int32_t> values{{10, 99, 5, 15}, {true, false, true, true}};
   wrapper<int32_t> all_null{{10, 20}, {false, false}};
@@ -150,27 +159,36 @@ TEST_F(ReduceLto, NullHandling)
   for (auto const& test : cases) {
     cudf::reduce_input const inputs[]{test.input};
     wrapper<int64_t> expected_raw_sum{{test.expected_sum}, {true}};
-    cudf::reduce_udf const udf{lto_fragments(),
-                               "tpch_q6_sales_init",
-                               "sum_update",
-                               "tpch_q6_sales_merge",
-                               "tpch_q6_sales_finalize"};
-    auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+    cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                               .init          = "tpch_q6_sales_init",
+                               .update        = "sum_update",
+                               .merge         = "tpch_q6_sales_merge",
+                               .finalize      = "tpch_q6_sales_finalize",
+                               .is_null_aware = cudf::null_aware::YES};
+    auto result = cudf::reduce(udf, inputs, state_types, output_types);
 
+    expect_sum_count_avg(result, test.expected_sum, test.expected_count);
+    auto indexed_filter           = udf;
+    indexed_filter.filter_indexed = true;
+    result                        = cudf::reduce(indexed_filter, inputs, state_types, output_types);
     expect_sum_count_avg(result, test.expected_sum, test.expected_count);
 
     // Value-only callbacks skip null rows and preserve their zero identity.
     data_type const types[]{state_types[0]};
-    cudf::reduce_udf const raw{
-      lto_fragments(), "raw_init", "raw_update", "raw_merge", "raw_finalize"};
-    result = cudf::reduce_lto(raw, cudf::null_aware::NO, inputs, types, types);
+    cudf::reduce_udf const raw{.fragments     = lto_fragments(),
+                               .init          = "raw_init",
+                               .update        = "raw_update",
+                               .merge         = "raw_merge",
+                               .finalize      = "raw_finalize",
+                               .is_null_aware = cudf::null_aware::NO};
+    result = cudf::reduce(raw, inputs, types, types);
 
     ASSERT_EQ(result.size(), std::size(types));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0], expected_raw_sum);
   }
 }
 
-TEST_F(ReduceLto, FusedOutput)
+TEST_F(ReduceUdf, FusedOutput)
 {
   // SELECT SUM(amount), COUNT(amount), AVG(amount), SUM(amount) >= 100 FROM input;
   wrapper<int32_t> amount{20, 40, 60};
@@ -184,10 +202,14 @@ TEST_F(ReduceLto, FusedOutput)
   data_type const outputs[]{
     output_types[0], output_types[1], output_types[2], data_type{type_id::BOOL8}};
 
-  cudf::reduce_udf const udf{
-    lto_fragments(), "tpch_q6_sales_init", "sum_update", "tpch_q6_sales_merge", "fused_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "sum_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "fused_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, outputs);
+  auto result = cudf::reduce(udf, inputs, state_types, outputs);
 
   ASSERT_EQ(result.size(), std::size(outputs));
   expect_sum_count_avg(
@@ -195,7 +217,7 @@ TEST_F(ReduceLto, FusedOutput)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[std::size(output_types)], expected_qualifies);
 }
 
-TEST_F(ReduceLto, FilterPushDownReduction)
+TEST_F(ReduceUdf, FilterPushDownReduction)
 {
   wrapper<int32_t> values{10, -99, 20, -99, 30};
   wrapper<bool> keep{{true, false, true, true, true}, {true, true, true, false, true}};
@@ -207,77 +229,89 @@ TEST_F(ReduceLto, FilterPushDownReduction)
     std::vector<cudf::bitmask_type>{0b10101}, cudf::get_default_stream(), mr());
   cudf::reduce_input const inputs[]{values};
 
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "checked_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "checked_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
   // Without a selection, negative input values trigger an error in checked_update.
-  EXPECT_THROW(cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types),
-               cudf::evaluation_error);
+  EXPECT_THROW(cudf::reduce(udf, inputs, state_types, output_types), cudf::evaluation_error);
 
   // A BOOL8 column supplies the selection; a null predicate excludes its row.
-  cudf::reduce_input const boolean_inputs[]{values, keep};
-  cudf::reduce_udf const boolean_udf{lto_fragments(),
-                                     "tpch_q6_sales_init",
-                                     "boolean_update",
-                                     "tpch_q6_sales_merge",
-                                     "tpch_q6_sales_finalize",
-                                     "boolean_filter"};
+  cudf::reduce_input const boolean_inputs[]{keep};
+  cudf::reduce_udf const boolean_udf{.fragments     = lto_fragments(),
+                                     .init          = "tpch_q6_sales_init",
+                                     .update        = "checked_update",
+                                     .merge         = "tpch_q6_sales_merge",
+                                     .finalize      = "tpch_q6_sales_finalize",
+                                     .filter        = "boolean_filter",
+                                     .is_null_aware = cudf::null_aware::YES};
 
-  auto result =
-    cudf::reduce_lto(boolean_udf, cudf::null_aware::YES, boolean_inputs, state_types, output_types);
+  auto result = cudf::reduce(boolean_udf, inputs, state_types, output_types, boolean_inputs);
   expect_sum_count_avg(result, expected_sum, expected_count);
 
   // A packed mask has no column type; the filter reads its words through user_data.
-  cudf::reduce_input const mask_inputs[]{values, cudf::user_data{packed.data()}};
-  cudf::reduce_udf const mask_udf{lto_fragments(),
-                                  "tpch_q6_sales_init",
-                                  "mask_update",
-                                  "tpch_q6_sales_merge",
-                                  "tpch_q6_sales_finalize",
-                                  "mask_filter"};
+  cudf::reduce_input const mask_inputs[]{cudf::user_data{packed.data()}};
+  cudf::reduce_udf const mask_udf{.fragments      = lto_fragments(),
+                                  .init           = "tpch_q6_sales_init",
+                                  .update         = "checked_update",
+                                  .merge          = "tpch_q6_sales_merge",
+                                  .finalize       = "tpch_q6_sales_finalize",
+                                  .filter         = "mask_filter",
+                                  .is_null_aware  = cudf::null_aware::YES,
+                                  .filter_indexed = true};
 
-  result =
-    cudf::reduce_lto(mask_udf, cudf::null_aware::YES, mask_inputs, state_types, output_types);
+  result = cudf::reduce(mask_udf, inputs, state_types, output_types, mask_inputs);
   expect_sum_count_avg(result, expected_sum, expected_count);
 
   data_type const raw_types[]{state_types[0]};
-  cudf::reduce_udf const raw{
-    lto_fragments(), "raw_init", "raw_mask_update", "raw_merge", "raw_finalize", "raw_mask_filter"};
-  result = cudf::reduce_lto(raw, cudf::null_aware::NO, mask_inputs, raw_types, raw_types);
+  cudf::reduce_udf const raw{.fragments      = lto_fragments(),
+                             .init           = "raw_init",
+                             .update         = "raw_update",
+                             .merge          = "raw_merge",
+                             .finalize       = "raw_finalize",
+                             .filter         = "raw_mask_filter",
+                             .is_null_aware  = cudf::null_aware::NO,
+                             .filter_indexed = true};
+  result = cudf::reduce(raw, inputs, raw_types, raw_types, mask_inputs);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0], (wrapper<int64_t>{{expected_sum}, {true}}));
 }
 
-TEST_F(ReduceLto, ErrorHandling)
+TEST_F(ReduceUdf, ErrorHandling)
 {
-  cudf::reduce_udf const init{lto_fragments(),
-                              "error_init",
-                              "checked_update",
-                              "tpch_q6_sales_merge",
-                              "tpch_q6_sales_finalize",
-                              "error_filter"};
-  cudf::reduce_udf const filter{lto_fragments(),
-                                "tpch_q6_sales_init",
-                                "checked_update",
-                                "tpch_q6_sales_merge",
-                                "tpch_q6_sales_finalize"};
-  cudf::reduce_udf const update{lto_fragments(),
-                                "tpch_q6_sales_init",
-                                "checked_update",
-                                "tpch_q6_sales_merge",
-                                "tpch_q6_sales_finalize"};
-  cudf::reduce_udf const merge{lto_fragments(),
-                               "tpch_q6_sales_init",
-                               "checked_update",
-                               "error_merge",
-                               "tpch_q6_sales_finalize"};
-  cudf::reduce_udf const finalize{lto_fragments(),
-                                  "tpch_q6_sales_init",
-                                  "checked_update",
-                                  "tpch_q6_sales_merge",
-                                  "error_finalize"};
+  cudf::reduce_udf const init{.fragments     = lto_fragments(),
+                              .init          = "error_init",
+                              .update        = "sum_update",
+                              .merge         = "tpch_q6_sales_merge",
+                              .finalize      = "tpch_q6_sales_finalize",
+                              .is_null_aware = cudf::null_aware::YES};
+  cudf::reduce_udf const filter{.fragments     = lto_fragments(),
+                                .init          = "tpch_q6_sales_init",
+                                .update        = "sum_update",
+                                .merge         = "tpch_q6_sales_merge",
+                                .finalize      = "tpch_q6_sales_finalize",
+                                .filter        = "error_filter",
+                                .is_null_aware = cudf::null_aware::YES};
+  cudf::reduce_udf const update{.fragments     = lto_fragments(),
+                                .init          = "tpch_q6_sales_init",
+                                .update        = "checked_update",
+                                .merge         = "tpch_q6_sales_merge",
+                                .finalize      = "tpch_q6_sales_finalize",
+                                .is_null_aware = cudf::null_aware::YES};
+  cudf::reduce_udf const merge{.fragments     = lto_fragments(),
+                               .init          = "tpch_q6_sales_init",
+                               .update        = "sum_update",
+                               .merge         = "error_merge",
+                               .finalize      = "tpch_q6_sales_finalize",
+                               .is_null_aware = cudf::null_aware::YES};
+  cudf::reduce_udf const finalize{.fragments     = lto_fragments(),
+                                  .init          = "tpch_q6_sales_init",
+                                  .update        = "sum_update",
+                                  .merge         = "tpch_q6_sales_merge",
+                                  .finalize      = "error_finalize",
+                                  .is_null_aware = cudf::null_aware::YES};
 
   struct error_case {
     cudf::reduce_udf udf;
@@ -297,7 +331,7 @@ TEST_F(ReduceLto, ErrorHandling)
 
   for (auto const& test : cases) {
     try {
-      cudf::reduce_lto(test.udf, cudf::null_aware::YES, inputs, state_types, output_types);
+      cudf::reduce(test.udf, inputs, state_types, output_types);
       FAIL() << "Expected a callback error";
     } catch (cudf::evaluation_error const& error) {
       EXPECT_EQ(error.error_code(), test.expected_error);
@@ -305,48 +339,55 @@ TEST_F(ReduceLto, ErrorHandling)
   }
 }
 
-TEST_F(ReduceLto, Assertions)
+TEST_F(ReduceUdf, Assertions)
 {
   wrapper<int32_t> values{1, 2, 3};
   wrapper<int32_t> shorter{1, 2};
 
   cudf::reduce_input const inputs[]{values};
   cudf::reduce_input const mismatched[]{values, shorter};
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "sum_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  wrapper<bool> shorter_mask{true, false};
+  cudf::reduce_input const shorter_filter[]{shorter_mask};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "sum_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
   // Input columns must have matching row counts.
-  EXPECT_THROW(cudf::reduce_lto(udf, cudf::null_aware::YES, mismatched, state_types, output_types),
+  EXPECT_THROW(cudf::reduce(udf, mismatched, state_types, output_types), std::invalid_argument);
+  // Supplying filter inputs requires an explicit predicate, even when lengths match.
+  EXPECT_THROW(cudf::reduce(udf, inputs, state_types, output_types, inputs), std::invalid_argument);
+  auto filtered   = udf;
+  filtered.filter = "boolean_filter";
+  EXPECT_THROW(cudf::reduce(filtered, inputs, state_types, output_types, shorter_filter),
                std::invalid_argument);
 }
 
-TEST_F(ReduceLto, UnsupportedTypes)
+TEST_F(ReduceUdf, UnsupportedTypes)
 {
   wrapper<int32_t> values{1, 2, 3};
   cudf::reduce_input const inputs[]{values};
   for (auto type : {type_id::EMPTY, type_id::DICTIONARY32, type_id::LIST, type_id::STRUCT}) {
     SCOPED_TRACE(static_cast<int32_t>(type));
     data_type const unsupported[]{data_type{type}};
-    cudf::reduce_udf const udf{lto_fragments(),
-                               "tpch_q6_sales_init",
-                               "sum_update",
-                               "tpch_q6_sales_merge",
-                               "tpch_q6_sales_finalize"};
+    cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                               .init          = "tpch_q6_sales_init",
+                               .update        = "sum_update",
+                               .merge         = "tpch_q6_sales_merge",
+                               .finalize      = "tpch_q6_sales_finalize",
+                               .is_null_aware = cudf::null_aware::YES};
 
     // Scalar reductions reject state types other than fixed-width types and strings.
-    EXPECT_THROW(cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, unsupported, output_types),
-                 std::invalid_argument);
+    EXPECT_THROW(cudf::reduce(udf, inputs, unsupported, output_types), std::invalid_argument);
 
     // Scalar reductions apply the same restriction to output types.
-    EXPECT_THROW(cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, unsupported),
-                 std::invalid_argument);
+    EXPECT_THROW(cudf::reduce(udf, inputs, state_types, unsupported), std::invalid_argument);
   }
 }
 
-TEST_F(ReduceLto, MultiInput)
+TEST_F(ReduceUdf, MultiInput)
 {
   // SELECT SUM((amount - discount) * rate), COUNT(...), AVG(...) FROM input;
   wrapper<int32_t> amount{20, 50, 100};
@@ -358,18 +399,19 @@ TEST_F(ReduceLto, MultiInput)
 
   cudf::reduce_input const inputs[]{amount, discount, cudf::scalar_column_view{rate}};
 
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "discount_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "discount_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+  auto result = cudf::reduce(udf, inputs, state_types, output_types);
 
   expect_sum_count_avg(result, expected_sum, expected_count);
 }
 
-TEST_F(ReduceLto, MultiOutput)
+TEST_F(ReduceUdf, MultiOutput)
 {
   wrapper<int32_t> values{1, 2, 9};
 
@@ -380,13 +422,14 @@ TEST_F(ReduceLto, MultiOutput)
 
   cudf::reduce_input const inputs[]{values};
 
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "sum_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "sum_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+  auto result = cudf::reduce(udf, inputs, state_types, output_types);
 
   expect_sum_count_avg(result, expected_sum, expected_count);
 
@@ -399,7 +442,7 @@ TEST_F(ReduceLto, MultiOutput)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*sum, expected_retained_sum);
 }
 
-TEST_F(ReduceLto, DictionaryInput)
+TEST_F(ReduceUdf, DictionaryInput)
 {
   wrapper<int32_t> values{{10, 99, 10, 20, -5}, {true, false, true, true, true}};
 
@@ -410,18 +453,19 @@ TEST_F(ReduceLto, DictionaryInput)
 
   cudf::reduce_input const inputs[]{dictionary->view()};
 
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "sum_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "sum_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+  auto result = cudf::reduce(udf, inputs, state_types, output_types);
 
   expect_sum_count_avg(result, expected_sum, expected_count);
 }
 
-TEST_F(ReduceLto, StringReduction)
+TEST_F(ReduceUdf, StringReduction)
 {
   // SELECT SUM(OCTET_LENGTH(value)), COUNT(value), AVG(OCTET_LENGTH(value)) FROM input;
   cudf::test::strings_column_wrapper strings{{"", "abc", "ignored", "GPU", "\xc3\xa9"},
@@ -431,22 +475,23 @@ TEST_F(ReduceLto, StringReduction)
   constexpr int64_t expected_count = 4;
 
   auto dictionary = cudf::dictionary::encode(strings);
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "string_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "string_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
   for (auto input : {cudf::column_view{strings}, dictionary->view()}) {
     cudf::reduce_input const inputs[]{input};
 
-    auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+    auto result = cudf::reduce(udf, inputs, state_types, output_types);
 
     expect_sum_count_avg(result, expected_sum, expected_count);
   }
 }
 
-TEST_F(ReduceLto, StringStateAndOutput)
+TEST_F(ReduceUdf, StringStateAndOutput)
 {
   // SELECT MAX(value), OCTET_LENGTH(MAX(value)) FROM input;
   std::vector<std::string> large_values(100'003, "abc");
@@ -472,11 +517,12 @@ TEST_F(ReduceLto, StringStateAndOutput)
   for (auto nulls : {cudf::null_aware::YES, cudf::null_aware::NO}) {
     SCOPED_TRACE(nulls == cudf::null_aware::YES ? "optional" : "value-only");
     bool na = nulls == cudf::null_aware::NO;
-    cudf::reduce_udf const udf{lto_fragments(),
-                               na ? "raw_string_max_init" : "string_max_init",
-                               na ? "raw_string_max_update" : "string_max_update",
-                               na ? "raw_string_max_merge" : "string_max_merge",
-                               na ? "raw_string_max_finalize" : "string_max_finalize"};
+    cudf::reduce_udf const udf{.fragments = lto_fragments(),
+                               .init      = na ? "raw_string_max_init" : "string_max_init",
+                               .update    = na ? "raw_string_max_update" : "string_max_update",
+                               .merge     = na ? "raw_string_max_merge" : "string_max_merge",
+                               .finalize  = na ? "raw_string_max_finalize" : "string_max_finalize",
+                               .is_null_aware = nulls};
 
     for (auto const& test : cases) {
       SCOPED_TRACE(test.values.size());
@@ -488,7 +534,7 @@ TEST_F(ReduceLto, StringStateAndOutput)
       wrapper<int32_t> expected_length{{static_cast<int32_t>(test.expected_max.size())}, {valid}};
       cudf::reduce_input const inputs[]{input->view()};
 
-      auto result = cudf::reduce_lto(udf, nulls, inputs, states, outputs);
+      auto result = cudf::reduce(udf, inputs, states, outputs);
       ASSERT_EQ(result.size(), std::size(outputs));
       if (!test.expected_max.empty()) { EXPECT_NE(result[0]->view().head(), input->view().head()); }
       input.reset();  // The result must own its characters after the input is destroyed.
@@ -498,7 +544,7 @@ TEST_F(ReduceLto, StringStateAndOutput)
   }
 }
 
-TEST_F(ReduceLto, UserDataInput)
+TEST_F(ReduceUdf, UserDataInput)
 {
   wrapper<int32_t> values{2, 4, 6};
   auto weights = cudf::detail::make_device_buffer(
@@ -509,17 +555,28 @@ TEST_F(ReduceLto, UserDataInput)
 
   cudf::reduce_input const inputs[]{values, cudf::user_data{weights.data()}};
 
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "user_data_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments      = lto_fragments(),
+                             .init           = "tpch_q6_sales_init",
+                             .update         = "user_data_update",
+                             .merge          = "tpch_q6_sales_merge",
+                             .finalize       = "tpch_q6_sales_finalize",
+                             .is_null_aware  = cudf::null_aware::YES,
+                             .update_indexed = true};
 
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+  auto result = cudf::reduce(udf, inputs, state_types, output_types);
   expect_sum_count_avg(result, expected_sum, expected_count);
+
+  auto mask = cudf::detail::make_device_buffer(
+    std::vector<cudf::bitmask_type>{0b101}, cudf::get_default_stream(), mr());
+  cudf::reduce_input const filter_inputs[]{cudf::user_data{mask.data()}};
+  auto filtered           = udf;
+  filtered.filter         = "mask_filter";
+  filtered.filter_indexed = true;
+  result = cudf::reduce(filtered, inputs, state_types, output_types, filter_inputs);
+  expect_sum_count_avg(result, 64, 2);
 }
 
-TEST_F(ReduceLto, TpchQ6Sales)
+TEST_F(ReduceUdf, TpchQ6Sales)
 {
   // WHERE active AND quantity > 0, then SUM/COUNT/AVG(price * quantity).
   wrapper<int32_t> price{10, 20, 30, 40, 50};
@@ -528,29 +585,28 @@ TEST_F(ReduceLto, TpchQ6Sales)
   constexpr int64_t expected_sum   = 120;
   constexpr int64_t expected_count = 2;
 
-  cudf::reduce_udf const udf{lto_fragments(),
-                             "tpch_q6_sales_init",
-                             "tpch_q6_sales_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "tpch_q6_sales_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
   cudf::reduce_input const inputs[]{price, quantity, active};
 
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+  auto result = cudf::reduce(udf, inputs, state_types, output_types);
 
   expect_sum_count_avg(result, expected_sum, expected_count);
 }
 
-TEST_F(ReduceLto, CudaSourceTpchQ6SalesNullsAndEmptyInput)
+TEST_F(ReduceUdf, CudaSourceTpchQ6SalesNullsAndEmptyInput)
 {
-  auto code = cuda_fragments();
-  cudf::lto_fragment const fragments[]{code.view()};
-
-  cudf::reduce_udf const udf{fragments,
-                             "tpch_q6_sales_init",
-                             "tpch_q6_sales_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "tpch_q6_sales_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
   for (int32_t rows : {0, 3}) {
     // SQL SUM/AVG are NULL and COUNT(expression) is zero for empty or all-null input.
@@ -569,12 +625,12 @@ TEST_F(ReduceLto, CudaSourceTpchQ6SalesNullsAndEmptyInput)
 
     cudf::reduce_input const inputs[]{price, quantity, active};
 
-    auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+    auto result = cudf::reduce(udf, inputs, state_types, output_types);
     expect_sum_count_avg(result, expected_sum, expected_count);
   }
 }
 
-TEST_F(ReduceLto, CudaSourceTpchQ6SalesLargeInput)
+TEST_F(ReduceUdf, CudaSourceTpchQ6SalesLargeInput)
 {
   // The same fused query over enough rows to require merging partial aggregates.
   constexpr int32_t rows = 100'003;
@@ -593,15 +649,13 @@ TEST_F(ReduceLto, CudaSourceTpchQ6SalesLargeInput)
 
   cudf::reduce_input const inputs[]{price, quantity, active};
 
-  auto code = cuda_fragments();
-  cudf::lto_fragment const fragments[]{code.view()};
+  cudf::reduce_udf const udf{.fragments     = lto_fragments(),
+                             .init          = "tpch_q6_sales_init",
+                             .update        = "tpch_q6_sales_update",
+                             .merge         = "tpch_q6_sales_merge",
+                             .finalize      = "tpch_q6_sales_finalize",
+                             .is_null_aware = cudf::null_aware::YES};
 
-  cudf::reduce_udf const udf{fragments,
-                             "tpch_q6_sales_init",
-                             "tpch_q6_sales_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
-
-  auto result = cudf::reduce_lto(udf, cudf::null_aware::YES, inputs, state_types, output_types);
+  auto result = cudf::reduce(udf, inputs, state_types, output_types);
   expect_sum_count_avg(result, expected_sum, expected_count);
 }

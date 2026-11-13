@@ -7,6 +7,7 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/types.hpp>
+#include <cudf/user_data.hpp>
 
 #include <cuda/std/optional>
 #include <cuda/std/type_traits>
@@ -17,15 +18,15 @@ namespace jit {
 /** @brief An opaque pointer input, broadcast to every row without optional wrapping. */
 template <int32_t Index>
 struct user_data_accessor {
-  using element_type             = void*;
+  using element_type             = voidptr_t;
   static constexpr int32_t index = Index;
 
-  static __device__ void* element(column_device_view_core const* cols, size_type)
+  static __device__ voidptr_t element(column_device_view_core const* cols, size_type)
   {
     return const_cast<void*>(cols[index].head());
   }
 
-  static __device__ void* nullable_element(column_device_view_core const* cols, size_type row)
+  static __device__ voidptr_t nullable_element(column_device_view_core const* cols, size_type row)
   {
     return element(cols, row);
   }

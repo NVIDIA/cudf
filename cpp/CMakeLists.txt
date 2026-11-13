@@ -999,7 +999,7 @@ add_library(
   src/reductions/nunique.cpp
   src/reductions/product.cu
   src/reductions/quantile.cu
-  src/reductions/reduce_lto.cu
+  src/reductions/reduce.cu
   src/reductions/reductions.cpp
   src/reductions/scan/ewm.cu
   src/reductions/scan/rank_scan.cu

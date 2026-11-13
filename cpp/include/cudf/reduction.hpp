@@ -291,21 +291,26 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  * | Callback | Parameters |
  * |----------|------------|
  * | init | state pointers... |
- * | filter | row index, bool* selected, input values... |
- * | update | row index, state pointers..., input values... |
+ * | filter | optional row index, bool* selected, filter input values... |
+ * | update | optional row index, state pointers..., input values... |
  * | merge | destination state pointers..., source state values... |
  * | finalize | output pointers..., state values... |
  *
  * Initialize every independent state to its identity. Merge must be associative and preserve
- * that identity; update/merge order is unspecified. An empty filter symbol selects all rows.
- * A false selection skips update.
+ * that identity; update/merge order is unspecified. An empty filter symbol uses the built-in
+ * `cudf_all_true` predicate and requires an empty filter-input list.
+ * A false selection skips update. Row indices use `cudf::size_type` and are passed only when
+ * `filter_indexed` or `update_indexed` is true for the corresponding callback.
  *
  * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
  * State and outputs support fixed-width types and strings.
+ * Update receives only `inputs`; filter receives only `filter_inputs`. Column lengths must match
+ * across both input lists. Scalars and user data are broadcast to every row.
  *
  * With @c null_aware::YES, inputs, state and outputs use @c cuda::std::optional<T>, with mutable
  * parameters passed as pointers to optionals. Empty optionals represent nulls. Callbacks define
  * null-state identities and output validity.
+ * User-data pointers, row indices and the filter's `bool* selected` are never optional.
  * With @c null_aware::NO, use plain values; rows with any null column/scalar input are skipped
  * before filtering.
  */
@@ -315,31 +320,38 @@ struct reduce_udf {
   std::string_view update{};    ///< Incorporates a selected row
   std::string_view merge{};     ///< Combines partial states
   std::string_view finalize{};  ///< Writes output values
-  std::string_view filter{};    ///< Optional row predicate
+  std::string_view filter{};    ///< Row predicate; required when filter inputs are supplied
+  null_aware is_null_aware = null_aware::NO;  ///< Whether values use optional wrappers
+  bool update_indexed =
+    false;  ///< Whether the update callback expects the row index as the first argument
+  bool filter_indexed =
+    false;  ///< Whether the filter callback expects the row index as the first argument
 };
 
 /**
  * @brief Reduces rows into one single-row column per requested output.
  *
- * @throws std::invalid_argument for mismatched input lengths or unsupported state/output types
+ * @throws std::invalid_argument for mismatched input lengths, unsupported state/output types, or
+ * filter inputs supplied without a filter symbol
  * @throws cudf::evaluation_error for callback failures
  * @param udf Compiled fragments and callback symbols
- * @param is_null_aware Whether values use optional wrappers
  * @param inputs Inputs in callback order
  * @param state_types State fields in callback order
  * @param outputs Returned types in finalization order
+ * @param filter_inputs Inputs for the filter callback; empty by default. Supplying inputs requires
+ * a nonempty `udf.filter`.
  * @param stream Execution stream
  * @param mr Output and temporary memory resources
  * @return One single-row column per output
  */
-std::vector<std::unique_ptr<column>> reduce_lto(
+std::vector<std::unique_ptr<column>> reduce(
   reduce_udf const& udf,
-  null_aware is_null_aware,
   std::span<reduce_input const> inputs,
   std::span<data_type const> state_types,
   std::span<data_type const> outputs,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+  std::span<reduce_input const> filter_inputs = {},
+  cuda::stream_ref stream                     = cudf::get_default_stream(),
+  cudf::memory_resources mr                   = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

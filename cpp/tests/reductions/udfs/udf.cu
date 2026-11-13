@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/errc.hpp>
-#include <cudf/types.hpp>
 #include <cudf/strings/string_view.cuh>
+#include <cudf/types.hpp>
 
 #include <cuda/std/cstdint>
 #include <cuda/std/optional>
@@ -20,8 +20,7 @@ using cudf::errc;
 using cudf::size_type;
 using cudf::string_view;
 
-__device__ errc sum_update(size_type,
-                           optional<int64_t>* sum,
+__device__ errc sum_update(optional<int64_t>* sum,
                            optional<int64_t>* count,
                            optional<int32_t> value)
 {
@@ -32,60 +31,39 @@ __device__ errc sum_update(size_type,
   return errc::SUCCESS;
 }
 
-__device__ errc checked_update(size_type row,
-                               optional<int64_t>* sum,
+__device__ errc checked_update(optional<int64_t>* sum,
                                optional<int64_t>* count,
                                optional<int32_t> value)
 {
   if (value && *value < 0) { return errc::ARITHMETIC_OVERFLOW; }
-  return sum_update(row, sum, count, value);
+  return sum_update(sum, count, value);
 }
 
-__device__ errc boolean_filter(size_type, bool* selected, optional<int32_t>, optional<bool> keep)
+__device__ errc boolean_filter(bool* selected, optional<bool> keep)
 {
   *selected = keep.value_or(false);
   return errc::SUCCESS;
 }
 
-__device__ errc checked_boolean_update(size_type row,
-                                       optional<int64_t>* sum,
-                                       optional<int64_t>* count,
-                                       optional<int32_t> value,
-                                       optional<bool>)
-{
-  return checked_update(row, sum, count, value);
-}
-
-__device__ errc mask_filter(size_type row, bool* selected, optional<int32_t>, void* user_data)
+__device__ errc mask_filter(size_type row, bool* selected, void* user_data)
 {
   auto const* mask = static_cast<uint32_t const*>(user_data);
   *selected        = (mask[row / 32] & (uint32_t{1} << (row % 32))) != 0;
   return errc::SUCCESS;
 }
 
-__device__ errc checked_mask_update(
-  size_type row, optional<int64_t>* sum, optional<int64_t>* count, optional<int32_t> value, void*)
+__device__ errc raw_mask_filter(size_type row, bool* selected, void* user_data)
 {
-  return checked_update(row, sum, count, value);
+  return mask_filter(row, selected, user_data);
 }
 
-__device__ errc raw_mask_filter(size_type row, bool* selected, int32_t value, void* user_data)
-{
-  return mask_filter(row, selected, value, user_data);
-}
-
-__device__ errc raw_mask_update(size_type row, int64_t* sum, int32_t value, void*)
-{
-  return raw_update(row, sum, value);
-}
-
-__device__ errc error_filter(size_type, bool* selected, optional<int32_t>)
+__device__ errc error_filter(bool* selected)
 {
   *selected = true;
   return errc::ARITHMETIC_OVERFLOW;
 }
 
-__device__ errc error_update(size_type, optional<int64_t>*, optional<int64_t>*, optional<int32_t>)
+__device__ errc error_update(optional<int64_t>*, optional<int64_t>*, optional<int32_t>)
 {
   return errc::DIVISION_BY_ZERO;
 }
@@ -111,8 +89,7 @@ __device__ errc error_finalize(
   return errc::DIVISION_BY_ZERO;
 }
 
-__device__ errc discount_update(size_type,
-                                optional<int64_t>* sum,
+__device__ errc discount_update(optional<int64_t>* sum,
                                 optional<int64_t>* count,
                                 optional<int32_t> amount,
                                 optional<int32_t> discount,
@@ -139,6 +116,9 @@ __device__ errc user_data_update(size_type row,
   return errc::SUCCESS;
 }
 
+__device__ errc tpch_q6_sales_finalize(
+  optional<int64_t>*, optional<int64_t>*, optional<double>*, optional<int64_t>, optional<int64_t>);
+
 __device__ errc fused_finalize(optional<int64_t>* out_sum,
                                optional<int64_t>* out_count,
                                optional<double>* out_average,
@@ -151,8 +131,7 @@ __device__ errc fused_finalize(optional<int64_t>* out_sum,
   return tpch_q6_sales_finalize(out_sum, out_count, out_average, sum, count);
 }
 
-__device__ errc string_update(size_type,
-                              optional<int64_t>* sum,
+__device__ errc string_update(optional<int64_t>* sum,
                               optional<int64_t>* count,
                               optional<string_view> value)
 {
@@ -176,9 +155,7 @@ __device__ errc string_max_merge(optional<string_view>* state, optional<string_v
   return errc::SUCCESS;
 }
 
-__device__ errc string_max_update(size_type,
-                                  optional<string_view>* state,
-                                  optional<string_view> value)
+__device__ errc string_max_update(optional<string_view>* state, optional<string_view> value)
 {
   return string_max_merge(state, value);
 }
@@ -206,7 +183,7 @@ __device__ errc raw_string_max_merge(string_view* state, string_view value)
   return errc::SUCCESS;
 }
 
-__device__ errc raw_string_max_update(size_type, string_view* state, string_view value)
+__device__ errc raw_string_max_update(string_view* state, string_view value)
 {
   return raw_string_max_merge(state, value);
 }
@@ -225,7 +202,7 @@ __device__ errc raw_init(int64_t* sum)
   return errc::SUCCESS;
 }
 
-__device__ errc raw_update(size_type, int64_t* sum, int32_t value)
+__device__ errc raw_update(int64_t* sum, int32_t value)
 {
   *sum += value;
   return errc::SUCCESS;
@@ -254,8 +231,7 @@ __device__ errc tpch_q6_sales_init(optional<int64_t>* sum, optional<int64_t>* co
   return errc::SUCCESS;
 }
 
-__device__ errc tpch_q6_sales_update(size_type,
-                                     optional<int64_t>* sum,
+__device__ errc tpch_q6_sales_update(optional<int64_t>* sum,
                                      optional<int64_t>* count,
                                      optional<int32_t> price,
                                      optional<int32_t> quantity,
@@ -290,6 +266,16 @@ __device__ errc tpch_q6_sales_finalize(optional<int64_t>* out_sum,
   return errc::SUCCESS;
 }
 
+__device__ errc empty_init() { return errc::SUCCESS; }
+
+__device__ errc empty_update(int32_t) { return errc::SUCCESS; }
+
+__device__ errc empty_merge() { return errc::SUCCESS; }
+
+__device__ errc empty_finalize() { return errc::SUCCESS; }
+
+__device__ errc empty_finalize_error() { return errc::DIVISION_BY_ZERO; }
+
 // Exercise optional state large enough to require scratch-backed block reduction.
 #define FIELDS(F)                                                                                \
   F(0), F(1), F(2), F(3), F(4), F(5), F(6), F(7), F(8), F(9), F(10), F(11), F(12), F(13), F(14), \
@@ -306,7 +292,7 @@ __device__ errc wide_init(FIELDS(POINTER))
   return errc::SUCCESS;
 }
 
-__device__ errc wide_update(size_type, FIELDS(POINTER), optional<int32_t> input)
+__device__ errc wide_update(FIELDS(POINTER), optional<int32_t> input)
 {
   auto const value = input.value_or(0);
 #define UPDATE(i) *state##i = state##i->value_or(0) + int64_t{i + 1} * value

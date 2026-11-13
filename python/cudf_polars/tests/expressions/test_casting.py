@@ -63,17 +63,20 @@ def test_cast_unsupported(engine: pl.GPUEngine, tests):
 
 
 @pytest.mark.parametrize("strict", [True, False])
-@pytest.mark.parametrize("to_bool", [False, True])
+@pytest.mark.parametrize(
+    "then", [None, pl.Boolean(), pl.Int8()], ids=["null", "to_bool", "to_int8"]
+)
 @pytest.mark.parametrize(
     "values",
     [[1, 2, 3], [1, None, 3], [None, None, None], []],
     ids=["valid", "mixed", "null", "empty"],
 )
-def test_cast_to_null(engine: pl.GPUEngine, values, strict, to_bool):
-    # Null is stored as INT8, so this must not become an INT8 -> INT8 cast.
+def test_cast_to_null(engine: pl.GPUEngine, values, strict, then):
+    # Null is stored as INT8, so neither the cast to Null nor a following cast
+    # back to Int8 may become a no-op INT8 -> INT8 cast.
     expr = pl.col("a").cast(pl.Null, strict=strict)
-    if to_bool:
-        expr = expr.cast(pl.Boolean)
+    if then is not None:
+        expr = expr.cast(then)
     query = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Int8)}).select(expr)
     if strict and any(value is not None for value in values):
         message = "conversion from `i8` to `null` failed"
@@ -87,6 +90,26 @@ def test_cast_to_null(engine: pl.GPUEngine, values, strict, to_bool):
                 query.collect(engine=engine)
     else:
         assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Int8(), pl.Int16(), pl.Boolean()])
+def test_cast_null_literal_column(engine: pl.GPUEngine, dtype):
+    query = pl.LazyFrame({"a": [1, 2, 3]}).select(pl.repeat(None, pl.len()).cast(dtype))
+    assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "from_dtype, to_dtype",
+    [
+        (pl.Datetime("us"), pl.Datetime("us", "UTC")),
+        (pl.Datetime("us", "UTC"), pl.Datetime("us")),
+        (pl.Datetime("us", "UTC"), pl.Datetime("us", "Asia/Tokyo")),
+    ],
+)
+def test_cast_datetime_time_zone(engine: pl.GPUEngine, from_dtype, to_dtype):
+    # Same physical type, so only the logical dtype changes.
+    df = pl.LazyFrame({"a": pl.Series([0, 10**6, None], dtype=from_dtype)})
+    assert_gpu_result_equal(df.select(pl.col("a").cast(to_dtype)), engine=engine)
 
 
 def test_allow_double_cast(engine: pl.GPUEngine):

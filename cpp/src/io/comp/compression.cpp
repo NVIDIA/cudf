@@ -459,17 +459,23 @@ void compress(compression_type compression,
   device_span<codec_exec_result> results_view = tmp_results;
 
   auto const streams = cudf::detail::fork_streams(stream, 2);
-  detail::device_compress(compression,
-                          inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
-                          outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
-                          results_view.subspan(split_idx, results_view.size() - split_idx),
-                          streams[0],
-                          mr);
-  detail::host_compress(compression,
-                        inputs_view.subspan(0, split_idx),
-                        outputs_view.subspan(0, split_idx),
-                        results_view.subspan(0, split_idx),
-                        streams[1]);
+  try {
+    detail::device_compress(compression,
+                            inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
+                            outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
+                            results_view.subspan(split_idx, results_view.size() - split_idx),
+                            streams[0],
+                            mr);
+    detail::host_compress(compression,
+                          inputs_view.subspan(0, split_idx),
+                          outputs_view.subspan(0, split_idx),
+                          results_view.subspan(0, split_idx),
+                          streams[1]);
+  } catch (...) {
+    // Buffers are freed in `stream` order, so it must wait for work already queued on the forks
+    cudf::detail::join_streams(streams, stream);
+    throw;
+  }
   cudf::detail::join_streams(streams, stream);
 
   copy_results_to_original_order(results_view, results, order, stream, mr);

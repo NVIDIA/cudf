@@ -816,19 +816,25 @@ void decompress(compression_type compression,
   // Only fork/join when both host and device have work.
   if (has_host_work and has_device_work) {
     auto const streams = cudf::detail::fork_streams(stream, 2);
-    detail::device_decompress(compression,
-                              inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
-                              outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
-                              results_view.subspan(split_idx, results_view.size() - split_idx),
-                              max_uncomp_chunk_size,
-                              max_total_uncomp_size,
-                              streams[0],
-                              mr);
-    detail::host_decompress(compression,
-                            inputs_view.subspan(0, split_idx),
-                            outputs_view.subspan(0, split_idx),
-                            results_view.subspan(0, split_idx),
-                            streams[1]);
+    try {
+      detail::device_decompress(compression,
+                                inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
+                                outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
+                                results_view.subspan(split_idx, results_view.size() - split_idx),
+                                max_uncomp_chunk_size,
+                                max_total_uncomp_size,
+                                streams[0],
+                                mr);
+      detail::host_decompress(compression,
+                              inputs_view.subspan(0, split_idx),
+                              outputs_view.subspan(0, split_idx),
+                              results_view.subspan(0, split_idx),
+                              streams[1]);
+    } catch (...) {
+      // Buffers are freed in `stream` order, so it must wait for work already queued on the forks
+      cudf::detail::join_streams(streams, stream);
+      throw;
+    }
     cudf::detail::join_streams(streams, stream);
   } else if (has_device_work) {
     detail::device_decompress(compression,

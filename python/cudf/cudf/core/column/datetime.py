@@ -44,6 +44,7 @@ from cudf.utils.dtypes import (
     dtype_from_pylibcudf_column,
     dtype_to_pylibcudf_type,
     get_dtype_of_same_kind,
+    is_pandas_nullable_extension_dtype,
 )
 from cudf.utils.scalar import pa_scalar_to_plc_scalar
 from cudf.utils.temporal import (
@@ -918,7 +919,11 @@ class DatetimeColumn(TemporalBaseColumn):
         result_col = binaryop.binaryop(lhs_binop, rhs_binop, op, out_dtype)
         if out_dtype.kind != "b" and op == "__add__":
             return result_col
-        elif out_dtype.kind == "b" and op in _EQUALITY_OPS:
+        elif (
+            out_dtype.kind == "b"
+            and op in _EQUALITY_OPS
+            and not is_pandas_nullable_extension_dtype(out_dtype)
+        ):
             return result_col.fillna(op == "__ne__")
         else:
             return result_col

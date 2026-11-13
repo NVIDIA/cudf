@@ -605,27 +605,6 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummax-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummin-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cumprod-True]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-ne]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-eq]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-ne]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-ne]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-ne]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_groupby_agg_extension[decimal128(7, 3)]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-mean-False]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-mean-True]": "cudf returns float to match duckdb/Polars",
@@ -5407,9 +5386,6 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/extension/test_arrow.py::TestArrowArray::test_arith_series_with_scalar[uint32-__rpow__]": "pandas xfails (reason: GH#29997: 1**pandas.NA == 1 while 1**pyarrow.NA == NULL for uint32), but xpasses with cudf.pandas",
     "tests/extension/test_arrow.py::TestArrowArray::test_arith_series_with_scalar[uint64-__rpow__]": "pandas xfails (reason: GH#29997: 1**pandas.NA == 1 while 1**pyarrow.NA == NULL for uint64), but xpasses with cudf.pandas",
     "tests/extension/test_arrow.py::TestArrowArray::test_arith_series_with_scalar[uint8-__rpow__]": "pandas xfails (reason: GH#29997: 1**pandas.NA == 1 while 1**pyarrow.NA == NULL for uint8), but xpasses with cudf.pandas",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-eq]": "Flaky/order-dependent",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-eq]": "Flaky/order-dependent",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-eq]": "Flaky/order-dependent",
     "tests/extension/test_arrow.py::TestArrowArray::test_concat_mixed_dtypes[decimal128(7, 3)]": "pandas xfails, but xpasses with cudf.pandas",
     "tests/extension/test_arrow.py::TestArrowArray::test_from_sequence_pa_array[binary]": "Tests private pandas APIs, for example the _pa_array attribute",
     "tests/extension/test_arrow.py::TestArrowArray::test_from_sequence_pa_array[bool]": "Tests private pandas APIs, for example the _pa_array attribute",
@@ -12259,7 +12235,6 @@ NODEIDS_TO_SKIP: dict[str, str] = {
 #: unsharded nightly and local runs keep exercising them -- skipping them
 #: everywhere would quietly drop the coverage instead of narrowing it.
 NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-eq]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     # Failing in sharded pandas-tests CI run 32294121723 (shard 1, job
     # 96216291366). Nondeterministic rather than a deterministic
     # incompatibility: test_stack_multiple_out_of_bounds[True] and the
